@@ -13,6 +13,7 @@ package evidence
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -21,9 +22,11 @@ import (
 
 	"witnessd/internal/checkpoint"
 	"witnessd/internal/declaration"
+	"witnessd/internal/jitter"
 	"witnessd/internal/presence"
 	"witnessd/internal/tpm"
 	"witnessd/internal/vdf"
+	"witnessd/pkg/anchors"
 )
 
 // Strength indicates the evidence tier.
@@ -75,7 +78,11 @@ type Packet struct {
 	// Layer 3: Hardware Attestation (Enhanced+)
 	Hardware *HardwareEvidence `json:"hardware,omitempty"`
 
-	// Layer 4: Behavioral Data (Maximum only)
+	// Layer 4a: Keystroke Evidence (Standard+)
+	// Proves real keystrokes occurred without capturing content
+	Keystroke *KeystrokeEvidence `json:"keystroke,omitempty"`
+
+	// Layer 4b: Behavioral Data (Maximum only)
 	Behavioral *BehavioralEvidence `json:"behavioral,omitempty"`
 
 	// Layer 5: External Anchors (Maximum only)
@@ -119,6 +126,29 @@ type HardwareEvidence struct {
 	DeviceID string        `json:"device_id"`
 }
 
+// KeystrokeEvidence contains jitter-based keystroke evidence.
+// This proves real keystrokes occurred without capturing content.
+type KeystrokeEvidence struct {
+	// Session metadata
+	SessionID    string        `json:"session_id"`
+	StartedAt    time.Time     `json:"started_at"`
+	EndedAt      time.Time     `json:"ended_at"`
+	Duration     time.Duration `json:"duration"`
+
+	// Statistics
+	TotalKeystrokes  uint64  `json:"total_keystrokes"`
+	TotalSamples     int     `json:"total_samples"`
+	KeystrokesPerMin float64 `json:"keystrokes_per_minute"`
+	UniqueDocStates  int     `json:"unique_document_states"`
+
+	// Verification
+	ChainValid         bool `json:"chain_valid"`
+	PlausibleHumanRate bool `json:"plausible_human_rate"`
+
+	// The actual jitter samples (for full verification)
+	Samples []jitter.Sample `json:"samples,omitempty"`
+}
+
 // BehavioralEvidence contains optional behavioral data.
 // This is from the old Layer 4 and is opt-in only.
 type BehavioralEvidence struct {
@@ -145,11 +175,15 @@ type ForensicMetrics struct {
 
 // ExternalAnchors contains third-party timestamp proofs.
 type ExternalAnchors struct {
+	// Legacy format (for backwards compatibility)
 	OpenTimestamps []OTSProof     `json:"opentimestamps,omitempty"`
 	RFC3161        []RFC3161Proof `json:"rfc3161,omitempty"`
+
+	// New unified format using anchors package
+	Proofs []AnchorProof `json:"proofs,omitempty"`
 }
 
-// OTSProof is an OpenTimestamps proof.
+// OTSProof is an OpenTimestamps proof (legacy format).
 type OTSProof struct {
 	ChainHash   string    `json:"chain_hash"`
 	Proof       string    `json:"proof"` // Base64-encoded OTS proof
@@ -158,12 +192,54 @@ type OTSProof struct {
 	BlockTime   time.Time `json:"block_time,omitempty"`
 }
 
-// RFC3161Proof is an RFC 3161 timestamp proof.
+// RFC3161Proof is an RFC 3161 timestamp proof (legacy format).
 type RFC3161Proof struct {
 	ChainHash   string    `json:"chain_hash"`
 	TSAUrl      string    `json:"tsa_url"`
 	Response    string    `json:"response"` // Base64-encoded TSR
 	Timestamp   time.Time `json:"timestamp"`
+}
+
+// AnchorProof is a unified anchor proof format.
+type AnchorProof struct {
+	// Provider identifier (e.g., "opentimestamps", "rfc3161", "eidas")
+	Provider string `json:"provider"`
+
+	// Provider display name
+	ProviderName string `json:"provider_name"`
+
+	// Legal standing of this proof
+	LegalStanding string `json:"legal_standing"`
+
+	// Regions where this proof has legal recognition
+	Regions []string `json:"regions"`
+
+	// Hash that was anchored
+	Hash string `json:"hash"`
+
+	// Timestamp from the anchor
+	Timestamp time.Time `json:"timestamp"`
+
+	// Status: pending, confirmed, failed
+	Status string `json:"status"`
+
+	// Raw proof data (base64 encoded)
+	RawProof string `json:"raw_proof"`
+
+	// Blockchain anchor details (if applicable)
+	Blockchain *BlockchainAnchorInfo `json:"blockchain,omitempty"`
+
+	// Verification URL
+	VerifyURL string `json:"verify_url,omitempty"`
+}
+
+// BlockchainAnchorInfo contains blockchain-specific details.
+type BlockchainAnchorInfo struct {
+	Chain       string    `json:"chain"`
+	BlockHeight uint64    `json:"block_height"`
+	BlockHash   string    `json:"block_hash,omitempty"`
+	BlockTime   time.Time `json:"block_time"`
+	TxID        string    `json:"tx_id,omitempty"`
 }
 
 // Claim describes what the evidence proves.
@@ -177,13 +253,14 @@ type Claim struct {
 type ClaimType string
 
 const (
-	ClaimChainIntegrity    ClaimType = "chain_integrity"
-	ClaimTimeElapsed       ClaimType = "time_elapsed"
-	ClaimProcessDeclared   ClaimType = "process_declared"
-	ClaimPresenceVerified  ClaimType = "presence_verified"
-	ClaimHardwareAttested  ClaimType = "hardware_attested"
-	ClaimBehaviorAnalyzed  ClaimType = "behavior_analyzed"
-	ClaimExternalAnchored  ClaimType = "external_anchored"
+	ClaimChainIntegrity      ClaimType = "chain_integrity"
+	ClaimTimeElapsed         ClaimType = "time_elapsed"
+	ClaimProcessDeclared     ClaimType = "process_declared"
+	ClaimPresenceVerified    ClaimType = "presence_verified"
+	ClaimKeystrokesVerified  ClaimType = "keystrokes_verified"
+	ClaimHardwareAttested    ClaimType = "hardware_attested"
+	ClaimBehaviorAnalyzed    ClaimType = "behavior_analyzed"
+	ClaimExternalAnchored    ClaimType = "external_anchored"
 )
 
 // Builder constructs evidence packets.
@@ -285,6 +362,38 @@ func (b *Builder) WithHardware(bindings []tpm.Binding, deviceID string) *Builder
 	return b
 }
 
+// WithKeystroke adds jitter-based keystroke evidence.
+func (b *Builder) WithKeystroke(ev *jitter.Evidence) *Builder {
+	if ev == nil || ev.Statistics.TotalKeystrokes == 0 {
+		return b
+	}
+
+	// Verify the evidence
+	if err := ev.Verify(); err != nil {
+		b.errors = append(b.errors, fmt.Errorf("keystroke evidence invalid: %w", err))
+		return b
+	}
+
+	b.packet.Keystroke = &KeystrokeEvidence{
+		SessionID:        ev.SessionID,
+		StartedAt:        ev.StartedAt,
+		EndedAt:          ev.EndedAt,
+		Duration:         ev.Statistics.Duration,
+		TotalKeystrokes:  ev.Statistics.TotalKeystrokes,
+		TotalSamples:     ev.Statistics.TotalSamples,
+		KeystrokesPerMin: ev.Statistics.KeystrokesPerMin,
+		UniqueDocStates:  ev.Statistics.UniqueDocHashes,
+		ChainValid:       ev.Statistics.ChainValid,
+		PlausibleHumanRate: ev.IsPlausibleHumanTyping(),
+		Samples:          ev.Samples,
+	}
+
+	if b.packet.Strength < Standard {
+		b.packet.Strength = Standard
+	}
+	return b
+}
+
 // WithBehavioral adds optional behavioral evidence.
 func (b *Builder) WithBehavioral(regions []EditRegion, metrics *ForensicMetrics) *Builder {
 	if len(regions) == 0 && metrics == nil {
@@ -300,7 +409,7 @@ func (b *Builder) WithBehavioral(regions []EditRegion, metrics *ForensicMetrics)
 	return b
 }
 
-// WithExternalAnchors adds external timestamp proofs.
+// WithExternalAnchors adds external timestamp proofs (legacy format).
 func (b *Builder) WithExternalAnchors(ots []OTSProof, rfc []RFC3161Proof) *Builder {
 	if len(ots) == 0 && len(rfc) == 0 {
 		return b
@@ -313,6 +422,53 @@ func (b *Builder) WithExternalAnchors(ots []OTSProof, rfc []RFC3161Proof) *Build
 		b.packet.Strength = Maximum
 	}
 	return b
+}
+
+// WithAnchors adds external anchor proofs from the anchors package.
+// This is the preferred method for adding external timestamps.
+func (b *Builder) WithAnchors(proofs []*anchors.Proof) *Builder {
+	if len(proofs) == 0 {
+		return b
+	}
+
+	if b.packet.External == nil {
+		b.packet.External = &ExternalAnchors{}
+	}
+
+	for _, proof := range proofs {
+		anchorProof := convertAnchorProof(proof)
+		b.packet.External.Proofs = append(b.packet.External.Proofs, anchorProof)
+	}
+
+	if b.packet.Strength < Maximum {
+		b.packet.Strength = Maximum
+	}
+	return b
+}
+
+// convertAnchorProof converts an anchors.Proof to AnchorProof.
+func convertAnchorProof(p *anchors.Proof) AnchorProof {
+	ap := AnchorProof{
+		Provider:      p.Provider,
+		Hash:          hex.EncodeToString(p.Hash[:]),
+		Timestamp:     p.Timestamp,
+		Status:        string(p.Status),
+		RawProof:      base64.StdEncoding.EncodeToString(p.RawProof),
+		VerifyURL:     p.VerifyURL,
+	}
+
+	// Add blockchain details if present
+	if p.BlockchainAnchor != nil {
+		ap.Blockchain = &BlockchainAnchorInfo{
+			Chain:       p.BlockchainAnchor.Chain,
+			BlockHeight: p.BlockchainAnchor.BlockHeight,
+			BlockHash:   p.BlockchainAnchor.BlockHash,
+			BlockTime:   p.BlockchainAnchor.BlockTime,
+			TxID:        p.BlockchainAnchor.TransactionID,
+		}
+	}
+
+	return ap
 }
 
 // Build finalizes the evidence packet.
@@ -375,6 +531,22 @@ func (b *Builder) generateClaims() {
 		})
 	}
 
+	// Keystroke evidence
+	if b.packet.Keystroke != nil {
+		desc := fmt.Sprintf("%d keystrokes recorded over %s (%.0f/min)",
+			b.packet.Keystroke.TotalKeystrokes,
+			b.packet.Keystroke.Duration.Round(time.Second),
+			b.packet.Keystroke.KeystrokesPerMin)
+		if b.packet.Keystroke.PlausibleHumanRate {
+			desc += ", consistent with human typing"
+		}
+		b.packet.Claims = append(b.packet.Claims, Claim{
+			Type:        ClaimKeystrokesVerified,
+			Description: desc,
+			Confidence:  "cryptographic",
+		})
+	}
+
 	// Hardware attestation
 	if b.packet.Hardware != nil {
 		b.packet.Claims = append(b.packet.Claims, Claim{
@@ -414,6 +586,11 @@ func (b *Builder) generateLimitations() {
 	if b.packet.Presence == nil {
 		b.packet.Limitations = append(b.packet.Limitations,
 			"No presence verification - cannot confirm human was at keyboard")
+	}
+
+	if b.packet.Keystroke == nil {
+		b.packet.Limitations = append(b.packet.Limitations,
+			"No keystroke evidence - cannot verify real typing occurred")
 	}
 
 	if b.packet.Hardware == nil {

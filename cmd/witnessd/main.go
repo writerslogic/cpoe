@@ -30,6 +30,7 @@ import (
 	"witnessd/internal/evidence"
 	"witnessd/internal/presence"
 	"witnessd/internal/tpm"
+	"witnessd/internal/tracking"
 	"witnessd/internal/vdf"
 )
 
@@ -54,6 +55,8 @@ func main() {
 		cmdVerify()
 	case "presence":
 		cmdPresence()
+	case "track":
+		cmdTrack()
 	case "calibrate":
 		cmdCalibrate()
 	case "status":
@@ -82,6 +85,7 @@ COMMANDS:
     export <file>       Export evidence packet with declaration
     verify <file>       Verify checkpoint chain integrity
     presence <action>   Manage presence verification sessions
+    track <action>      Track keyboard activity (count only, no capture)
     calibrate           Calibrate VDF performance for this machine
     status              Show witnessd status and configuration
     daemon              (Legacy) Run background monitoring daemon
@@ -95,9 +99,17 @@ WORKFLOW:
     5. witnessd commit doc.md -m "..."  # More checkpoints
     6. witnessd export doc.md           # Export evidence when done
 
+ENHANCED WORKFLOW (with keystroke tracking):
+    1. witnessd track start doc.md      # Start tracking (counts only)
+    2. (write your document)
+    3. witnessd track status            # Check progress
+    4. witnessd track stop              # Stop and save evidence
+    5. witnessd export doc.md           # Include tracking evidence
+
 The system proves:
     - Content states form an unbroken chain
     - Minimum time elapsed between commits (VDF)
+    - Real keystrokes occurred over time (jitter evidence)
     - Your signed declaration of creative process
 
 See https://github.com/davidcondrey/witnessd for documentation.`)
@@ -116,6 +128,7 @@ func cmdInit() {
 		dir,
 		filepath.Join(dir, "chains"),
 		filepath.Join(dir, "sessions"),
+		filepath.Join(dir, "tracking"),
 	}
 
 	for _, d := range dirs {
@@ -604,6 +617,245 @@ func cmdPresence() {
 			fmt.Println("✓ Challenge PASSED")
 		} else {
 			fmt.Println("✗ Challenge FAILED")
+		}
+
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown action: %s\n", action)
+		os.Exit(1)
+	}
+}
+
+func cmdTrack() {
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, `Usage: witnessd track <action> [options]
+
+ACTIONS:
+    start <file>    Start tracking keyboard activity for a file
+    stop            Stop tracking and save evidence
+    status          Show current tracking status
+    list            List saved tracking sessions
+    export <id>     Export jitter evidence from a session
+
+PRIVACY NOTE:
+    Tracking counts keystrokes - it does NOT capture which keys are pressed.
+    This is NOT a keylogger. Only event counts and timing are recorded.`)
+		os.Exit(1)
+	}
+
+	action := os.Args[2]
+	trackingDir := filepath.Join(witnessdDir(), "tracking")
+	os.MkdirAll(trackingDir, 0700)
+
+	// Session state file
+	currentFile := filepath.Join(trackingDir, "current_session.json")
+
+	switch action {
+	case "start":
+		if len(os.Args) < 4 {
+			fmt.Fprintln(os.Stderr, "Usage: witnessd track start <file>")
+			os.Exit(1)
+		}
+
+		filePath := os.Args[3]
+
+		// Check file exists
+		if _, err := os.Stat(filePath); os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "File not found: %s\n", filePath)
+			os.Exit(1)
+		}
+
+		// Check for existing session
+		if _, err := os.Stat(currentFile); err == nil {
+			fmt.Fprintln(os.Stderr, "Tracking session already active. Run 'witnessd track stop' first.")
+			os.Exit(1)
+		}
+
+		cfg := tracking.DefaultConfig(filePath)
+		session, err := tracking.NewSession(cfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating tracking session: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Check if keyboard tracking is available
+		available, msg := session.Status().Error, ""
+		if available != "" {
+			fmt.Fprintf(os.Stderr, "Note: %s\n", available)
+		}
+
+		if err := session.Start(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error starting tracking: %v\n", err)
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintln(os.Stderr, "On macOS: Grant Accessibility permission in System Preferences")
+			fmt.Fprintln(os.Stderr, "On Linux: Add yourself to the 'input' group or run as root")
+			os.Exit(1)
+		}
+		_ = msg
+
+		// Save session ID for later
+		sessionInfo := map[string]interface{}{
+			"id":         session.ID,
+			"started_at": session.StartedAt,
+			"document":   filePath,
+		}
+		data, _ := json.MarshalIndent(sessionInfo, "", "  ")
+		if err := os.WriteFile(currentFile, data, 0600); err != nil {
+			fmt.Fprintf(os.Stderr, "Error saving session info: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Save actual session
+		if err := session.Save(witnessdDir()); err != nil {
+			fmt.Fprintf(os.Stderr, "Error saving session: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Println("Keystroke tracking started.")
+		fmt.Printf("Session ID: %s\n", session.ID)
+		fmt.Printf("Document: %s\n", filePath)
+		fmt.Println()
+		fmt.Println("PRIVACY NOTE: Only keystroke counts are recorded, NOT key values.")
+		fmt.Println()
+		fmt.Println("Run 'witnessd track status' to check progress.")
+		fmt.Println("Run 'witnessd track stop' when done.")
+
+	case "stop":
+		data, err := os.ReadFile(currentFile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "No active tracking session.")
+			os.Exit(1)
+		}
+
+		var sessionInfo map[string]interface{}
+		json.Unmarshal(data, &sessionInfo)
+		sessionID := sessionInfo["id"].(string)
+
+		// Load and stop session
+		session, err := tracking.Load(witnessdDir(), sessionID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading session: %v\n", err)
+			os.Exit(1)
+		}
+
+		session.Stop()
+		session.Save(witnessdDir())
+
+		// Remove current session marker
+		os.Remove(currentFile)
+
+		status := session.Status()
+
+		fmt.Println("Tracking session stopped.")
+		fmt.Printf("Duration: %s\n", status.Duration.Round(time.Second))
+		fmt.Printf("Keystrokes: %d\n", status.KeystrokeCount)
+		fmt.Printf("Samples: %d\n", status.SampleCount)
+		if status.KeystrokesPerMin > 0 {
+			fmt.Printf("Typing rate: %.0f keystrokes/min\n", status.KeystrokesPerMin)
+		}
+		fmt.Println()
+		fmt.Printf("Session saved: %s\n", sessionID)
+		fmt.Println("Include with 'witnessd export' using -tier maximum")
+
+	case "status":
+		data, err := os.ReadFile(currentFile)
+		if err != nil {
+			fmt.Println("No active tracking session.")
+			return
+		}
+
+		var sessionInfo map[string]interface{}
+		json.Unmarshal(data, &sessionInfo)
+		sessionID := sessionInfo["id"].(string)
+
+		// Load session to get current stats
+		session, err := tracking.Load(witnessdDir(), sessionID)
+		if err != nil {
+			fmt.Printf("Session ID: %s\n", sessionID)
+			fmt.Println("(unable to load session details)")
+			return
+		}
+
+		status := session.Status()
+
+		fmt.Println("=== Active Tracking Session ===")
+		fmt.Printf("Session ID: %s\n", status.ID)
+		fmt.Printf("Document: %s\n", status.DocumentPath)
+		fmt.Printf("Started: %s\n", status.StartedAt.Format(time.RFC3339))
+		fmt.Printf("Duration: %s\n", status.Duration.Round(time.Second))
+		fmt.Printf("Keystrokes: %d\n", status.KeystrokeCount)
+		fmt.Printf("Samples: %d\n", status.SampleCount)
+		if status.KeystrokesPerMin > 0 {
+			fmt.Printf("Typing rate: %.0f keystrokes/min\n", status.KeystrokesPerMin)
+		}
+
+	case "list":
+		manager := tracking.NewManager(witnessdDir())
+		sessions, err := manager.ListSavedSessions()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error listing sessions: %v\n", err)
+			os.Exit(1)
+		}
+
+		if len(sessions) == 0 {
+			fmt.Println("No saved tracking sessions.")
+			return
+		}
+
+		fmt.Println("Saved tracking sessions:")
+		for _, id := range sessions {
+			evidence, err := manager.LoadEvidence(id)
+			if err != nil {
+				fmt.Printf("  %s (error loading)\n", id)
+				continue
+			}
+			fmt.Printf("  %s: %d keystrokes, %d samples, %s\n",
+				id,
+				evidence.Statistics.TotalKeystrokes,
+				evidence.Statistics.TotalSamples,
+				evidence.Statistics.Duration.Round(time.Second))
+		}
+
+	case "export":
+		if len(os.Args) < 4 {
+			fmt.Fprintln(os.Stderr, "Usage: witnessd track export <session-id>")
+			os.Exit(1)
+		}
+
+		sessionID := os.Args[3]
+		manager := tracking.NewManager(witnessdDir())
+		evidence, err := manager.LoadEvidence(sessionID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading session: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Verify the evidence
+		if err := evidence.Verify(); err != nil {
+			fmt.Fprintf(os.Stderr, "Evidence verification failed: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Export to JSON
+		outPath := sessionID + ".jitter.json"
+		data, _ := evidence.Encode()
+		if err := os.WriteFile(outPath, data, 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing evidence: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("Jitter evidence exported to: %s\n", outPath)
+		fmt.Println()
+		fmt.Println("Evidence summary:")
+		fmt.Printf("  Duration: %s\n", evidence.Statistics.Duration.Round(time.Second))
+		fmt.Printf("  Keystrokes: %d\n", evidence.Statistics.TotalKeystrokes)
+		fmt.Printf("  Samples: %d\n", evidence.Statistics.TotalSamples)
+		fmt.Printf("  Document states: %d\n", evidence.Statistics.UniqueDocHashes)
+		fmt.Printf("  Chain valid: %v\n", evidence.Statistics.ChainValid)
+
+		if evidence.IsPlausibleHumanTyping() {
+			fmt.Println("  Plausibility: consistent with human typing")
+		} else {
+			fmt.Println("  Plausibility: unusual patterns detected")
 		}
 
 	default:
