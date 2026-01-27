@@ -179,17 +179,20 @@ func (s *Session) RecordKeystroke() (jitterMicros uint32, shouldSample bool) {
 		return 0, false
 	}
 
-	// Compute jitter
-	jitter := s.computeJitter(docHash)
+	// Create sample - capture timestamp first for determinism
+	now := time.Now()
 
-	// Create sample
+	// Get previous hash for chaining
 	var prevHash [32]byte
 	if len(s.Samples) > 0 {
 		prevHash = s.Samples[len(s.Samples)-1].Hash
 	}
 
+	// Compute jitter using the timestamp we'll store
+	jitter := s.computeJitter(docHash, now)
+
 	sample := Sample{
-		Timestamp:      time.Now(),
+		Timestamp:      now,
 		KeystrokeCount: s.keystrokeCount,
 		DocumentHash:   docHash,
 		JitterMicros:   jitter,
@@ -206,29 +209,42 @@ func (s *Session) RecordKeystroke() (jitterMicros uint32, shouldSample bool) {
 // computeJitter derives jitter from the session state.
 // The jitter value is deterministic given the inputs, creating
 // an unforgeable chain bound to the document's evolution.
-func (s *Session) computeJitter(docHash [32]byte) uint32 {
-	h := hmac.New(sha256.New, s.seed[:])
+func (s *Session) computeJitter(docHash [32]byte, timestamp time.Time) uint32 {
+	var prevJitter [32]byte
+	if len(s.Samples) > 0 {
+		prevJitter = s.Samples[len(s.Samples)-1].Hash
+	}
+	return ComputeJitterValue(s.seed[:], docHash, s.keystrokeCount, timestamp, prevJitter, s.Params)
+}
 
-	// Include all binding factors
-	var buf [8]byte
-	binary.BigEndian.PutUint64(buf[:], s.keystrokeCount)
-	h.Write(buf[:])
+// ComputeJitterValue computes a jitter value from the given inputs.
+// This is the core HMAC computation: HMAC-SHA256(seed, doc_hash || count || timestamp || prev_jitter)
+// The function is deterministic and can be used for both generation and verification.
+func ComputeJitterValue(seed []byte, docHash [32]byte, keystrokeCount uint64, timestamp time.Time, prevJitter [32]byte, params Parameters) uint32 {
+	h := hmac.New(sha256.New, seed)
 
+	// Order: doc_hash || count || timestamp || prev_jitter
 	h.Write(docHash[:])
 
-	binary.BigEndian.PutUint64(buf[:], uint64(time.Now().UnixNano()))
+	var buf [8]byte
+	binary.BigEndian.PutUint64(buf[:], keystrokeCount)
 	h.Write(buf[:])
 
-	binary.BigEndian.PutUint32(buf[:4], s.lastJitter)
-	h.Write(buf[:4])
+	binary.BigEndian.PutUint64(buf[:], uint64(timestamp.UnixNano()))
+	h.Write(buf[:])
 
-	// Derive jitter value
+	h.Write(prevJitter[:])
+
+	// Derive jitter value from first 4 bytes
 	hash := h.Sum(nil)
 	raw := binary.BigEndian.Uint32(hash[:4])
 
 	// Map to range [min, max]
-	jitterRange := s.Params.MaxJitterMicros - s.Params.MinJitterMicros
-	jitter := s.Params.MinJitterMicros + (raw % jitterRange)
+	jitterRange := params.MaxJitterMicros - params.MinJitterMicros
+	if jitterRange == 0 {
+		return params.MinJitterMicros
+	}
+	jitter := params.MinJitterMicros + (raw % jitterRange)
 
 	return jitter
 }

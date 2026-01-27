@@ -21,13 +21,18 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"witnessd/internal/checkpoint"
 	"witnessd/internal/declaration"
 	"witnessd/internal/evidence"
+	"witnessd/internal/jitter"
 	"witnessd/internal/presence"
 	"witnessd/internal/tpm"
 	"witnessd/internal/tracking"
@@ -83,7 +88,7 @@ COMMANDS:
     commit <file>       Create a checkpoint for a file
     log <file>          Show checkpoint history for a file
     export <file>       Export evidence packet with declaration
-    verify <file>       Verify checkpoint chain integrity
+    verify <file>       Verify checkpoint chain or evidence packet
     presence <action>   Manage presence verification sessions
     track <action>      Track keyboard activity (count only, no capture)
     calibrate           Calibrate VDF performance for this machine
@@ -91,20 +96,27 @@ COMMANDS:
     daemon              (Legacy) Run background monitoring daemon
     help                Show this help message
 
-WORKFLOW:
+BASIC WORKFLOW:
     1. witnessd init                    # One-time setup
     2. (write your document)
     3. witnessd commit doc.md -m "..."  # Checkpoint when ready
     4. (continue writing)
     5. witnessd commit doc.md -m "..."  # More checkpoints
     6. witnessd export doc.md           # Export evidence when done
+    7. witnessd verify evidence.json    # Verify evidence packet
 
-ENHANCED WORKFLOW (with keystroke tracking):
-    1. witnessd track start doc.md      # Start tracking (counts only)
+ENHANCED WORKFLOW (with keystroke + jitter tracking):
+    1. witnessd track start doc.md      # Start tracking daemon
     2. (write your document)
-    3. witnessd track status            # Check progress
-    4. witnessd track stop              # Stop and save evidence
-    5. witnessd export doc.md           # Include tracking evidence
+    3. witnessd track status            # Check keystroke count, jitter samples
+    4. witnessd commit doc.md -m "..."  # Creates checkpoint with jitter chain
+    5. witnessd track stop              # Stop tracking, save jitter evidence
+    6. witnessd export doc.md           # Export with jitter evidence
+    7. witnessd verify evidence.wpkt    # Verify including jitter chain
+
+PRIVACY NOTE:
+    Tracking counts keystrokes - it does NOT capture which keys are pressed.
+    This is NOT a keylogger. Only event counts and timing are recorded.
 
 The system proves:
     - Content states form an unbroken chain
@@ -222,6 +234,14 @@ func cmdCommit() {
 		os.Exit(1)
 	}
 
+	// Check for active tracking session
+	var trackingInfo string
+	if jitterEv := loadTrackingEvidence(filePath); jitterEv != nil {
+		trackingInfo = fmt.Sprintf(" (tracking: %d keystrokes, %d samples)",
+			jitterEv.Statistics.TotalKeystrokes,
+			jitterEv.Statistics.TotalSamples)
+	}
+
 	// Commit
 	fmt.Printf("Computing checkpoint...")
 	start := time.Now()
@@ -240,7 +260,7 @@ func cmdCommit() {
 
 	fmt.Printf(" done (%s)\n", elapsed.Round(time.Millisecond))
 	fmt.Println()
-	fmt.Printf("Checkpoint #%d created\n", cp.Ordinal)
+	fmt.Printf("Checkpoint #%d created%s\n", cp.Ordinal, trackingInfo)
 	fmt.Printf("  Content hash: %s\n", hex.EncodeToString(cp.ContentHash[:8])+"...")
 	fmt.Printf("  Chain hash:   %s\n", hex.EncodeToString(cp.Hash[:8])+"...")
 	if cp.VDF != nil {
@@ -346,6 +366,14 @@ func cmdExport() {
 	builder := evidence.NewBuilder(filepath.Base(filePath), chain).
 		WithDeclaration(decl)
 
+	// Load tracking evidence if available
+	keystrokeEvidence := loadTrackingEvidence(filePath)
+	if keystrokeEvidence != nil {
+		fmt.Printf("Including keystroke evidence: %d keystrokes, %d samples\n",
+			keystrokeEvidence.Statistics.TotalKeystrokes,
+			keystrokeEvidence.Statistics.TotalSamples)
+	}
+
 	// Add tier-specific evidence
 	switch strings.ToLower(*tier) {
 	case "standard":
@@ -353,16 +381,28 @@ func cmdExport() {
 		if len(sessions) > 0 {
 			builder.WithPresence(sessions)
 		}
+		// Include keystroke evidence at standard tier and above
+		if keystrokeEvidence != nil {
+			builder.WithKeystroke(keystrokeEvidence)
+		}
 	case "enhanced":
 		sessions := loadPresenceSessions(filePath)
 		if len(sessions) > 0 {
 			builder.WithPresence(sessions)
+		}
+		// Include keystroke evidence
+		if keystrokeEvidence != nil {
+			builder.WithKeystroke(keystrokeEvidence)
 		}
 		// TPM binding would go here
 	case "maximum":
 		sessions := loadPresenceSessions(filePath)
 		if len(sessions) > 0 {
 			builder.WithPresence(sessions)
+		}
+		// Include keystroke evidence
+		if keystrokeEvidence != nil {
+			builder.WithKeystroke(keystrokeEvidence)
 		}
 		// All layers would be added here
 	}
@@ -401,14 +441,20 @@ func cmdExport() {
 
 func cmdVerify() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "Usage: witnessd verify <file|evidence.json>")
+		fmt.Fprintln(os.Stderr, "Usage: witnessd verify <file|evidence.json|evidence.wpkt>")
 		os.Exit(1)
 	}
 
 	path := os.Args[2]
 
-	// Check if it's an evidence packet
-	if strings.HasSuffix(path, ".json") {
+	// Check if it's a .wpkt file (witnessd packet - binary or JSON)
+	if strings.HasSuffix(path, ".wpkt") {
+		verifyEvidencePacket(path)
+		return
+	}
+
+	// Check if it's an evidence JSON file
+	if strings.HasSuffix(path, ".json") || strings.HasSuffix(path, ".evidence.json") {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
@@ -422,31 +468,95 @@ func cmdVerify() {
 			return
 		}
 
-		// Verify evidence packet
-		vdfParams := loadVDFParams()
-		if err := packet.Verify(vdfParams); err != nil {
-			fmt.Fprintf(os.Stderr, "Verification FAILED: %v\n", err)
-			os.Exit(1)
-		}
-
-		fmt.Println("=== Evidence Verification ===")
-		fmt.Println()
-		fmt.Printf("Document: %s\n", packet.Document.Title)
-		fmt.Printf("Strength: %s\n", packet.Strength)
-		fmt.Printf("Checkpoints: %d\n", len(packet.Checkpoints))
-		fmt.Printf("Total elapsed: %s\n", packet.TotalElapsedTime().Round(time.Second))
-		fmt.Println()
-		fmt.Println("Claims verified:")
-		for _, claim := range packet.Claims {
-			fmt.Printf("  ✓ %s\n", claim.Description)
-		}
-		fmt.Println()
-		fmt.Println("Verification PASSED")
+		verifyPacket(packet)
 		return
 	}
 
 	// Verify chain for file
 	verifyChain(path)
+}
+
+// verifyEvidencePacket verifies a .wpkt evidence packet file.
+func verifyEvidencePacket(path string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Try JSON first
+	packet, err := evidence.Decode(data)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error decoding evidence packet: %v\n", err)
+		os.Exit(1)
+	}
+
+	verifyPacket(packet)
+}
+
+// verifyPacket verifies an evidence packet and prints results.
+func verifyPacket(packet *evidence.Packet) {
+	fmt.Println("=== Evidence Verification ===")
+	fmt.Println()
+
+	// Verify evidence packet
+	vdfParams := loadVDFParams()
+	if err := packet.Verify(vdfParams); err != nil {
+		fmt.Fprintf(os.Stderr, "Verification FAILED: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Document: %s\n", packet.Document.Title)
+	fmt.Printf("Strength: %s\n", packet.Strength)
+	fmt.Printf("Checkpoints: %d\n", len(packet.Checkpoints))
+	fmt.Printf("Total elapsed: %s\n", packet.TotalElapsedTime().Round(time.Second))
+
+	// Verify keystroke/jitter evidence if present
+	if packet.Keystroke != nil {
+		fmt.Println()
+		fmt.Println("Keystroke Evidence:")
+		fmt.Printf("  Keystrokes: %d\n", packet.Keystroke.TotalKeystrokes)
+		fmt.Printf("  Jitter samples: %d\n", packet.Keystroke.TotalSamples)
+		fmt.Printf("  Duration: %s\n", packet.Keystroke.Duration.Round(time.Second))
+		fmt.Printf("  Typing rate: %.0f keystrokes/min\n", packet.Keystroke.KeystrokesPerMin)
+
+		// Verify jitter chain if samples are present
+		if len(packet.Keystroke.Samples) > 0 {
+			jitterEv := &jitter.Evidence{
+				SessionID:    packet.Keystroke.SessionID,
+				StartedAt:    packet.Keystroke.StartedAt,
+				EndedAt:      packet.Keystroke.EndedAt,
+				Samples:      packet.Keystroke.Samples,
+				Statistics: jitter.Statistics{
+					TotalKeystrokes:  packet.Keystroke.TotalKeystrokes,
+					TotalSamples:     packet.Keystroke.TotalSamples,
+					Duration:         packet.Keystroke.Duration,
+					KeystrokesPerMin: packet.Keystroke.KeystrokesPerMin,
+					UniqueDocHashes:  packet.Keystroke.UniqueDocStates,
+					ChainValid:       packet.Keystroke.ChainValid,
+				},
+			}
+			if err := jitterEv.Verify(); err != nil {
+				fmt.Printf("  Jitter chain: INVALID (%v)\n", err)
+			} else {
+				fmt.Println("  Jitter chain: VALID")
+			}
+		}
+
+		if packet.Keystroke.PlausibleHumanRate {
+			fmt.Println("  Human plausibility: consistent with human typing")
+		} else {
+			fmt.Println("  Human plausibility: unusual patterns detected")
+		}
+	}
+
+	fmt.Println()
+	fmt.Println("Claims verified:")
+	for _, claim := range packet.Claims {
+		fmt.Printf("  [OK] %s\n", claim.Description)
+	}
+	fmt.Println()
+	fmt.Println("Verification PASSED")
 }
 
 func verifyChain(filePath string) {
@@ -630,7 +740,7 @@ func cmdTrack() {
 		fmt.Fprintln(os.Stderr, `Usage: witnessd track <action> [options]
 
 ACTIONS:
-    start <file>    Start tracking keyboard activity for a file
+    start <file>    Start tracking keyboard activity for a file (runs in background)
     stop            Stop tracking and save evidence
     status          Show current tracking status
     list            List saved tracking sessions
@@ -648,6 +758,8 @@ PRIVACY NOTE:
 
 	// Session state file
 	currentFile := filepath.Join(trackingDir, "current_session.json")
+	// PID file for background daemon
+	pidFile := filepath.Join(trackingDir, "daemon.pid")
 
 	switch action {
 	case "start":
@@ -658,66 +770,89 @@ PRIVACY NOTE:
 
 		filePath := os.Args[3]
 
+		// Get absolute path for the file
+		absPath, err := filepath.Abs(filePath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error resolving path: %v\n", err)
+			os.Exit(1)
+		}
+
 		// Check file exists
-		if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		if _, err := os.Stat(absPath); os.IsNotExist(err) {
 			fmt.Fprintf(os.Stderr, "File not found: %s\n", filePath)
 			os.Exit(1)
 		}
 
 		// Check for existing session
 		if _, err := os.Stat(currentFile); err == nil {
-			fmt.Fprintln(os.Stderr, "Tracking session already active. Run 'witnessd track stop' first.")
-			os.Exit(1)
+			// Check if daemon is still running
+			if isTrackingDaemonRunning(pidFile) {
+				fmt.Fprintln(os.Stderr, "Tracking session already active. Run 'witnessd track stop' first.")
+				os.Exit(1)
+			}
+			// Daemon not running, clean up stale session
+			os.Remove(currentFile)
+			os.Remove(pidFile)
 		}
 
-		cfg := tracking.DefaultConfig(filePath)
-		session, err := tracking.NewSession(cfg)
+		// Check if this is the daemon subprocess
+		if os.Getenv("WITNESSD_TRACKING_DAEMON") == "1" {
+			runTrackingDaemon(absPath, currentFile, pidFile)
+			return
+		}
+
+		// Fork a daemon subprocess
+		fmt.Println("Starting keystroke tracking daemon...")
+
+		exe, err := os.Executable()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating tracking session: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error finding executable: %v\n", err)
 			os.Exit(1)
 		}
 
-		// Check if keyboard tracking is available
-		available, msg := session.Status().Error, ""
-		if available != "" {
-			fmt.Fprintf(os.Stderr, "Note: %s\n", available)
+		// Start daemon subprocess
+		cmd := exec.Command(exe, "track", "start", absPath)
+		cmd.Env = append(os.Environ(), "WITNESSD_TRACKING_DAEMON=1")
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+		cmd.Stdin = nil
+
+		// Detach from parent process
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			Setsid: true,
 		}
 
-		if err := session.Start(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error starting tracking: %v\n", err)
+		if err := cmd.Start(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error starting tracking daemon: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Wait a moment for daemon to initialize
+		time.Sleep(500 * time.Millisecond)
+
+		// Check if daemon started successfully
+		if _, err := os.Stat(currentFile); os.IsNotExist(err) {
+			fmt.Fprintln(os.Stderr, "Error: Tracking daemon failed to start.")
 			fmt.Fprintln(os.Stderr)
 			fmt.Fprintln(os.Stderr, "On macOS: Grant Accessibility permission in System Preferences")
 			fmt.Fprintln(os.Stderr, "On Linux: Add yourself to the 'input' group or run as root")
 			os.Exit(1)
 		}
-		_ = msg
 
-		// Save session ID for later
-		sessionInfo := map[string]interface{}{
-			"id":         session.ID,
-			"started_at": session.StartedAt,
-			"document":   filePath,
-		}
-		data, _ := json.MarshalIndent(sessionInfo, "", "  ")
-		if err := os.WriteFile(currentFile, data, 0600); err != nil {
-			fmt.Fprintf(os.Stderr, "Error saving session info: %v\n", err)
-			os.Exit(1)
-		}
-
-		// Save actual session
-		if err := session.Save(witnessdDir()); err != nil {
-			fmt.Fprintf(os.Stderr, "Error saving session: %v\n", err)
-			os.Exit(1)
-		}
+		// Read session info
+		data, _ := os.ReadFile(currentFile)
+		var sessionInfo map[string]interface{}
+		json.Unmarshal(data, &sessionInfo)
 
 		fmt.Println("Keystroke tracking started.")
-		fmt.Printf("Session ID: %s\n", session.ID)
-		fmt.Printf("Document: %s\n", filePath)
+		fmt.Printf("Session ID: %s\n", sessionInfo["id"])
+		fmt.Printf("Document: %s\n", absPath)
 		fmt.Println()
 		fmt.Println("PRIVACY NOTE: Only keystroke counts are recorded, NOT key values.")
 		fmt.Println()
 		fmt.Println("Run 'witnessd track status' to check progress.")
 		fmt.Println("Run 'witnessd track stop' when done.")
+		return
 
 	case "stop":
 		data, err := os.ReadFile(currentFile)
@@ -730,20 +865,30 @@ PRIVACY NOTE:
 		json.Unmarshal(data, &sessionInfo)
 		sessionID := sessionInfo["id"].(string)
 
-		// Load and stop session
+		// Signal the daemon to stop gracefully
+		if isTrackingDaemonRunning(pidFile) {
+			stopTrackingDaemon(pidFile)
+			// Wait for daemon to save session
+			for i := 0; i < 30; i++ {
+				time.Sleep(100 * time.Millisecond)
+				if !isTrackingDaemonRunning(pidFile) {
+					break
+				}
+			}
+		}
+
+		// Load session to get final stats
 		session, err := tracking.Load(witnessdDir(), sessionID)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error loading session: %v\n", err)
 			os.Exit(1)
 		}
 
-		session.Stop()
-		session.Save(witnessdDir())
-
-		// Remove current session marker
-		os.Remove(currentFile)
-
 		status := session.Status()
+
+		// Remove current session marker and PID file
+		os.Remove(currentFile)
+		os.Remove(pidFile)
 
 		fmt.Println("Tracking session stopped.")
 		fmt.Printf("Duration: %s\n", status.Duration.Round(time.Second))
@@ -754,7 +899,9 @@ PRIVACY NOTE:
 		}
 		fmt.Println()
 		fmt.Printf("Session saved: %s\n", sessionID)
-		fmt.Println("Include with 'witnessd export' using -tier maximum")
+		fmt.Println()
+		fmt.Println("Include this tracking evidence when exporting:")
+		fmt.Println("  witnessd export <document> -tier standard")
 
 	case "status":
 		data, err := os.ReadFile(currentFile)
@@ -766,6 +913,9 @@ PRIVACY NOTE:
 		var sessionInfo map[string]interface{}
 		json.Unmarshal(data, &sessionInfo)
 		sessionID := sessionInfo["id"].(string)
+
+		// Check if daemon is running
+		daemonRunning := isTrackingDaemonRunning(pidFile)
 
 		// Load session to get current stats
 		session, err := tracking.Load(witnessdDir(), sessionID)
@@ -783,9 +933,14 @@ PRIVACY NOTE:
 		fmt.Printf("Started: %s\n", status.StartedAt.Format(time.RFC3339))
 		fmt.Printf("Duration: %s\n", status.Duration.Round(time.Second))
 		fmt.Printf("Keystrokes: %d\n", status.KeystrokeCount)
-		fmt.Printf("Samples: %d\n", status.SampleCount)
+		fmt.Printf("Jitter samples: %d\n", status.SampleCount)
 		if status.KeystrokesPerMin > 0 {
 			fmt.Printf("Typing rate: %.0f keystrokes/min\n", status.KeystrokesPerMin)
+		}
+		if daemonRunning {
+			fmt.Println("Daemon: RUNNING")
+		} else {
+			fmt.Println("Daemon: STOPPED (session data preserved)")
 		}
 
 	case "list":
@@ -1120,6 +1275,155 @@ func loadPresenceSessions(filePath string) []presence.Session {
 	}
 
 	return sessions
+}
+
+// loadTrackingEvidence loads jitter evidence for a document from tracking sessions.
+func loadTrackingEvidence(documentPath string) *jitter.Evidence {
+	absPath, err := filepath.Abs(documentPath)
+	if err != nil {
+		return nil
+	}
+
+	manager := tracking.NewManager(witnessdDir())
+	sessions, err := manager.ListSavedSessions()
+	if err != nil {
+		return nil
+	}
+
+	// Find sessions that match this document
+	for _, sessionID := range sessions {
+		ev, err := manager.LoadEvidence(sessionID)
+		if err != nil {
+			continue
+		}
+		if ev.DocumentPath == absPath {
+			return ev
+		}
+	}
+
+	// Also check current session
+	trackingDir := filepath.Join(witnessdDir(), "tracking")
+	currentFile := filepath.Join(trackingDir, "current_session.json")
+	data, err := os.ReadFile(currentFile)
+	if err == nil {
+		var sessionInfo map[string]interface{}
+		json.Unmarshal(data, &sessionInfo)
+		if doc, ok := sessionInfo["document"].(string); ok && doc == absPath {
+			if id, ok := sessionInfo["id"].(string); ok {
+				ev, err := manager.LoadEvidence(id)
+				if err == nil {
+					return ev
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// isTrackingDaemonRunning checks if the tracking daemon process is running.
+func isTrackingDaemonRunning(pidFile string) bool {
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		return false
+	}
+
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return false
+	}
+
+	// Check if process exists
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+
+	// On Unix, FindProcess always succeeds. Send signal 0 to check if process exists.
+	err = process.Signal(syscall.Signal(0))
+	return err == nil
+}
+
+// stopTrackingDaemon sends SIGTERM to the tracking daemon.
+func stopTrackingDaemon(pidFile string) error {
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		return err
+	}
+
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return err
+	}
+
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+
+	return process.Signal(syscall.SIGTERM)
+}
+
+// runTrackingDaemon runs the tracking daemon in the foreground (called by subprocess).
+func runTrackingDaemon(documentPath, currentFile, pidFile string) {
+	// Write PID file
+	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
+		os.Exit(1)
+	}
+
+	// Create tracking session
+	cfg := tracking.DefaultConfig(documentPath)
+	session, err := tracking.NewSession(cfg)
+	if err != nil {
+		os.Remove(pidFile)
+		os.Exit(1)
+	}
+
+	// Start tracking
+	if err := session.Start(); err != nil {
+		os.Remove(pidFile)
+		os.Exit(1)
+	}
+
+	// Save session info
+	sessionInfo := map[string]interface{}{
+		"id":         session.ID,
+		"started_at": session.StartedAt,
+		"document":   documentPath,
+		"pid":        os.Getpid(),
+	}
+	data, _ := json.MarshalIndent(sessionInfo, "", "  ")
+	if err := os.WriteFile(currentFile, data, 0600); err != nil {
+		session.Stop()
+		os.Remove(pidFile)
+		os.Exit(1)
+	}
+
+	// Save initial session state
+	session.Save(witnessdDir())
+
+	// Set up signal handling for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT)
+
+	// Periodic save ticker
+	saveTicker := time.NewTicker(10 * time.Second)
+	defer saveTicker.Stop()
+
+	// Run until signaled
+	for {
+		select {
+		case <-sigChan:
+			// Graceful shutdown
+			session.Stop()
+			session.Save(witnessdDir())
+			os.Remove(pidFile)
+			return
+		case <-saveTicker.C:
+			// Periodic save to preserve progress
+			session.Save(witnessdDir())
+		}
+	}
 }
 
 // Unused import placeholders for compatibility
