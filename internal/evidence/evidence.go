@@ -567,7 +567,7 @@ func (b *Builder) generateClaims() {
 
 	// External anchors
 	if b.packet.External != nil {
-		count := len(b.packet.External.OpenTimestamps) + len(b.packet.External.RFC3161)
+		count := len(b.packet.External.OpenTimestamps) + len(b.packet.External.RFC3161) + len(b.packet.External.Proofs)
 		b.packet.Claims = append(b.packet.Claims, Claim{
 			Type:        ClaimExternalAnchored,
 			Description: fmt.Sprintf("Chain anchored to %d external timestamp authorities", count),
@@ -642,6 +642,13 @@ func (p *Packet) Verify(vdfParams vdf.Parameters) error {
 	// Verify declaration signature
 	if p.Declaration != nil && !p.Declaration.Verify() {
 		return errors.New("declaration signature invalid")
+	}
+
+	// Verify TPM bindings if present
+	if p.Hardware != nil && len(p.Hardware.Bindings) > 0 {
+		if err := tpm.VerifyBindingChain(p.Hardware.Bindings, nil); err != nil {
+			return fmt.Errorf("hardware attestation invalid: %w", err)
+		}
 	}
 
 	return nil
