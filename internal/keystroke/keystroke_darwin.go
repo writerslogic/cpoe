@@ -10,11 +10,49 @@ package keystroke
 #include <pthread.h>
 #include <unistd.h>
 
-// We only count events - we do NOT examine the keycode
-static volatile int keystrokeCount = 0;
+// ============================================================================
+// Synthetic Event Detection for CGEventPost Attack Mitigation
+// ============================================================================
+//
+// CGEventPost() can inject synthetic keyboard events that appear at the
+// CGEventTap layer. We use multiple heuristics to detect and reject these:
+//
+// 1. Event Source State ID:
+//    - kCGEventSourceStateHIDSystemState (1): Hardware events from HID system
+//    - kCGEventSourceStateCombinedSessionState (0): Often synthetic
+//    - kCGEventSourceStatePrivate (-1): Synthetic from CGEventSourceCreate
+//
+// 2. Keyboard Type:
+//    - Hardware keyboards report a non-zero keyboard type
+//    - Synthetic events often have keyboard type 0 or invalid values
+//
+// 3. Event Source PID:
+//    - Hardware events have source PID of 0 (kernel)
+//    - CGEventPost events have the posting process's PID
+//
+// 4. Event Flags:
+//    - Some synthetic events have unusual flag combinations
+//
+// Note: A sophisticated attacker can potentially forge these fields, but
+// this raises the bar significantly above naive CGEventPost() attacks.
+// ============================================================================
+
+// Counters for keystroke events
+static volatile int64_t keystrokeCount = 0;           // Verified hardware keystrokes
+static volatile int64_t syntheticRejectedCount = 0;   // Rejected as likely synthetic
+static volatile int64_t suspiciousCount = 0;          // Passed but flagged as suspicious
+
+// Detailed rejection reason counters
+static volatile int64_t rejectedBadSourceState = 0;   // Non-HID source state
+static volatile int64_t rejectedBadKeyboardType = 0;  // Invalid keyboard type
+static volatile int64_t rejectedNonKernelPID = 0;     // Non-zero source PID
+static volatile int64_t rejectedZeroTimestamp = 0;    // Missing timestamp
 
 // Jitter configuration (prepared for future use)
 static volatile int jitterMicros = 0;
+
+// Strictness mode: 0 = permissive (warn only), 1 = strict (reject suspicious)
+static volatile int strictMode = 1;
 
 // Run loop state
 static CFRunLoopRef tapRunLoop = NULL;
@@ -27,6 +65,103 @@ static void stopEventTap(void);
 // Event tap and run loop source (declared before callback so it can use them)
 static CFMachPortRef eventTap = NULL;
 static CFRunLoopSourceRef runLoopSource = NULL;
+
+// Check if an event appears to be from hardware (not CGEventPost)
+// Returns: 0 = likely synthetic (reject), 1 = likely hardware (accept), 2 = suspicious but accept
+static int verifyEventSource(CGEventRef event) {
+    // -------------------------------------------------------------------------
+    // Check 1: Event Source State ID
+    // -------------------------------------------------------------------------
+    // Hardware keyboard events come from kCGEventSourceStateHIDSystemState (1)
+    // CGEventPost typically uses kCGEventSourceStateCombinedSessionState (0)
+    // or kCGEventSourceStatePrivate (-1)
+    int64_t sourceStateID = CGEventGetIntegerValueField(event, kCGEventSourceStateID);
+
+    // kCGEventSourceStateHIDSystemState = 1 (hardware)
+    // kCGEventSourceStateCombinedSessionState = 0 (session, often synthetic)
+    // kCGEventSourceStatePrivate = -1 (definitely synthetic)
+    if (sourceStateID == -1) {
+        // Private source state - definitely synthetic
+        rejectedBadSourceState++;
+        return 0;
+    }
+
+    int suspicious = 0;
+    if (sourceStateID != 1) {
+        // Not from HID system - suspicious but could be legitimate in some cases
+        // (e.g., virtual keyboard, remote desktop)
+        suspicious = 1;
+    }
+
+    // -------------------------------------------------------------------------
+    // Check 2: Keyboard Type
+    // -------------------------------------------------------------------------
+    // Real keyboards report their type (e.g., ANSI, ISO, JIS)
+    // Synthetic events often have keyboard type 0
+    int64_t keyboardType = CGEventGetIntegerValueField(event, kCGKeyboardEventKeyboardType);
+
+    if (keyboardType == 0) {
+        // Zero keyboard type - very suspicious for key events
+        // Some legitimate virtual keyboards might have this, but it's rare
+        if (strictMode) {
+            rejectedBadKeyboardType++;
+            return 0;
+        }
+        suspicious = 1;
+    }
+
+    // Sanity check: keyboard type should be reasonable (< 100)
+    if (keyboardType > 100) {
+        rejectedBadKeyboardType++;
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Check 3: Source Unix Process ID
+    // -------------------------------------------------------------------------
+    // Hardware events from the HID system have source PID of 0 (kernel)
+    // CGEventPost events have the PID of the process that posted them
+    int64_t sourcePID = CGEventGetIntegerValueField(event, kCGEventSourceUnixProcessID);
+
+    if (sourcePID != 0) {
+        // Non-kernel source - this is a strong indicator of synthetic events
+        // CGEventPost sets this to the calling process's PID
+        if (strictMode) {
+            rejectedNonKernelPID++;
+            return 0;
+        }
+        suspicious = 1;
+    }
+
+    // -------------------------------------------------------------------------
+    // Check 4: Event Timestamp
+    // -------------------------------------------------------------------------
+    // Real events have valid timestamps from the event system
+    // Some synthetic events may have zero or stale timestamps
+    CGEventTimestamp timestamp = CGEventGetTimestamp(event);
+
+    if (timestamp == 0) {
+        // Zero timestamp is suspicious - real events always have timestamps
+        if (strictMode) {
+            rejectedZeroTimestamp++;
+            return 0;
+        }
+        suspicious = 1;
+    }
+
+    // -------------------------------------------------------------------------
+    // Check 5: Autorepeat flag (informational)
+    // -------------------------------------------------------------------------
+    // Note: We don't reject based on autorepeat, but it's useful context
+    // Synthetic attacks often don't set autorepeat correctly for held keys
+    // int64_t autorepeat = CGEventGetIntegerValueField(event, kCGKeyboardEventAutorepeat);
+
+    if (suspicious) {
+        return 2;  // Suspicious but accepted
+    }
+
+    return 1;  // Verified as likely hardware
+}
 
 CGEventRef eventCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *refcon) {
     (void)proxy;  // unused
@@ -43,6 +178,22 @@ CGEventRef eventCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef eve
     }
 
     if (type == kCGEventKeyDown) {
+        // Verify the event source to detect CGEventPost injection attacks
+        int verifyResult = verifyEventSource(event);
+
+        if (verifyResult == 0) {
+            // Likely synthetic - reject and don't count
+            syntheticRejectedCount++;
+            // Still return the event (we're monitoring, not blocking)
+            return event;
+        }
+
+        if (verifyResult == 2) {
+            // Suspicious but accepted
+            suspiciousCount++;
+        }
+
+        // Verified or accepted - count this keystroke
         keystrokeCount++;
 
         // Future: Apply jitter delay here
@@ -166,12 +317,26 @@ static void stopEventTap(void) {
     tapRunLoop = NULL;
 }
 
-int getCount() {
+// ============================================================================
+// Accessor Functions
+// ============================================================================
+
+int64_t getCount() {
     return keystrokeCount;
 }
 
 void resetCount() {
     keystrokeCount = 0;
+}
+
+void resetAllCounters() {
+    keystrokeCount = 0;
+    syntheticRejectedCount = 0;
+    suspiciousCount = 0;
+    rejectedBadSourceState = 0;
+    rejectedBadKeyboardType = 0;
+    rejectedNonKernelPID = 0;
+    rejectedZeroTimestamp = 0;
 }
 
 int isTapEnabled() {
@@ -184,7 +349,53 @@ int wasTapDisabledBySystem() {
     return val;
 }
 
-// Prepare for jitter injection (not yet used)
+// ============================================================================
+// Synthetic Event Detection Statistics
+// ============================================================================
+
+int64_t getSyntheticRejectedCount() {
+    return syntheticRejectedCount;
+}
+
+int64_t getSuspiciousCount() {
+    return suspiciousCount;
+}
+
+// Detailed rejection reason accessors
+int64_t getRejectedBadSourceState() {
+    return rejectedBadSourceState;
+}
+
+int64_t getRejectedBadKeyboardType() {
+    return rejectedBadKeyboardType;
+}
+
+int64_t getRejectedNonKernelPID() {
+    return rejectedNonKernelPID;
+}
+
+int64_t getRejectedZeroTimestamp() {
+    return rejectedZeroTimestamp;
+}
+
+// Get total events seen (accepted + rejected)
+int64_t getTotalEventsSeen() {
+    return keystrokeCount + syntheticRejectedCount;
+}
+
+// Strictness mode control
+void setStrictMode(int strict) {
+    strictMode = strict ? 1 : 0;
+}
+
+int getStrictMode() {
+    return strictMode;
+}
+
+// ============================================================================
+// Jitter Configuration (Future Use)
+// ============================================================================
+
 void setJitterMicros(int micros) {
     jitterMicros = micros;
 }
@@ -192,6 +403,10 @@ void setJitterMicros(int micros) {
 int getJitterMicros() {
     return jitterMicros;
 }
+
+// ============================================================================
+// Accessibility Permissions
+// ============================================================================
 
 int checkAccessibility() {
     // Check if we have accessibility permissions
@@ -224,6 +439,9 @@ type DarwinCounter struct {
 
 	// Track if we've seen the tap get disabled by the system
 	tapDisableCount atomic.Int64
+
+	// Strict mode rejects suspicious events; permissive mode only warns
+	strictMode bool
 }
 
 func newPlatformCounter() Counter {
@@ -259,8 +477,8 @@ func (d *DarwinCounter) Start(ctx context.Context) error {
 		return errors.New("accessibility permission required: go to System Preferences > Security & Privacy > Privacy > Accessibility")
 	}
 
-	// Reset the C-side counter
-	C.resetCount()
+	// Reset all C-side counters (keystroke count and synthetic event stats)
+	C.resetAllCounters()
 
 	// Start the event tap
 	result := C.startEventTap()
@@ -326,7 +544,7 @@ func (d *DarwinCounter) pollLoop() {
 		case <-ticker.C:
 			cCount := uint64(C.getCount())
 			if cCount > lastCount {
-				// Notify for each new keystroke
+				// Notify for each new keystroke (only verified hardware events)
 				for i := lastCount; i < cCount; i++ {
 					d.Increment()
 				}
@@ -364,6 +582,67 @@ func (d *DarwinCounter) Stop() error {
 // This can happen if the callback is too slow.
 func (d *DarwinCounter) TapDisableCount() int64 {
 	return d.tapDisableCount.Load()
+}
+
+// SetStrictMode controls whether suspicious events are rejected (true) or
+// only flagged (false). Default is strict mode (true).
+//
+// In strict mode, events that fail any verification check are rejected.
+// In permissive mode, suspicious events are counted but flagged for review.
+//
+// Use permissive mode for debugging or when false positives are a concern
+// (e.g., virtual keyboards, remote desktop).
+func (d *DarwinCounter) SetStrictMode(strict bool) {
+	d.strictMode = strict
+	if strict {
+		C.setStrictMode(1)
+	} else {
+		C.setStrictMode(0)
+	}
+}
+
+// StrictMode returns whether strict mode is enabled.
+func (d *DarwinCounter) StrictMode() bool {
+	return C.getStrictMode() == 1
+}
+
+// SyntheticEventStats returns statistics about detected synthetic event
+// injection attempts. This is useful for:
+// - Detecting CGEventPost-based attacks
+// - Debugging virtual keyboard issues
+// - Auditing keystroke evidence integrity
+func (d *DarwinCounter) SyntheticEventStats() SyntheticEventStats {
+	return SyntheticEventStats{
+		TotalRejected:           int64(C.getSyntheticRejectedCount()),
+		Suspicious:              int64(C.getSuspiciousCount()),
+		RejectedBadSourceState:  int64(C.getRejectedBadSourceState()),
+		RejectedBadKeyboardType: int64(C.getRejectedBadKeyboardType()),
+		RejectedNonKernelPID:    int64(C.getRejectedNonKernelPID()),
+		RejectedZeroTimestamp:   int64(C.getRejectedZeroTimestamp()),
+		TotalEventsSeen:         int64(C.getTotalEventsSeen()),
+	}
+}
+
+// ResetAllCounters resets all counters including synthetic event statistics.
+func (d *DarwinCounter) ResetAllCounters() {
+	C.resetAllCounters()
+}
+
+// InjectionAttemptDetected returns true if any events have been rejected
+// as likely synthetic injections.
+func (d *DarwinCounter) InjectionAttemptDetected() bool {
+	return C.getSyntheticRejectedCount() > 0
+}
+
+// SyntheticRejectionRate returns the percentage of events rejected as synthetic.
+// Returns 0 if no events have been seen.
+func (d *DarwinCounter) SyntheticRejectionRate() float64 {
+	total := int64(C.getTotalEventsSeen())
+	if total == 0 {
+		return 0
+	}
+	rejected := int64(C.getSyntheticRejectedCount())
+	return float64(rejected) / float64(total) * 100
 }
 
 // Ensure DarwinCounter satisfies Counter interface

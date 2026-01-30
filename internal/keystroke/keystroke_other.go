@@ -1,4 +1,4 @@
-// +build !darwin,!linux
+//go:build !darwin && !linux && !windows
 
 package keystroke
 

@@ -140,6 +140,84 @@ func New() Counter {
 // ErrNotAvailable is returned when keyboard counting isn't available.
 var ErrNotAvailable = errors.New("keyboard counting not available on this platform")
 
+// CrossValidationResult contains the result of comparing application-layer and HID counts.
+type CrossValidationResult struct {
+	// CGEventTapCount is the count from the application layer (may include synthetic)
+	// On macOS this is CGEventTap, on Windows this is Raw Input
+	CGEventTapCount int64
+	// HIDCount is the count from HID layer (hardware only)
+	HIDCount int64
+	// Discrepancy is CGEventTapCount - HIDCount (positive = synthetic detected)
+	Discrepancy int64
+	// SyntheticDetected is true if discrepancy suggests synthetic events
+	SyntheticDetected bool
+	// SyntheticPercentage is the estimated percentage of synthetic events
+	SyntheticPercentage float64
+}
+
+// CrossValidate compares application-layer and HID counts to detect synthetic events.
+// This is the strongest detection method because userspace injection APIs cannot
+// inject at the HID layer.
+//
+// Returns:
+//   - Discrepancy > 0: Synthetic events detected (app layer saw more than HID)
+//   - Discrepancy = 0: All events appear to be hardware
+//   - Discrepancy < 0: Unusual (HID saw more than app layer - timing issue?)
+func CrossValidate(appLayerCount int64, hidCount int64) CrossValidationResult {
+	discrepancy := appLayerCount - hidCount
+
+	result := CrossValidationResult{
+		CGEventTapCount:   appLayerCount,
+		HIDCount:          hidCount,
+		Discrepancy:       discrepancy,
+		SyntheticDetected: discrepancy > 0,
+	}
+
+	if appLayerCount > 0 && discrepancy > 0 {
+		result.SyntheticPercentage = float64(discrepancy) / float64(appLayerCount) * 100
+	}
+
+	return result
+}
+
+// ValidationStats contains cross-validation statistics for dual-layer monitoring.
+type ValidationStats struct {
+	// CGEventTapCount is total events seen at application layer
+	// On macOS: CGEventTap, on Windows: Raw Input
+	CGEventTapCount int64
+	// HIDCount is total events seen at HID layer (hardware only)
+	HIDCount int64
+	// ValidatedCount is the count we're reporting (depends on strict mode)
+	ValidatedCount int64
+	// TotalSyntheticDetected is cumulative synthetic events detected
+	TotalSyntheticDetected int64
+	// Discrepancy is current difference between app layer and HID counts
+	Discrepancy int64
+	// HIDMonitorActive indicates if HID monitoring is working
+	HIDMonitorActive bool
+	// StrictMode indicates if only HID-verified events are counted
+	StrictMode bool
+}
+
+// SyntheticEventStats contains statistics about detected synthetic event injection attempts.
+// This is used for cross-validation between hardware and software layers.
+type SyntheticEventStats struct {
+	// TotalRejected is the total number of events rejected as likely synthetic
+	TotalRejected int64
+	// Suspicious is the count of events that were suspicious but accepted
+	Suspicious int64
+	// RejectedBadSourceState is events rejected for non-HID source state (macOS only)
+	RejectedBadSourceState int64
+	// RejectedBadKeyboardType is events rejected for invalid keyboard type (macOS only)
+	RejectedBadKeyboardType int64
+	// RejectedNonKernelPID is events rejected for non-kernel source PID (macOS only)
+	RejectedNonKernelPID int64
+	// RejectedZeroTimestamp is events rejected for missing timestamp (macOS only)
+	RejectedZeroTimestamp int64
+	// TotalEventsSeen is all events (accepted + rejected)
+	TotalEventsSeen int64
+}
+
 // ErrPermissionDenied is returned when permissions are insufficient.
 var ErrPermissionDenied = errors.New("insufficient permissions for keyboard counting")
 
