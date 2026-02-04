@@ -1,7 +1,8 @@
 # witnessd - Kinetic Proof of Provenance
 # Makefile for building, testing, and verification
 
-.PHONY: all build test bench clean install audit verify-self fmt lint help
+.PHONY: all build test bench clean install install-man uninstall audit verify-self fmt lint validate-schemas help
+.PHONY: release release-snapshot sign notarize
 
 # Build variables
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -29,10 +30,23 @@ $(WITNESSCTL): cmd/witnessctl/*.go internal/**/*.go
 	@mkdir -p $(BINDIR)
 	go build $(LDFLAGS) -o $@ ./cmd/witnessctl
 
-install: build
-	cp $(WITNESSD) /usr/local/bin/
-	cp $(WITNESSCTL) /usr/local/bin/
+install: build install-man
+	install -m 755 $(WITNESSD) /usr/local/bin/
+	install -m 755 $(WITNESSCTL) /usr/local/bin/
 	@echo "Installed to /usr/local/bin/"
+
+install-man:
+	@mkdir -p /usr/local/share/man/man1
+	install -m 644 docs/man/witnessd.1 /usr/local/share/man/man1/
+	install -m 644 docs/man/witnessctl.1 /usr/local/share/man/man1/
+	@echo "Man pages installed to /usr/local/share/man/man1/"
+
+uninstall:
+	rm -f /usr/local/bin/witnessd
+	rm -f /usr/local/bin/witnessctl
+	rm -f /usr/local/share/man/man1/witnessd.1
+	rm -f /usr/local/share/man/man1/witnessctl.1
+	@echo "Uninstalled witnessd"
 
 ## Test targets
 
@@ -82,6 +96,9 @@ fmt:
 lint:
 	golangci-lint run ./... 2>/dev/null || go vet ./...
 
+validate-schemas:
+	go test ./internal/schemavalidation -run TestSchemaValidation
+
 tidy:
 	go mod tidy
 
@@ -95,9 +112,9 @@ run-daemon: build
 status: build
 	$(WITNESSCTL) status
 
-## IME targets
+## IME targets (desktop platforms only)
 
-.PHONY: ime-macos ime-linux ime-windows ime-android ime-ios
+.PHONY: ime-macos ime-linux ime-windows
 
 ime-macos:
 	@echo "Building macOS IME..."
@@ -112,19 +129,53 @@ ime-windows:
 	@echo "Note: Must be run on Windows with MSVC"
 	$(MAKE) -C cmd/witnessd-tsf
 
-ime-android:
-	@echo "Building Android IME..."
-	cd cmd/witnessd-android && chmod +x build.sh && ./build.sh
-
-ime-ios:
-	@echo "Building iOS keyboard extension..."
-	cd cmd/witnessd-ios && chmod +x build.sh && ./build.sh
-
 install-ime-macos: ime-macos
 	$(MAKE) -C cmd/witnessd-ime install
 
 install-ime-linux: ime-linux
 	$(MAKE) -C cmd/witnessd-ibus install
+
+## Release targets
+
+release:
+	@echo "Creating release with goreleaser..."
+	goreleaser release --clean
+
+release-snapshot:
+	@echo "Creating snapshot release..."
+	goreleaser release --snapshot --clean
+
+release-dry-run:
+	@echo "Dry run release..."
+	goreleaser release --skip=publish --clean
+
+## macOS signing (requires Apple Developer ID)
+
+sign: build
+	@echo "Signing binaries for macOS..."
+	@if [ -z "$(APPLE_DEVELOPER_ID)" ]; then \
+		echo "Error: APPLE_DEVELOPER_ID environment variable not set"; \
+		exit 1; \
+	fi
+	codesign --force --options runtime --sign "$(APPLE_DEVELOPER_ID)" --timestamp $(WITNESSD)
+	codesign --force --options runtime --sign "$(APPLE_DEVELOPER_ID)" --timestamp $(WITNESSCTL)
+	@echo "Binaries signed."
+
+notarize: sign
+	@echo "Notarizing binaries..."
+	@if [ -z "$(APPLE_ISSUER_ID)" ] || [ -z "$(APPLE_KEY_ID)" ]; then \
+		echo "Error: APPLE_ISSUER_ID and APPLE_KEY_ID must be set"; \
+		exit 1; \
+	fi
+	@echo "Creating zip for notarization..."
+	zip -j witnessd-notarize.zip $(WITNESSD) $(WITNESSCTL)
+	xcrun notarytool submit witnessd-notarize.zip \
+		--issuer "$(APPLE_ISSUER_ID)" \
+		--key-id "$(APPLE_KEY_ID)" \
+		--key "$(APPLE_PRIVATE_KEY)" \
+		--wait
+	rm witnessd-notarize.zip
+	@echo "Notarization complete."
 
 ## Clean
 
@@ -140,33 +191,40 @@ help:
 	@echo "witnessd - Kinetic Proof of Provenance"
 	@echo ""
 	@echo "Build targets:"
-	@echo "  make build      - Build witnessd and witnessctl"
-	@echo "  make install    - Install binaries to /usr/local/bin"
+	@echo "  make build       - Build witnessd and witnessctl"
+	@echo "  make install     - Install binaries and man pages"
+	@echo "  make install-man - Install man pages only"
+	@echo "  make uninstall   - Remove installed files"
 	@echo ""
 	@echo "Test targets:"
-	@echo "  make test       - Run all tests"
-	@echo "  make test-race  - Run tests with race detector"
-	@echo "  make bench      - Run benchmarks"
-	@echo "  make coverage   - Generate coverage report"
+	@echo "  make test        - Run all tests"
+	@echo "  make test-race   - Run tests with race detector"
+	@echo "  make bench       - Run benchmarks"
+	@echo "  make coverage    - Generate coverage report"
 	@echo ""
-	@echo "IME targets:"
-	@echo "  make ime-macos  - Build macOS Input Method"
-	@echo "  make ime-linux  - Build Linux IBus engine"
+	@echo "Release targets:"
+	@echo "  make release          - Create release with goreleaser"
+	@echo "  make release-snapshot - Create snapshot release"
+	@echo "  make release-dry-run  - Dry run (no publish)"
+	@echo "  make sign             - Sign macOS binaries"
+	@echo "  make notarize         - Notarize macOS binaries"
+	@echo ""
+	@echo "IME targets (desktop platforms):"
+	@echo "  make ime-macos   - Build macOS Input Method"
+	@echo "  make ime-linux   - Build Linux IBus engine"
 	@echo "  make ime-windows - Build Windows TSF (Windows only)"
-	@echo "  make ime-android - Build Android IME"
-	@echo "  make ime-ios    - Build iOS keyboard extension"
 	@echo "  make install-ime-macos - Install macOS IME"
 	@echo "  make install-ime-linux - Install Linux IBus engine"
 	@echo ""
 	@echo "Audit targets:"
-	@echo "  make audit      - Show git signature audit log"
+	@echo "  make audit       - Show git signature audit log"
 	@echo "  make verify-self - Verify source code against witness database"
 	@echo ""
 	@echo "Development:"
-	@echo "  make fmt        - Format code"
-	@echo "  make lint       - Run linters"
-	@echo "  make dev        - Format, tidy, test, build"
+	@echo "  make fmt         - Format code"
+	@echo "  make lint        - Run linters"
+	@echo "  make dev         - Format, tidy, test, build"
 	@echo ""
 	@echo "Utilities:"
-	@echo "  make status     - Show daemon status"
-	@echo "  make clean      - Remove build artifacts"
+	@echo "  make status      - Show daemon status"
+	@echo "  make clean       - Remove build artifacts"

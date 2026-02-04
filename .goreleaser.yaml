@@ -1,0 +1,268 @@
+# GoReleaser configuration for witnessd
+# https://goreleaser.com
+
+version: 2
+
+project_name: witnessd
+
+before:
+  hooks:
+    - go mod tidy
+    - go generate ./...
+
+builds:
+  - id: witnessd
+    main: ./cmd/witnessd
+    binary: witnessd
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.Version={{.Version}}
+      - -X main.Commit={{.ShortCommit}}
+      - -X main.BuildTime={{.Date}}
+    mod_timestamp: '{{ .CommitTimestamp }}'
+
+  - id: witnessctl
+    main: ./cmd/witnessctl
+    binary: witnessctl
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.Version={{.Version}}
+      - -X main.Commit={{.ShortCommit}}
+      - -X main.BuildTime={{.Date}}
+    mod_timestamp: '{{ .CommitTimestamp }}'
+
+# Universal binaries for macOS (Intel + Apple Silicon)
+universal_binaries:
+  - id: witnessd-universal
+    ids:
+      - witnessd
+    replace: true
+    name_template: witnessd
+  - id: witnessctl-universal
+    ids:
+      - witnessctl
+    replace: true
+    name_template: witnessctl
+
+# macOS code signing and notarization
+signs:
+  - id: darwin-sign
+    cmd: codesign
+    args:
+      - --force
+      - --options
+      - runtime
+      - --sign
+      - "{{ .Env.APPLE_DEVELOPER_ID }}"
+      - --timestamp
+      - "{{ .Path }}"
+    artifacts: binary
+    ids:
+      - witnessd-universal
+      - witnessctl-universal
+
+notarize:
+  - ids:
+      - witnessd-universal
+      - witnessctl-universal
+    macos:
+      - enabled: true
+        sign:
+          certificate: "{{ .Env.APPLE_DEVELOPER_ID }}"
+        notarize:
+          issuer_id: "{{ .Env.APPLE_ISSUER_ID }}"
+          key_id: "{{ .Env.APPLE_KEY_ID }}"
+          key: "{{ .Env.APPLE_PRIVATE_KEY }}"
+
+archives:
+  - id: default
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - LICENSE
+      - README.md
+      - docs/man/*
+
+checksum:
+  name_template: 'checksums.txt'
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - Merge pull request
+      - Merge branch
+  groups:
+    - title: '🚀 Features'
+      regexp: '^feat'
+      order: 0
+    - title: '🐛 Bug Fixes'
+      regexp: '^fix'
+      order: 1
+    - title: '📦 Dependencies'
+      regexp: '^deps'
+      order: 2
+    - title: '🔧 Other'
+      order: 999
+
+release:
+  github:
+    owner: writerslogic
+    name: witnessd
+  draft: false
+  prerelease: auto
+  mode: replace
+  header: |
+    ## witnessd {{ .Tag }}
+
+    Cryptographic Authorship Witnessing - Kinetic Proof of Provenance
+
+    ### Installation
+
+    **Homebrew (macOS/Linux):**
+    ```bash
+    brew install writerslogic/tap/witnessd
+    ```
+
+    **Manual:**
+    Download the appropriate archive for your platform below.
+  footer: |
+    ---
+
+    **Full Changelog**: https://github.com/writerslogic/witnessd/compare/{{ .PreviousTag }}...{{ .Tag }}
+
+    **Documentation**: https://github.com/writerslogic/witnessd#readme
+
+# Homebrew tap
+brews:
+  - name: witnessd
+    ids:
+      - default
+    repository:
+      owner: writerslogic
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    folder: Formula
+    homepage: https://github.com/writerslogic/witnessd
+    description: Cryptographic authorship witnessing - kinetic proof of provenance
+    license: Apache-2.0
+    install: |
+      bin.install "witnessd"
+      bin.install "witnessctl"
+      man1.install "docs/man/witnessd.1"
+      man1.install "docs/man/witnessctl.1"
+    test: |
+      system "#{bin}/witnessd", "version"
+      system "#{bin}/witnessctl", "-version"
+    caveats: |
+      To get started:
+        witnessd init
+        witnessd calibrate
+
+      For documentation:
+        man witnessd
+        man witnessctl
+
+# Scoop bucket for Windows
+scoops:
+  - name: witnessd
+    ids:
+      - default
+    repository:
+      owner: writerslogic
+      name: scoop-bucket
+      token: "{{ .Env.SCOOP_BUCKET_TOKEN }}"
+    folder: bucket
+    homepage: https://github.com/writerslogic/witnessd
+    description: Cryptographic authorship witnessing - kinetic proof of provenance
+    license: Apache-2.0
+
+# AUR for Arch Linux
+aurs:
+  - name: witnessd-bin
+    ids:
+      - default
+    homepage: https://github.com/writerslogic/witnessd
+    description: Cryptographic authorship witnessing - kinetic proof of provenance
+    maintainers:
+      - 'David Condrey <david@condrey.dev>'
+    license: Apache-2.0
+    private_key: '{{ .Env.AUR_SSH_PRIVATE_KEY }}'
+    git_url: 'ssh://aur@aur.archlinux.org/witnessd-bin.git'
+    package: |
+      install -Dm755 witnessd "${pkgdir}/usr/bin/witnessd"
+      install -Dm755 witnessctl "${pkgdir}/usr/bin/witnessctl"
+      install -Dm644 docs/man/witnessd.1 "${pkgdir}/usr/share/man/man1/witnessd.1"
+      install -Dm644 docs/man/witnessctl.1 "${pkgdir}/usr/share/man/man1/witnessctl.1"
+      install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/witnessd/LICENSE"
+
+# .deb and .rpm packages
+nfpms:
+  - id: packages
+    package_name: witnessd
+    vendor: David Condrey
+    homepage: https://github.com/writerslogic/witnessd
+    maintainer: David Condrey <david@condrey.dev>
+    description: Cryptographic authorship witnessing - kinetic proof of provenance
+    license: Apache-2.0
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+    contents:
+      - src: docs/man/witnessd.1
+        dst: /usr/share/man/man1/witnessd.1
+      - src: docs/man/witnessctl.1
+        dst: /usr/share/man/man1/witnessctl.1
+      - src: LICENSE
+        dst: /usr/share/licenses/witnessd/LICENSE
+
+# Docker images
+dockers:
+  - image_templates:
+      - "ghcr.io/writerslogic/witnessd:{{ .Tag }}"
+      - "ghcr.io/writerslogic/witnessd:latest"
+    dockerfile: Dockerfile
+    build_flag_templates:
+      - "--pull"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--label=org.opencontainers.image.source=https://github.com/writerslogic/witnessd"
+
+# Announce releases
+announce:
+  skip: '{{ not .IsRelease }}'
