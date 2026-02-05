@@ -7,11 +7,93 @@ on:
 
 permissions:
   contents: write
-  id-token: write  # For SLSA provenance
+  id-token: write
+  packages: write
 
 jobs:
   goreleaser:
-    name: Release
+    name: Build and Release
+    runs-on: macos-latest  # For Apple signing
+    outputs:
+      hashes: ${{ steps.hash.outputs.hashes }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Import Apple Developer Certificate
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          rm certificate.p12
+
+      - name: Install Syft for SBOM
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
+          APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
+          APPLE_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
+          APPLE_PRIVATE_KEY: ${{ secrets.APPLE_PRIVATE_KEY }}
+
+      - name: Generate artifact hashes
+        id: hash
+        run: |
+          cd dist
+          sha256sum *.tar.gz *.zip 2>/dev/null | base64 -w0 > hashes.txt || \
+          shasum -a 256 *.tar.gz *.zip 2>/dev/null | base64 > hashes.txt
+          echo "hashes=$(cat hashes.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Generate SBOM
+        run: |
+          syft dir:. -o spdx-json=dist/witnessd-sbom.spdx.json
+          syft dir:. -o cyclonedx-json=dist/witnessd-sbom.cdx.json
+
+      - name: Upload SBOM to Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload ${{ github.ref_name }} dist/witnessd-sbom.spdx.json dist/witnessd-sbom.cdx.json --clobber
+
+  slsa-provenance:
+    name: SLSA Provenance
+    needs: goreleaser
+    permissions:
+      actions: read
+      id-token: write
+      contents: write
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.0.0
+    with:
+      base64-subjects: "${{ needs.goreleaser.outputs.hashes }}"
+      upload-assets: true
+
+  # Build Linux binaries on Ubuntu (no CGO issues)
+  build-linux:
+    name: Build Linux
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,43 +103,50 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.22'
           cache: true
 
-      - name: Install Syft for SBOM
+      - name: Build Linux binaries
         run: |
-          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+          GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -X main.Version=${{ github.ref_name }} -X main.Commit=${{ github.sha }} -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o witnessd-linux-amd64 ./cmd/witnessd
+          GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -X main.Version=${{ github.ref_name }} -X main.Commit=${{ github.sha }} -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o witnessctl-linux-amd64 ./cmd/witnessctl
+          GOOS=linux GOARCH=arm64 go build -ldflags "-s -w -X main.Version=${{ github.ref_name }} -X main.Commit=${{ github.sha }} -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o witnessd-linux-arm64 ./cmd/witnessd
+          GOOS=linux GOARCH=arm64 go build -ldflags "-s -w -X main.Version=${{ github.ref_name }} -X main.Commit=${{ github.sha }} -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o witnessctl-linux-arm64 ./cmd/witnessctl
 
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v5
-        with:
-          distribution: goreleaser
-          version: latest
-          args: release --clean
+      - name: Upload Linux binaries
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Generate SBOM
         run: |
-          syft dir:. -o spdx-json=witnessd-sbom.spdx.json
-          syft dir:. -o cyclonedx-json=witnessd-sbom.cdx.json
+          tar -czvf witnessd_${{ github.ref_name }}_linux_amd64.tar.gz witnessd-linux-amd64 witnessctl-linux-amd64 LICENSE README.md
+          tar -czvf witnessd_${{ github.ref_name }}_linux_arm64.tar.gz witnessd-linux-arm64 witnessctl-linux-arm64 LICENSE README.md
+          gh release upload ${{ github.ref_name }} witnessd_${{ github.ref_name }}_linux_amd64.tar.gz witnessd_${{ github.ref_name }}_linux_arm64.tar.gz --clobber
 
-      - name: Upload SBOM
-        uses: actions/upload-artifact@v4
-        with:
-          name: sbom
-          path: |
-            witnessd-sbom.spdx.json
-            witnessd-sbom.cdx.json
-
-  slsa-provenance:
-    name: SLSA Provenance
+  docker:
+    name: Docker Image
+    runs-on: ubuntu-latest
     needs: goreleaser
-    permissions:
-      actions: read
-      id-token: write
-      contents: write
-    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v1.9.0
-    with:
-      base64-subjects: "${{ needs.goreleaser.outputs.hashes }}"
-      upload-assets: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/writerslogic/witnessd:${{ github.ref_name }}
+            ghcr.io/writerslogic/witnessd:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/writerslogic/witnessd
+            org.opencontainers.image.version=${{ github.ref_name }}
+            org.opencontainers.image.revision=${{ github.sha }}

@@ -10,6 +10,32 @@ permissions:
   contents: read
 
 jobs:
+  verify-signatures:
+    name: Verify Commit Signatures
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect signature
+        id: sig
+        run: |
+          sig=$(git log -1 --pretty=%G?)
+          echo "sig=$sig" >> $GITHUB_OUTPUT
+
+      - name: Verify SSH signature (allowed_signers)
+        if: steps.sig.outputs.sig != 'N'
+        run: |
+          git config --global gpg.format ssh
+          git config --global gpg.ssh.allowedSignersFile "$(pwd)/allowed_signers"
+          git verify-commit HEAD
+
+      - name: Fail on unsigned commit
+        if: steps.sig.outputs.sig == 'N'
+        run: |
+          echo "Commit is unsigned; failing per main-branch policy."
+          exit 1
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -32,6 +58,9 @@ jobs:
         run: |
           go install honnef.co/go/tools/cmd/staticcheck@latest
           staticcheck ./...
+
+      - name: Validate schemas
+        run: make validate-schemas
 
   test:
     name: Test
