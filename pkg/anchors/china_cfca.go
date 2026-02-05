@@ -7,9 +7,12 @@
 //
 // Key characteristics:
 // - GOVERNMENT AFFILIATED: Under supervision of People's Bank of China
-// - LEGALLY BINDING: Recognized for legal proceedings in mainland China
+// - CHINESE FRAMEWORK: Electronic signature regulations in mainland China
 // - SM ALGORITHMS: Uses Chinese national cryptographic standards (SM2/SM3/SM4)
 // - CHINESE LANGUAGE: Documentation and interfaces primarily in Chinese
+//
+// NOTE: Legal status depends on specific use case and compliance requirements.
+// Consult legal counsel for binding legal determinations.
 //
 // Implementation requirements:
 // - CFCA account and API credentials

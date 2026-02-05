@@ -61,6 +61,9 @@ type Packet struct {
 	ExportedAt time.Time `json:"exported_at"`
 	Strength  Strength  `json:"strength"`
 
+	// Record Provenance (who, where, when)
+	Provenance *RecordProvenance `json:"provenance,omitempty"`
+
 	// The document
 	Document DocumentInfo `json:"document"`
 
@@ -110,6 +113,56 @@ type DocumentInfo struct {
 	Path        string `json:"path"`
 	FinalHash   string `json:"final_hash"`
 	FinalSize   int64  `json:"final_size"`
+}
+
+// RecordProvenance documents who initiated the record and where it was generated.
+type RecordProvenance struct {
+	// Record initiator
+	DeviceID       string `json:"device_id"`
+	SigningPubkey  string `json:"signing_pubkey"`
+	KeySource      string `json:"key_source"` // "file", "tpm", "secure_enclave"
+
+	// System identification
+	Hostname       string `json:"hostname"`
+	OS             string `json:"os"`
+	OSVersion      string `json:"os_version,omitempty"`
+	Architecture   string `json:"architecture"`
+
+	// Session identification
+	SessionID      string    `json:"session_id"`
+	SessionStarted time.Time `json:"session_started"`
+
+	// Input device tracking (optional)
+	InputDevices   []InputDeviceInfo `json:"input_devices,omitempty"`
+
+	// Access control snapshot
+	AccessControl  *AccessControlInfo `json:"access_control,omitempty"`
+}
+
+// InputDeviceInfo describes a keyboard or input device.
+type InputDeviceInfo struct {
+	VendorID       uint16 `json:"vendor_id"`
+	ProductID      uint16 `json:"product_id"`
+	ProductName    string `json:"product_name"`
+	SerialNumber   string `json:"serial_number,omitempty"`
+	ConnectionType string `json:"connection_type"` // "USB", "Bluetooth", "Internal", "Virtual"
+	Fingerprint    string `json:"fingerprint"`
+}
+
+// AccessControlInfo documents who had/didn't have write access.
+type AccessControlInfo struct {
+	CapturedAt      time.Time `json:"captured_at"`
+	FileOwnerUID    int       `json:"file_owner_uid"`
+	FileOwnerName   string    `json:"file_owner_name,omitempty"`
+	FilePermissions string    `json:"file_permissions"` // e.g., "0644"
+	FileGroupGID    int       `json:"file_group_gid,omitempty"`
+	FileGroupName   string    `json:"file_group_name,omitempty"`
+	ProcessUID      int       `json:"process_uid"`
+	ProcessEUID     int       `json:"process_euid"`
+	ProcessUsername string    `json:"process_username,omitempty"`
+
+	// Explicit limitations
+	Limitations     []string `json:"limitations"`
 }
 
 // CheckpointProof is a checkpoint with verification data.
@@ -431,6 +484,17 @@ func (b *Builder) WithContexts(contexts []ContextPeriod) *Builder {
 		return b
 	}
 	b.packet.Contexts = contexts
+	return b
+}
+
+// WithProvenance adds record provenance information.
+// This documents who initiated the record, where it was generated,
+// and access control information at the time of creation.
+func (b *Builder) WithProvenance(prov *RecordProvenance) *Builder {
+	if prov == nil {
+		return b
+	}
+	b.packet.Provenance = prov
 	return b
 }
 

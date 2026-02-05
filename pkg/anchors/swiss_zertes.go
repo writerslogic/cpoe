@@ -8,9 +8,12 @@
 //
 // Key characteristics:
 // - SWISS LAW: Separate from EU eIDAS but similar structure
-// - LEGALLY BINDING: Full legal equivalence in Switzerland
+// - ZERTES FRAMEWORK: Swiss electronic signature regulations
 // - SAS ACCREDITED: Certification by Swiss Accreditation Service
-// - COMPATIBILITY: Often interoperable with eIDAS QTSPs
+// - COMPATIBILITY: Often interoperable with EU Trust List providers
+//
+// NOTE: Legal status depends on specific use case and compliance requirements.
+// Consult legal counsel for binding legal determinations.
 //
 // Legal framework:
 // - ZertES (SR 943.03) - Federal Act on Electronic Signatures

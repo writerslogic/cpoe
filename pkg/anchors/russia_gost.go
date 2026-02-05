@@ -7,9 +7,12 @@
 //
 // Key characteristics:
 // - GOST ALGORITHMS: Uses Russian national cryptographic standards
-// - LEGALLY BINDING: Under Federal Law on Electronic Signature (63-FZ)
+// - FEDERAL LAW 63-FZ: Framework for electronic signatures in Russia
 // - STATE CONTROLLED: Accreditation by Ministry of Digital Development
 // - RUSSIAN LANGUAGE: Documentation in Russian
+//
+// NOTE: Legal status depends on specific use case and compliance requirements.
+// Consult legal counsel for binding legal determinations.
 //
 // GOST Cryptographic Standards:
 // - GOST R 34.10-2012: Digital signature (elliptic curve)

@@ -7,9 +7,12 @@
 //
 // Key characteristics:
 // - GOVERNMENT MANDATED: Required for many official Brazilian transactions
-// - LEGALLY BINDING: Full legal equivalence to handwritten signatures
+// - ICP-BRASIL FRAMEWORK: Brazilian PKI regulations
 // - HIERARCHICAL PKI: Root CA operated by ITI (Instituto Nacional de TI)
 // - PORTUGUESE: Documentation primarily in Portuguese
+//
+// NOTE: Legal status depends on specific use case and compliance requirements.
+// Consult legal counsel for binding legal determinations.
 //
 // Implementation requirements:
 // - Accredited TSA certificate from ICP-Brasil hierarchy

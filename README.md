@@ -18,7 +18,7 @@
 
 ## Overview
 
-**witnessd** generates irrefutable cryptographic evidence of document authorship through commit-based temporal witnessing. Unlike detection-based approaches that attempt to distinguish human from AI content, witnessd provides a **documentation framework** where authors commit to content states over time and declare their creative process.
+**witnessd** generates tamper-evident cryptographic records of document authorship through commit-based temporal witnessing. Unlike detection-based approaches that attempt to distinguish human from AI content, witnessd provides a **documentation framework** where authors commit to content states over time and declare their creative process.
 
 ### Philosophy
 

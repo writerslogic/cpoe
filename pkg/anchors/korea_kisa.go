@@ -7,9 +7,12 @@
 //
 // Key characteristics:
 // - GOVERNMENT OPERATED: KISA is a government agency under MSIT
-// - LEGALLY BINDING: Recognized under Korean Electronic Signature Act
+// - KOREAN ESA: Framework under Korean Electronic Signature Act
 // - NPKI BASED: Part of National PKI infrastructure
 // - KOREAN LANGUAGE: Documentation primarily in Korean
+//
+// NOTE: Legal status depends on specific use case and compliance requirements.
+// Consult legal counsel for binding legal determinations.
 //
 // Legal framework:
 // - Electronic Signature Act (전자서명법, 2020 revision)

@@ -7,9 +7,12 @@
 //
 // Key characteristics:
 // - GOVERNMENT OPERATED: CCA is under MeitY
-// - LEGALLY BINDING: IT Act 2000 provides legal recognition
+// - IT ACT 2000: Framework for electronic signatures in India
 // - HIERARCHICAL PKI: Root CA operated by CCA
 // - AADHAAR INTEGRATION: Some services integrate with Aadhaar
+//
+// NOTE: Legal status depends on specific use case and compliance requirements.
+// Consult legal counsel for binding legal determinations.
 //
 // Legal framework:
 // - Information Technology Act, 2000 (amended 2008)
