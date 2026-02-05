@@ -1,46 +1,99 @@
-# Build artifacts
+###############################################################################
+# Build artifacts (never commit binaries)
+###############################################################################
 /bin/
 /target/
+/dist/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go build outputs
 /witnessd
 /witnessctl
-*.exe
+/witnessd-entropy
+/witnessd-test
+*.test
+*.out
 
-# macOS
+###############################################################################
+# macOS / Apple
+###############################################################################
 .DS_Store
 .AppleDouble
 .LSOverride
+._*
 
-# IDE
+# Xcode / SwiftUI
+DerivedData/
+*.xcuserstate
+*.xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.ipa
+
+# Apple signing / notarization
+*.p8
+*.p12
+*.cer
+*.mobileprovision
+witnessd-notarize.zip
+
+###############################################################################
+# IDEs / editors
+###############################################################################
 .idea/
 .vscode/
 *.swp
 *.swo
+*.bak
+*.tmp
 
-# Research data and paper (not for public repo)
-/data/
-/paper/
-docs/paper.md
-
-# IME build artifacts
+###############################################################################
+# IME / platform build artifacts
+###############################################################################
 cmd/witnessd-ime/build/
-cmd/witnessd-ime/Witnessd.app/Contents/MacOS/
+cmd/witnessd-ime/Witnessd.app/
+cmd/witnessd-ime/libwitnessd.a
+cmd/witnessd-ime/libwitnessd.h
 
-# Release artifacts
-dist/
-*.zip
-*.tar.gz
-*.deb
-*.rpm
-
-# Coverage
+###############################################################################
+# Coverage / testing artifacts
+###############################################################################
 coverage.out
 coverage.html
+ca_coverage.out
 
+###############################################################################
+# Research data (NOT for public repo)
+###############################################################################
+data/raw/
+data/processed/
+data/external/
+
+# Allow scripts + README
+!data/download-datasets.sh
+!data/README.md
+
+###############################################################################
+# Paper directory (private research, not for public repo)
+###############################################################################
+paper/
+
+###############################################################################
 # Local environment
+###############################################################################
 .env
 .env.local
+.env.*
 
-# Apple signing
-*.p8
-*.p12
-witnessd-notarize.zip
+###############################################################################
+# Archives / installers
+###############################################################################
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.deb
+*.rpm
