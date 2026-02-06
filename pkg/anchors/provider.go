@@ -168,7 +168,7 @@ type Proof struct {
 	// RawProof contains the provider-specific proof data
 	// - OpenTimestamps: .ots file contents
 	// - RFC 3161: TimeStampResp ASN.1 DER
-	// - eIDAS: Qualified timestamp token
+	// - EU Trust List validated: RFC 3161 with certificate validation
 	RawProof []byte `json:"raw_proof"`
 
 	// VerifyURL is an optional URL for independent verification
