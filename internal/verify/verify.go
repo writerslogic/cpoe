@@ -395,7 +395,10 @@ func VerifyEvidence(packet *EvidencePacket, pubKey ed25519.PublicKey) error {
 
 	// Bag peaks to get root
 	if len(packet.Peaks) == 1 {
-		rootBytes, _ := hex.DecodeString(packet.MMRRoot)
+		rootBytes, err := hex.DecodeString(packet.MMRRoot)
+		if err != nil || len(rootBytes) != 32 {
+			return ErrProofInvalid
+		}
 		var root [32]byte
 		copy(root[:], rootBytes)
 		if currentHash != root {
@@ -407,7 +410,10 @@ func VerifyEvidence(packet *EvidencePacket, pubKey ed25519.PublicKey) error {
 	// Bag from right to left
 	peaksHashes := make([][32]byte, len(packet.Peaks))
 	for i, p := range packet.Peaks {
-		pBytes, _ := hex.DecodeString(p)
+		pBytes, err := hex.DecodeString(p)
+		if err != nil || len(pBytes) != 32 {
+			return ErrProofInvalid
+		}
 		copy(peaksHashes[i][:], pBytes)
 	}
 
@@ -416,7 +422,10 @@ func VerifyEvidence(packet *EvidencePacket, pubKey ed25519.PublicKey) error {
 		root = mmr.HashInternal(peaksHashes[i], root)
 	}
 
-	rootBytes, _ := hex.DecodeString(packet.MMRRoot)
+	rootBytes, err := hex.DecodeString(packet.MMRRoot)
+	if err != nil || len(rootBytes) != 32 {
+		return ErrProofInvalid
+	}
 	var expectedRoot [32]byte
 	copy(expectedRoot[:], rootBytes)
 

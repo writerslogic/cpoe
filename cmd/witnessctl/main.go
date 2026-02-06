@@ -244,7 +244,6 @@ func usage() {
 		c.Cyan, c.Reset,
 		c.Cyan, c.Reset,
 		c.Cyan, c.Reset,
-		c.Cyan, c.Reset,
 		c.Bold+c.White, c.Reset,
 		c.Bold+c.White, c.Reset,
 		c.Bold+c.White, c.Reset,

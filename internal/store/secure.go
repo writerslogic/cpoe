@@ -89,10 +89,10 @@ func OpenSecure(path string, hmacKey []byte) (*SecureStore, error) {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
-	// Set secure file permissions
-	if err := os.Chmod(path, 0600); err != nil {
+	// Force connection establishment to create the file
+	if err := db.Ping(); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("set database permissions: %w", err)
+		return nil, fmt.Errorf("establish database connection: %w", err)
 	}
 
 	// Apply base schema
@@ -105,6 +105,12 @@ func OpenSecure(path string, hmacKey []byte) (*SecureStore, error) {
 	if _, err := db.Exec(secureSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("apply secure schema: %w", err)
+	}
+
+	// Set secure file permissions (after file is created)
+	if err := os.Chmod(path, 0600); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("set database permissions: %w", err)
 	}
 
 	store := &SecureStore{
@@ -270,12 +276,13 @@ type SecureEvent struct {
 
 // InsertSecureEvent inserts a new event with integrity verification.
 func (s *SecureStore) InsertSecureEvent(e *SecureEvent) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Check integrity status while holding the lock to prevent race condition
 	if !s.integrityOK {
 		return errors.New("database integrity compromised - refusing to write")
 	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	// Set previous hash from chain
 	e.PreviousHash = s.lastHash
@@ -403,8 +410,12 @@ type Stats struct {
 
 // GetStats returns database statistics.
 func (s *SecureStore) GetStats() (*Stats, error) {
+	s.mu.RLock()
+	integrityOK := s.integrityOK
+	s.mu.RUnlock()
+
 	stats := &Stats{
-		IntegrityOK: s.integrityOK,
+		IntegrityOK: integrityOK,
 	}
 
 	// Event count

@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>Cryptographic proof of authorship through documented process attestation</strong>
+  <strong>Tamper-evident documentation of authorship process through cryptographic attestation</strong>
 </p>
 
 <p align="center">
@@ -33,8 +33,8 @@ The system makes three categories of claims:
 - **Hardened Keystroke Capture** — CGEventTap-based counting with multi-layer security
 - **Tamper Detection** — HMAC integrity verification, cryptographic chaining, timing anomaly detection
 - **Script/USB-HID Protection** — Detects automated input from scripts and hardware spoofing devices
-- **Jitter Evidence** — Cryptographic proof of real-time typing through zone-based keystroke timing
-- **Verifiable Delay Functions (VDF)** — Prove minimum elapsed time between commits (unforgeable)
+- **Jitter Evidence** — Supporting signal of real-time human interaction through zone-based keystroke timing
+- **Verifiable Delay Functions (VDF)** — Prove minimum elapsed time between commits (detects modification)
 - **Process Declarations** — Structured documentation of AI usage, collaboration, and input modalities
 - **Presence Verification** — Optional random challenges proving human presence
 - **Secure Storage** — Tamper-evident SQLite database with HMAC integrity verification
@@ -168,6 +168,12 @@ No actual keystrokes or text content is captured.
 4. **Export** bundles events into portable evidence packets
 5. **Verify** validates evidence packets independently
 
+### macOS Menu Bar App
+
+The macOS menu bar app is a convenience interface only. It does not implement evidence logic, verification logic, or trust decisions.
+
+This UI invokes the witnessd CLI. All security invariants and evidence semantics live in the CLI.
+
 ## How It Works
 
 ```
@@ -280,11 +286,11 @@ witnessd export essay.md -tier enhanced
 
 ## Evidence Tiers
 
-| Tier | Components | Claims |
+| Tier | Components | Evidence Signals |
 |------|------------|--------|
 | **Basic** | Commits + Declaration | Chain integrity, time elapsed, process declared |
 | **Standard** | + Presence Verification | Author was physically present during sessions |
-| **Enhanced** | + Hardware Attestation | TPM attests chain was not modified |
+| **Enhanced** | + Hardware Attestation | TPM attestation provides hardware-backed signals against rollback andn key misuse |
 | **Maximum** | + Behavioral + External | Full forensic analysis + blockchain anchors |
 
 ## Process Declaration
@@ -353,8 +359,7 @@ Zone 6 (right ring):  O L .
 Zone 7 (right pinky): P ; /
 ```
 
-Human typing has characteristic patterns between zones. The jitter evidence proves
-these patterns occurred over the documented time period.
+Human typing has characteristic patterns between zones. The jitter evidence provides supporting signals consistent with human typing over the documented time period.
 
 ## Keystroke Security
 
@@ -425,10 +430,10 @@ Input Method Engine (IME) provides keystroke counting without system-level acces
 
 The evidence packet makes explicit claims:
 
-**Cryptographic (cannot be faked):**
-- "Content states form an unbroken cryptographic chain"
-- "At least 12h 34m elapsed during documented composition"
-- "Author was present 89% of challenged sessions"
+**Cryptographic (tamper-evident, independently verifiable):**
+- “Content states form a cryptographically linked, append-only chain”
+- “At least 12h 34m of wall-clock time elapsed between committed states”
+- “Presence challenges were responded to during 89% of challenge windows”
 
 **Attestation (legal accountability):**
 - "Author signed declaration of creative process"
@@ -455,6 +460,8 @@ False declarations are the author's legal risk, not a technical detection proble
 - Adversary controls filesystem after the fact
 - Adversary cannot break SHA-256, Ed25519, or VDF
 - Adversary cannot retroactively modify Bitcoin blockchain
+
+As with all user-space systems, compromise of the operating system kernel prior to evidence capture invalidates downstream guarantees; this is an explicit and irreducible limitation.
 
 **Storage Security:**
 
@@ -521,7 +528,7 @@ If you use witnessd in academic work, please cite:
 
 ```bibtex
 @article{condrey2025witnessd,
-  title={Kinetic Proof of Provenance: Cryptographic Authorship Witnessing Through Temporal Attestation},
+  title={Falsifiable Process Evidence: Producing Admissible Machine-Generated Records Without Trusted Parties},
   author={Condrey, David},
   journal={arXiv preprint},
   year={2025},

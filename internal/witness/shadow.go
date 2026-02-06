@@ -305,7 +305,13 @@ func encodeShadow(s *ShadowFile) []byte {
 		copy(buf[offset:], s.Content)
 
 	case ShadowChunked:
-		binary.BigEndian.PutUint32(buf[offset:offset+4], uint32(len(s.Chunks)))
+		// Validate chunk count fits in uint32 (max 2^32-1 chunks)
+		if len(s.Chunks) > 0xFFFFFFFF {
+			// Truncate to max representable value - this is a safety limit
+			binary.BigEndian.PutUint32(buf[offset:offset+4], 0xFFFFFFFF)
+		} else {
+			binary.BigEndian.PutUint32(buf[offset:offset+4], uint32(len(s.Chunks)))
+		}
 		offset += 4
 		for _, chunk := range s.Chunks {
 			binary.BigEndian.PutUint64(buf[offset:offset+8], uint64(chunk.Offset))

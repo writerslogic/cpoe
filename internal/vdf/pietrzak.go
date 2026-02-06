@@ -301,6 +301,8 @@ func (v *PietrzakVDF) generateProofIntermediates(chain []*big.Int) []*big.Int {
 }
 
 // Verify checks the Pietrzak VDF proof in O(log T) time.
+// SECURITY: Uses the VDF's configured T value, NOT the proof's claimed T.
+// This prevents attackers from claiming T=1 to bypass the time requirement.
 func (v *PietrzakVDF) Verify(proof *PietrzakProof) bool {
 	if proof == nil || proof.Input == nil || proof.Output == nil {
 		return false
@@ -314,14 +316,34 @@ func (v *PietrzakVDF) Verify(proof *PietrzakProof) bool {
 		return false
 	}
 
+	// CRITICAL SECURITY CHECK: Verify proof.T matches expected T
+	// An attacker could set proof.T=1 and provide a trivial proof if we
+	// used the proof's claimed T value instead of the expected value.
+	if proof.T != v.params.T {
+		return false
+	}
+
+	// Verify the proof has the expected number of intermediate values
+	// For T squarings, we expect O(log T) intermediates
+	expectedLevels := bitLength(v.params.T)
+	if len(proof.Intermediates) < expectedLevels-1 {
+		// Not enough intermediate values - proof is incomplete
+		return false
+	}
+
 	// Verify using recursive halving
 	x := new(big.Int).Set(proof.Input)
 	y := new(big.Int).Set(proof.Output)
-	t := proof.T
+	t := v.params.T // Use configured T, not proof.T
 
 	for i, mu := range proof.Intermediates {
 		if t <= 1 {
 			break
+		}
+
+		// Validate intermediate value bounds
+		if mu == nil || mu.Sign() <= 0 || mu.Cmp(v.params.N) >= 0 {
+			return false
 		}
 
 		// Generate Fiat-Shamir challenge

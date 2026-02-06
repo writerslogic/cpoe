@@ -24,7 +24,7 @@ Traditional authorship verification attempts to *detect* AI involvement through 
 2. Detection is an arms race that content generators will eventually win
 3. False positives harm legitimate authors
 
-Process declarations take a different approach: **document what cannot be detected, attest to what cannot be proven**. The author makes a legally binding statement about their creative process. Verification shifts from technical detection to institutional accountability.
+Process declarations take a different approach: **document what cannot be detected, attest to what cannot be proven**. The author makes a cryptographically signed statement about their creative process. Verification shifts from technical detection to institutional accountability.
 
 ### Accountability Framework
 
@@ -424,7 +424,7 @@ Process declarations are designed to be legally meaningful across jurisdictions,
 | Jurisdiction | Potential Framework |
 |--------------|---------------------|
 | United States | Contract law, fraud statutes, academic honor codes |
-| European Union | eIDAS regulation, national contract law |
+| European Union | National contract law, electronic signature regulations |
 | United Kingdom | Fraud Act 2006, contract law |
 | Academic | Institution-specific honor codes and policies |
 
@@ -611,5 +611,5 @@ For sensitive contexts, consider:
 
 - Ed25519: RFC 8032, Edwards-Curve Digital Signature Algorithm
 - SHA-256: FIPS 180-4, Secure Hash Standard
-- eIDAS: EU Regulation 910/2014 on electronic identification
+- ETSI EN 319 612: EU Trusted Lists format specification
 - IEEE 2410-2019: Biometric Open Protocol Standard (for context on attestation)

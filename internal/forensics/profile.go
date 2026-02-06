@@ -208,7 +208,12 @@ func detectTemporalAnomalies(events []EventData, regions map[int64][]RegionData)
 }
 
 // abs32 returns the absolute value of an int32.
+// Handles the special case of math.MinInt32 (-2147483648) which cannot be negated
+// without overflow in two's complement, returning math.MaxInt32 instead.
 func abs32(x int32) int32 {
+	if x == -2147483648 { // math.MinInt32
+		return 2147483647 // math.MaxInt32
+	}
 	if x < 0 {
 		return -x
 	}

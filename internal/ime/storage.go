@@ -36,6 +36,11 @@ func NewEvidenceStorage(baseDir string) (*EvidenceStorage, error) {
 
 // defaultStorageDir returns the platform-specific evidence storage directory.
 func defaultStorageDir() (string, error) {
+	// Check for environment variable override (used by sandboxed macOS app)
+	if envDir := os.Getenv("WITNESSD_DATA_DIR"); envDir != "" {
+		return filepath.Join(envDir, "evidence"), nil
+	}
+
 	switch runtime.GOOS {
 	case "darwin":
 		home, err := os.UserHomeDir()

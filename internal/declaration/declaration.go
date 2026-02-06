@@ -236,15 +236,16 @@ func (b *Builder) validate() error {
 }
 
 // signingPayload creates the canonical bytes to sign.
+// SECURITY: All declaration fields must be included to prevent post-signature tampering.
 func (d *Declaration) signingPayload() []byte {
 	h := sha256.New()
-	h.Write([]byte("witnessd-declaration-v1"))
+	h.Write([]byte("witnessd-declaration-v2")) // Bumped version for new payload format
 
 	h.Write(d.DocumentHash[:])
 	h.Write(d.ChainHash[:])
 	h.Write([]byte(d.Title))
 
-	// Modalities
+	// Modalities (including Note field)
 	var buf [8]byte
 	binary.BigEndian.PutUint64(buf[:], uint64(len(d.InputModalities)))
 	h.Write(buf[:])
@@ -252,15 +253,41 @@ func (d *Declaration) signingPayload() []byte {
 		h.Write([]byte(m.Type))
 		binary.BigEndian.PutUint64(buf[:], uint64(m.Percentage*1000)) // Fixed-point
 		h.Write(buf[:])
+		h.Write([]byte(m.Note))
 	}
 
-	// AI tools
+	// AI tools (all fields must be signed)
 	binary.BigEndian.PutUint64(buf[:], uint64(len(d.AITools)))
 	h.Write(buf[:])
 	for _, ai := range d.AITools {
 		h.Write([]byte(ai.Tool))
+		h.Write([]byte(ai.Version))
 		h.Write([]byte(ai.Purpose))
+		h.Write([]byte(ai.Interaction))
 		h.Write([]byte(ai.Extent))
+		// Include sections
+		binary.BigEndian.PutUint64(buf[:], uint64(len(ai.Sections)))
+		h.Write(buf[:])
+		for _, section := range ai.Sections {
+			h.Write([]byte(section))
+		}
+	}
+
+	// Collaborators (CRITICAL: must be signed to prevent tampering)
+	binary.BigEndian.PutUint64(buf[:], uint64(len(d.Collaborators)))
+	h.Write(buf[:])
+	for _, c := range d.Collaborators {
+		h.Write([]byte(c.Name))
+		h.Write([]byte(c.Role))
+		binary.BigEndian.PutUint64(buf[:], uint64(len(c.Sections)))
+		h.Write(buf[:])
+		for _, section := range c.Sections {
+			h.Write([]byte(section))
+		}
+		// Include collaborator's public key if present
+		if c.PublicKey != nil {
+			h.Write(c.PublicKey)
+		}
 	}
 
 	// Statement
@@ -268,6 +295,10 @@ func (d *Declaration) signingPayload() []byte {
 
 	// Timestamp
 	binary.BigEndian.PutUint64(buf[:], uint64(d.CreatedAt.UnixNano()))
+	h.Write(buf[:])
+
+	// Version
+	binary.BigEndian.PutUint64(buf[:], uint64(d.Version))
 	h.Write(buf[:])
 
 	// Public key

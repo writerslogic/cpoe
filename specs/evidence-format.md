@@ -402,7 +402,7 @@ See `specs/behavioral-metrics.md` for metric definitions.
       {
         "provider": "rfc3161",
         "provider_name": "DigiCert TSA",
-        "legal_standing": "eIDAS qualified timestamp",
+        "legal_standing": "RFC 3161 timestamp (EU Trust List validated)",
         "regions": ["EU", "US"],
         "hash": "f3a4b5c6...",
         "timestamp": "2026-01-25T14:30:05Z",

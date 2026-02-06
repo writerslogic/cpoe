@@ -233,8 +233,11 @@ func (c *Chain) Verify() error {
 			return fmt.Errorf("checkpoint 0: non-zero previous hash")
 		}
 
-		// Verify VDF
-		if i > 0 && cp.VDF != nil {
+		// Verify VDF (mandatory for all non-first checkpoints)
+		if i > 0 {
+			if cp.VDF == nil {
+				return fmt.Errorf("checkpoint %d: missing VDF proof (required for time verification)", i)
+			}
 			expectedInput := vdf.ChainInput(cp.ContentHash, cp.PreviousHash, cp.Ordinal)
 			if cp.VDF.Input != expectedInput {
 				return fmt.Errorf("checkpoint %d: VDF input mismatch", i)

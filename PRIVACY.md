@@ -80,8 +80,8 @@ automated content generation, without accessing actual content.
 - Timestamps of signature operations
 - Optional: TPM-backed attestations binding signatures to hardware
 
-**Purpose:** To create legally admissible evidence under FRE 902(13) and
-eIDAS 2.0 qualified electronic signature requirements.
+**Purpose:** To create cryptographically verifiable evidence. Note: Legal
+admissibility depends on jurisdiction and context; consult legal counsel.
 
 ## Data Storage and Security
 

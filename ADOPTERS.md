@@ -6,10 +6,9 @@ an industry-recognized tool for cryptographic file witnessing.
 
 ## Why List Your Organization?
 
-In forensic and legal contexts, demonstrating widespread adoption strengthens
-the argument for judicial admissibility under standards like FRE 902(13)
-(self-authenticating electronic evidence) and eIDAS 2.0 (qualified electronic
-signatures).
+In forensic and legal contexts, demonstrating widespread adoption can support
+arguments for judicial consideration. The system implements EU Trusted List
+parsing and validation according to ETSI EN 319 612 for timestamp verification.
 
 ## How to Add Your Organization
 

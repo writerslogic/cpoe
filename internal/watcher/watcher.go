@@ -201,40 +201,89 @@ func (w *Watcher) debounceLoop() {
 	}
 }
 
+// stableFile represents a file ready for hashing.
+type stableFile struct {
+	path    string
+	lastMod time.Time
+}
+
 // checkStableFiles finds files that haven't changed for the debounce interval.
+// This implementation releases the lock during file I/O to avoid blocking eventLoop.
 func (w *Watcher) checkStableFiles(now time.Time) {
+	threshold := now.Add(-w.interval)
+
+	// Phase 1: Collect stable files while holding lock (fast)
+	var stableFiles []stableFile
+	w.stateMu.RLock()
+	for path, lastMod := range w.state {
+		if lastMod.Before(threshold) {
+			stableFiles = append(stableFiles, stableFile{path: path, lastMod: lastMod})
+		}
+	}
+	w.stateMu.RUnlock()
+
+	if len(stableFiles) == 0 {
+		return
+	}
+
+	// Phase 2: Hash files without holding lock (slow I/O)
+	type hashResult struct {
+		path    string
+		lastMod time.Time
+		hash    [32]byte
+		size    int64
+		err     error
+	}
+	results := make([]hashResult, len(stableFiles))
+
+	for i, sf := range stableFiles {
+		hash, size, err := HashFile(sf.path)
+		results[i] = hashResult{
+			path:    sf.path,
+			lastMod: sf.lastMod,
+			hash:    hash,
+			size:    size,
+			err:     err,
+		}
+	}
+
+	// Phase 3: Update state with lock, checking for modifications during hashing
 	w.stateMu.Lock()
 	defer w.stateMu.Unlock()
 
-	threshold := now.Add(-w.interval)
-
-	for path, lastMod := range w.state {
-		if lastMod.Before(threshold) {
-			// File has been stable long enough - witness it
-			hash, size, err := HashFile(path)
-			if err != nil {
-				select {
-				case w.errors <- err:
-				default:
-				}
-				continue
-			}
-
-			event := Event{
-				Path:      path,
-				Hash:      hash,
-				Size:      size,
-				Timestamp: now,
-			}
-
+	for _, r := range results {
+		if r.err != nil {
 			select {
-			case w.events <- event:
-				// Update state to current time to prevent re-witnessing
-				// until next modification
-				delete(w.state, path)
+			case w.errors <- r.err:
 			default:
-				// Event channel full, try again later
 			}
+			continue
+		}
+
+		// Check if file was modified during hashing
+		currentLastMod, exists := w.state[r.path]
+		if !exists {
+			// File was removed from state (already processed or deleted)
+			continue
+		}
+		if currentLastMod != r.lastMod {
+			// File was modified during hashing - skip and let it stabilize again
+			continue
+		}
+
+		event := Event{
+			Path:      r.path,
+			Hash:      r.hash,
+			Size:      r.size,
+			Timestamp: now,
+		}
+
+		select {
+		case w.events <- event:
+			// Remove from state to prevent re-witnessing until next modification
+			delete(w.state, r.path)
+		default:
+			// Event channel full, try again later
 		}
 	}
 }

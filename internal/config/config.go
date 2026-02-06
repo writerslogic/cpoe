@@ -36,15 +36,14 @@ type Config struct {
 
 // DefaultConfig returns a configuration with sensible defaults.
 func DefaultConfig() *Config {
-	homeDir, _ := os.UserHomeDir()
-	witnessdDir := filepath.Join(homeDir, ".witnessd")
+	witnessdDir := WitnessdDir()
 
 	return &Config{
 		WatchPaths:     []string{},
 		Interval:       5,
 		DatabasePath:   filepath.Join(witnessdDir, "mmr.db"),
 		LogPath:        filepath.Join(witnessdDir, "witnessd.log"),
-		SigningKeyPath: filepath.Join(homeDir, ".ssh", "witnessd_signing_key"),
+		SigningKeyPath: filepath.Join(witnessdDir, "signing_key"),
 		SignaturesPath: filepath.Join(witnessdDir, "signatures.sigs"),
 		EventStorePath: filepath.Join(witnessdDir, "events.db"),
 	}
@@ -52,8 +51,7 @@ func DefaultConfig() *Config {
 
 // ConfigPath returns the default configuration file path.
 func ConfigPath() string {
-	homeDir, _ := os.UserHomeDir()
-	return filepath.Join(homeDir, ".witnessd", "config.toml")
+	return filepath.Join(WitnessdDir(), "config.toml")
 }
 
 // Load reads configuration from the specified path.
@@ -118,7 +116,13 @@ func (c *Config) EnsureDirectories() error {
 }
 
 // WitnessdDir returns the base witnessd directory.
+// If the WITNESSD_DATA_DIR environment variable is set, it is used instead of ~/.witnessd.
+// This allows the macOS app to redirect data to a sandboxed container directory.
 func WitnessdDir() string {
+	// Check for override via environment variable (used by sandboxed macOS app)
+	if envDir := os.Getenv("WITNESSD_DATA_DIR"); envDir != "" {
+		return envDir
+	}
 	homeDir, _ := os.UserHomeDir()
 	return filepath.Join(homeDir, ".witnessd")
 }

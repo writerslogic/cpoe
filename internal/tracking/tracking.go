@@ -172,13 +172,17 @@ func (s *Session) Stop() error {
 		s.cancel()
 	}
 
-	// Stop secure session
-	if err := s.secureSession.Stop(); err != nil {
-		s.error = err
+	// Stop secure session (may be nil for loaded sessions)
+	if s.secureSession != nil {
+		if err := s.secureSession.Stop(); err != nil {
+			s.error = err
+		}
 	}
 
-	// End jitter session
-	s.jitterSession.End()
+	// End jitter session (may be nil for loaded sessions)
+	if s.jitterSession != nil {
+		s.jitterSession.End()
+	}
 
 	s.EndedAt = time.Now()
 	s.running = false
@@ -217,32 +221,38 @@ func (s *Session) Status() Status {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// Get status from secure session
-	secureStatus := s.secureSession.Status()
-
 	status := Status{
-		ID:               s.ID,
-		Running:          s.running,
-		StartedAt:        s.StartedAt,
-		EndedAt:          s.EndedAt,
-		DocumentPath:     s.DocumentPath,
-		KeystrokeCount:   secureStatus.KeystrokeCount,
-		SampleCount:      s.jitterSession.SampleCount(),
-		Checkpoints:      secureStatus.Checkpoints,
-		PasteEvents:      secureStatus.PasteEvents,
-		TPMAvailable:     secureStatus.TPMStatus.Available,
-		Compromised:      secureStatus.Compromised,
-		CompromiseReason: secureStatus.CompromiseReason,
+		ID:           s.ID,
+		Running:      s.running,
+		StartedAt:    s.StartedAt,
+		EndedAt:      s.EndedAt,
+		DocumentPath: s.DocumentPath,
 	}
 
-	// Get anomaly report
-	status.AnomalyPercentage = secureStatus.AnomalyReport.AnomalyPercentage
-	status.SuspectedScripted = secureStatus.AnomalyReport.SuspectedScripted
-	status.SuspectedUSBHID = secureStatus.AnomalyReport.SuspectedUSBHID
+	// Get status from secure session (may be nil for loaded sessions)
+	if s.secureSession != nil {
+		secureStatus := s.secureSession.Status()
+		status.KeystrokeCount = secureStatus.KeystrokeCount
+		status.Checkpoints = secureStatus.Checkpoints
+		status.PasteEvents = secureStatus.PasteEvents
+		status.TPMAvailable = secureStatus.TPMStatus.Available
+		status.Compromised = secureStatus.Compromised
+		status.CompromiseReason = secureStatus.CompromiseReason
 
-	// Get synthetic event stats
-	status.SyntheticRejected = uint64(secureStatus.SyntheticStats.TotalRejected)
-	status.ValidationMismatch = uint64(secureStatus.ValidationStats.Discrepancy)
+		// Get anomaly report
+		status.AnomalyPercentage = secureStatus.AnomalyReport.AnomalyPercentage
+		status.SuspectedScripted = secureStatus.AnomalyReport.SuspectedScripted
+		status.SuspectedUSBHID = secureStatus.AnomalyReport.SuspectedUSBHID
+
+		// Get synthetic event stats
+		status.SyntheticRejected = uint64(secureStatus.SyntheticStats.TotalRejected)
+		status.ValidationMismatch = uint64(secureStatus.ValidationStats.Discrepancy)
+	}
+
+	// Get sample count from jitter session (may be nil for loaded sessions)
+	if s.jitterSession != nil {
+		status.SampleCount = s.jitterSession.SampleCount()
+	}
 
 	// Compute duration
 	end := s.EndedAt
@@ -268,16 +278,25 @@ func (s *Session) Status() Status {
 
 // Export returns jitter evidence from this session (legacy format).
 func (s *Session) Export() jitter.Evidence {
+	if s.jitterSession == nil {
+		return jitter.Evidence{}
+	}
 	return s.jitterSession.Export()
 }
 
 // ExportSecure returns the secure session evidence with full tamper-evident chain.
 func (s *Session) ExportSecure() (*keystroke.SecureSessionEvidence, error) {
+	if s.secureSession == nil {
+		return nil, fmt.Errorf("secure session not available (session was loaded from disk)")
+	}
 	return s.secureSession.Export()
 }
 
 // SecureStatus returns the full secure session status.
 func (s *Session) SecureStatus() keystroke.SessionStatus {
+	if s.secureSession == nil {
+		return keystroke.SessionStatus{}
+	}
 	return s.secureSession.Status()
 }
 
@@ -288,26 +307,30 @@ func (s *Session) Save(witnessdDir string) error {
 		return err
 	}
 
-	// Save legacy jitter session for compatibility
-	jitterPath := filepath.Join(trackingDir, s.ID+".json")
-	if err := s.jitterSession.Save(jitterPath); err != nil {
-		return fmt.Errorf("failed to save jitter session: %w", err)
+	// Save legacy jitter session for compatibility (may be nil for some sessions)
+	if s.jitterSession != nil {
+		jitterPath := filepath.Join(trackingDir, s.ID+".json")
+		if err := s.jitterSession.Save(jitterPath); err != nil {
+			return fmt.Errorf("failed to save jitter session: %w", err)
+		}
 	}
 
-	// Save secure evidence
-	secureEvidence, err := s.secureSession.Export()
-	if err != nil {
-		return fmt.Errorf("failed to export secure evidence: %w", err)
-	}
+	// Save secure evidence (may be nil for loaded sessions)
+	if s.secureSession != nil {
+		secureEvidence, err := s.secureSession.Export()
+		if err != nil {
+			return fmt.Errorf("failed to export secure evidence: %w", err)
+		}
 
-	secureData, err := secureEvidence.JSON()
-	if err != nil {
-		return fmt.Errorf("failed to serialize secure evidence: %w", err)
-	}
+		secureData, err := secureEvidence.JSON()
+		if err != nil {
+			return fmt.Errorf("failed to serialize secure evidence: %w", err)
+		}
 
-	securePath := filepath.Join(trackingDir, s.ID+".secure.json")
-	if err := os.WriteFile(securePath, secureData, 0600); err != nil {
-		return fmt.Errorf("failed to save secure evidence: %w", err)
+		securePath := filepath.Join(trackingDir, s.ID+".secure.json")
+		if err := os.WriteFile(securePath, secureData, 0600); err != nil {
+			return fmt.Errorf("failed to save secure evidence: %w", err)
+		}
 	}
 
 	return nil
