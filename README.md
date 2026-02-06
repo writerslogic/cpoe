@@ -11,7 +11,8 @@
   <a href="#quick-start">Quick Start</a> •
   <a href="#how-it-works">How It Works</a> •
   <a href="#commands">Commands</a> •
-  <a href="#evidence-tiers">Evidence Tiers</a>
+  <a href="#evidence-tiers">Evidence Tiers</a> •
+  <a href="#legal">Legal & Licensing</a>
 </p>
 
 ---
@@ -20,27 +21,21 @@
 
 **witnessd** generates tamper-evident cryptographic records of document authorship through commit-based temporal witnessing. Unlike detection-based approaches that attempt to distinguish human from AI content, witnessd provides a **documentation framework** where authors commit to content states over time and declare their creative process.
 
-### Philosophy
+### The Forensic Triad
 
-The system makes three categories of claims:
+The system achieves "adversarial collapse" by combining three independent mechanisms:
 
-1. **Cryptographic (strong)**: Content states form an unbroken hash chain; VDFs prove minimum elapsed time between states
-2. **Attestation (legal)**: Authors sign declarations describing their process, including any AI tool usage
-3. **Presence (optional)**: Random challenge-response protocols verify author presence during sessions
+1. **Causality Locks (Temporal)**: Uses **Verifiable Delay Functions (VDFs)** to prove minimum elapsed time between states, ensuring checkpoints cannot be silently back-dated.
+2. **Behavioral & Hardware Binding (Identity)**: Uses **Cryptographic Jitter Seals** (keystroke timing) and **TPM/PUF attestations** to tie evidence to real-time human activity and specific hardware.
+3. **Ratcheted Evidence Log (Integrity)**: Appends checkpoints to a **Merkle Mountain Range (MMR)** log using keys that are ratcheted and destroyed after use to ensure forward secrecy.
 
 ### Key Features
 
-- **Hardened Keystroke Capture** — CGEventTap-based counting with multi-layer security
-- **Tamper Detection** — HMAC integrity verification, cryptographic chaining, timing anomaly detection
-- **Script/USB-HID Protection** — Detects automated input from scripts and hardware spoofing devices
-- **Jitter Evidence** — Supporting signal of real-time human interaction through zone-based keystroke timing
-- **Verifiable Delay Functions (VDF)** — Prove minimum elapsed time between commits (detects modification)
-- **Process Declarations** — Structured documentation of AI usage, collaboration, and input modalities
-- **Presence Verification** — Optional random challenges proving human presence
-- **Secure Storage** — Tamper-evident SQLite database with HMAC integrity verification
-- **Evidence Strength Tiers** — Basic → Standard → Enhanced → Maximum
-- **External Trust Anchors** — OpenTimestamps (Bitcoin) and RFC 3161 TSA integration
-- **TPM Integration** — Hardware-backed security with monotonic counters and attestation
+- **Capture Environment Declaration (CED)** — Explicitly records OS, kernel, and security state at session start to prevent environment spoofing.
+- **Jitter Seals** — Supporting signal of real-time human interaction through zone-based keystroke timing without capturing content.
+- **Hardened Keystroke Capture** — Dual-layer validation (CGEventTap/IOKit) to detect synthetic events and automated scripts.
+- **Evidence Strength Tiers** — Basic → Standard → Enhanced → Maximum.
+- **External Trust Anchors** — Integration with OpenTimestamps (Bitcoin) and RFC 3161 TSA.
 
 ## Installation
 
@@ -73,22 +68,17 @@ cp configs/config.example.toml ~/.witnessd/config.toml
 ## Quick Start
 
 ```bash
-# 1. Initialize witnessd
-witnessd init
+# 1. Initialize and calibrate
+witnessd init && witnessd calibrate
 
-# 2. Calibrate VDF for your machine (one-time)
-witnessd calibrate
+# 2. Start tracking for your document
+witnessd track start manuscript.md
 
-# 3. Write your document, then commit checkpoints
+# 3. Create checkpoints as you write
 witnessd commit manuscript.md -m "Completed chapter 1"
-# ... continue writing ...
-witnessd commit manuscript.md -m "Finished draft"
 
-# 4. View checkpoint history
-witnessd log manuscript.md
-
-# 5. Export evidence when done
-witnessd export manuscript.md
+# 4. Export evidence packet
+witnessd export manuscript.md -tier enhanced
 ```
 
 ## Enhanced Workflow (with Keystroke Tracking)
@@ -127,36 +117,14 @@ witnessd export manuscript.md -tier standard
 
 No actual keystrokes or text content is captured.
 
-## Architecture
+Architecture
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│                         WITNESSD SYSTEM                           │
+│                         WITNESSD SYSTEM                          │
 ├──────────────────────────────────────────────────────────────────┤
-│                                                                   │
-│   ┌─────────────┐     ┌─────────────┐     ┌─────────────┐        │
-│   │  witnessd   │     │  witnessctl │     │   IME       │        │
-│   │  (daemon)   │     │   (query)   │     │  (future)   │        │
-│   └──────┬──────┘     └──────┬──────┘     └──────┬──────┘        │
-│          │                   │                   │                │
-│          ▼                   ▼                   ▼                │
-│   ┌──────────────────────────────────────────────────────┐       │
-│   │               Secure SQLite Storage                   │       │
-│   │  • HMAC integrity verification                        │       │
-│   │  • Chain-linked events                                │       │
-│   │  • Tamper detection                                   │       │
-│   └──────────────────────────────────────────────────────┘       │
-│          │                                                        │
-│          ▼                                                        │
-│   ┌──────────────────────────────────────────────────────┐       │
-│   │                 Evidence Layers                       │       │
-│   │  • VDF proofs (temporal)                              │       │
-│   │  • Jitter evidence (behavioral)                       │       │
-│   │  • Presence verification                              │       │
-│   │  • TPM attestation                                    │       │
-│   │  • External anchors (Bitcoin, RFC 3161)               │       │
-│   └──────────────────────────────────────────────────────┘       │
-│                                                                   │
+│    CAUSALITY LOCKS      BEHAVIORAL BINDING      RATCHETED LOG    │
+│    (VDF Timeline)      (Jitter / TPM / PUF)     (MMR Structure)  │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -524,15 +492,15 @@ Configuration is stored in `~/.witnessd/config.json`:
 
 ## Citation
 
-If you use witnessd in academic work, please cite:
+If you use witnessd in academic or forensic work, please cite:
 
 ```bibtex
-@article{condrey2025witnessd,
-  title={Falsifiable Process Evidence: Producing Admissible Machine-Generated Records Without Trusted Parties},
-  author={Condrey, David},
-  journal={arXiv preprint},
-  year={2025},
-  note={Paper forthcoming}
+@article{condrey2026witnessd,
+  title={Falsifiable Process Evidence via Cryptographic Causality Locks and Behavioral Attestation},
+  author={Condrey, David Lee},
+  publisher={WritersLogic, Inc.},
+  year={2026},
+  note={U.S. Patent Pending}
 }
 ```
 
@@ -540,7 +508,15 @@ If you use witnessd in academic work, please cite:
 
 ## License
 
-Apache License 2.0
+This software is licensed under the **Polyform Non-Commercial License 1.0.0**. 
+
+**Commercial Use Restricted:** Any commercial use of this software, including use by or on behalf of a for-profit organization, requires a separate commercial license from **WritersLogic, Inc.** ---
+
+## Intellectual Property Notice
+
+**Patent Pending:** The technologies implemented in this repository—including but not limited to **Cryptographic Jitter Seals**, **VDF Causality Locks**, and **Ratcheted Merkle Mountain Range Logs**—are the subject of pending U.S. and international patent applications. 
+
+© 2026 WritersLogic, Inc. All rights reserved.
 
 ## Contributing
 
