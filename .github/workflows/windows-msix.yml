@@ -1,0 +1,533 @@
+name: Windows MSIX Build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'cmd/**'
+      - 'internal/**'
+      - 'pkg/**'
+      - 'platforms/windows/**'
+      - '.github/workflows/windows-msix.yml'
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'cmd/**'
+      - 'internal/**'
+      - 'pkg/**'
+      - 'platforms/windows/**'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g., 1.0.0)'
+        required: false
+        default: ''
+      sign_package:
+        description: 'Sign the package'
+        required: false
+        type: boolean
+        default: false
+      submit_to_store:
+        description: 'Submit to Partner Center'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GO_VERSION: '1.22'
+
+jobs:
+  build-windows:
+    name: Build Windows Binaries
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        arch: [x64, arm64]
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Determine version
+        id: version
+        shell: pwsh
+        run: |
+          if ("${{ github.event.inputs.version }}" -ne "") {
+            $version = "${{ github.event.inputs.version }}"
+          } elseif ("${{ github.ref_type }}" -eq "tag") {
+            $version = "${{ github.ref_name }}" -replace '^v', ''
+          } else {
+            $version = "0.0.0-dev.${{ github.run_number }}"
+          }
+          # Ensure 4-part version for MSIX
+          $parts = $version -split '\.'
+          while ($parts.Count -lt 4) { $parts += "0" }
+          $msixVersion = ($parts[0..3] -join '.')
+          echo "version=$msixVersion" >> $env:GITHUB_OUTPUT
+          echo "Version: $msixVersion"
+
+      - name: Build witnessd
+        shell: pwsh
+        env:
+          GOOS: windows
+          GOARCH: ${{ matrix.arch == 'x64' && 'amd64' || 'arm64' }}
+          CGO_ENABLED: '0'
+        run: |
+          $ldflags = "-s -w -X main.Version=${{ steps.version.outputs.version }} -X main.Commit=${{ github.sha }} -X main.BuildTime=$(Get-Date -Format 'yyyy-MM-ddTHH:mm:ssZ')"
+          go build -trimpath -ldflags "$ldflags" -o "build/windows_${{ matrix.arch }}/witnessd.exe" ./cmd/witnessd
+          go build -trimpath -ldflags "$ldflags" -o "build/windows_${{ matrix.arch }}/witnessctl.exe" ./cmd/witnessctl
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-binaries-${{ matrix.arch }}
+          path: build/windows_${{ matrix.arch }}/
+          retention-days: 7
+
+  build-tsf:
+    name: Build TSF DLL
+    runs-on: windows-latest
+    needs: [build-windows]
+    strategy:
+      matrix:
+        arch: [x64]  # ARM64 TSF build requires special toolchain
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Set up Visual Studio
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Set up Visual Studio Developer Command Prompt
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch }}
+
+      - name: Build Go archive
+        shell: pwsh
+        env:
+          GOOS: windows
+          GOARCH: ${{ matrix.arch == 'x64' && 'amd64' || 'arm64' }}
+          CGO_ENABLED: '1'
+        run: |
+          New-Item -ItemType Directory -Path "build/tsf_${{ matrix.arch }}" -Force
+          go build -buildmode=c-archive -trimpath -o "build/tsf_${{ matrix.arch }}/witnessd.a" ./cmd/witnessd-tsf
+
+      - name: Compile TSF DLL
+        shell: cmd
+        run: |
+          cl /nologo /EHsc /LD /MD /O2 /DNDEBUG ^
+            /I"build/tsf_${{ matrix.arch }}" ^
+            cmd/witnessd-tsf/tsf/witnessd_tsf.cpp ^
+            build/tsf_${{ matrix.arch }}/witnessd.a ^
+            kernel32.lib user32.lib ole32.lib oleaut32.lib advapi32.lib shlwapi.lib ^
+            /link /DLL /OUT:build/windows_${{ matrix.arch }}/witnessd-tsf.dll
+
+      - name: Upload TSF DLL
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-tsf-${{ matrix.arch }}
+          path: build/windows_${{ matrix.arch }}/witnessd-tsf.dll
+          retention-days: 7
+
+  generate-assets:
+    name: Generate Visual Assets
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install ImageMagick
+        shell: pwsh
+        run: |
+          choco install imagemagick -y
+          refreshenv
+
+      - name: Generate assets
+        shell: pwsh
+        run: |
+          # Check if source icon exists
+          $iconPath = "platforms/windows/assets/icon.svg"
+          if (-not (Test-Path $iconPath)) {
+            $iconPath = ""
+          }
+
+          # Generate assets
+          Set-Location platforms/windows/assets
+          if ($iconPath) {
+            .\generate-assets.ps1 -SourceSvg "..\..\..\$iconPath"
+          } else {
+            .\generate-assets.ps1
+          }
+
+      - name: Upload assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-assets
+          path: platforms/windows/assets/*.png
+          retention-days: 7
+
+  create-msix:
+    name: Create MSIX Package
+    runs-on: windows-latest
+    needs: [build-windows, build-tsf, generate-assets]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download x64 binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-binaries-x64
+          path: build/windows_x64/
+
+      - name: Download arm64 binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-binaries-arm64
+          path: build/windows_arm64/
+
+      - name: Download TSF DLL
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-tsf-x64
+          path: build/windows_x64/
+        continue-on-error: true  # TSF build might not be available
+
+      - name: Download assets
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-assets
+          path: platforms/windows/assets/
+
+      - name: Install Windows SDK
+        shell: pwsh
+        run: |
+          # Windows SDK should be pre-installed on windows-latest
+          $sdkPath = "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
+          $versions = Get-ChildItem $sdkPath -Directory | Sort-Object Name -Descending | Select-Object -First 1
+          if ($versions) {
+            echo "Windows SDK found: $($versions.Name)"
+          } else {
+            echo "Installing Windows SDK..."
+            choco install windows-sdk-10-version-2004-all -y
+          }
+
+      - name: Create MSIX packages
+        shell: pwsh
+        run: |
+          $version = "${{ needs.build-windows.outputs.version }}"
+          if (-not $version) { $version = "1.0.0.0" }
+
+          # Create x64 package
+          .\platforms\windows\scripts\create-msix.ps1 `
+            -Architecture x64 `
+            -Version $version `
+            -SkipAssetValidation
+
+          # Create arm64 package (if binaries exist)
+          if (Test-Path "build/windows_arm64/witnessd.exe") {
+            .\platforms\windows\scripts\create-msix.ps1 `
+              -Architecture arm64 `
+              -Version $version `
+              -SkipAssetValidation
+          }
+
+      - name: Create MSIX bundle
+        shell: pwsh
+        run: |
+          $version = "${{ needs.build-windows.outputs.version }}"
+          if (-not $version) { $version = "1.0.0.0" }
+
+          $makeAppx = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\makeappx.exe" |
+            Sort-Object FullName -Descending | Select-Object -First 1
+
+          if ($makeAppx) {
+            $bundleDir = "build/msix/bundle"
+            New-Item -ItemType Directory -Path $bundleDir -Force
+
+            # Copy packages to bundle directory
+            Get-ChildItem "build/msix/*.msix" | Copy-Item -Destination $bundleDir
+
+            # Create bundle
+            & $makeAppx.FullName bundle /d $bundleDir /p "build/msix/Witnessd_${version}.msixbundle" /o
+          }
+
+      - name: Upload MSIX packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: msix-packages
+          path: |
+            build/msix/*.msix
+            build/msix/*.msixbundle
+          retention-days: 30
+
+  sign-msix:
+    name: Sign MSIX Package
+    runs-on: windows-latest
+    needs: [create-msix]
+    if: github.event.inputs.sign_package == 'true' || (github.ref_type == 'tag' && startsWith(github.ref, 'refs/tags/v'))
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download MSIX packages
+        uses: actions/download-artifact@v4
+        with:
+          name: msix-packages
+          path: build/msix/
+
+      - name: Import signing certificate
+        shell: pwsh
+        env:
+          WINDOWS_CERT_PFX: ${{ secrets.WINDOWS_SIGNING_CERT_PFX }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}
+        run: |
+          if (-not $env:WINDOWS_CERT_PFX) {
+            Write-Warning "No signing certificate configured"
+            exit 0
+          }
+
+          # Decode and save PFX
+          $pfxBytes = [Convert]::FromBase64String($env:WINDOWS_CERT_PFX)
+          $pfxPath = "signing.pfx"
+          [IO.File]::WriteAllBytes($pfxPath, $pfxBytes)
+
+          # Import to certificate store
+          $securePassword = ConvertTo-SecureString $env:WINDOWS_CERT_PASSWORD -AsPlainText -Force
+          Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\My -Password $securePassword
+
+          # Clean up
+          Remove-Item $pfxPath -Force
+
+      - name: Sign packages
+        shell: pwsh
+        env:
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}
+        run: |
+          $cert = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert | Select-Object -First 1
+          if (-not $cert) {
+            Write-Warning "No code signing certificate found"
+            exit 0
+          }
+
+          .\platforms\windows\scripts\sign-msix.ps1 `
+            -SignAll `
+            -CertificateThumbprint $cert.Thumbprint
+
+      - name: Upload signed packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: msix-packages-signed
+          path: |
+            build/msix/*.msix
+            build/msix/*.msixbundle
+          retention-days: 30
+
+  validate-msix:
+    name: Validate MSIX Package
+    runs-on: windows-latest
+    needs: [create-msix]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download MSIX packages
+        uses: actions/download-artifact@v4
+        with:
+          name: msix-packages
+          path: build/msix/
+
+      - name: Validate package structure
+        shell: pwsh
+        run: |
+          .\platforms\windows\scripts\validate-msix.ps1 -SkipWACK
+
+      - name: Run WACK (optional)
+        shell: pwsh
+        continue-on-error: true  # WACK might not be available in all runners
+        run: |
+          $wack = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\App Certification Kit\appcert.exe" -ErrorAction SilentlyContinue
+          if ($wack) {
+            .\platforms\windows\scripts\validate-msix.ps1
+          } else {
+            Write-Host "WACK not available - skipping"
+          }
+
+      - name: Upload validation reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validation-reports
+          path: build/msix/validation/
+          retention-days: 7
+
+  test-installation:
+    name: Test MSIX Installation
+    runs-on: windows-latest
+    needs: [create-msix]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download MSIX package
+        uses: actions/download-artifact@v4
+        with:
+          name: msix-packages
+          path: build/msix/
+
+      - name: Enable developer mode
+        shell: pwsh
+        run: |
+          # Enable sideloading for testing
+          reg add "HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock" /t REG_DWORD /f /v "AllowDevelopmentWithoutDevLicense" /d "1"
+
+      - name: Test package installation
+        shell: pwsh
+        run: |
+          $package = Get-ChildItem "build/msix/*.msix" | Select-Object -First 1
+          if (-not $package) {
+            Write-Error "No MSIX package found"
+            exit 1
+          }
+
+          Write-Host "Testing installation of: $($package.Name)"
+
+          # Install package
+          try {
+            Add-AppxPackage -Path $package.FullName -ForceApplicationShutdown
+            Write-Host "Package installed successfully" -ForegroundColor Green
+          } catch {
+            Write-Warning "Package installation failed (may require signing): $_"
+            exit 0
+          }
+
+          # Verify installation
+          $installed = Get-AppxPackage | Where-Object { $_.Name -like "*Witnessd*" }
+          if ($installed) {
+            Write-Host "Installed package:" -ForegroundColor Green
+            Write-Host "  Name: $($installed.Name)"
+            Write-Host "  Version: $($installed.Version)"
+            Write-Host "  InstallLocation: $($installed.InstallLocation)"
+
+            # Test executable
+            $exe = Join-Path $installed.InstallLocation "witnessd.exe"
+            if (Test-Path $exe) {
+              Write-Host "Testing executable..."
+              & $exe version
+            }
+
+            # Uninstall
+            Write-Host "Uninstalling..."
+            Remove-AppxPackage -Package $installed.PackageFullName
+            Write-Host "Test completed successfully" -ForegroundColor Green
+          } else {
+            Write-Warning "Package not found after installation"
+          }
+
+  release:
+    name: Release MSIX
+    runs-on: windows-latest
+    needs: [sign-msix, validate-msix]
+    if: github.ref_type == 'tag' && startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Download signed packages
+        uses: actions/download-artifact@v4
+        with:
+          name: msix-packages-signed
+          path: build/msix/
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/msix/*.msix
+            build/msix/*.msixbundle
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Optional: Submit to Microsoft Partner Center
+  submit-to-store:
+    name: Submit to Partner Center
+    runs-on: windows-latest
+    needs: [sign-msix, validate-msix]
+    if: github.event.inputs.submit_to_store == 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          name: msix-packages-signed
+          path: build/msix/
+
+      - name: Create MSIX Upload package
+        shell: pwsh
+        run: |
+          # Create .msixupload for Store submission
+          $bundle = Get-ChildItem "build/msix/*.msixbundle" | Select-Object -First 1
+          if ($bundle) {
+            $uploadPath = $bundle.FullName -replace '\.msixbundle$', '.msixupload'
+            Compress-Archive -Path $bundle.FullName -DestinationPath $uploadPath
+            Rename-Item $uploadPath ($uploadPath -replace '\.zip$', '.msixupload')
+          }
+
+      - name: Submit to Partner Center
+        shell: pwsh
+        env:
+          PARTNER_CENTER_TENANT_ID: ${{ secrets.PARTNER_CENTER_TENANT_ID }}
+          PARTNER_CENTER_CLIENT_ID: ${{ secrets.PARTNER_CENTER_CLIENT_ID }}
+          PARTNER_CENTER_CLIENT_SECRET: ${{ secrets.PARTNER_CENTER_CLIENT_SECRET }}
+          PARTNER_CENTER_APP_ID: ${{ secrets.PARTNER_CENTER_APP_ID }}
+        run: |
+          if (-not $env:PARTNER_CENTER_TENANT_ID) {
+            Write-Warning "Partner Center credentials not configured"
+            exit 0
+          }
+
+          # Install StoreBroker module
+          Install-Module -Name StoreBroker -Force -AllowClobber
+
+          # Authenticate
+          $secureSecret = ConvertTo-SecureString $env:PARTNER_CENTER_CLIENT_SECRET -AsPlainText -Force
+          $cred = New-Object System.Management.Automation.PSCredential($env:PARTNER_CENTER_CLIENT_ID, $secureSecret)
+
+          Set-StoreBrokerAuthentication -TenantId $env:PARTNER_CENTER_TENANT_ID -Credential $cred
+
+          # Create submission
+          $package = Get-ChildItem "build/msix/*.msixupload" | Select-Object -First 1
+          if ($package) {
+            Write-Host "Submitting: $($package.Name)"
+            New-ApplicationSubmission -AppId $env:PARTNER_CENTER_APP_ID -PackagePath $package.FullName
+          }

@@ -7,6 +7,16 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/writerslogic/witnessd/actions/workflows/ci.yml"><img src="https://github.com/writerslogic/witnessd/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/writerslogic/witnessd/actions/workflows/release.yml"><img src="https://github.com/writerslogic/witnessd/actions/workflows/release.yml/badge.svg" alt="Release"></a>
+  <a href="https://slsa.dev/spec/v1.0/levels#build-l3"><img src="https://slsa.dev/images/gh-badge-level3.svg" alt="SLSA Level 3"></a>
+  <a href="https://github.com/writerslogic/witnessd/releases/latest"><img src="https://img.shields.io/github/v/release/writerslogic/witnessd?label=release" alt="Release"></a>
+  <a href="https://goreportcard.com/report/github.com/writerslogic/witnessd"><img src="https://goreportcard.com/badge/github.com/writerslogic/witnessd" alt="Go Report Card"></a>
+  <a href="https://pkg.go.dev/github.com/writerslogic/witnessd"><img src="https://pkg.go.dev/badge/github.com/writerslogic/witnessd.svg" alt="Go Reference"></a>
+  <a href="https://github.com/writerslogic/witnessd/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-dual-blue" alt="License"></a>
+</p>
+
+<p align="center">
   <a href="#installation">Installation</a> •
   <a href="#quick-start">Quick Start</a> •
   <a href="#how-it-works">How It Works</a> •
@@ -14,6 +24,10 @@
   <a href="#evidence-tiers">Evidence Tiers</a> •
   <a href="#legal">Legal & Licensing</a>
 </p>
+
+---
+
+> **Patent Pending:** The system and method for falsifiable process evidence via cryptographic causality locks and behavioral attestation is the subject of USPTO Application No. 19/460,364.
 
 ---
 
@@ -508,13 +522,15 @@ If you use witnessd in academic or forensic work, please cite:
 
 ## License
 
-This software is licensed under the **Polyform Non-Commercial License 1.0.0**. 
+This software is licensed under the **Polyform Non-Commercial License 1.0.0**.
 
-**Commercial Use Restricted:** Any commercial use of this software, including use by or on behalf of a for-profit organization, requires a separate commercial license from **WritersLogic, Inc.** ---
+**Commercial Use Restricted:** Any commercial use of this software, including use by or on behalf of a for-profit organization, requires a separate commercial license from **WritersLogic, Inc.**
+
+---
 
 ## Intellectual Property Notice
 
-**Patent Pending:** The technologies implemented in this repository—including but not limited to **Cryptographic Jitter Seals**, **VDF Causality Locks**, and **Ratcheted Merkle Mountain Range Logs**—are the subject of pending U.S. and international patent applications. 
+**Patent Pending:** The technologies implemented in this repository—including but not limited to **Cryptographic Jitter Seals**, **VDF Causality Locks**, and **Ratcheted Merkle Mountain Range Logs**—are the subject of pending U.S. and international patent applications.
 
 © 2026 WritersLogic, Inc. All rights reserved.
 

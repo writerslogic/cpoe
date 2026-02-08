@@ -1,0 +1,408 @@
+# GitHub Actions workflow for building Witnessd Windows Installer
+#
+# This workflow builds the Windows MSI installer using WiX Toolset v4.
+# It handles:
+# - Building Go binaries for Windows (x64 and arm64)
+# - Building the TSF DLL (C++ component)
+# - Creating the MSI installer package
+# - Code signing (when secrets are available)
+# - Running installer tests
+# - Uploading artifacts for releases
+
+name: Windows Installer
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'cmd/**'
+      - 'internal/**'
+      - 'pkg/**'
+      - 'platforms/windows/**'
+      - '.github/workflows/windows-installer.yml'
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'cmd/**'
+      - 'internal/**'
+      - 'pkg/**'
+      - 'platforms/windows/**'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version override (e.g., 1.0.0)'
+        required: false
+      sign:
+        description: 'Sign binaries and installer'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  GO_VERSION: '1.22'
+  WIX_VERSION: '4.0.5'
+
+jobs:
+  # ============================================================================
+  # Build Go Binaries
+  # ============================================================================
+  build-binaries:
+    name: Build Go Binaries
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        arch: [x64, arm64]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          if [[ -n "${{ github.event.inputs.version }}" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION=$(git describe --tags --always 2>/dev/null || echo "0.0.1-dev")
+            VERSION="${VERSION#v}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Build witnessd
+        shell: bash
+        env:
+          GOOS: windows
+          GOARCH: ${{ matrix.arch == 'x64' && 'amd64' || 'arm64' }}
+          CGO_ENABLED: 0
+        run: |
+          mkdir -p build/${{ matrix.arch }}
+          go build -ldflags "-s -w -X main.Version=${{ steps.version.outputs.version }} -X main.Commit=${{ github.sha }} -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -o build/${{ matrix.arch }}/witnessd.exe ./cmd/witnessd
+
+      - name: Build witnessctl
+        shell: bash
+        env:
+          GOOS: windows
+          GOARCH: ${{ matrix.arch == 'x64' && 'amd64' || 'arm64' }}
+          CGO_ENABLED: 0
+        run: |
+          go build -ldflags "-s -w -X main.Version=${{ steps.version.outputs.version }} -X main.Commit=${{ github.sha }} -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -o build/${{ matrix.arch }}/witnessctl.exe ./cmd/witnessctl
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-binaries-${{ matrix.arch }}
+          path: build/${{ matrix.arch }}/
+          retention-days: 7
+
+  # ============================================================================
+  # Build TSF DLL (requires Visual Studio)
+  # ============================================================================
+  build-tsf:
+    name: Build TSF DLL
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        arch: [x64]  # arm64 TSF requires different toolchain
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Set up Visual Studio
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build Go archive
+        shell: cmd
+        working-directory: cmd/witnessd-tsf
+        env:
+          CGO_ENABLED: 1
+          GOOS: windows
+          GOARCH: amd64
+        run: |
+          mkdir ..\..\build\${{ matrix.arch }}
+          go build -buildmode=c-archive -o ..\..\build\${{ matrix.arch }}\witnessd.a .
+
+      - name: Build C++ DLL
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" ${{ matrix.arch }}
+          cl /EHsc /LD /O2 /DNDEBUG cmd\witnessd-tsf\tsf\*.cpp build\${{ matrix.arch }}\witnessd.a /Fe"build\${{ matrix.arch }}\witnessd-tsf.dll" /link ole32.lib oleaut32.lib advapi32.lib
+
+      - name: Upload TSF DLL
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-tsf-${{ matrix.arch }}
+          path: build/${{ matrix.arch }}/witnessd-tsf.dll
+          retention-days: 7
+
+  # ============================================================================
+  # Build MSI Installer
+  # ============================================================================
+  build-installer:
+    name: Build MSI Installer
+    runs-on: windows-latest
+    needs: [build-binaries, build-tsf]
+    strategy:
+      matrix:
+        arch: [x64]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-binaries-${{ matrix.arch }}
+          path: build/${{ matrix.arch }}
+
+      - name: Download TSF DLL
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-tsf-${{ matrix.arch }}
+          path: build/${{ matrix.arch }}
+
+      - name: Install WiX Toolset
+        shell: pwsh
+        run: |
+          dotnet tool install -g wix --version ${{ env.WIX_VERSION }}
+          wix extension add -g WixToolset.UI.wixext
+          wix extension add -g WixToolset.Util.wixext
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          if [[ -n "${{ github.event.inputs.version }}" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION=$(git describe --tags --always 2>/dev/null || echo "0.0.1-dev")
+            VERSION="${VERSION#v}"
+          fi
+          # Convert to MSI-compatible version (X.X.X.X)
+          MSI_VERSION=$(echo "$VERSION" | sed 's/-.*//')
+          PARTS=$(echo "$MSI_VERSION" | tr '.' '\n' | wc -l)
+          while [ $PARTS -lt 3 ]; do
+            MSI_VERSION="$MSI_VERSION.0"
+            PARTS=$((PARTS + 1))
+          done
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "msi_version=$MSI_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Prepare installer resources
+        shell: pwsh
+        run: |
+          $BuildDir = "build\${{ matrix.arch }}"
+          $InstallerDir = "platforms\windows\installer"
+
+          # Copy resources
+          Copy-Item "$InstallerDir\resources\*" -Destination $BuildDir -Recurse -Force
+
+          # Copy license and readme
+          if (Test-Path "LICENSE") { Copy-Item "LICENSE" -Destination $BuildDir }
+          if (Test-Path "README.md") { Copy-Item "README.md" -Destination $BuildDir }
+
+      - name: Build MSI
+        shell: pwsh
+        run: |
+          $BuildDir = Resolve-Path "build\${{ matrix.arch }}"
+          $InstallerDir = "platforms\windows\installer"
+          $OutputDir = "build\installer"
+
+          New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
+
+          $WixSources = @(
+            "$InstallerDir\Product.wxs",
+            "$InstallerDir\Features.wxs",
+            "$InstallerDir\Files.wxs",
+            "$InstallerDir\UI.wxs",
+            "$InstallerDir\CustomActions.wxs"
+          )
+
+          wix build `
+            -arch ${{ matrix.arch }} `
+            -d "BuildDir=$BuildDir" `
+            -d "SourceDir=$(Get-Location)" `
+            -d "ResourcesDir=$BuildDir" `
+            -d "ProductVersion=${{ steps.version.outputs.msi_version }}" `
+            -ext WixToolset.UI.wixext `
+            -ext WixToolset.Util.wixext `
+            -o "$OutputDir\witnessd-${{ steps.version.outputs.version }}-${{ matrix.arch }}.msi" `
+            $WixSources
+
+      - name: Upload MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer-${{ matrix.arch }}
+          path: build/installer/*.msi
+          retention-days: 30
+
+  # ============================================================================
+  # Code Signing (requires secrets)
+  # ============================================================================
+  sign-installer:
+    name: Sign Installer
+    runs-on: windows-latest
+    needs: [build-installer]
+    if: |
+      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') ||
+      github.event.inputs.sign == 'true'
+    strategy:
+      matrix:
+        arch: [x64]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download MSI
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-installer-${{ matrix.arch }}
+          path: build/installer
+
+      - name: Import code signing certificate
+        if: env.CODE_SIGNING_CERT != ''
+        env:
+          CODE_SIGNING_CERT: ${{ secrets.WINDOWS_CODE_SIGNING_CERT }}
+          CODE_SIGNING_PASSWORD: ${{ secrets.WINDOWS_CODE_SIGNING_PASSWORD }}
+        shell: pwsh
+        run: |
+          $CertBytes = [Convert]::FromBase64String($env:CODE_SIGNING_CERT)
+          $CertPath = Join-Path $env:TEMP "code-signing.pfx"
+          [IO.File]::WriteAllBytes($CertPath, $CertBytes)
+
+          $SecurePassword = ConvertTo-SecureString -String $env:CODE_SIGNING_PASSWORD -AsPlainText -Force
+          Import-PfxCertificate -FilePath $CertPath -CertStoreLocation Cert:\CurrentUser\My -Password $SecurePassword
+
+          Remove-Item $CertPath -Force
+
+      - name: Sign MSI
+        if: env.CODE_SIGNING_THUMBPRINT != ''
+        env:
+          CODE_SIGNING_THUMBPRINT: ${{ secrets.WINDOWS_CODE_SIGNING_THUMBPRINT }}
+        shell: pwsh
+        run: |
+          $MsiFiles = Get-ChildItem -Path "build\installer\*.msi"
+          foreach ($Msi in $MsiFiles) {
+            & signtool sign /sha1 $env:CODE_SIGNING_THUMBPRINT /tr http://timestamp.digicert.com /td sha256 /fd sha256 /v $Msi.FullName
+          }
+
+      - name: Upload signed MSI
+        if: env.CODE_SIGNING_THUMBPRINT != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer-signed-${{ matrix.arch }}
+          path: build/installer/*.msi
+          retention-days: 30
+
+  # ============================================================================
+  # Test Installer
+  # ============================================================================
+  test-installer:
+    name: Test Installer
+    runs-on: windows-latest
+    needs: [build-installer]
+    strategy:
+      matrix:
+        arch: [x64]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download MSI
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-installer-${{ matrix.arch }}
+          path: build/installer
+
+      - name: Get MSI filename
+        id: msi
+        shell: pwsh
+        run: |
+          $MsiFile = Get-ChildItem -Path "build\installer\*.msi" | Select-Object -First 1
+          echo "path=$($MsiFile.FullName)" >> $env:GITHUB_OUTPUT
+          echo "name=$($MsiFile.Name)" >> $env:GITHUB_OUTPUT
+
+      - name: Run installer tests
+        shell: pwsh
+        run: |
+          .\platforms\windows\installer\test-installer.ps1 `
+            -MsiPath "${{ steps.msi.outputs.path }}" `
+            -LogDir "build\test-logs"
+
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-test-logs-${{ matrix.arch }}
+          path: build/test-logs/
+          retention-days: 7
+
+  # ============================================================================
+  # Release (on tag push)
+  # ============================================================================
+  release:
+    name: Upload to Release
+    runs-on: ubuntu-latest
+    needs: [sign-installer, test-installer]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Download signed MSI (x64)
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-installer-signed-x64
+          path: release
+        continue-on-error: true
+
+      - name: Download unsigned MSI (x64) if no signed version
+        if: failure()
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-installer-x64
+          path: release
+
+      - name: Calculate checksums
+        run: |
+          cd release
+          for f in *.msi; do
+            sha256sum "$f" > "$f.sha256"
+          done
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/*.msi
+            release/*.sha256
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
