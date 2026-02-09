@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 	private var statusBarController: StatusBarController?
 	private let witnessdBridge = WitnessdBridge()
+	private var windowCheckWorkItem: DispatchWorkItem?
 
 	// MARK: - Application Lifecycle
 
@@ -19,6 +20,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 		statusBarController = StatusBarController(bridge: witnessdBridge)
 
+		// Monitor when all windows are closed to return to accessory mode
+		NotificationCenter.default.addObserver(
+			self,
+			selector: #selector(windowWillClose),
+			name: NSWindow.willCloseNotification,
+			object: nil
+		)
+
 		// Auto-initialize on first launch
 		Task {
 			await autoInitializeIfNeeded()
@@ -26,18 +35,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 		}
 	}
 
-	func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-		Task { @MainActor in
-			statusBarController?.shutdown()
+	@objc private func windowWillClose(_ notification: Notification) {
+		// Cancel any pending check to debounce rapid window closes
+		windowCheckWorkItem?.cancel()
 
-			if (await witnessdBridge.getStatus()).isTracking {
-				_ = await witnessdBridge.stopTracking()
+		// Create new work item for checking windows
+		let workItem = DispatchWorkItem { [weak self] in
+			guard self != nil else { return }
+
+			// Check for any visible standard windows
+			// Exclude status bar, panels, and other special windows
+			let visibleWindows = NSApp.windows.filter { window in
+				window.isVisible &&
+				window.level == .normal &&
+				!window.className.contains("StatusBar") &&
+				window.styleMask.contains(.titled)
 			}
 
-			sender.reply(toApplicationShouldTerminate: true)
+			if visibleWindows.isEmpty {
+				NSApp.setActivationPolicy(.accessory)
+			}
 		}
 
-		return .terminateLater
+		windowCheckWorkItem = workItem
+		// Delay to allow for window transition animations and debounce
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: workItem)
+	}
+
+	func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+		// Clean up observers
+		NotificationCenter.default.removeObserver(self)
+		windowCheckWorkItem?.cancel()
+		windowCheckWorkItem = nil
+
+		// Shutdown status bar controller
+		statusBarController?.shutdown()
+
+		// Allow immediate termination - CLI handles its own cleanup
+		return .terminateNow
+	}
+
+	deinit {
+		NotificationCenter.default.removeObserver(self)
 	}
 
 	// MARK: - Auto-Initialization
@@ -108,7 +147,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 	private func openAccessibilitySettings() {
 		// This URL opens System Settings → Privacy & Security → Accessibility
 		// AND adds the app to the list automatically
-		let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true]
+		// Use string key directly to avoid concurrency warning with kAXTrustedCheckOptionPrompt
+		let promptKey = "AXTrustedCheckOptionPrompt" as CFString
+		let options: CFDictionary = [promptKey: true] as CFDictionary
 		AXIsProcessTrustedWithOptions(options)
 
 		// Also open the settings pane directly for visibility

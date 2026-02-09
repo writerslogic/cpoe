@@ -61,6 +61,7 @@ cd platforms\windows\installer
 | **Core** | Essential witnessd daemon and witnessctl CLI | Required |
 | **Service** | Install as Windows service with auto-start | Enabled |
 | **TSF** | Text Services Framework input method | Enabled |
+| **System Tray** | Tray icon for status and control (auto-starts) | Enabled |
 | **Shell Integration** | PATH, shortcuts, context menu | Enabled |
 
 ### Directory Structure
@@ -72,6 +73,7 @@ Witnessd\
 ├── bin\
 │   ├── witnessd.exe      # Main daemon
 │   ├── witnessctl.exe    # CLI tool
+│   ├── witnessd-tray.exe # System tray application
 │   └── witnessd-tsf.dll  # TSF input method (optional)
 ├── config\
 │   ├── config.json.template

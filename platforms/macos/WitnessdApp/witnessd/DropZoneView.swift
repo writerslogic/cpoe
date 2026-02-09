@@ -43,9 +43,16 @@ struct DropZoneView: View {
             showFilePicker()
         }
         .animation(reduceMotion ? nil : Design.Animation.normal, value: isTargeted)
+        .focusable()
         .accessibilityLabel(title)
-        .accessibilityHint("Drop a file or double-tap to browse")
+        .accessibilityHint("Drop a file or double-tap to browse. Press Return or Space to open file browser.")
         .accessibilityAddTraits(.isButton)
+        .accessibilityIdentifier("drop-zone-\(title.lowercased().replacingOccurrences(of: " ", with: "-"))")
+        .onChange(of: isTargeted) { _, targeted in
+            if targeted {
+                AccessibilityAnnouncer.shared.announce("File hovering over drop zone")
+            }
+        }
     }
 
     private func handleDrop(providers: [NSItemProvider]) {
@@ -116,6 +123,8 @@ struct CompactDropZone: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
+                .accessibilityLabel("Browse for file")
+                .accessibilityHint("Opens a file picker dialog")
             }
         }
         .padding(Design.Spacing.md)
@@ -135,8 +144,14 @@ struct CompactDropZone: View {
             return true
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(droppedFile?.lastPathComponent ?? placeholder)
+        .accessibilityLabel(droppedFile != nil ? "Selected file: \(droppedFile!.lastPathComponent)" : placeholder)
         .accessibilityHint("Drop a file or activate to browse")
+        .accessibilityValue(droppedFile != nil ? "File selected" : "No file selected")
+        .onChange(of: droppedFile) { _, newFile in
+            if let file = newFile {
+                AccessibilityAnnouncer.shared.announce("File selected: \(file.lastPathComponent)")
+            }
+        }
     }
 
     private func handleDrop(providers: [NSItemProvider]) {

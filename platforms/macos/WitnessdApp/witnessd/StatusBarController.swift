@@ -11,6 +11,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
 	private var globalMonitor: Any?
 	private var localMonitor: Any?
 	private var currentStatus = WitnessStatus()
+	private var sentinelStatus = SentinelStatus()
 
 	// Auto-checkpoint
 	private var autoCheckpointTimer: Timer?
@@ -71,7 +72,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
 	private func setupStatusBarButton() {
 		guard let button = statusItem.button else { return }
 
-		updateIcon(isTracking: false, isInitialized: false)
+		updateIcon(isWatching: false, isInitialized: false)
 		button.action = #selector(handleClick)
 		button.target = self
 		button.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -112,13 +113,13 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
 
 	// MARK: - Status Bar Icon
 
-	private func updateIcon(isTracking: Bool, isInitialized: Bool) {
+	private func updateIcon(isWatching: Bool, isInitialized: Bool) {
 		guard let button = statusItem.button else { return }
 
 		let symbolName: String
 		let tintColor: NSColor
 
-		if isTracking {
+		if isWatching {
 			symbolName = "eye.circle.fill"
 			tintColor = .systemGreen
 		} else if isInitialized {
@@ -135,7 +136,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
 			button.contentTintColor = tintColor
 		}
 
-		let tooltipStatus = isTracking ? "Tracking Active" : (isInitialized ? "Ready" : "Not Initialized")
+		let tooltipStatus = isWatching ? "Watching Active" : (isInitialized ? "Ready" : "Not Initialized")
 		button.toolTip = "Witnessd — \(tooltipStatus)"
 		button.setAccessibilityValue(tooltipStatus)
 	}
@@ -143,8 +144,14 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
 	// MARK: - Status Updates
 
 	/// Polling intervals - faster when tracking, slower when idle
-	private static let trackingPollInterval: TimeInterval = 3.0
-	private static let idlePollInterval: TimeInterval = 10.0
+	private static let trackingPollInterval: TimeInterval = 5.0  // Increased from 3s to reduce CPU usage
+	private static let idlePollInterval: TimeInterval = 15.0     // Increased from 10s to reduce CPU usage
+
+	/// Cached status to avoid redundant UI updates
+	private var lastIconState: (isWatching: Bool, isInitialized: Bool)?
+
+	/// Tracks whether a status update is in progress to prevent overlapping calls
+	private var isUpdatingStatus = false
 
 	private func startStatusUpdates() {
 		Task { @MainActor [weak self] in
@@ -172,9 +179,22 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
 	}
 
 	private func updateStatus() async {
+		// Prevent overlapping status updates
+		guard !isUpdatingStatus else { return }
+		isUpdatingStatus = true
+		defer { isUpdatingStatus = false }
+
 		let status = await bridge.getStatus()
 		currentStatus = status
-		updateIcon(isTracking: status.isTracking, isInitialized: status.isInitialized)
+		sentinelStatus = await bridge.getSentinelStatus()
+
+		// Only update icon if state actually changed
+		let newIconState = (isWatching: sentinelStatus.isRunning, isInitialized: status.isInitialized)
+		if lastIconState?.isWatching != newIconState.isWatching ||
+		   lastIconState?.isInitialized != newIconState.isInitialized {
+			updateIcon(isWatching: newIconState.isWatching, isInitialized: newIconState.isInitialized)
+			lastIconState = newIconState
+		}
 
 		// Check if tracking state changed
 		if status.isTracking != wasTrackingPreviously {
@@ -249,47 +269,35 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
 	private func showContextMenu() {
 		let menu = NSMenu()
 
-		// Status header with keystroke count if tracking
+		// Status header showing sentinel status
 		let header = NSMenuItem()
-		if currentStatus.isTracking {
-			let docName = currentStatus.trackingDocument.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "Session"
-			header.title = "● Tracking: \(docName) (\(currentStatus.keystrokeCount) keystrokes)"
+		if sentinelStatus.isRunning {
+			let docCount = sentinelStatus.trackedDocuments
+			header.title = "● Sentinel Active • \(docCount) document\(docCount == 1 ? "" : "s") tracked"
+		} else if currentStatus.isInitialized {
+			header.title = "○ Sentinel Stopped"
 		} else {
-			header.title = "○ Ready to Track"
+			header.title = "○ Not Initialized"
 		}
 		header.isEnabled = false
 		menu.addItem(header)
 		menu.addItem(.separator())
 
-		if currentStatus.isTracking {
-			// Show stop option when tracking
+		if sentinelStatus.isRunning {
+			// Show stop option when running
 			menu.addItem(makeMenuItem(
-				title: "Stop Tracking",
+				title: "Stop Sentinel",
 				systemImage: "stop.fill",
-				action: #selector(quickStopTracking),
+				action: #selector(stopSentinel),
 				keyEquivalent: ""
 			))
-
+		} else if currentStatus.isInitialized {
+			// Show start option when stopped
 			menu.addItem(makeMenuItem(
-				title: "Create Checkpoint Now",
-				systemImage: "checkmark.circle",
-				action: #selector(createCheckpointNow),
-				keyEquivalent: ""
-			))
-		} else {
-			// Show start options when not tracking
-			menu.addItem(makeMenuItem(
-				title: "▶ Start Global Tracking",
-				systemImage: "keyboard",
-				action: #selector(startGlobalTracking),
+				title: "▶ Start Sentinel",
+				systemImage: "play.fill",
+				action: #selector(startSentinel),
 				keyEquivalent: "g"
-			))
-
-			menu.addItem(makeMenuItem(
-				title: "Start Tracking Document…",
-				systemImage: "doc",
-				action: #selector(quickStartTracking),
-				keyEquivalent: ""
 			))
 		}
 
@@ -330,59 +338,55 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
 		let item = NSMenuItem(title: title, action: action, keyEquivalent: keyEquivalent)
 		item.target = self
 		if let systemImage {
-			item.image = NSImage(systemSymbolName: systemImage, accessibilityDescription: nil)
+			item.image = NSImage(systemSymbolName: systemImage, accessibilityDescription: title)
 		}
+		// Set accessibility help for the menu item
+		item.setAccessibilityHelp("Activates \(title)")
 		return item
 	}
 
 	// MARK: - Quick Actions
 
-	@objc private func startGlobalTracking() {
-		// Start tracking with a default session file in the data directory
-		// This allows tracking all keystrokes without specifying a document
+	@objc private func stopSentinel() {
 		Task { @MainActor in
-			let formatter = DateFormatter()
-			formatter.dateFormat = "yyyy-MM-dd"
-			let dateString = formatter.string(from: Date())
-			let sessionFile = "\(bridge.dataDirectoryPath)/sessions/\(dateString)-session.md"
-
-			// Ensure sessions directory exists
-			let sessionsDir = "\(bridge.dataDirectoryPath)/sessions"
-			do {
-				try FileManager.default.createDirectory(
-					atPath: sessionsDir,
-					withIntermediateDirectories: true,
-					attributes: nil
+			AccessibilityAnnouncer.shared.announceLoading("Stopping sentinel")
+			let result = await bridge.sentinelStop()
+			if result.success {
+				await updateStatus()
+				AccessibilityAnnouncer.shared.announceStateChange("Sentinel stopped", context: "Document tracking is now inactive")
+				NotificationManager.shared.send(
+					title: "Sentinel Stopped",
+					body: "Automatic document tracking has been stopped."
 				)
-			} catch {
-				showError(title: "Failed to Start Tracking", message: "Could not create sessions directory: \(error.localizedDescription)")
-				return
+			} else {
+				AccessibilityAnnouncer.shared.announce("Failed to stop sentinel: \(result.message)", highPriority: true)
+				showError(title: "Failed to Stop", message: result.message)
 			}
+		}
+	}
 
-			// Create the session file if it doesn't exist
-			if !FileManager.default.fileExists(atPath: sessionFile) {
-				let header = "# Writing Session - \(dateString)\n\nKeystroke tracking session.\n"
-				do {
-					try header.write(toFile: sessionFile, atomically: true, encoding: .utf8)
-				} catch {
-					showError(title: "Failed to Start Tracking", message: "Could not create session file: \(error.localizedDescription)")
-					return
+	@objc private func startSentinel() {
+		Task { @MainActor in
+			AccessibilityAnnouncer.shared.announceLoading("Starting sentinel")
+			let result = await bridge.sentinelStart()
+			if result.success {
+				await updateStatus()
+				AccessibilityAnnouncer.shared.announceStateChange("Sentinel started", context: "Document tracking is now active")
+				NotificationManager.shared.send(
+					title: "Sentinel Started",
+					body: "Automatic document tracking is now active."
+				)
+			} else {
+				// Check if it's a permissions issue
+				if result.message.contains("accessibility") || result.message.contains("failed to start") {
+					AccessibilityAnnouncer.shared.announce("Accessibility permission required to start sentinel", highPriority: true)
+					showError(title: "Accessibility Required",
+							  message: "The sentinel needs accessibility permissions to track document focus.\n\nGo to System Settings → Privacy & Security → Accessibility and add Witnessd.")
+				} else {
+					AccessibilityAnnouncer.shared.announce("Failed to start sentinel: \(result.message)", highPriority: true)
+					showError(title: "Failed to Start", message: result.message)
 				}
 			}
-
-			let result = await bridge.startTracking(documentPath: sessionFile)
-			if !result.success {
-				showError(title: "Failed to Start Tracking", message: result.message ?? "The witnessd daemon could not start tracking. Check that the application has accessibility permissions.")
-				return
-			}
-
-			await updateStatus()
-
-			// Notify user
-			NotificationManager.shared.send(
-				title: "Global Tracking Started",
-				body: "Witnessd is now tracking all keystrokes."
-			)
 		}
 	}
 
@@ -393,54 +397,6 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
 		alert.alertStyle = .warning
 		alert.addButton(withTitle: "OK")
 		alert.runModal()
-	}
-
-	@objc private func quickStartTracking() {
-		let panel = NSOpenPanel()
-		panel.canChooseFiles = true
-		panel.canChooseDirectories = false
-		panel.allowsMultipleSelection = false
-		panel.message = "Select a document to track"
-		panel.prompt = "Start Tracking"
-
-		if panel.runModal() == .OK, let url = panel.url {
-			Task { @MainActor in
-				_ = await bridge.startTracking(documentPath: url.path)
-				await updateStatus()
-			}
-		}
-	}
-
-	@objc private func quickStopTracking() {
-		Task { @MainActor in
-			// Create final checkpoint before stopping
-			if let doc = currentStatus.trackingDocument {
-				_ = await bridge.commit(filePath: doc, message: "Session ended")
-			}
-			_ = await bridge.stopTracking()
-			await updateStatus()
-
-			NotificationManager.shared.send(
-				title: "Tracking Stopped",
-				body: "Your keystroke session has been saved."
-			)
-		}
-	}
-
-	@objc private func createCheckpointNow() {
-		Task { @MainActor in
-			guard let doc = currentStatus.trackingDocument else { return }
-			let formatter = DateFormatter()
-			formatter.dateFormat = "HH:mm"
-			let timeString = formatter.string(from: Date())
-			let result = await bridge.commit(filePath: doc, message: "Manual checkpoint at \(timeString)")
-			if result.success {
-				NotificationManager.shared.send(
-					title: "Checkpoint Created",
-					body: "Your progress has been saved."
-				)
-			}
-		}
 	}
 
 	@objc private func showDetails() {
@@ -457,13 +413,10 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
 	}
 
 	@objc private func quit() {
-		Task { @MainActor in
-			if currentStatus.isTracking {
-				_ = await bridge.stopTracking()
-			}
-			shutdown()
-			NSApp.terminate(nil)
-		}
+		// Clean up and terminate immediately
+		// Don't wait for async operations - CLI handles its own cleanup
+		shutdown()
+		NSApp.terminate(nil)
 	}
 	
 	@MainActor

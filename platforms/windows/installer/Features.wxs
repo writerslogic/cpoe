@@ -33,6 +33,23 @@
         </File>
       </Component>
 
+      <!-- System Tray App -->
+      <Component Id="WitnessdTrayExe" Guid="A1B2C3D4-E5F6-7890-ABCD-100000000005">
+        <File Id="witnessd_tray.exe"
+              Name="witnessd-tray.exe"
+              Source="$(var.BuildDir)\witnessd-tray.exe"
+              KeyPath="yes">
+          <DigitalSignature />
+        </File>
+        <Shortcut Id="StartupShortcut"
+                  Directory="StartupFolder"
+                  Name="Witnessd Tray"
+                  WorkingDirectory="BinFolder"
+                  Icon="witnessd.ico"
+                  IconIndex="0"
+                  Advertise="yes" />
+      </Component>
+
       <!-- License file -->
       <Component Id="LicenseFile" Guid="A1B2C3D4-E5F6-7890-ABCD-100000000003" Directory="INSTALLFOLDER">
         <File Id="LICENSE"
@@ -206,6 +223,14 @@
                   Name="Witnessd Help"
                   Description="Open Witnessd documentation"
                   Target="[INSTALLFOLDER]README.md" />
+
+        <!-- Witnessd Tray -->
+        <Shortcut Id="WitnessdTrayShortcut"
+                  Name="Witnessd Tray"
+                  Description="Witnessd System Tray App"
+                  Target="[BinFolder]witnessd-tray.exe"
+                  WorkingDirectory="BinFolder"
+                  Icon="witnessd.ico" />
 
         <!-- Uninstall Shortcut -->
         <Shortcut Id="UninstallShortcut"

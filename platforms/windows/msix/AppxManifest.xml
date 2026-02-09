@@ -126,8 +126,8 @@
     <!-- TSF Text Input Processor COM registration -->
     <com:Extension Category="windows.comServer">
       <com:ComServer>
-        <com:SurrogateServer DisplayName="Witnessd TSF Provider">
-          <com:Class Id="A1B2C3D4-E5F6-7890-ABCD-EF1234567890" Path="witnessd-tsf.dll" ThreadingModel="Apartment">
+        <com:InProcessServer Path="witnessd-tsf.dll">
+          <com:Class Id="A1B2C3D4-E5F6-7890-ABCD-EF1234567890" ThreadingModel="Apartment" DisplayName="Witnessd TSF Provider">
             <com:ProgId>Witnessd.TSF.1</com:ProgId>
             <com:VersionIndependentProgId>Witnessd.TSF</com:VersionIndependentProgId>
             <com:Interfaces>
@@ -136,7 +136,7 @@
               <com:Interface Id="42D4D099-7C1A-4a89-B836-6C6F22160DF0" /> <!-- ITfTextInputProcessorEx -->
             </com:Interfaces>
           </com:Class>
-        </com:SurrogateServer>
+        </com:InProcessServer>
       </com:ComServer>
     </com:Extension>
 

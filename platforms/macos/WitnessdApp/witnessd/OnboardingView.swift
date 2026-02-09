@@ -452,15 +452,18 @@ struct OnboardingView: View {
         withOptionalAnimation {
             currentStep -= 1
         }
+        AccessibilityAnnouncer.shared.announceNavigation(to: "\(steps[currentStep]) step")
     }
 
     private func goNext() {
         withOptionalAnimation {
             currentStep += 1
         }
+        AccessibilityAnnouncer.shared.announceNavigation(to: "\(steps[currentStep]) step")
     }
 
     private func complete() {
+        AccessibilityAnnouncer.shared.announceStateChange("Setup complete", context: "Witnessd is ready to use")
         isPresented = false
         onComplete()
     }
@@ -468,6 +471,7 @@ struct OnboardingView: View {
     private func initialize() {
         isInitializing = true
         error = nil
+        AccessibilityAnnouncer.shared.announceLoading("Initializing Witnessd")
 
         Task {
             let result = await bridge.initialize()
@@ -475,13 +479,16 @@ struct OnboardingView: View {
                 isInitializing = false
                 if result.success {
                     initComplete = true
+                    AccessibilityAnnouncer.shared.announceCompletion("Initialization", success: true)
                     // Check if Accessibility is already granted
                     accessibilityGranted = AXIsProcessTrusted()
                     withOptionalAnimation {
                         currentStep = 2 // Go to Accessibility step
                     }
+                    AccessibilityAnnouncer.shared.announceNavigation(to: "Accessibility Permission step")
                 } else {
                     error = result.message
+                    AccessibilityAnnouncer.shared.announceCompletion("Initialization", success: false)
                 }
             }
         }
@@ -524,10 +531,12 @@ struct OnboardingView: View {
             if granted {
                 // Stop checking once granted
                 stopAccessibilityCheck()
+                AccessibilityAnnouncer.shared.announceStateChange("Accessibility permission granted")
                 // Auto-advance to next step when permission granted
                 withOptionalAnimation {
                     currentStep = 3 // Calibrate step
                 }
+                AccessibilityAnnouncer.shared.announceNavigation(to: "VDF Calibration step")
             }
         }
     }
@@ -543,6 +552,7 @@ struct OnboardingView: View {
 
     private func calibrate() {
         isCalibrating = true
+        AccessibilityAnnouncer.shared.announceLoading("Calibrating VDF")
 
         Task {
             let result = await bridge.calibrate()
@@ -550,6 +560,9 @@ struct OnboardingView: View {
                 isCalibrating = false
                 if result.success {
                     calibrateComplete = true
+                    AccessibilityAnnouncer.shared.announceCompletion("VDF Calibration", success: true)
+                } else {
+                    AccessibilityAnnouncer.shared.announceCompletion("VDF Calibration", success: false)
                 }
             }
         }

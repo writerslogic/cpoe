@@ -106,11 +106,15 @@ struct SettingsView: View {
                             in: 100...2000,
                             step: 100
                         )
+                        .accessibilityLabel("Debounce Interval")
+                        .accessibilityValue("\(service.settings.debounceIntervalMs) milliseconds")
+                        .accessibilityHint("Adjust how long to wait after the last keystroke before saving. Use left or right arrow keys to adjust.")
 
                         Text("\(service.settings.debounceIntervalMs) ms")
                             .font(Design.Typography.mono)
                             .foregroundColor(Design.Colors.secondaryText)
                             .frame(width: 70, alignment: .trailing)
+                            .accessibilityHidden(true)
                     }
 
                     Text("How long to wait after the last keystroke before saving. Lower values capture more detail but use more resources.")
@@ -588,12 +592,12 @@ struct SettingsView: View {
                 successAlert.runModal()
 
                 // Restart the app
-                let url = URL(fileURLWithPath: Bundle.main.resourcePath!)
-                let path = url.deletingLastPathComponent().deletingLastPathComponent().absoluteString
-                let task = Process()
-                task.launchPath = "/usr/bin/open"
-                task.arguments = [path]
-                task.launch()
+                if let bundleURL = Bundle.main.bundleURL as URL? {
+                    let task = Process()
+                    task.launchPath = "/usr/bin/open"
+                    task.arguments = [bundleURL.path]
+                    try? task.run()
+                }
 
                 NSApplication.shared.terminate(nil)
             } catch {

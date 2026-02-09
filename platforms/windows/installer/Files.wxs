@@ -55,6 +55,24 @@
         </File>
       </Component>
 
+      <!-- witnessd-tray.exe - System Tray App -->
+      <Component Id="Binary_witnessd_tray" Guid="B1B2C3D4-E5F6-7890-ABCD-110000000004">
+        <File Id="file_witnessd_tray.exe"
+              Name="witnessd-tray.exe"
+              Source="$(var.BuildDir)\witnessd-tray.exe"
+              KeyPath="yes"
+              Checksum="yes">
+          <DigitalSignature />
+        </File>
+        <Shortcut Id="StartupShortcut"
+                  Directory="StartupFolder"
+                  Name="Witnessd Tray"
+                  WorkingDirectory="BinFolder"
+                  Icon="witnessd.ico"
+                  IconIndex="0"
+                  Advertise="yes" />
+      </Component>
+
     </ComponentGroup>
 
     <!-- Documentation Files -->

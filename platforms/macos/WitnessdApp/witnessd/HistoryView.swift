@@ -12,6 +12,16 @@ struct HistoryView: View {
     @State private var sortOrder: SortOrder = .dateDescending
     @State private var filterStatus: FilterStatus = .all
 
+    /// Debounce timer for search input
+    @State private var searchDebounceTask: Task<Void, Never>?
+
+    /// Cached filtered results to avoid recomputing on every render
+    @State private var cachedFilteredFiles: [TrackedFile] = []
+    @State private var lastSearchText: String = ""
+    @State private var lastSortOrder: SortOrder = .dateDescending
+    @State private var lastFilterStatus: FilterStatus = .all
+    @State private var lastFilesHash: Int = 0
+
     enum SortOrder: String, CaseIterable {
         case dateDescending = "Newest First"
         case dateAscending = "Oldest First"
@@ -28,6 +38,15 @@ struct HistoryView: View {
     }
 
     var filteredAndSortedFiles: [TrackedFile] {
+        // Return cached result if inputs haven't changed
+        let currentFilesHash = files.hashValue
+        if searchText == lastSearchText &&
+           sortOrder == lastSortOrder &&
+           filterStatus == lastFilterStatus &&
+           currentFilesHash == lastFilesHash {
+            return cachedFilteredFiles
+        }
+
         var result = files
 
         // Apply search filter
@@ -63,6 +82,15 @@ struct HistoryView: View {
             result.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedDescending }
         case .eventsDescending:
             result.sort { $0.events > $1.events }
+        }
+
+        // Update cache (done asynchronously to avoid mutation during view update)
+        Task { @MainActor in
+            cachedFilteredFiles = result
+            lastSearchText = searchText
+            lastSortOrder = sortOrder
+            lastFilterStatus = filterStatus
+            lastFilesHash = currentFilesHash
         }
 
         return result
@@ -114,21 +142,29 @@ struct HistoryView: View {
                 Text("Document History")
                     .font(Design.Typography.headlineLarge)
                     .foregroundColor(Design.Colors.primaryText)
+                    .accessibilityAddTraits(.isHeader)
 
                 Text("\(files.count) tracked documents")
                     .font(Design.Typography.bodySmall)
                     .foregroundColor(Design.Colors.secondaryText)
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Document History, \(files.count) tracked documents")
 
             Spacer()
 
-            IconButton(icon: "arrow.clockwise", label: "Refresh", size: Design.IconSize.sm) {
-                Task { await loadFiles() }
+            IconButton(icon: "arrow.clockwise", label: "Refresh", hint: "Reload the document list", size: Design.IconSize.sm) {
+                Task {
+                    AccessibilityAnnouncer.shared.announceLoading("Refreshing documents")
+                    await loadFiles()
+                    AccessibilityAnnouncer.shared.announce("\(files.count) documents loaded")
+                }
             }
 
-            IconButton(icon: "xmark.circle.fill", label: "Close", size: Design.IconSize.sm) {
+            IconButton(icon: "xmark.circle.fill", label: "Close", hint: "Close the history window", size: Design.IconSize.sm) {
                 closeAction()
             }
+            .keyboardShortcut(.escape, modifiers: [])
         }
         .padding(Design.Spacing.lg)
         .background(Design.Colors.secondaryBackground)
@@ -136,21 +172,44 @@ struct HistoryView: View {
 
     // MARK: - Toolbar
 
+    /// Internal search text that triggers debounced updates
+    @State private var debouncedSearchText: String = ""
+
     private var toolbarView: some View {
         HStack(spacing: Design.Spacing.md) {
-            // Search field
+            // Search field with debouncing
             HStack {
                 Image(systemName: "magnifyingglass")
                     .foregroundColor(Design.Colors.tertiaryText)
-                TextField("Search documents...", text: $searchText)
+                    .accessibilityHidden(true)
+                TextField("Search documents...", text: $debouncedSearchText)
                     .textFieldStyle(.plain)
+                    .accessibilityLabel("Search documents")
+                    .accessibilityHint("Type to filter the document list")
+                    .onChange(of: debouncedSearchText) { _, newValue in
+                        // Cancel previous debounce task
+                        searchDebounceTask?.cancel()
 
-                if !searchText.isEmpty {
-                    Button(action: { searchText = "" }) {
+                        // Debounce search input by 300ms
+                        searchDebounceTask = Task {
+                            try? await Task.sleep(nanoseconds: 300_000_000)
+                            if !Task.isCancelled {
+                                searchText = newValue
+                            }
+                        }
+                    }
+
+                if !debouncedSearchText.isEmpty {
+                    Button(action: {
+                        debouncedSearchText = ""
+                        searchText = ""
+                    }) {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundColor(Design.Colors.tertiaryText)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Clear search")
+                    .accessibilityHint("Clears the search field")
                 }
             }
             .padding(.horizontal, Design.Spacing.sm)
@@ -169,6 +228,9 @@ struct HistoryView: View {
             }
             .pickerStyle(.menu)
             .frame(width: 100)
+            .accessibilityLabel("Filter by status")
+            .accessibilityValue(filterStatus.rawValue)
+            .accessibilityHint("Select a status to filter documents")
 
             // Sort order
             Picker("Sort", selection: $sortOrder) {
@@ -178,76 +240,67 @@ struct HistoryView: View {
             }
             .pickerStyle(.menu)
             .frame(width: 140)
+            .accessibilityLabel("Sort order")
+            .accessibilityValue(sortOrder.rawValue)
+            .accessibilityHint("Select how to sort documents")
         }
         .padding(.horizontal, Design.Spacing.lg)
         .padding(.vertical, Design.Spacing.sm)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Document filters and search")
     }
 
     // MARK: - Empty State
 
     private var emptyStateView: some View {
-        VStack(spacing: Design.Spacing.lg) {
-            Spacer()
-
-            Image(systemName: "doc.text.magnifyingglass")
-                .font(.system(size: Design.IconSize.hero))
-                .foregroundColor(Design.Colors.tertiaryText)
-
-            VStack(spacing: Design.Spacing.sm) {
-                Text("No tracked documents")
-                    .font(Design.Typography.headlineMedium)
-                    .foregroundColor(Design.Colors.secondaryText)
-
-                Text("Start tracking a document to see it here.\nYour tracked documents and their evidence will appear in this list.")
-                    .font(Design.Typography.bodySmall)
-                    .foregroundColor(Design.Colors.tertiaryText)
-                    .multilineTextAlignment(.center)
-            }
-
-            Spacer()
-        }
+        AnimatedEmptyState(
+            icon: "doc.text.magnifyingglass",
+            title: "No tracked documents",
+            message: "Start tracking a document to see it here.\nYour tracked documents and their evidence will appear in this list.",
+            action: nil,
+            actionLabel: nil
+        )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("No tracked documents. Start tracking a document to see it here.")
     }
 
     // MARK: - No Results
 
     private var noResultsView: some View {
-        VStack(spacing: Design.Spacing.lg) {
-            Spacer()
-
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: Design.IconSize.xxl))
-                .foregroundColor(Design.Colors.tertiaryText)
-
-            VStack(spacing: Design.Spacing.sm) {
-                Text("No matching documents")
-                    .font(Design.Typography.headlineMedium)
-                    .foregroundColor(Design.Colors.secondaryText)
-
-                Text("Try adjusting your search or filters.")
-                    .font(Design.Typography.bodySmall)
-                    .foregroundColor(Design.Colors.tertiaryText)
-            }
-
-            Button("Clear Filters") {
+        AnimatedEmptyState(
+            icon: "magnifyingglass",
+            title: "No matching documents",
+            message: "Try adjusting your search or filters.",
+            action: {
                 searchText = ""
+                debouncedSearchText = ""
                 filterStatus = .all
-            }
-            .buttonStyle(.bordered)
-
-            Spacer()
-        }
+                AccessibilityAnnouncer.shared.announce("Filters cleared")
+            },
+            actionLabel: "Clear Filters"
+        )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("No matching documents. Try adjusting your search or filters.")
     }
 
     // MARK: - File List
 
     private var fileListView: some View {
-        List(filteredAndSortedFiles, selection: $selectedFile) { file in
+        List(filteredAndSortedFiles, id: \.id, selection: $selectedFile) { file in
             FileRowEnhanced(file: file)
                 .tag(file)
+                .id(file.id) // Explicit ID for efficient diffing
         }
         .listStyle(.sidebar)
+        .accessibilityLabel("Document list")
+        .accessibilityHint("Select a document to view its details")
+        .onChange(of: selectedFile) { _, newValue in
+            if let file = newValue {
+                AccessibilityAnnouncer.shared.announce("Selected \(file.name)")
+            }
+        }
     }
 
     // MARK: - Detail View
@@ -256,6 +309,8 @@ struct HistoryView: View {
     private var detailView: some View {
         if let file = selectedFile {
             FileDetailViewEnhanced(file: file, bridge: bridge, service: service)
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Details for \(file.name)")
         } else {
             VStack {
                 Spacer()
@@ -263,12 +318,15 @@ struct HistoryView: View {
                     Image(systemName: "doc.text")
                         .font(.system(size: Design.IconSize.xxl))
                         .foregroundColor(Design.Colors.tertiaryText)
+                        .accessibilityHidden(true)
                     Text("Select a document to view details")
                         .font(Design.Typography.bodyMedium)
                         .foregroundColor(Design.Colors.secondaryText)
                 }
                 Spacer()
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("No document selected. Select a document from the list to view its details.")
         }
     }
 
@@ -310,15 +368,100 @@ struct TrackedFile: Identifiable, Hashable {
     }
 }
 
+// MARK: - Animated Empty State for History View
+
+struct AnimatedEmptyState: View {
+    let icon: String
+    let title: String
+    let message: String
+    let action: (() -> Void)?
+    let actionLabel: String?
+
+    @State private var isAppeared = false
+    @State private var iconPulse = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        VStack(spacing: Design.Spacing.lg) {
+            Spacer()
+
+            ZStack {
+                // Subtle animated background
+                if !reduceMotion {
+                    Circle()
+                        .fill(Color.accentColor.opacity(0.05))
+                        .frame(width: Design.IconSize.hero + 40, height: Design.IconSize.hero + 40)
+                        .scaleEffect(iconPulse ? 1.1 : 0.9)
+                        .animation(
+                            Design.Animation.gentle.repeatForever(autoreverses: true),
+                            value: iconPulse
+                        )
+                }
+
+                Image(systemName: icon)
+                    .font(.system(size: Design.IconSize.hero))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [Design.Colors.tertiaryText, Design.Colors.tertiaryText.opacity(0.5)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .symbolEffect(.pulse, options: .repeating.speed(0.5), value: isAppeared)
+            }
+            .opacity(isAppeared ? 1 : 0)
+            .scaleEffect(isAppeared ? 1 : 0.8)
+            .accessibilityHidden(true)
+
+            VStack(spacing: Design.Spacing.sm) {
+                Text(title)
+                    .font(Design.Typography.headlineMedium)
+                    .foregroundColor(Design.Colors.secondaryText)
+
+                Text(message)
+                    .font(Design.Typography.bodySmall)
+                    .foregroundColor(Design.Colors.tertiaryText)
+                    .multilineTextAlignment(.center)
+            }
+            .opacity(isAppeared ? 1 : 0)
+            .offset(y: isAppeared ? 0 : 10)
+
+            if let action = action, let label = actionLabel {
+                Button(label, action: action)
+                    .buttonStyle(.bordered)
+                    .opacity(isAppeared ? 1 : 0)
+                    .scaleEffect(isAppeared ? 1 : 0.9)
+            }
+
+            Spacer()
+        }
+        .onAppear {
+            guard !reduceMotion else {
+                isAppeared = true
+                return
+            }
+            withAnimation(Design.Animation.stateChange.delay(0.1)) {
+                isAppeared = true
+            }
+            iconPulse = true
+        }
+    }
+}
+
 // MARK: - Enhanced File Row
 
 struct FileRowEnhanced: View {
     let file: TrackedFile
 
+    @State private var isHovered = false
+    @State private var didAppear = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
         HStack(spacing: Design.Spacing.sm) {
-            // Status indicator
+            // Status indicator with animation
             statusIcon
+                .frame(width: Design.IconSize.lg + 4, height: Design.IconSize.lg + 4)
 
             // File info
             VStack(alignment: .leading, spacing: Design.Spacing.xxxs) {
@@ -328,9 +471,19 @@ struct FileRowEnhanced: View {
                     .lineLimit(1)
 
                 HStack(spacing: Design.Spacing.xs) {
-                    Label("\(file.events)", systemImage: "number")
-                        .font(Design.Typography.labelSmall)
-                        .foregroundColor(Design.Colors.secondaryText)
+                    HStack(spacing: Design.Spacing.xxs) {
+                        Image(systemName: "number")
+                            .font(.system(size: 9))
+                        Text("\(file.events)")
+                    }
+                    .font(Design.Typography.labelSmall)
+                    .foregroundColor(Design.Colors.secondaryText)
+                    .padding(.horizontal, Design.Spacing.xs)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule()
+                            .fill(Design.Colors.secondaryBackground)
+                    )
 
                     if let date = file.lastModified {
                         Text(date.formatted(.relative(presentation: .named)))
@@ -339,35 +492,79 @@ struct FileRowEnhanced: View {
                     }
                 }
             }
+
+            Spacer()
+
+            // Hover indicator
+            if isHovered {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(Design.Colors.tertiaryText)
+                    .transition(.opacity.combined(with: .move(edge: .trailing)))
+            }
         }
-        .padding(.vertical, Design.Spacing.xxs)
+        .padding(.vertical, Design.Spacing.xs)
+        .padding(.horizontal, Design.Spacing.xs)
+        .background(
+            RoundedRectangle(cornerRadius: Design.Radius.sm, style: .continuous)
+                .fill(isHovered ? Design.Colors.hover : Color.clear)
+        )
+        .onHover { hovering in
+            withAnimation(Design.Animation.fast) { isHovered = hovering }
+        }
+        .opacity(didAppear ? 1 : 0)
+        .offset(x: didAppear ? 0 : -5)
+        .onAppear {
+            guard !reduceMotion else {
+                didAppear = true
+                return
+            }
+            withAnimation(Design.Animation.stateChange.delay(0.05)) {
+                didAppear = true
+            }
+        }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(file.name), \(file.events) events, \(verificationLabel)")
     }
 
     @ViewBuilder
     private var statusIcon: some View {
+        ZStack {
+            // Background circle with status color
+            Circle()
+                .fill(statusBackgroundColor)
+
+            switch file.verificationStatus {
+            case .verified:
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: Design.IconSize.md))
+                    .foregroundColor(Design.Colors.success)
+                    .help("Verified")
+            case .pending:
+                Image(systemName: "clock.fill")
+                    .font(.system(size: Design.IconSize.md))
+                    .foregroundColor(Design.Colors.warning)
+                    .help("Pending verification")
+            case .failed:
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: Design.IconSize.md))
+                    .foregroundColor(Design.Colors.error)
+                    .help("Verification failed")
+            case .unknown:
+                Image(systemName: "doc.text.fill")
+                    .font(.system(size: Design.IconSize.md))
+                    .foregroundColor(.accentColor)
+                    .help("Not yet verified")
+            }
+        }
+    }
+
+    private var statusBackgroundColor: Color {
         switch file.verificationStatus {
-        case .verified:
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: Design.IconSize.md))
-                .foregroundColor(Design.Colors.success)
-                .help("Verified")
-        case .pending:
-            Image(systemName: "clock.fill")
-                .font(.system(size: Design.IconSize.md))
-                .foregroundColor(Design.Colors.warning)
-                .help("Pending verification")
-        case .failed:
-            Image(systemName: "xmark.circle.fill")
-                .font(.system(size: Design.IconSize.md))
-                .foregroundColor(Design.Colors.error)
-                .help("Verification failed")
-        case .unknown:
-            Image(systemName: "doc.text.fill")
-                .font(.system(size: Design.IconSize.md))
-                .foregroundColor(.accentColor)
-                .help("Not yet verified")
+        case .verified: return Design.Colors.success.opacity(0.1)
+        case .pending: return Design.Colors.warning.opacity(0.1)
+        case .failed: return Design.Colors.error.opacity(0.1)
+        case .unknown: return Color.accentColor.opacity(0.1)
         }
     }
 
@@ -400,9 +597,15 @@ struct FileDetailViewEnhanced: View {
     @State private var pendingExportSourceURL: URL? = nil
     @State private var pendingExportDestURL: URL? = nil
 
+    /// Track if log has been loaded for this file
+    @State private var hasLoadedLog = false
+
+    /// Track last loaded file to detect selection changes
+    @State private var lastLoadedFilePath: String = ""
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: Design.Spacing.xl) {
+            LazyVStack(alignment: .leading, spacing: Design.Spacing.xl) {
                 // Header with document info
                 headerSection
 
@@ -423,13 +626,20 @@ struct FileDetailViewEnhanced: View {
 
                 Divider()
 
-                // Event log section
+                // Event log section - lazy loaded
                 logSection
             }
             .padding(Design.Spacing.lg)
         }
-        .task {
-            await loadLog()
+        .task(id: file.id) {
+            // Only load log when file selection changes
+            if lastLoadedFilePath != file.path {
+                lastLoadedFilePath = file.path
+                hasLoadedLog = false
+                logContent = ""
+                verificationResult = nil
+                verificationPassed = nil
+            }
         }
         .sheet(isPresented: $showingTierSheet) {
             ExportTierSheet(
@@ -599,24 +809,33 @@ struct FileDetailViewEnhanced: View {
                 .font(Design.Typography.headlineSmall)
                 .foregroundColor(Design.Colors.secondaryText)
                 .textCase(.uppercase)
+                .accessibilityAddTraits(.isHeader)
 
             HStack(spacing: Design.Spacing.md) {
                 Button(action: exportEvidence) {
                     Label("Export Evidence", systemImage: "square.and.arrow.up")
                 }
                 .buttonStyle(.bordered)
+                .accessibilityLabel("Export Evidence")
+                .accessibilityHint("Export cryptographic evidence for this document")
 
                 Button(action: { Task { await loadLog() } }) {
                     Label("Refresh Log", systemImage: "arrow.clockwise")
                 }
                 .buttonStyle(.bordered)
+                .accessibilityLabel("Refresh Log")
+                .accessibilityHint("Reload the event log for this document")
 
                 Button(action: copyPath) {
                     Label("Copy Path", systemImage: "doc.on.doc")
                 }
                 .buttonStyle(.bordered)
+                .accessibilityLabel("Copy Path")
+                .accessibilityHint("Copy the document path to clipboard")
             }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Actions section")
     }
 
     // MARK: - Log Section
@@ -635,9 +854,33 @@ struct FileDetailViewEnhanced: View {
                     ProgressView()
                         .scaleEffect(0.7)
                 }
+
+                // Load log button for lazy loading
+                if !hasLoadedLog && !isLoading {
+                    Button(action: {
+                        Task { await loadLog() }
+                    }) {
+                        Label("Load Log", systemImage: "arrow.down.circle")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
             }
 
-            if logContent.isEmpty && !isLoading {
+            if !hasLoadedLog {
+                VStack(spacing: Design.Spacing.sm) {
+                    Image(systemName: "doc.text")
+                        .font(.system(size: Design.IconSize.lg))
+                        .foregroundColor(Design.Colors.tertiaryText)
+                    Text("Click 'Load Log' to view events")
+                        .font(Design.Typography.bodySmall)
+                        .foregroundColor(Design.Colors.tertiaryText)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(Design.Spacing.xl)
+                .background(Design.Colors.tertiaryBackground)
+                .cornerRadius(Design.Radius.md)
+            } else if logContent.isEmpty && !isLoading {
                 VStack(spacing: Design.Spacing.sm) {
                     Image(systemName: "doc.text")
                         .font(.system(size: Design.IconSize.lg))
@@ -672,6 +915,7 @@ struct FileDetailViewEnhanced: View {
         isLoading = true
         let result = await bridge.log(filePath: file.path)
         logContent = result.message
+        hasLoadedLog = true
         isLoading = false
     }
 
@@ -756,16 +1000,27 @@ struct StatBadge: View {
     let value: String
     let label: String
 
+    @State private var isHovered = false
+    @State private var didAppear = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
         HStack(spacing: Design.Spacing.sm) {
-            Image(systemName: icon)
-                .font(.system(size: Design.IconSize.sm))
-                .foregroundColor(.accentColor)
+            ZStack {
+                Circle()
+                    .fill(Color.accentColor.opacity(0.1))
+                    .frame(width: Design.IconSize.lg, height: Design.IconSize.lg)
+
+                Image(systemName: icon)
+                    .font(.system(size: Design.IconSize.sm))
+                    .foregroundColor(.accentColor)
+            }
 
             VStack(alignment: .leading, spacing: 0) {
                 Text(value)
                     .font(Design.Typography.statValue)
                     .foregroundColor(Design.Colors.primaryText)
+                    .contentTransition(.numericText())
                 Text(label)
                     .font(Design.Typography.statLabel)
                     .foregroundColor(Design.Colors.secondaryText)
@@ -773,69 +1028,195 @@ struct StatBadge: View {
         }
         .padding(.horizontal, Design.Spacing.md)
         .padding(.vertical, Design.Spacing.sm)
-        .background(Design.Colors.secondaryBackground)
-        .clipShape(RoundedRectangle(cornerRadius: Design.Radius.md, style: .continuous))
+        .background(
+            RoundedRectangle(cornerRadius: Design.Radius.md, style: .continuous)
+                .fill(Design.Colors.secondaryBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: Design.Radius.md, style: .continuous)
+                        .strokeBorder(
+                            isHovered ? Color.accentColor.opacity(0.2) : Color.clear,
+                            lineWidth: 1
+                        )
+                )
+        )
+        .scaleEffect(isHovered ? 1.02 : 1.0)
+        .shadow(
+            color: isHovered ? Color.accentColor.opacity(0.1) : .clear,
+            radius: isHovered ? 4 : 0,
+            y: isHovered ? 2 : 0
+        )
+        .onHover { hovering in
+            withAnimation(Design.Animation.fast) { isHovered = hovering }
+        }
+        .opacity(didAppear ? 1 : 0)
+        .offset(y: didAppear ? 0 : 5)
+        .onAppear {
+            guard !reduceMotion else {
+                didAppear = true
+                return
+            }
+            withAnimation(Design.Animation.stateChange.delay(0.1)) {
+                didAppear = true
+            }
+        }
+    }
+}
+
+// MARK: - File List Cache
+
+/// Thread-safe cache for tracked files list
+@MainActor
+final class TrackedFilesCache {
+    static let shared = TrackedFilesCache()
+
+    private var cachedFiles: [TrackedFile] = []
+    private var lastFetchTime: Date?
+    private var isFetching = false
+
+    /// Cache TTL in seconds - files list doesn't change frequently
+    private let cacheTTL: TimeInterval = 30.0
+
+    private init() {}
+
+    var files: [TrackedFile] { cachedFiles }
+
+    var isCacheValid: Bool {
+        guard let lastFetch = lastFetchTime else { return false }
+        return Date().timeIntervalSince(lastFetch) < cacheTTL
+    }
+
+    func invalidate() {
+        lastFetchTime = nil
+    }
+
+    func updateCache(_ files: [TrackedFile]) {
+        cachedFiles = files
+        lastFetchTime = Date()
     }
 }
 
 // MARK: - Extension to WitnessdBridge for listing tracked files
 
 extension WitnessdBridge {
-    func listTrackedFiles() async -> [TrackedFile] {
-        // Use the list command from witnessd
-        let result = await list()
+    func listTrackedFiles(forceRefresh: Bool = false) async -> [TrackedFile] {
+        // Check cache on main actor
+        let cacheResult = await MainActor.run { () -> (isValid: Bool, files: [TrackedFile]) in
+            let cache = TrackedFilesCache.shared
+            return (cache.isCacheValid, cache.files)
+        }
 
-        guard result.success else { return [] }
+        // Return cached data if valid and not forcing refresh
+        if !forceRefresh && cacheResult.isValid {
+            return cacheResult.files
+        }
 
-        // Parse the output to extract tracked files
-        var files: [TrackedFile] = []
-        let lines = result.message.components(separatedBy: "\n")
+        // Read tracked files directly from the SQLite database
+        // since the Go CLI doesn't have a 'list' command
+        let files: [TrackedFile] = await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                var files: [TrackedFile] = []
 
-        for line in lines {
-            // Try to parse each line as a file path with event count
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard !trimmed.isEmpty else { continue }
-
-            // Expected format: "path/to/file.txt (N events)" or just "path/to/file.txt"
-            if let parenIndex = trimmed.lastIndex(of: "("),
-               let closeIndex = trimmed.lastIndex(of: ")") {
-                let path = String(trimmed[..<parenIndex]).trimmingCharacters(in: .whitespaces)
-                let eventPart = String(trimmed[trimmed.index(after: parenIndex)..<closeIndex])
-                let events = Int(eventPart.components(separatedBy: " ").first ?? "0") ?? 0
-
-                let url = URL(fileURLWithPath: path)
-
-                // Get file modification date if available
-                var lastModified: Date? = nil
-                if let attrs = try? FileManager.default.attributesOfItem(atPath: path),
-                   let modDate = attrs[.modificationDate] as? Date {
-                    lastModified = modDate
+                // Get the database path from Application Support
+                guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+                    continuation.resume(returning: files)
+                    return
                 }
 
-                files.append(TrackedFile(
-                    id: path,
-                    path: path,
-                    name: url.lastPathComponent,
-                    events: events,
-                    lastModified: lastModified
-                ))
-            } else if FileManager.default.fileExists(atPath: trimmed) {
-                let url = URL(fileURLWithPath: trimmed)
+                let dbPath = appSupport.appendingPathComponent("Witnessd/events.db").path
 
-                var lastModified: Date? = nil
-                if let attrs = try? FileManager.default.attributesOfItem(atPath: trimmed),
-                   let modDate = attrs[.modificationDate] as? Date {
-                    lastModified = modDate
+                // Check if database exists
+                guard FileManager.default.fileExists(atPath: dbPath) else {
+                    continuation.resume(returning: files)
+                    return
                 }
 
-                files.append(TrackedFile(
-                    id: trimmed,
-                    path: trimmed,
-                    name: url.lastPathComponent,
-                    events: 0,
-                    lastModified: lastModified
-                ))
+                // Use sqlite3 command to query the database
+                // Optimized query with LIMIT for pagination potential
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+                process.arguments = [
+                    "-separator", "\t",  // Use tab as separator to avoid pipe conflicts
+                    dbPath,
+                    "SELECT file_path, COUNT(*) as event_count, MAX(timestamp_ns) as last_modified FROM secure_events GROUP BY file_path ORDER BY last_modified DESC LIMIT 500;"
+                ]
+
+                let outputPipe = Pipe()
+                process.standardOutput = outputPipe
+                process.standardError = FileHandle.nullDevice
+
+                // Set up timeout
+                let timeoutWorkItem = DispatchWorkItem {
+                    if process.isRunning {
+                        process.terminate()
+                    }
+                }
+                DispatchQueue.global().asyncAfter(deadline: .now() + 5.0, execute: timeoutWorkItem)
+
+                do {
+                    try process.run()
+                    process.waitUntilExit()
+                    timeoutWorkItem.cancel()
+
+                    // Check exit status
+                    guard process.terminationStatus == 0 else {
+                        continuation.resume(returning: files)
+                        return
+                    }
+
+                    let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+                    guard let output = String(data: outputData, encoding: .utf8), !output.isEmpty else {
+                        continuation.resume(returning: files)
+                        return
+                    }
+
+                    // Parse the output - format is: file_path\tevent_count\ttimestamp_ns
+                    // Pre-allocate array capacity for better performance
+                    let lines = output.components(separatedBy: "\n")
+                    files.reserveCapacity(lines.count)
+
+                    for line in lines {
+                        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !trimmed.isEmpty else { continue }
+
+                        let parts = trimmed.components(separatedBy: "\t")
+                        // Validate we have expected number of columns
+                        guard parts.count >= 2 else { continue }
+
+                        let path = parts[0]
+                        guard !path.isEmpty else { continue }
+
+                        let events = Int(parts[1]) ?? 0
+
+                        // Parse timestamp (nanoseconds since epoch)
+                        var lastModified: Date? = nil
+                        if parts.count >= 3, !parts[2].isEmpty, let timestampNs = Int64(parts[2]) {
+                            lastModified = Date(timeIntervalSince1970: Double(timestampNs) / 1_000_000_000.0)
+                        }
+
+                        let url = URL(fileURLWithPath: path)
+
+                        files.append(TrackedFile(
+                            id: path,
+                            path: path,
+                            name: url.lastPathComponent,
+                            events: events,
+                            lastModified: lastModified
+                        ))
+                    }
+                } catch {
+                    // Log error for debugging (in production, use os.log)
+                    #if DEBUG
+                    print("listTrackedFiles error: \(error.localizedDescription)")
+                    #endif
+                }
+
+                continuation.resume(returning: files)
             }
+        }
+
+        // Update cache on main actor
+        await MainActor.run {
+            TrackedFilesCache.shared.updateCache(files)
         }
 
         return files

@@ -152,6 +152,16 @@ if (-not $SkipGoBuild) {
         Pop-Location
     }
 
+    # Build witnessd-tray
+    Write-Host "  Building witnessd-tray.exe..." -ForegroundColor Gray
+    Push-Location $RepoRoot
+    try {
+        go build -ldflags "-H=windowsgui $LdFlags" -o "$BuildDir\witnessd-tray.exe" ./cmd/witnessd-tray
+        if ($LASTEXITCODE -ne 0) { throw "Failed to build witnessd-tray.exe" }
+    } finally {
+        Pop-Location
+    }
+
     Write-Host "  Go binaries built successfully." -ForegroundColor Green
 } else {
     Write-Host "Skipping Go build (using existing binaries)" -ForegroundColor Yellow
@@ -242,7 +252,8 @@ if ($Sign) {
 
     $FilesToSign = @(
         "$BuildDir\witnessd.exe",
-        "$BuildDir\witnessctl.exe"
+        "$BuildDir\witnessctl.exe",
+        "$BuildDir\witnessd-tray.exe"
     )
     if (Test-Path "$BuildDir\witnessd-tsf.dll") {
         $FilesToSign += "$BuildDir\witnessd-tsf.dll"
