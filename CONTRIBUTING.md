@@ -121,7 +121,22 @@ Releases are managed by maintainers:
 - Documentation in `docs/`
 - Test files for usage examples
 
-## License
+## License and Contributor Agreement
 
-By contributing, you agree that your contributions will be licensed under
-the Apache License 2.0.
+By contributing to witnessd, you agree that:
+
+1. **License Grant:** Your contributions will be licensed under the same dual
+   license as the project (Non-Commercial License for non-commercial use;
+   commercial license required for commercial use).
+
+2. **Patent Grant:** You grant Writerslogic Inc. a perpetual, worldwide,
+   royalty-free license to use any patent claims you may have that are
+   necessarily infringed by your contribution.
+
+3. **Originality:** Your contributions are your original work and you have
+   the right to grant these licenses.
+
+4. **Patent Notice:** This project is the subject of USPTO Patent Application
+   No. 19/460,364. See the LICENSE file for complete terms.
+
+For questions about the contributor agreement, contact: legal@writerslogic.com
