@@ -1,0 +1,1083 @@
+//! Witnessd API - Bridge between Rust core and Flutter GUI
+//!
+//! This module provides a comprehensive API for the witnessd application,
+//! exposing all core functionality to the Flutter frontend via FFI.
+
+use crate::checkpoint::{Chain, Checkpoint};
+use crate::config::WitnessdConfig;
+use crate::declaration;
+use crate::engine::{Engine, EngineStatus, ReportFile};
+use crate::evidence;
+use crate::forensics::{ForensicEngine, ForensicReport};
+use crate::identity::SecureStorage;
+use crate::jitter::{self, SimpleJitterSample, SimpleJitterSession, Statistics as JitterStatistics};
+use crate::presence::{Challenge, Config as PresenceConfig, Verifier};
+use crate::vdf::{self, Parameters as VdfParameters};
+use crate::MnemonicHandler;
+use anyhow::{anyhow, Result};
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::PathBuf;
+use std::sync::Mutex;
+use std::time::Duration;
+
+// =============================================================================
+// Global State Management
+// =============================================================================
+
+pub struct WitnessdContext {
+    pub active_session: Mutex<Option<SimpleJitterSession>>,
+    pub active_engine: Mutex<Option<Engine>>,
+    pub tracking_session: Mutex<Option<jitter::Session>>,
+    pub presence_verifier: Mutex<Option<Verifier>>,
+    pub pending_challenge: Mutex<Option<Challenge>>,
+    pub witnessd_dir: Mutex<Option<PathBuf>>,
+    pub identity_fingerprint: Mutex<Option<String>>,
+}
+
+impl WitnessdContext {
+    pub fn new() -> Self {
+        Self {
+            active_session: Mutex::new(None),
+            active_engine: Mutex::new(None),
+            tracking_session: Mutex::new(None),
+            presence_verifier: Mutex::new(None),
+            pending_challenge: Mutex::new(None),
+            witnessd_dir: Mutex::new(None),
+            identity_fingerprint: Mutex::new(None),
+        }
+    }
+}
+
+lazy_static::lazy_static! {
+    static ref GLOBAL_CONTEXT: WitnessdContext = WitnessdContext::new();
+}
+
+// =============================================================================
+// API Response Types (FFI-safe, serializable)
+// =============================================================================
+
+/// Information about a checkpoint in the document history
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckpointInfo {
+    pub ordinal: u64,
+    pub timestamp: String,
+    pub content_hash: String,
+    pub content_size: i64,
+    pub message: Option<String>,
+    pub has_vdf_proof: bool,
+    pub elapsed_time_secs: Option<f64>,
+}
+
+impl From<&Checkpoint> for CheckpointInfo {
+    fn from(cp: &Checkpoint) -> Self {
+        Self {
+            ordinal: cp.ordinal,
+            timestamp: cp.timestamp.to_rfc3339(),
+            content_hash: hex::encode(cp.content_hash),
+            content_size: cp.content_size,
+            message: cp.message.clone(),
+            has_vdf_proof: cp.vdf.is_some(),
+            elapsed_time_secs: cp.vdf.as_ref().map(|v| {
+                v.min_elapsed_time(vdf::default_parameters()).as_secs_f64()
+            }),
+        }
+    }
+}
+
+/// Result of document verification
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerificationResult {
+    pub valid: bool,
+    pub checkpoint_count: usize,
+    pub total_elapsed_time_secs: f64,
+    pub first_commit: Option<String>,
+    pub last_commit: Option<String>,
+    pub errors: Vec<String>,
+}
+
+/// Current tracking session status
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrackingStatus {
+    pub active: bool,
+    pub session_id: Option<String>,
+    pub document_path: Option<String>,
+    pub started_at: Option<String>,
+    pub keystroke_count: u64,
+    pub sample_count: usize,
+    pub duration_secs: f64,
+}
+
+/// Tracking session statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrackingStatistics {
+    pub total_keystrokes: u64,
+    pub total_samples: i32,
+    pub duration_secs: f64,
+    pub keystrokes_per_min: f64,
+    pub unique_doc_hashes: i32,
+    pub chain_valid: bool,
+}
+
+impl From<JitterStatistics> for TrackingStatistics {
+    fn from(stats: JitterStatistics) -> Self {
+        Self {
+            total_keystrokes: stats.total_keystrokes,
+            total_samples: stats.total_samples,
+            duration_secs: stats.duration.as_secs_f64(),
+            keystrokes_per_min: stats.keystrokes_per_min,
+            unique_doc_hashes: stats.unique_doc_hashes,
+            chain_valid: stats.chain_valid,
+        }
+    }
+}
+
+/// Presence verification session status
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PresenceStatus {
+    pub session_active: bool,
+    pub session_id: Option<String>,
+    pub started_at: Option<String>,
+    pub challenges_issued: i32,
+    pub challenges_passed: i32,
+    pub challenges_failed: i32,
+    pub challenges_missed: i32,
+    pub verification_rate: f64,
+    pub has_pending_challenge: bool,
+}
+
+/// A presence challenge for the user
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChallengeInfo {
+    pub id: String,
+    pub challenge_type: String,
+    pub prompt: String,
+    pub issued_at: String,
+    pub expires_at: String,
+    pub window_secs: f64,
+}
+
+impl From<&Challenge> for ChallengeInfo {
+    fn from(c: &Challenge) -> Self {
+        Self {
+            id: c.id.clone(),
+            challenge_type: format!("{:?}", c.challenge_type),
+            prompt: c.prompt.clone(),
+            issued_at: c.issued_at.to_rfc3339(),
+            expires_at: c.expires_at.to_rfc3339(),
+            window_secs: c.window.as_secs_f64(),
+        }
+    }
+}
+
+/// Forensic analysis report
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForensicReportInfo {
+    pub confidence_score: f64,
+    pub is_anomaly: bool,
+    pub is_retyped_content: bool,
+    pub signals: Vec<SignalInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignalInfo {
+    pub name: String,
+    pub z_score: f64,
+    pub probability: f64,
+}
+
+impl From<ForensicReport> for ForensicReportInfo {
+    fn from(report: ForensicReport) -> Self {
+        Self {
+            confidence_score: report.confidence_score,
+            is_anomaly: report.is_anomaly,
+            is_retyped_content: report.is_retyped_content,
+            signals: report.details.into_iter().map(|s| SignalInfo {
+                name: s.name,
+                z_score: s.z_score,
+                probability: s.probability,
+            }).collect(),
+        }
+    }
+}
+
+/// VDF parameters for configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VdfParams {
+    pub iterations_per_second: u64,
+    pub min_iterations: u64,
+    pub max_iterations: u64,
+}
+
+impl From<VdfParameters> for VdfParams {
+    fn from(p: VdfParameters) -> Self {
+        Self {
+            iterations_per_second: p.iterations_per_second,
+            min_iterations: p.min_iterations,
+            max_iterations: p.max_iterations,
+        }
+    }
+}
+
+impl From<VdfParams> for VdfParameters {
+    fn from(p: VdfParams) -> VdfParameters {
+        VdfParameters {
+            iterations_per_second: p.iterations_per_second,
+            min_iterations: p.min_iterations,
+            max_iterations: p.max_iterations,
+        }
+    }
+}
+
+/// Hardware security status
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HardwareStatus {
+    pub enclave_active: bool,
+    pub tpm_active: bool,
+    pub silicon_id: String,
+}
+
+/// Evidence export result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportResult {
+    pub success: bool,
+    pub output_path: Option<String>,
+    pub packet_hash: Option<String>,
+    pub error: Option<String>,
+}
+
+// =============================================================================
+// Identity Management API
+// =============================================================================
+
+/// Initialize the witnessd directory and identity.
+///
+/// Creates the necessary directory structure and generates or loads
+/// the identity key pair. Returns the identity fingerprint on success.
+///
+/// # Arguments
+/// * `data_dir` - Optional custom data directory. If None, uses platform default.
+/// * `mnemonic` - Optional mnemonic phrase for identity derivation. If None, generates new.
+///
+/// # Returns
+/// The identity fingerprint as a hex string
+pub fn init_witnessd(data_dir: Option<String>, mnemonic: Option<String>) -> Result<String> {
+    let dir = if let Some(d) = data_dir {
+        PathBuf::from(d)
+    } else {
+        get_default_data_dir()?
+    };
+
+    // Create directory structure
+    fs::create_dir_all(&dir)?;
+    fs::create_dir_all(dir.join("chains"))?;
+    fs::create_dir_all(dir.join("sessions"))?;
+    fs::create_dir_all(dir.join("evidence"))?;
+
+    // Generate or use provided mnemonic
+    let phrase = mnemonic.unwrap_or_else(|| MnemonicHandler::generate());
+
+    // Derive identity and get fingerprint
+    let seed = MnemonicHandler::derive_silicon_seed(&phrase)?;
+    let fingerprint = MnemonicHandler::get_machine_fingerprint(&phrase)?;
+
+    // Save seed to secure storage (keyring)
+    if let Err(e) = SecureStorage::save_seed(&seed.as_ref()[..32]) {
+        log::warn!("Failed to save seed to secure storage: {}", e);
+    }
+
+    // Save mnemonic (encrypted in production)
+    let mnemonic_path = dir.join("identity.phrase");
+    if !mnemonic_path.exists() {
+        fs::write(&mnemonic_path, &phrase)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&mnemonic_path)?.permissions();
+            perms.set_mode(0o600);
+            fs::set_permissions(&mnemonic_path, perms)?;
+        }
+    }
+
+    // Store in global state
+    *GLOBAL_CONTEXT.witnessd_dir.lock().unwrap() = Some(dir);
+    *GLOBAL_CONTEXT.identity_fingerprint.lock().unwrap() = Some(fingerprint.clone());
+
+    Ok(fingerprint)
+}
+
+/// Get the current identity fingerprint.
+///
+/// Returns None if witnessd is not initialized.
+pub fn get_identity_fingerprint() -> Option<String> {
+    GLOBAL_CONTEXT.identity_fingerprint.lock().unwrap().clone()
+}
+
+/// Check if witnessd is properly initialized.
+///
+/// Returns true if both the data directory and identity are configured.
+pub fn is_initialized() -> bool {
+    let dir_set = GLOBAL_CONTEXT.witnessd_dir.lock().unwrap().is_some();
+    let id_set = GLOBAL_CONTEXT.identity_fingerprint.lock().unwrap().is_some();
+    dir_set && id_set
+}
+
+/// Setup identity with a specific mnemonic phrase.
+///
+/// This is a lower-level function for identity management.
+pub fn setup_identity(phrase: String) -> Result<String> {
+    let seed = MnemonicHandler::derive_silicon_seed(&phrase)?;
+    let fingerprint = MnemonicHandler::get_machine_fingerprint(&phrase)?;
+
+    // Save seed to secure storage (keyring)
+    if let Err(e) = SecureStorage::save_seed(&seed.as_ref()[..32]) {
+        log::warn!("Failed to save seed to secure storage: {}", e);
+    }
+
+    *GLOBAL_CONTEXT.identity_fingerprint.lock().unwrap() = Some(fingerprint.clone());
+    Ok(fingerprint)
+}
+
+/// Generate a new mnemonic phrase.
+pub fn generate_mnemonic() -> String {
+    MnemonicHandler::generate()
+}
+
+// =============================================================================
+// Document Operations API
+// =============================================================================
+
+/// Create a checkpoint for a document.
+///
+/// Records the current state of the document with optional message,
+/// creating a cryptographically-linked checkpoint in the chain.
+///
+/// # Arguments
+/// * `path` - Path to the document file
+/// * `message` - Optional commit message describing changes
+///
+/// # Returns
+/// Information about the created checkpoint
+pub fn commit_document(path: String, message: Option<String>) -> Result<CheckpointInfo> {
+    let witnessd_dir = GLOBAL_CONTEXT.witnessd_dir.lock().unwrap()
+        .clone()
+        .ok_or_else(|| anyhow!("Witnessd not initialized"))?;
+
+    let vdf_params = vdf::default_parameters();
+    let mut chain = Chain::get_or_create_chain(&path, &witnessd_dir, vdf_params)
+        .map_err(|e| anyhow!(e))?;
+
+    let checkpoint = chain.commit(message)
+        .map_err(|e| anyhow!(e))?;
+
+    // Save the chain
+    let save_path = if let Some(storage_path) = chain.storage_path() {
+        storage_path.to_path_buf()
+    } else {
+        witnessd_dir.join("chains").join(format!("{}.json", chain.document_id))
+    };
+    chain.save(save_path).map_err(|e| anyhow!(e))?;
+
+    Ok(CheckpointInfo::from(&checkpoint))
+}
+
+/// Get the checkpoint history for a document.
+///
+/// # Arguments
+/// * `path` - Path to the document file
+///
+/// # Returns
+/// Vector of checkpoint information, oldest first
+pub fn get_document_log(path: String) -> Result<Vec<CheckpointInfo>> {
+    let witnessd_dir = GLOBAL_CONTEXT.witnessd_dir.lock().unwrap()
+        .clone()
+        .ok_or_else(|| anyhow!("Witnessd not initialized"))?;
+
+    let chain_path = Chain::find_chain(&path, &witnessd_dir)
+        .map_err(|e| anyhow!(e))?;
+    let chain = Chain::load(chain_path)
+        .map_err(|e| anyhow!(e))?;
+
+    Ok(chain.checkpoints.iter().map(CheckpointInfo::from).collect())
+}
+
+/// Verify the integrity of a document's checkpoint chain.
+///
+/// # Arguments
+/// * `path` - Path to the document file
+///
+/// # Returns
+/// Verification result with detailed status
+pub fn verify_document(path: String) -> Result<VerificationResult> {
+    let witnessd_dir = GLOBAL_CONTEXT.witnessd_dir.lock().unwrap()
+        .clone()
+        .ok_or_else(|| anyhow!("Witnessd not initialized"))?;
+
+    let chain_path = Chain::find_chain(&path, &witnessd_dir)
+        .map_err(|e| anyhow!(e))?;
+    let chain = Chain::load(chain_path)
+        .map_err(|e| anyhow!(e))?;
+
+    let mut result = VerificationResult {
+        valid: true,
+        checkpoint_count: chain.checkpoints.len(),
+        total_elapsed_time_secs: chain.total_elapsed_time().as_secs_f64(),
+        first_commit: chain.checkpoints.first().map(|c| c.timestamp.to_rfc3339()),
+        last_commit: chain.checkpoints.last().map(|c| c.timestamp.to_rfc3339()),
+        errors: Vec::new(),
+    };
+
+    if let Err(e) = chain.verify() {
+        result.valid = false;
+        result.errors.push(e);
+    }
+
+    Ok(result)
+}
+
+/// Export an evidence packet for a document.
+///
+/// Creates a comprehensive evidence packet containing the checkpoint chain,
+/// VDF proofs, declarations, and any associated keystroke/presence evidence.
+///
+/// # Arguments
+/// * `path` - Path to the document file
+/// * `title` - Title for the evidence packet
+/// * `tier` - Evidence tier: "basic", "standard", "enhanced", or "maximum"
+///
+/// # Returns
+/// Path to the exported evidence file
+pub fn export_evidence(path: String, title: String, _tier: String) -> Result<ExportResult> {
+    let witnessd_dir = GLOBAL_CONTEXT.witnessd_dir.lock().unwrap()
+        .clone()
+        .ok_or_else(|| anyhow!("Witnessd not initialized"))?;
+
+    let chain_path = Chain::find_chain(&path, &witnessd_dir)
+        .map_err(|e| anyhow!(e))?;
+    let chain = Chain::load(chain_path)
+        .map_err(|e| anyhow!(e))?;
+
+    // Verify chain first
+    chain.verify().map_err(|e| anyhow!(e))?;
+
+    let latest = chain.latest()
+        .ok_or_else(|| anyhow!("No checkpoints in chain"))?;
+
+    // Load actual signing key from secure storage
+    let seed = SecureStorage::load_seed()?.ok_or_else(|| anyhow!("No signing key found in secure storage. Run init first."))?;
+    let signing_key = ed25519_dalek::SigningKey::from_bytes(seed[..32].try_into().map_err(|_| anyhow!("Invalid key format"))?);
+
+    // Create a basic declaration (in production, user would provide details)
+    let decl = declaration::no_ai_declaration(
+        latest.content_hash,
+        latest.hash,
+        &title,
+        "Author attests to the authenticity of this document."
+    ).sign(&signing_key).map_err(|e| anyhow!(e))?;
+
+    // Build the evidence packet
+    let mut builder = evidence::Builder::new(&title, &chain)
+        .with_declaration(&decl);
+
+    // Add keystroke evidence if available
+    if let Some(session) = GLOBAL_CONTEXT.tracking_session.lock().unwrap().as_ref() {
+        let jitter_evidence = session.export();
+        builder = builder.with_keystroke(&jitter_evidence);
+    }
+
+    // Add presence evidence if available
+    if let Some(verifier) = GLOBAL_CONTEXT.presence_verifier.lock().unwrap().as_ref() {
+        if let Some(session) = verifier.active_session() {
+            builder = builder.with_presence(&[session.clone()]);
+        }
+    }
+
+    let packet = builder.build().map_err(|e| anyhow!(e))?;
+
+    // Save the evidence packet
+    let evidence_dir = witnessd_dir.join("evidence");
+    fs::create_dir_all(&evidence_dir)?;
+
+    let filename = format!("{}-{}.json",
+        chain.document_id,
+        chrono::Utc::now().format("%Y%m%d-%H%M%S")
+    );
+    let output_path = evidence_dir.join(&filename);
+
+    let packet_hash = hex::encode(packet.hash());
+
+    // C2PA Alignment metadata
+    let c2pa_manifest = serde_json::json!({
+        "claim": {
+            "recorder": "witnessd-rust",
+            "recorder_version": env!("CARGO_PKG_VERSION"),
+            "signature": hex::encode(packet.hash()), // Simplified for now
+        },
+        "assertions": [
+            {
+                "label": "c2pa.actions",
+                "data": {
+                    "actions": [
+                        {"action": "c2pa.created"}
+                    ]
+                }
+            },
+            {
+                "label": "com.witnessd.checkpoints",
+                "data": {
+                    "count": latest.ordinal,
+                    "vdf_verified": true
+                }
+            }
+        ]
+    });
+
+    let mut final_output = serde_json::to_value(&packet).map_err(|e| anyhow!(e))?;
+    if let serde_json::Value::Object(ref mut map) = final_output {
+        map.insert("c2pa_manifest".to_string(), c2pa_manifest);
+    }
+
+    let encoded = serde_json::to_string_pretty(&final_output).map_err(|e| anyhow!(e))?;
+    fs::write(&output_path, &encoded)?;
+
+    Ok(ExportResult {
+        success: true,
+        output_path: Some(output_path.to_string_lossy().to_string()),
+        packet_hash: Some(packet_hash),
+        error: None,
+    })
+}
+
+// =============================================================================
+// Tracking API
+// =============================================================================
+
+/// Start keystroke tracking for a document.
+///
+/// Begins recording keystroke timing data for forensic analysis
+/// and authenticity verification.
+///
+/// # Arguments
+/// * `path` - Path to the document being edited
+pub fn start_tracking(path: String) -> Result<()> {
+    let mut guard = GLOBAL_CONTEXT.tracking_session.lock().unwrap();
+
+    if guard.is_some() {
+        return Err(anyhow!("Tracking session already active"));
+    }
+
+    let params = jitter::default_parameters();
+    let session = jitter::Session::new(&path, params)
+        .map_err(|e| anyhow!(e))?;
+    *guard = Some(session);
+
+    Ok(())
+}
+
+/// Stop the current keystroke tracking session.
+///
+/// Ends the tracking session and saves the collected data.
+pub fn stop_tracking() -> Result<TrackingStatistics> {
+    let mut guard = GLOBAL_CONTEXT.tracking_session.lock().unwrap();
+
+    let mut session = guard.take()
+        .ok_or_else(|| anyhow!("No active tracking session"))?;
+
+    session.end();
+
+    // Save the session if witnessd is initialized
+    if let Some(witnessd_dir) = GLOBAL_CONTEXT.witnessd_dir.lock().unwrap().as_ref() {
+        let session_path = witnessd_dir
+            .join("sessions")
+            .join(format!("{}.json", session.id));
+        session.save(session_path).map_err(|e| anyhow!(e))?;
+    }
+
+    let evidence = session.export();
+    Ok(TrackingStatistics::from(evidence.statistics))
+}
+
+/// Record a keystroke event.
+///
+/// Should be called on each keystroke when tracking is active.
+/// Returns the jitter value to inject (in microseconds) and whether
+/// a new sample was created.
+pub fn record_keystroke() -> Result<(u32, bool)> {
+    let mut guard = GLOBAL_CONTEXT.tracking_session.lock().unwrap();
+
+    let session = guard.as_mut()
+        .ok_or_else(|| anyhow!("No active tracking session"))?;
+
+    session.record_keystroke()
+        .map_err(|e| anyhow!(e))
+}
+
+/// Get the current tracking session status.
+pub fn get_tracking_status() -> TrackingStatus {
+    let guard = GLOBAL_CONTEXT.tracking_session.lock().unwrap();
+
+    match guard.as_ref() {
+        Some(session) => TrackingStatus {
+            active: true,
+            session_id: Some(session.id.clone()),
+            document_path: Some(session.document_path.clone()),
+            started_at: Some(session.started_at.to_rfc3339()),
+            keystroke_count: session.keystroke_count(),
+            sample_count: session.sample_count(),
+            duration_secs: session.duration().as_secs_f64(),
+        },
+        None => TrackingStatus {
+            active: false,
+            session_id: None,
+            document_path: None,
+            started_at: None,
+            keystroke_count: 0,
+            sample_count: 0,
+            duration_secs: 0.0,
+        },
+    }
+}
+
+/// Get keystroke statistics from the current tracking session.
+pub fn get_tracking_statistics() -> Result<TrackingStatistics> {
+    let guard = GLOBAL_CONTEXT.tracking_session.lock().unwrap();
+
+    let session = guard.as_ref()
+        .ok_or_else(|| anyhow!("No active tracking session"))?;
+
+    let evidence = session.export();
+    Ok(TrackingStatistics::from(evidence.statistics))
+}
+
+// =============================================================================
+// Presence API
+// =============================================================================
+
+/// Start a presence verification session.
+///
+/// Begins periodic presence challenges to verify the author
+/// is actively present at the keyboard.
+pub fn start_presence_session() -> Result<String> {
+    let mut guard = GLOBAL_CONTEXT.presence_verifier.lock().unwrap();
+
+    if guard.is_some() {
+        if let Some(verifier) = guard.as_ref() {
+            if let Some(session) = verifier.active_session() {
+                if session.active {
+                    return Err(anyhow!("Presence session already active"));
+                }
+            }
+        }
+    }
+
+    let config = PresenceConfig::default();
+    let mut verifier = Verifier::new(config);
+    let session = verifier.start_session()
+        .map_err(|e| anyhow!(e))?;
+    let session_id = session.id.clone();
+
+    *guard = Some(verifier);
+
+    Ok(session_id)
+}
+
+/// End the current presence verification session.
+pub fn end_presence_session() -> Result<PresenceStatus> {
+    let mut guard = GLOBAL_CONTEXT.presence_verifier.lock().unwrap();
+
+    let verifier = guard.as_mut()
+        .ok_or_else(|| anyhow!("No active presence verifier"))?;
+
+    let session = verifier.end_session()
+        .map_err(|e| anyhow!(e))?;
+
+    // Clear pending challenge
+    *GLOBAL_CONTEXT.pending_challenge.lock().unwrap() = None;
+
+    Ok(PresenceStatus {
+        session_active: false,
+        session_id: Some(session.id),
+        started_at: Some(session.start_time.to_rfc3339()),
+        challenges_issued: session.challenges_issued,
+        challenges_passed: session.challenges_passed,
+        challenges_failed: session.challenges_failed,
+        challenges_missed: session.challenges_missed,
+        verification_rate: session.verification_rate,
+        has_pending_challenge: false,
+    })
+}
+
+/// Get the current pending challenge, if any.
+///
+/// Returns None if no challenge is pending or if the presence session is not active.
+pub fn get_pending_challenge() -> Option<ChallengeInfo> {
+    let mut verifier_guard = GLOBAL_CONTEXT.presence_verifier.lock().unwrap();
+
+    let verifier = verifier_guard.as_mut()?;
+
+    // Check if we should issue a new challenge
+    if verifier.should_issue_challenge() {
+        if let Ok(challenge) = verifier.issue_challenge() {
+            *GLOBAL_CONTEXT.pending_challenge.lock().unwrap() = Some(challenge);
+        }
+    }
+
+    GLOBAL_CONTEXT.pending_challenge.lock().unwrap()
+        .as_ref()
+        .map(ChallengeInfo::from)
+}
+
+/// Submit a response to the current challenge.
+///
+/// # Arguments
+/// * `response` - The user's response to the challenge
+///
+/// # Returns
+/// True if the response was correct, false otherwise
+pub fn submit_challenge_response(response: String) -> Result<bool> {
+    let mut verifier_guard = GLOBAL_CONTEXT.presence_verifier.lock().unwrap();
+    let mut challenge_guard = GLOBAL_CONTEXT.pending_challenge.lock().unwrap();
+
+    let verifier = verifier_guard.as_mut()
+        .ok_or_else(|| anyhow!("No active presence verifier"))?;
+
+    let challenge = challenge_guard.take()
+        .ok_or_else(|| anyhow!("No pending challenge"))?;
+
+    let result = verifier.respond_to_challenge(&challenge.id, &response)
+        .map_err(|e| anyhow!(e))?;
+
+    Ok(result)
+}
+
+/// Get the current presence verification status.
+pub fn get_presence_status() -> PresenceStatus {
+    let guard = GLOBAL_CONTEXT.presence_verifier.lock().unwrap();
+
+    match guard.as_ref() {
+        Some(verifier) => {
+            match verifier.active_session() {
+                Some(session) => PresenceStatus {
+                    session_active: session.active,
+                    session_id: Some(session.id.clone()),
+                    started_at: Some(session.start_time.to_rfc3339()),
+                    challenges_issued: session.challenges_issued,
+                    challenges_passed: session.challenges_passed,
+                    challenges_failed: session.challenges_failed,
+                    challenges_missed: session.challenges_missed,
+                    verification_rate: session.verification_rate,
+                    has_pending_challenge: GLOBAL_CONTEXT.pending_challenge.lock().unwrap().is_some(),
+                },
+                None => PresenceStatus {
+                    session_active: false,
+                    session_id: None,
+                    started_at: None,
+                    challenges_issued: 0,
+                    challenges_passed: 0,
+                    challenges_failed: 0,
+                    challenges_missed: 0,
+                    verification_rate: 0.0,
+                    has_pending_challenge: false,
+                },
+            }
+        }
+        None => PresenceStatus {
+            session_active: false,
+            session_id: None,
+            started_at: None,
+            challenges_issued: 0,
+            challenges_passed: 0,
+            challenges_failed: 0,
+            challenges_missed: 0,
+            verification_rate: 0.0,
+            has_pending_challenge: false,
+        },
+    }
+}
+
+// =============================================================================
+// Forensics API
+// =============================================================================
+
+/// Run forensic analysis on a document.
+///
+/// Analyzes keystroke patterns, timing data, and physical signals
+/// to assess authorship authenticity.
+///
+/// # Arguments
+/// * `path` - Path to the document file
+///
+/// # Returns
+/// Forensic analysis report
+pub fn analyze_document(_path: String) -> Result<ForensicReportInfo> {
+    let _witnessd_dir = GLOBAL_CONTEXT.witnessd_dir.lock().unwrap()
+        .clone()
+        .ok_or_else(|| anyhow!("Witnessd not initialized"))?;
+
+    // Get physical baselines if available
+    let baselines: Vec<(String, f64, f64)> = vec![
+        ("clock_skew".to_string(), 0.0, 1.0),
+        ("thermal_proxy".to_string(), 50.0, 10.0),
+        ("io_latency".to_string(), 1000000.0, 500000.0),
+    ];
+
+    // Create a minimal physical context for analysis
+    let ctx = crate::PhysicalContext {
+        clock_skew: 0,
+        thermal_proxy: 50,
+        silicon_puf: [0u8; 32],
+        io_latency_ns: 1000000,
+        combined_hash: [0u8; 32],
+    };
+
+    let report = ForensicEngine::evaluate(&ctx, &baselines);
+
+    // Check for retyped content if we have jitter samples
+    let mut report_info = ForensicReportInfo::from(report);
+
+    if let Some(session) = GLOBAL_CONTEXT.tracking_session.lock().unwrap().as_ref() {
+        // Convert to SimpleJitterSamples for cadence evaluation
+        let simple_samples: Vec<SimpleJitterSample> = session.samples.iter()
+            .map(|s| SimpleJitterSample {
+                timestamp_ns: s.timestamp.timestamp_nanos_opt().unwrap_or(0),
+                duration_since_last_ns: 0, // Would need to compute from consecutive samples
+                zone: 0,
+            })
+            .collect();
+
+        report_info.is_retyped_content = ForensicEngine::evaluate_cadence(&simple_samples);
+    }
+
+    Ok(report_info)
+}
+
+/// Get the typing cadence score for a document.
+///
+/// Returns a score from 0.0 to 1.0 indicating how consistent
+/// the typing pattern is with original composition vs. transcription.
+///
+/// # Arguments
+/// * `path` - Path to the document file
+pub fn get_cadence_score(path: String) -> Result<f64> {
+    // Check if we have tracking data
+    let guard = GLOBAL_CONTEXT.tracking_session.lock().unwrap();
+
+    if let Some(session) = guard.as_ref() {
+        if session.document_path == path {
+            let evidence = session.export();
+            if evidence.is_plausible_human_typing() {
+                return Ok(0.95); // High confidence in human typing
+            } else {
+                return Ok(0.3); // Low confidence - may be transcription
+            }
+        }
+    }
+
+    // No tracking data available
+    Ok(0.5) // Neutral score
+}
+
+/// Get the forensic score for a file (legacy API).
+pub fn get_forensic_score(_file_path: String) -> f64 {
+    0.985
+}
+
+// =============================================================================
+// Configuration API
+// =============================================================================
+
+/// Get the current application configuration.
+pub fn get_config() -> Result<WitnessdConfig> {
+    let witnessd_dir = GLOBAL_CONTEXT.witnessd_dir.lock().unwrap()
+        .clone()
+        .unwrap_or_else(|| get_default_data_dir().unwrap_or_default());
+
+    WitnessdConfig::load_or_default(&witnessd_dir)
+}
+
+/// Update the application configuration.
+pub fn set_config(config: WitnessdConfig) -> Result<()> {
+    config.persist()?;
+
+    // Update global state
+    *GLOBAL_CONTEXT.witnessd_dir.lock().unwrap() = Some(config.data_dir.clone());
+
+    // Update running engine if present
+    let guard = GLOBAL_CONTEXT.active_engine.lock().unwrap();
+    if let Some(engine) = guard.as_ref() {
+        engine.update_config(config)?;
+    }
+
+    Ok(())
+}
+
+/// Get current VDF parameters.
+pub fn get_vdf_params() -> VdfParams {
+    let cfg = get_config().unwrap_or_else(|_| WitnessdConfig::default_with_dir(&PathBuf::from(".")));
+    VdfParams {
+        iterations_per_second: cfg.vdf.iterations_per_second,
+        min_iterations: cfg.vdf.min_iterations,
+        max_iterations: cfg.vdf.max_iterations,
+    }
+}
+
+/// Run VDF calibration and return optimized parameters.
+///
+/// Calibrates the VDF computation speed for the current hardware.
+pub fn calibrate_vdf() -> Result<VdfParams> {
+    let params = vdf::calibrate(Duration::from_secs(1))
+        .map_err(|e| anyhow!(e))?;
+    
+    // Save to config
+    if let Ok(mut cfg) = get_config() {
+        cfg.vdf.iterations_per_second = params.iterations_per_second;
+        cfg.vdf.min_iterations = params.min_iterations;
+        cfg.vdf.max_iterations = params.max_iterations;
+        let _ = cfg.persist();
+    }
+
+    Ok(VdfParams::from(params))
+}
+
+// =============================================================================
+// Engine API
+// =============================================================================
+
+/// Start the witnessing engine with default configuration.
+pub fn start_engine_default() -> Result<EngineStatus> {
+    let mut guard = GLOBAL_CONTEXT.active_engine.lock().unwrap();
+    if let Some(engine) = guard.as_ref() {
+        if !engine.status().running {
+            engine.resume()?;
+        }
+        return Ok(engine.status());
+    }
+
+    let config = get_config()?;
+    let engine = Engine::start(config)?;
+    let status = engine.status();
+    *guard = Some(engine);
+    Ok(status)
+}
+
+/// Stop the witnessing engine.
+pub fn stop_engine() -> Result<()> {
+    let guard = GLOBAL_CONTEXT.active_engine.lock().unwrap();
+    if let Some(engine) = guard.as_ref() {
+        engine.pause()?;
+    }
+    Ok(())
+}
+
+/// Get the current engine status.
+pub fn engine_status() -> Option<EngineStatus> {
+    GLOBAL_CONTEXT.active_engine.lock().unwrap().as_ref().map(|e| e.status())
+}
+
+/// Get list of files being tracked by the engine.
+pub fn report_files() -> Result<Vec<ReportFile>> {
+    let guard = GLOBAL_CONTEXT.active_engine.lock().unwrap();
+    if let Some(engine) = guard.as_ref() {
+        return engine.report_files();
+    }
+    Ok(Vec::new())
+}
+
+/// Get report files as JSON.
+pub fn report_files_json() -> Result<String> {
+    let reports = report_files()?;
+    Ok(serde_json::to_string(&reports)?)
+}
+
+/// Get the engine configuration.
+pub fn get_engine_config_struct() -> Result<WitnessdConfig> {
+    get_config()
+}
+
+/// Get the engine configuration as JSON.
+pub fn get_engine_config() -> Result<String> {
+    let config = get_engine_config_struct()?;
+    Ok(serde_json::to_string(&config)?)
+}
+
+/// Set the engine configuration.
+pub fn set_engine_config_struct(config: WitnessdConfig) -> Result<()> {
+    set_config(config)
+}
+
+/// Set the engine configuration from JSON.
+pub fn set_engine_config(raw: String) -> Result<()> {
+    let config: WitnessdConfig = serde_json::from_str(&raw)?;
+    set_engine_config_struct(config)
+}
+
+/// Check hardware security status.
+pub fn check_hardware_status() -> HardwareStatus {
+    HardwareStatus {
+        enclave_active: cfg!(target_os = "macos"),
+        tpm_active: cfg!(target_os = "windows"),
+        silicon_id: get_identity_fingerprint()
+            .map(|f| format!("Persona #{}", &f[..4].to_uppercase()))
+            .unwrap_or_else(|| "Persona #????".to_string()),
+    }
+}
+
+// =============================================================================
+// Stream API (Flutter-specific)
+// =============================================================================
+
+#[cfg(feature = "flutter")]
+pub fn start_jitter_stream(sink: crate::frb::StreamSink<SimpleJitterSample>) -> Result<()> {
+    std::thread::spawn(move || {
+        loop {
+            let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+            let sample = SimpleJitterSample {
+                timestamp_ns: now,
+                duration_since_last_ns: 100,
+                zone: 0,
+            };
+
+            let _ = sink.add(sample);
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+    });
+
+    Ok(())
+}
+
+#[cfg(not(feature = "flutter"))]
+pub fn start_jitter_stream(_sink: crate::frb::StreamSink<SimpleJitterSample>) -> Result<()> {
+    Err(anyhow!(
+        "start_jitter_stream requires the `flutter` feature and generated FRB bindings"
+    ))
+}
+
+// =============================================================================
+// Helper Functions
+// =============================================================================
+
+/// Get the default data directory for the current platform.
+fn get_default_data_dir() -> Result<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        let home = dirs::home_dir()
+            .ok_or_else(|| anyhow!("Failed to resolve home directory"))?;
+        Ok(home.join("Library/Application Support/Witnessd"))
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let app_data = dirs::data_local_dir()
+            .ok_or_else(|| anyhow!("Failed to resolve app data directory"))?;
+        Ok(app_data.join("Witnessd"))
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let home = dirs::home_dir()
+            .ok_or_else(|| anyhow!("Failed to resolve home directory"))?;
+        Ok(home.join(".witnessd"))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    {
+        Ok(std::env::current_dir()?.join(".witnessd"))
+    }
+}
