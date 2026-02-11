@@ -1,0 +1,4 @@
+rust_input: crate::bridge
+rust_root: ../rust/witnessd-core
+dart_output: lib
+dart_entrypoint_class_name: RustLib
