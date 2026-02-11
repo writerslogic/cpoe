@@ -11,6 +11,7 @@ use statrs::statistics::{Data, OrderStatistics};
 use std::collections::HashMap;
 use std::fmt;
 
+use crate::analysis::{BehavioralFingerprint, ForgeryAnalysis};
 use crate::jitter::SimpleJitterSample;
 use crate::PhysicalContext;
 
@@ -134,12 +135,18 @@ pub struct ForensicMetrics {
     pub primary: PrimaryMetrics,
     /// Keystroke cadence metrics.
     pub cadence: CadenceMetrics,
+    /// Behavioral fingerprint analysis.
+    pub behavioral: Option<BehavioralFingerprint>,
+    /// Forgery detection results.
+    pub forgery_analysis: Option<ForgeryAnalysis>,
     /// Edit velocity metrics.
     pub velocity: VelocityMetrics,
     /// Session-level statistics.
     pub session_stats: SessionStats,
     /// Overall assessment score (0.0 - 1.0, higher = more human-like).
     pub assessment_score: f64,
+    /// Steganographic confidence (validity of timing modulation).
+    pub steg_confidence: f64,
     /// Number of detected anomalies.
     pub anomaly_count: usize,
     /// Risk level classification.
@@ -1007,14 +1014,14 @@ pub fn calculate_assessment_score(
         score -= 0.1;
     }
 
-    // Penalize robotic cadence
+    // Penalize robotic cadence (Behavioral check)
     if cadence.is_robotic {
-        score -= 0.25;
+        score -= 0.35; // Increased penalty
     }
 
     // Penalize low coefficient of variation (too consistent)
     if cadence.coefficient_of_variation < 0.2 {
-        score -= 0.1 * (0.2 - cadence.coefficient_of_variation) / 0.2;
+        score -= 0.15 * (0.2 - cadence.coefficient_of_variation) / 0.2;
     }
 
     // Penalize anomalies
@@ -1114,9 +1121,32 @@ pub fn analyze_forensics(
         metrics.primary = primary;
     }
 
-    // Cadence metrics
+    // Cadence and Behavioral metrics
     if let Some(samples) = jitter_samples {
         metrics.cadence = analyze_cadence(samples);
+        
+        // Compute behavioral fingerprint (the "How")
+        let fingerprint = BehavioralFingerprint::from_samples(samples);
+        metrics.behavioral = Some(fingerprint);
+        
+        // Run forgery detection
+        let forgery = BehavioralFingerprint::detect_forgery(samples);
+        metrics.forgery_analysis = Some(forgery.clone());
+
+        // Compute Steganographic Confidence (the "What")
+        // In a full implementation, this would verify the HMAC-jitter values.
+        // For now, we correlate stability with steganographic presence.
+        metrics.steg_confidence = if metrics.cadence.coefficient_of_variation > 0.3 {
+            0.95 // High entropy suggests authentic human jitter
+        } else {
+            0.20 // Too stable suggests either replaying or missing steganography
+        };
+
+        // Fusion: If steg is "perfect" but behavioral is "suspicious", penalize score heavily.
+        if forgery.is_suspicious && metrics.steg_confidence > 0.8 {
+            // "Perfect Replay" detection
+            metrics.anomaly_count += 1;
+        }
     }
 
     // Velocity metrics
@@ -1127,7 +1157,7 @@ pub fn analyze_forensics(
 
     // Anomaly count
     let anomalies = detect_anomalies(events, regions, &metrics.primary);
-    metrics.anomaly_count = anomalies.len();
+    metrics.anomaly_count += anomalies.len();
 
     // Assessment score
     metrics.assessment_score = calculate_assessment_score(
