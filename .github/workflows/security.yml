@@ -1,0 +1,153 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly on Monday
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  # ============================================================================
+  # Rust Security Audit
+  # ============================================================================
+  cargo-audit:
+    name: Cargo Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+
+      - name: Run audit
+        working-directory: rust/witnessd-core
+        run: cargo audit --json > audit-results.json
+        continue-on-error: true
+
+      - name: Upload audit results
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-audit-results
+          path: rust/witnessd-core/audit-results.json
+
+  cargo-deny:
+    name: Cargo Deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny
+
+      - name: Check advisories
+        working-directory: rust/witnessd-core
+        run: cargo deny check advisories
+        continue-on-error: true
+
+      - name: Check licenses
+        working-directory: rust/witnessd-core
+        run: cargo deny check licenses
+        continue-on-error: true
+
+      - name: Check bans
+        working-directory: rust/witnessd-core
+        run: cargo deny check bans
+        continue-on-error: true
+
+  # ============================================================================
+  # Dependency Review (PRs only)
+  # ============================================================================
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: critical
+          deny-licenses: GPL-3.0, AGPL-3.0
+
+  # ============================================================================
+  # Trivy Vulnerability Scanner
+  # ============================================================================
+  trivy:
+    name: Trivy Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+        if: always()
+
+  # ============================================================================
+  # Secret Scanning
+  # ============================================================================
+  secrets:
+    name: Secret Scanning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: TruffleHog scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          extra_args: --only-verified
+
+      - name: Gitleaks scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+  # ============================================================================
+  # SAST with Semgrep
+  # ============================================================================
+  semgrep:
+    name: Semgrep SAST
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Semgrep
+        run: semgrep ci --sarif --output=semgrep-results.sarif
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+        continue-on-error: true
+
+      - name: Upload Semgrep results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep-results.sarif
+        if: always()
+        continue-on-error: true

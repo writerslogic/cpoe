@@ -12,7 +12,7 @@ permissions:
   attestations: write
 
 env:
-  GO_VERSION: '1.22'
+  CARGO_TERM_COLOR: always
 
 jobs:
   # ============================================================================
@@ -26,11 +26,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
         with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
+          components: clippy
 
       - name: Validate tag format
         run: |
@@ -43,784 +42,342 @@ jobs:
           echo "Tag format valid: $TAG"
 
       - name: Run tests
-        run: go test -race ./...
+        working-directory: rust/witnessd-core
+        run: cargo test --all-features
 
-      - name: Run linter
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: v1.61
-          args: --timeout=5m
+      - name: Run clippy
+        working-directory: rust/witnessd-core
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
   # ============================================================================
-  # GoReleaser (Main Release Job)
+  # Build Rust Binaries (All Platforms)
   # ============================================================================
-  goreleaser:
-    name: GoReleaser Build
-    runs-on: ubuntu-latest
+  build-rust:
+    name: Build Rust (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
     needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            ext: ''
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            ext: ''
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            ext: ''
+          - target: aarch64-apple-darwin
+            os: macos-14
+            ext: ''
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            ext: '.exe'
     outputs:
       hashes: ${{ steps.hash.outputs.hashes }}
-      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
         with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
+          targets: ${{ matrix.target }}
 
-      - name: Extract version
-        id: version
+      - name: Install cross-compilation tools (Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-dev
+
+      - name: Build CLI
+        working-directory: rust/witnessd-cli
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: |
+          cargo build --release --target ${{ matrix.target }}
+
+      - name: Create archive (Unix)
+        if: runner.os != 'Windows'
         run: |
           VERSION="${{ github.ref_name }}"
-          echo "version=${VERSION#v}" >> $GITHUB_OUTPUT
+          ARCHIVE="witnessd-rust_${VERSION}_${{ matrix.target }}.tar.gz"
+          tar -czvf "$ARCHIVE" \
+            -C rust/witnessd-cli/target/${{ matrix.target }}/release \
+            witnessd-cli${{ matrix.ext }}
+          echo "ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
 
-      - name: Install Syft for SBOM
+      - name: Create archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: |
-          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+          $VERSION = "${{ github.ref_name }}"
+          $ARCHIVE = "witnessd-rust_${VERSION}_${{ matrix.target }}.zip"
+          Compress-Archive -Path "rust/witnessd-cli/target/${{ matrix.target }}/release/witnessd-cli${{ matrix.ext }}" -DestinationPath $ARCHIVE
+          echo "ARCHIVE=$ARCHIVE" >> $env:GITHUB_ENV
 
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
-        with:
-          distribution: goreleaser
-          version: '~> v2'
-          args: release --clean
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          SCOOP_BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
-          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-
-      - name: Generate artifact hashes
+      - name: Generate hash
         id: hash
+        shell: bash
         run: |
-          cd dist
-          sha256sum *.tar.gz *.zip 2>/dev/null | base64 -w0 > hashes.txt || \
-          shasum -a 256 *.tar.gz *.zip 2>/dev/null | base64 > hashes.txt
-          echo "hashes=$(cat hashes.txt)" >> "$GITHUB_OUTPUT"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            sha256sum "${{ env.ARCHIVE }}" | base64 -w0 > hash.txt
+          else
+            shasum -a 256 "${{ env.ARCHIVE }}" | base64 > hash.txt
+          fi
+          echo "hashes=$(cat hash.txt)" >> "$GITHUB_OUTPUT"
 
-      - name: Generate SBOM
-        run: |
-          syft dir:. -o spdx-json=dist/witnessd-sbom.spdx.json
-          syft dir:. -o cyclonedx-json=dist/witnessd-sbom.cdx.json
-
-      - name: Upload SBOM to Release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release upload ${{ github.ref_name }} \
-            dist/witnessd-sbom.spdx.json \
-            dist/witnessd-sbom.cdx.json \
-            --clobber
-
-      - name: Upload dist artifacts
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: goreleaser-dist
-          path: dist/
+          name: binary-${{ matrix.target }}
+          path: ${{ env.ARCHIVE }}
           retention-days: 7
 
   # ============================================================================
-  # macOS Build, Sign, Notarize, DMG
+  # Aggregate Hashes for SLSA
   # ============================================================================
-  build-macos:
-    name: Build macOS (${{ matrix.arch }})
-    runs-on: macos-14
-    needs: validate
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [amd64, arm64]
+  aggregate-hashes:
+    name: Aggregate Artifact Hashes
+    runs-on: ubuntu-latest
+    needs: build-rust
     outputs:
-      dmg-amd64: ${{ steps.dmg.outputs.dmg-amd64 }}
-      dmg-arm64: ${{ steps.dmg.outputs.dmg-arm64 }}
+      hashes: ${{ steps.aggregate.outputs.hashes }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Import Apple Developer Certificate
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-        run: |
-          if [ -n "$APPLE_CERTIFICATE" ]; then
-            echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
-            security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-            security default-keychain -s build.keychain
-            security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-            security import certificate.p12 -k build.keychain \
-              -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-            security set-key-partition-list -S apple-tool:,apple:,codesign: \
-              -s -k "$KEYCHAIN_PASSWORD" build.keychain
-            rm certificate.p12
-            echo "SIGNING_ENABLED=true" >> $GITHUB_ENV
-          else
-            echo "No signing certificate provided"
-            echo "SIGNING_ENABLED=false" >> $GITHUB_ENV
-          fi
-
-      - name: Build Go binaries
-        env:
-          GOARCH: ${{ matrix.arch }}
-          CGO_ENABLED: '1'
-        run: |
-          mkdir -p dist
-          go build -ldflags "-s -w \
-            -X main.Version=${{ github.ref_name }} \
-            -X main.Commit=${{ github.sha }} \
-            -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            -o dist/witnessd-darwin-${{ matrix.arch }} ./cmd/witnessd
-          go build -ldflags "-s -w \
-            -X main.Version=${{ github.ref_name }} \
-            -X main.Commit=${{ github.sha }} \
-            -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            -o dist/witnessctl-darwin-${{ matrix.arch }} ./cmd/witnessctl
-
-      - name: Code sign binaries
-        if: env.SIGNING_ENABLED == 'true'
-        env:
-          APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
-        run: |
-          codesign --force --options runtime \
-            --sign "$APPLE_DEVELOPER_ID" --timestamp \
-            dist/witnessd-darwin-${{ matrix.arch }}
-          codesign --force --options runtime \
-            --sign "$APPLE_DEVELOPER_ID" --timestamp \
-            dist/witnessctl-darwin-${{ matrix.arch }}
-
-      - name: Build macOS App
-        run: |
-          mkdir -p platforms/macos/WitnessdApp/witnessd/Resources
-          cp dist/witnessd-darwin-${{ matrix.arch }} \
-            platforms/macos/WitnessdApp/witnessd/Resources/witnessd
-
-          xcodebuild -project platforms/macos/WitnessdApp/witnessd.xcodeproj \
-            -scheme Witness \
-            -configuration Release \
-            -destination 'platform=macOS,arch=${{ matrix.arch == 'amd64' && 'x86_64' || 'arm64' }}' \
-            -derivedDataPath platforms/macos/WitnessdApp/build \
-            -archivePath platforms/macos/WitnessdApp/build/Witness.xcarchive \
-            archive \
-            ${{ env.SIGNING_ENABLED == 'true' && '' || 'CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO' }}
-
-      - name: Notarize App
-        if: env.SIGNING_ENABLED == 'true'
-        env:
-          APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
-          APPLE_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
-          APPLE_PRIVATE_KEY: ${{ secrets.APPLE_PRIVATE_KEY }}
-        run: |
-          # Create notarization zip
-          zip -r Witnessd-${{ matrix.arch }}.zip \
-            platforms/macos/WitnessdApp/build/Witness.xcarchive
-
-          # Submit for notarization
-          xcrun notarytool submit Witnessd-${{ matrix.arch }}.zip \
-            --issuer "$APPLE_ISSUER_ID" \
-            --key-id "$APPLE_KEY_ID" \
-            --key "$APPLE_PRIVATE_KEY" \
-            --wait
-
-      - name: Create DMG
-        id: dmg
-        run: |
-          DMG_NAME="Witnessd-${{ github.ref_name }}-darwin-${{ matrix.arch }}.dmg"
-
-          # Create DMG structure
-          mkdir -p dmg-staging
-          if [ -d "platforms/macos/WitnessdApp/build/Build/Products/Release/Witnessd.app" ]; then
-            cp -R "platforms/macos/WitnessdApp/build/Build/Products/Release/Witnessd.app" dmg-staging/
-          elif [ -d "platforms/macos/WitnessdApp/build/Witness.xcarchive/Products/Applications/Witnessd.app" ]; then
-            cp -R "platforms/macos/WitnessdApp/build/Witness.xcarchive/Products/Applications/Witnessd.app" dmg-staging/
-          fi
-          ln -s /Applications dmg-staging/Applications
-
-          # Create DMG
-          hdiutil create -volname "Witnessd" -srcfolder dmg-staging \
-            -ov -format UDZO "$DMG_NAME"
-
-          echo "dmg-${{ matrix.arch }}=$DMG_NAME" >> $GITHUB_OUTPUT
-          echo "DMG created: $DMG_NAME"
-
-      - name: Sign DMG
-        if: env.SIGNING_ENABLED == 'true'
-        env:
-          APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
-        run: |
-          codesign --force --sign "$APPLE_DEVELOPER_ID" --timestamp \
-            "Witnessd-${{ github.ref_name }}-darwin-${{ matrix.arch }}.dmg"
-
-      - name: Upload DMG to Release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release upload ${{ github.ref_name }} \
-            "Witnessd-${{ github.ref_name }}-darwin-${{ matrix.arch }}.dmg" \
-            --clobber
-
-      - name: Upload macOS artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos-${{ matrix.arch }}
-          path: |
-            dist/witnessd-darwin-${{ matrix.arch }}
-            dist/witnessctl-darwin-${{ matrix.arch }}
-            Witnessd-*.dmg
-
-  # ============================================================================
-  # macOS Universal Binary
-  # ============================================================================
-  build-macos-universal:
-    name: Build macOS Universal
-    runs-on: macos-14
-    needs: build-macos
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download amd64 artifacts
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          name: macos-amd64
-          path: amd64/
+          path: artifacts
+          pattern: binary-*
+          merge-multiple: true
 
-      - name: Download arm64 artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: macos-arm64
-          path: arm64/
-
-      - name: Create Universal Binary
+      - name: Generate combined hashes
+        id: aggregate
         run: |
-          mkdir -p universal
-          lipo -create -output universal/witnessd \
-            amd64/witnessd-darwin-amd64 \
-            arm64/witnessd-darwin-arm64
-          lipo -create -output universal/witnessctl \
-            amd64/witnessctl-darwin-amd64 \
-            arm64/witnessctl-darwin-arm64
-
-          # Verify universal binary
-          file universal/witnessd
-          file universal/witnessctl
-
-      - name: Create Universal Archive
-        run: |
-          tar -czvf witnessd_${{ github.ref_name }}_darwin_universal.tar.gz \
-            -C universal witnessd witnessctl
-
-      - name: Upload Universal Binary to Release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release upload ${{ github.ref_name }} \
-            witnessd_${{ github.ref_name }}_darwin_universal.tar.gz \
-            --clobber
+          cd artifacts
+          sha256sum * | base64 -w0 > ../hashes.txt
+          echo "hashes=$(cat ../hashes.txt)" >> "$GITHUB_OUTPUT"
 
   # ============================================================================
-  # Windows Build and Package
-  # ============================================================================
-  build-windows:
-    name: Build Windows
-    runs-on: windows-2022
-    needs: validate
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Build Windows binaries
-        shell: pwsh
-        run: |
-          $env:CGO_ENABLED = "0"
-          $version = "${{ github.ref_name }}"
-          $commit = "${{ github.sha }}"
-          $buildTime = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
-
-          go build -ldflags "-s -w -X main.Version=$version -X main.Commit=$commit -X main.BuildTime=$buildTime" `
-            -o dist/witnessd.exe ./cmd/witnessd
-          go build -ldflags "-s -w -X main.Version=$version -X main.Commit=$commit -X main.BuildTime=$buildTime" `
-            -o dist/witnessctl.exe ./cmd/witnessctl
-
-      - name: Sign Windows binaries
-        if: secrets.WINDOWS_SIGNING_CERTIFICATE != ''
-        shell: pwsh
-        env:
-          WINDOWS_SIGNING_CERTIFICATE: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE }}
-          WINDOWS_SIGNING_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
-        run: |
-          # Import certificate
-          $cert = [System.Convert]::FromBase64String($env:WINDOWS_SIGNING_CERTIFICATE)
-          [System.IO.File]::WriteAllBytes("certificate.pfx", $cert)
-
-          # Sign binaries using signtool
-          & "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe" sign `
-            /f certificate.pfx /p "$env:WINDOWS_SIGNING_PASSWORD" `
-            /t http://timestamp.digicert.com /fd sha256 `
-            dist/witnessd.exe dist/witnessctl.exe
-
-          Remove-Item certificate.pfx
-
-      - name: Create MSI installer
-        shell: pwsh
-        run: |
-          # Install WiX toolset
-          dotnet tool install --global wix --version 4.0.4
-
-          # Create WiX source file
-          $wxsContent = @"
-          <?xml version="1.0" encoding="UTF-8"?>
-          <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
-            <Package Name="Witnessd" Manufacturer="WritersLogic"
-                     Version="${{ github.ref_name }}" UpgradeCode="12345678-1234-1234-1234-123456789012">
-              <MajorUpgrade DowngradeErrorMessage="A newer version is already installed." />
-              <MediaTemplate EmbedCab="yes" />
-              <Feature Id="ProductFeature" Title="Witnessd" Level="1">
-                <ComponentGroupRef Id="ProductComponents" />
-              </Feature>
-            </Package>
-            <Fragment>
-              <StandardDirectory Id="ProgramFiles64Folder">
-                <Directory Id="INSTALLFOLDER" Name="Witnessd" />
-              </StandardDirectory>
-            </Fragment>
-            <Fragment>
-              <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
-                <Component Id="witnessd.exe">
-                  <File Source="dist\witnessd.exe" />
-                </Component>
-                <Component Id="witnessctl.exe">
-                  <File Source="dist\witnessctl.exe" />
-                </Component>
-              </ComponentGroup>
-            </Fragment>
-          </Wix>
-          "@
-          $wxsContent | Out-File -FilePath "witnessd.wxs" -Encoding UTF8
-
-          # Build MSI
-          wix build witnessd.wxs -o "Witnessd-${{ github.ref_name }}-windows-amd64.msi"
-
-      - name: Create ZIP archive
-        shell: pwsh
-        run: |
-          Compress-Archive -Path dist/witnessd.exe, dist/witnessctl.exe, LICENSE, README.md `
-            -DestinationPath "witnessd_${{ github.ref_name }}_windows_amd64.zip"
-
-      - name: Upload Windows artifacts to Release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          gh release upload ${{ github.ref_name }} \
-            "witnessd_${{ github.ref_name }}_windows_amd64.zip" \
-            "Witnessd-${{ github.ref_name }}-windows-amd64.msi" \
-            --clobber
-
-      - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-amd64
-          path: |
-            dist/*.exe
-            *.msi
-            *.zip
-
-  # ============================================================================
-  # Linux Packages (deb, rpm, AppImage)
-  # ============================================================================
-  build-linux-packages:
-    name: Build Linux Packages
-    runs-on: ubuntu-latest
-    needs: goreleaser
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [amd64, arm64]
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Set up QEMU for cross-compilation
-        if: matrix.arch == 'arm64'
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
-      - name: Build Linux binaries
-        env:
-          GOARCH: ${{ matrix.arch }}
-          CGO_ENABLED: '0'
-        run: |
-          mkdir -p dist
-          go build -ldflags "-s -w \
-            -X main.Version=${{ github.ref_name }} \
-            -X main.Commit=${{ github.sha }} \
-            -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            -o dist/witnessd ./cmd/witnessd
-          go build -ldflags "-s -w \
-            -X main.Version=${{ github.ref_name }} \
-            -X main.Commit=${{ github.sha }} \
-            -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            -o dist/witnessctl ./cmd/witnessctl
-
-      - name: Install packaging tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y rpm dpkg-dev fakeroot
-
-      - name: Create DEB package
-        run: |
-          VERSION="${{ github.ref_name }}"
-          VERSION="${VERSION#v}"
-          PKG_DIR="witnessd_${VERSION}_${{ matrix.arch }}"
-
-          mkdir -p ${PKG_DIR}/DEBIAN
-          mkdir -p ${PKG_DIR}/usr/bin
-          mkdir -p ${PKG_DIR}/usr/share/man/man1
-          mkdir -p ${PKG_DIR}/usr/share/licenses/witnessd
-
-          cp dist/witnessd ${PKG_DIR}/usr/bin/
-          cp dist/witnessctl ${PKG_DIR}/usr/bin/
-          cp LICENSE ${PKG_DIR}/usr/share/licenses/witnessd/
-
-          if [ -f docs/man/witnessd.1 ]; then
-            cp docs/man/witnessd.1 ${PKG_DIR}/usr/share/man/man1/
-          fi
-          if [ -f docs/man/witnessctl.1 ]; then
-            cp docs/man/witnessctl.1 ${PKG_DIR}/usr/share/man/man1/
-          fi
-
-          cat > ${PKG_DIR}/DEBIAN/control << EOF
-          Package: witnessd
-          Version: ${VERSION}
-          Section: utils
-          Priority: optional
-          Architecture: ${{ matrix.arch }}
-          Maintainer: David Condrey <david@condrey.dev>
-          Description: Cryptographic authorship witnessing - kinetic proof of provenance
-           Witnessd provides cryptographic witnessing of authorship through
-           keystroke dynamics analysis and secure attestation.
-          Homepage: https://github.com/writerslogic/witnessd
-          EOF
-
-          fakeroot dpkg-deb --build ${PKG_DIR}
-          mv ${PKG_DIR}.deb witnessd_${VERSION}_${{ matrix.arch }}.deb
-
-      - name: Create RPM package
-        run: |
-          VERSION="${{ github.ref_name }}"
-          VERSION="${VERSION#v}"
-
-          mkdir -p rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
-
-          cat > rpmbuild/SPECS/witnessd.spec << EOF
-          Name:           witnessd
-          Version:        ${VERSION}
-          Release:        1%{?dist}
-          Summary:        Cryptographic authorship witnessing
-          License:        Proprietary
-          URL:            https://github.com/writerslogic/witnessd
-
-          %description
-          Witnessd provides cryptographic witnessing of authorship through
-          keystroke dynamics analysis and secure attestation.
-
-          %install
-          mkdir -p %{buildroot}/usr/bin
-          mkdir -p %{buildroot}/usr/share/licenses/witnessd
-          cp %{_sourcedir}/witnessd %{buildroot}/usr/bin/
-          cp %{_sourcedir}/witnessctl %{buildroot}/usr/bin/
-          cp %{_sourcedir}/LICENSE %{buildroot}/usr/share/licenses/witnessd/
-
-          %files
-          /usr/bin/witnessd
-          /usr/bin/witnessctl
-          /usr/share/licenses/witnessd/LICENSE
-          EOF
-
-          cp dist/witnessd rpmbuild/SOURCES/
-          cp dist/witnessctl rpmbuild/SOURCES/
-          cp LICENSE rpmbuild/SOURCES/
-
-          rpmbuild --define "_topdir $(pwd)/rpmbuild" \
-            --target ${{ matrix.arch == 'amd64' && 'x86_64' || 'aarch64' }} \
-            -bb rpmbuild/SPECS/witnessd.spec
-
-          find rpmbuild/RPMS -name "*.rpm" -exec mv {} . \;
-
-      - name: Create AppImage
-        if: matrix.arch == 'amd64'
-        run: |
-          VERSION="${{ github.ref_name }}"
-          VERSION="${VERSION#v}"
-
-          # Download appimagetool
-          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
-          chmod +x appimagetool-x86_64.AppImage
-
-          # Create AppDir structure
-          mkdir -p AppDir/usr/bin
-          mkdir -p AppDir/usr/share/applications
-          mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
-
-          cp dist/witnessd AppDir/usr/bin/
-          cp dist/witnessctl AppDir/usr/bin/
-
-          # Create desktop file
-          cat > AppDir/usr/share/applications/witnessd.desktop << EOF
-          [Desktop Entry]
-          Type=Application
-          Name=Witnessd
-          Exec=witnessd
-          Icon=witnessd
-          Categories=Utility;Security;
-          EOF
-
-          # Create AppRun
-          cat > AppDir/AppRun << EOF
-          #!/bin/bash
-          SELF=\$(readlink -f "\$0")
-          HERE=\${SELF%/*}
-          exec "\$HERE/usr/bin/witnessd" "\$@"
-          EOF
-          chmod +x AppDir/AppRun
-
-          # Build AppImage
-          ./appimagetool-x86_64.AppImage AppDir "Witnessd-${VERSION}-x86_64.AppImage"
-
-      - name: Upload Linux packages to Release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release upload ${{ github.ref_name }} \
-            witnessd_*.deb \
-            *.rpm \
-            $(ls Witnessd-*.AppImage 2>/dev/null || true) \
-            --clobber
-
-      - name: Upload Linux artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-packages-${{ matrix.arch }}
-          path: |
-            *.deb
-            *.rpm
-            *.AppImage
-
-  # ============================================================================
-  # Docker Image
-  # ============================================================================
-  docker:
-    name: Docker Image
-    runs-on: ubuntu-latest
-    needs: goreleaser
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Docker metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/writerslogic/witnessd
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=raw,value=latest,enable={{is_default_branch}}
-
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Generate Docker SBOM
-        run: |
-          docker sbom ghcr.io/writerslogic/witnessd:${{ github.ref_name }} \
-            --format spdx-json > docker-sbom.spdx.json || true
-
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@v3
-
-      - name: Sign container image with Cosign (keyless)
-        env:
-          COSIGN_EXPERIMENTAL: "true"
-        run: |
-          cosign sign --yes ghcr.io/writerslogic/witnessd:${{ github.ref_name }}
-          # Sign all tags
-          for tag in $(echo "${{ steps.meta.outputs.tags }}" | tr ',' '\n'); do
-            cosign sign --yes "$tag" || true
-          done
-
-      - name: Generate container attestation
-        env:
-          COSIGN_EXPERIMENTAL: "true"
-        run: |
-          # Attest SBOM to container
-          if [ -f docker-sbom.spdx.json ]; then
-            cosign attest --yes --predicate docker-sbom.spdx.json \
-              --type spdxjson \
-              ghcr.io/writerslogic/witnessd:${{ github.ref_name }}
-          fi
-
-  # ============================================================================
-  # SLSA Provenance
+  # SLSA Provenance Generation (Level 3)
   # ============================================================================
   slsa-provenance:
     name: SLSA Provenance
-    needs: goreleaser
+    needs: aggregate-hashes
     permissions:
       actions: read
       id-token: write
       contents: write
     uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.0.0
     with:
-      base64-subjects: "${{ needs.goreleaser.outputs.hashes }}"
+      base64-subjects: "${{ needs.aggregate-hashes.outputs.hashes }}"
       upload-assets: true
 
   # ============================================================================
-  # Homebrew Formula Update
+  # Generate SBOM
   # ============================================================================
-  homebrew:
-    name: Update Homebrew Formula
+  sbom:
+    name: Generate SBOM
     runs-on: ubuntu-latest
-    needs: [goreleaser, build-macos-universal]
-    if: "!contains(github.ref_name, '-')"  # Skip pre-releases
+    needs: validate
     steps:
-      - name: Update Homebrew Tap
-        env:
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      - uses: actions/checkout@v4
+
+      - name: Install Syft
         run: |
-          if [ -n "$HOMEBREW_TAP_TOKEN" ]; then
-            echo "Homebrew formula updated via GoReleaser"
-          else
-            echo "Skipping Homebrew update - no token provided"
-          fi
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+
+      - name: Generate SPDX SBOM
+        run: |
+          syft dir:. -o spdx-json=witnessd-rust-sbom.spdx.json
+
+      - name: Generate CycloneDX SBOM
+        run: |
+          syft dir:. -o cyclonedx-json=witnessd-rust-sbom.cdx.json
+
+      - name: Upload SBOMs
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: |
+            witnessd-rust-sbom.spdx.json
+            witnessd-rust-sbom.cdx.json
 
   # ============================================================================
-  # Release Notes
+  # Create GitHub Release
   # ============================================================================
-  release-notes:
-    name: Generate Release Notes
+  release:
+    name: Create Release
     runs-on: ubuntu-latest
-    needs: [goreleaser, build-macos, build-windows, build-linux-packages, docker]
+    needs: [build-rust, slsa-provenance, sbom]
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Generate release summary
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
         run: |
-          VERSION="${{ github.ref_name }}"
+          cd artifacts
+          sha256sum *.tar.gz *.zip 2>/dev/null > checksums.txt || true
+          cat checksums.txt
 
-          # Get previous tag
+      - name: Get previous tag
+        id: prev_tag
+        run: |
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          echo "prev_tag=$PREV_TAG" >> $GITHUB_OUTPUT
 
-          # Generate changelog
-          if [ -n "$PREV_TAG" ]; then
-            CHANGELOG=$(git log --pretty=format:"- %s" ${PREV_TAG}..HEAD)
+      - name: Generate changelog
+        id: changelog
+        run: |
+          if [ -n "${{ steps.prev_tag.outputs.prev_tag }}" ]; then
+            CHANGELOG=$(git log --pretty=format:"- %s" ${{ steps.prev_tag.outputs.prev_tag }}..HEAD)
           else
             CHANGELOG="Initial release"
           fi
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
-          # Update release notes
-          gh release edit ${{ github.ref_name }} --notes "## witnessd ${VERSION}
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: witnessd-rust ${{ github.ref_name }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.zip
+            artifacts/checksums.txt
+            artifacts/witnessd-rust-sbom.spdx.json
+            artifacts/witnessd-rust-sbom.cdx.json
+          body: |
+            ## witnessd-rust ${{ github.ref_name }}
 
-          Cryptographic Authorship Witnessing - Kinetic Proof of Provenance
+            Cryptographic Authorship Witnessing - Rust Implementation
 
-          ### Installation
+            ### Downloads
 
-          **Homebrew (macOS/Linux):**
-          \`\`\`bash
-          brew install writerslogic/tap/witnessd
-          \`\`\`
+            | Platform | Architecture | Download |
+            |----------|--------------|----------|
+            | Linux | x86_64 | [tar.gz](https://github.com/writerslogic/witnessd-rust/releases/download/${{ github.ref_name }}/witnessd-rust_${{ github.ref_name }}_x86_64-unknown-linux-gnu.tar.gz) |
+            | Linux | aarch64 | [tar.gz](https://github.com/writerslogic/witnessd-rust/releases/download/${{ github.ref_name }}/witnessd-rust_${{ github.ref_name }}_aarch64-unknown-linux-gnu.tar.gz) |
+            | macOS | x86_64 | [tar.gz](https://github.com/writerslogic/witnessd-rust/releases/download/${{ github.ref_name }}/witnessd-rust_${{ github.ref_name }}_x86_64-apple-darwin.tar.gz) |
+            | macOS | aarch64 | [tar.gz](https://github.com/writerslogic/witnessd-rust/releases/download/${{ github.ref_name }}/witnessd-rust_${{ github.ref_name }}_aarch64-apple-darwin.tar.gz) |
+            | Windows | x86_64 | [zip](https://github.com/writerslogic/witnessd-rust/releases/download/${{ github.ref_name }}/witnessd-rust_${{ github.ref_name }}_x86_64-pc-windows-msvc.zip) |
 
-          **Windows (Scoop):**
-          \`\`\`powershell
-          scoop bucket add witnessd https://github.com/writerslogic/scoop-bucket
-          scoop install witnessd
-          \`\`\`
+            ### Verification
 
-          **Docker:**
-          \`\`\`bash
-          docker pull ghcr.io/writerslogic/witnessd:${VERSION}
-          \`\`\`
+            All release artifacts include:
+            - SHA256 checksums (`checksums.txt`)
+            - SLSA Level 3 provenance attestations
+            - SBOM (SPDX and CycloneDX formats)
 
-          ### Downloads
+            ```bash
+            # Verify checksum
+            sha256sum -c checksums.txt
 
-          | Platform | Download |
-          |----------|----------|
-          | macOS (Universal) | [DMG](https://github.com/writerslogic/witnessd/releases/download/${VERSION}/witnessd_${VERSION}_darwin_universal.tar.gz) |
-          | macOS (Intel) | [DMG](https://github.com/writerslogic/witnessd/releases/download/${VERSION}/Witnessd-${VERSION}-darwin-amd64.dmg) |
-          | macOS (Apple Silicon) | [DMG](https://github.com/writerslogic/witnessd/releases/download/${VERSION}/Witnessd-${VERSION}-darwin-arm64.dmg) |
-          | Windows | [MSI](https://github.com/writerslogic/witnessd/releases/download/${VERSION}/Witnessd-${VERSION}-windows-amd64.msi) |
-          | Linux (deb) | [Download](https://github.com/writerslogic/witnessd/releases/download/${VERSION}/witnessd_${VERSION#v}_amd64.deb) |
-          | Linux (rpm) | [Download](https://github.com/writerslogic/witnessd/releases/download/${VERSION}/witnessd-${VERSION#v}-1.x86_64.rpm) |
+            # Verify SLSA provenance
+            slsa-verifier verify-artifact witnessd-rust_${{ github.ref_name }}_x86_64-unknown-linux-gnu.tar.gz \
+              --provenance-path multiple.intoto.jsonl \
+              --source-uri github.com/writerslogic/witnessd-rust
+            ```
 
-          ### Verification
+            ### Changelog
+            ${{ steps.changelog.outputs.changelog }}
 
-          All release artifacts include:
-          - SHA256 checksums
-          - SLSA provenance attestations
-          - SBOM (SPDX and CycloneDX formats)
+            ---
+            **Full Changelog**: https://github.com/writerslogic/witnessd-rust/compare/${{ steps.prev_tag.outputs.prev_tag }}...${{ github.ref_name }}
 
-          \`\`\`bash
-          # Verify checksum
-          sha256sum -c checksums.txt
+  # ============================================================================
+  # Build Flutter Apps (App Store / Microsoft Store)
+  # ============================================================================
+  build-flutter-macos:
+    name: Build Flutter macOS
+    runs-on: macos-14
+    needs: validate
+    steps:
+      - uses: actions/checkout@v4
 
-          # Verify SLSA provenance
-          slsa-verifier verify-artifact witnessd_${VERSION}_linux_amd64.tar.gz \\
-            --provenance-path multiple.intoto.jsonl \\
-            --source-uri github.com/writerslogic/witnessd
-          \`\`\`
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: 'stable'
+          cache: true
 
-          ### Changelog
-          ${CHANGELOG}
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
 
-          ---
-          **Full Changelog**: https://github.com/writerslogic/witnessd/compare/${PREV_TAG}...${VERSION}
-          "
+      - name: Install flutter_rust_bridge dependencies
+        run: |
+          cargo install flutter_rust_bridge_codegen
+
+      - name: Build Rust library for macOS
+        working-directory: rust/witnessd-core
+        run: |
+          cargo build --release
+
+      - name: Get Flutter dependencies
+        working-directory: witnessd-gui
+        run: flutter pub get
+
+      - name: Build macOS app
+        working-directory: witnessd-gui
+        run: flutter build macos --release
+
+      - name: Upload macOS app
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-macos
+          path: witnessd-gui/build/macos/Build/Products/Release/*.app
+
+  build-flutter-windows:
+    name: Build Flutter Windows
+    runs-on: windows-latest
+    needs: validate
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: 'stable'
+          cache: true
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+
+      - name: Build Rust library for Windows
+        working-directory: rust/witnessd-core
+        run: cargo build --release
+
+      - name: Get Flutter dependencies
+        working-directory: witnessd-gui
+        run: flutter pub get
+
+      - name: Build Windows app
+        working-directory: witnessd-gui
+        run: flutter build windows --release
+
+      - name: Upload Windows app
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-windows
+          path: witnessd-gui/build/windows/x64/runner/Release/
