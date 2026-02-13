@@ -158,6 +158,11 @@ jobs:
           path: ${{ env.ARCHIVE }}
           retention-days: 7
 
+      - name: Attest Build Provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: ${{ env.ARCHIVE }}
+
   # ============================================================================
   # Aggregate Hashes for SLSA
   # ============================================================================

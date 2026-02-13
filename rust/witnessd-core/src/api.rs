@@ -1069,17 +1069,13 @@ pub fn check_hardware_status() -> HardwareStatus {
 // Stream API (Flutter-specific)
 // =============================================================================
 
+/// Jitter sample data sent over stream: (timestamp_ns, duration_since_last_ns, zone)
 #[cfg(feature = "flutter")]
-pub fn start_jitter_stream(sink: crate::frb::StreamSink<SimpleJitterSample>) -> Result<()> {
+pub fn start_jitter_stream(sink: crate::frb::StreamSink<(i64, u64, u8)>) -> Result<()> {
     std::thread::spawn(move || loop {
         let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
-        let sample = SimpleJitterSample {
-            timestamp_ns: now,
-            duration_since_last_ns: 100,
-            zone: 0,
-        };
-
-        let _ = sink.add(sample);
+        // Send as tuple: (timestamp_ns, duration_since_last_ns, zone)
+        let _ = sink.add((now, 100u64, 0u8));
         std::thread::sleep(std::time::Duration::from_millis(500));
     });
 

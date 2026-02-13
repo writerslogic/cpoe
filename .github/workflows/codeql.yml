@@ -14,45 +14,32 @@ permissions:
   contents: read
   actions: read
 
-env:
-  GO_VERSION: '1.22'
-
 jobs:
   # ============================================================================
-  # Go Analysis
+  # Rust Analysis with Semgrep (CodeQL doesn't support Rust directly)
   # ============================================================================
-  analyze-go:
-    name: Analyze Go
+  analyze-rust:
+    name: Analyze Rust
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Run Semgrep for Rust
+        uses: semgrep/semgrep-action@v1
         with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
+          config: >-
+            p/rust
+            p/security-audit
+            p/secrets
+          generateSarif: true
 
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+      - name: Upload Semgrep SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
         with:
-          languages: go
-          queries: +security-and-quality
-          config: |
-            paths-ignore:
-              - '**/*_test.go'
-              - 'testdata/**'
-              - 'vendor/**'
-
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
-
-      - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
-        with:
-          category: "/language:go"
-          upload: always
+          sarif_file: semgrep.sarif
+          category: semgrep-rust
 
   # ============================================================================
   # Swift Analysis (for macOS app)
@@ -72,63 +59,24 @@ jobs:
 
       - name: Build Swift project
         run: |
-          xcodebuild -project platforms/macos/WitnessdApp/witnessd.xcodeproj \
-            -scheme Witness \
-            -configuration Debug \
-            -destination 'platform=macOS' \
-            build \
-            CODE_SIGN_IDENTITY="-" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO || true
+          if [ -d "platforms/macos/WitnessdApp" ]; then
+            xcodebuild -project platforms/macos/WitnessdApp/witnessd.xcodeproj \
+              -scheme Witness \
+              -configuration Debug \
+              -destination 'platform=macOS' \
+              build \
+              CODE_SIGN_IDENTITY="-" \
+              CODE_SIGNING_REQUIRED=NO \
+              CODE_SIGNING_ALLOWED=NO || true
+          else
+            echo "Swift project not found, skipping"
+          fi
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
         with:
           category: "/language:swift"
           upload: always
-
-  # ============================================================================
-  # Additional Security Scanning
-  # ============================================================================
-  security-scan:
-    name: Extended Security Scan
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Run Gosec
-        uses: securego/gosec@master
-        with:
-          args: '-fmt sarif -out gosec-results.sarif -exclude-generated ./...'
-
-      - name: Upload Gosec SARIF
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: gosec-results.sarif
-          category: gosec
-
-      - name: Run Semgrep
-        uses: semgrep/semgrep-action@v1
-        with:
-          config: >-
-            p/security-audit
-            p/golang
-            p/secrets
-          generateSarif: true
-
-      - name: Upload Semgrep SARIF
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: semgrep.sarif
-          category: semgrep
 
   # ============================================================================
   # Secret Scanning
@@ -151,47 +99,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
-
-  # ============================================================================
-  # SAST with Multiple Tools
-  # ============================================================================
-  sast:
-    name: SAST Analysis
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Run staticcheck
-        run: |
-          go install honnef.co/go/tools/cmd/staticcheck@latest
-          staticcheck -f sarif ./... > staticcheck.sarif 2>/dev/null || true
-
-      - name: Upload staticcheck SARIF
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
         continue-on-error: true
-        with:
-          sarif_file: staticcheck.sarif
-          category: staticcheck
-
-      - name: Run govulncheck
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck -format sarif ./... > govulncheck.sarif 2>/dev/null || true
-
-      - name: Upload govulncheck SARIF
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        continue-on-error: true
-        with:
-          sarif_file: govulncheck.sarif
-          category: govulncheck
 
   # ============================================================================
   # Dependency Review

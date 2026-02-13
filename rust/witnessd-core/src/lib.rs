@@ -39,5 +39,6 @@ pub use crate::sentinel::{
 pub use crate::store::{SecureEvent, SecureStore};
 pub use crate::vdf::{RoughtimeClient, TimeAnchor, TimeKeeper, VdfProof};
 
+#[cfg(target_os = "macos")]
 #[macro_use]
 extern crate objc;

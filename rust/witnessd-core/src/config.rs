@@ -62,8 +62,6 @@ impl Default for VdfConfig {
     }
 }
 
-use std::time::Duration;
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SentinelConfig {
     #[serde(default = "default_false")]
