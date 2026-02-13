@@ -10,7 +10,9 @@ use crate::engine::{Engine, EngineStatus, ReportFile};
 use crate::evidence;
 use crate::forensics::{ForensicEngine, ForensicReport};
 use crate::identity::SecureStorage;
-use crate::jitter::{self, SimpleJitterSample, SimpleJitterSession, Statistics as JitterStatistics};
+use crate::jitter::{
+    self, SimpleJitterSample, SimpleJitterSession, Statistics as JitterStatistics,
+};
 use crate::presence::{Challenge, Config as PresenceConfig, Verifier};
 use crate::vdf::{self, Parameters as VdfParameters};
 use crate::MnemonicHandler;
@@ -78,9 +80,10 @@ impl From<&Checkpoint> for CheckpointInfo {
             content_size: cp.content_size,
             message: cp.message.clone(),
             has_vdf_proof: cp.vdf.is_some(),
-            elapsed_time_secs: cp.vdf.as_ref().map(|v| {
-                v.min_elapsed_time(vdf::default_parameters()).as_secs_f64()
-            }),
+            elapsed_time_secs: cp
+                .vdf
+                .as_ref()
+                .map(|v| v.min_elapsed_time(vdf::default_parameters()).as_secs_f64()),
         }
     }
 }
@@ -192,11 +195,15 @@ impl From<ForensicReport> for ForensicReportInfo {
             confidence_score: report.confidence_score,
             is_anomaly: report.is_anomaly,
             is_retyped_content: report.is_retyped_content,
-            signals: report.details.into_iter().map(|s| SignalInfo {
-                name: s.name,
-                z_score: s.z_score,
-                probability: s.probability,
-            }).collect(),
+            signals: report
+                .details
+                .into_iter()
+                .map(|s| SignalInfo {
+                    name: s.name,
+                    z_score: s.z_score,
+                    probability: s.probability,
+                })
+                .collect(),
         }
     }
 }
@@ -318,7 +325,11 @@ pub fn get_identity_fingerprint() -> Option<String> {
 /// Returns true if both the data directory and identity are configured.
 pub fn is_initialized() -> bool {
     let dir_set = GLOBAL_CONTEXT.witnessd_dir.lock().unwrap().is_some();
-    let id_set = GLOBAL_CONTEXT.identity_fingerprint.lock().unwrap().is_some();
+    let id_set = GLOBAL_CONTEXT
+        .identity_fingerprint
+        .lock()
+        .unwrap()
+        .is_some();
     dir_set && id_set
 }
 
@@ -359,22 +370,26 @@ pub fn generate_mnemonic() -> String {
 /// # Returns
 /// Information about the created checkpoint
 pub fn commit_document(path: String, message: Option<String>) -> Result<CheckpointInfo> {
-    let witnessd_dir = GLOBAL_CONTEXT.witnessd_dir.lock().unwrap()
+    let witnessd_dir = GLOBAL_CONTEXT
+        .witnessd_dir
+        .lock()
+        .unwrap()
         .clone()
         .ok_or_else(|| anyhow!("Witnessd not initialized"))?;
 
     let vdf_params = vdf::default_parameters();
-    let mut chain = Chain::get_or_create_chain(&path, &witnessd_dir, vdf_params)
-        .map_err(|e| anyhow!(e))?;
+    let mut chain =
+        Chain::get_or_create_chain(&path, &witnessd_dir, vdf_params).map_err(|e| anyhow!(e))?;
 
-    let checkpoint = chain.commit(message)
-        .map_err(|e| anyhow!(e))?;
+    let checkpoint = chain.commit(message).map_err(|e| anyhow!(e))?;
 
     // Save the chain
     let save_path = if let Some(storage_path) = chain.storage_path() {
         storage_path.to_path_buf()
     } else {
-        witnessd_dir.join("chains").join(format!("{}.json", chain.document_id))
+        witnessd_dir
+            .join("chains")
+            .join(format!("{}.json", chain.document_id))
     };
     chain.save(save_path).map_err(|e| anyhow!(e))?;
 
@@ -389,14 +404,15 @@ pub fn commit_document(path: String, message: Option<String>) -> Result<Checkpoi
 /// # Returns
 /// Vector of checkpoint information, oldest first
 pub fn get_document_log(path: String) -> Result<Vec<CheckpointInfo>> {
-    let witnessd_dir = GLOBAL_CONTEXT.witnessd_dir.lock().unwrap()
+    let witnessd_dir = GLOBAL_CONTEXT
+        .witnessd_dir
+        .lock()
+        .unwrap()
         .clone()
         .ok_or_else(|| anyhow!("Witnessd not initialized"))?;
 
-    let chain_path = Chain::find_chain(&path, &witnessd_dir)
-        .map_err(|e| anyhow!(e))?;
-    let chain = Chain::load(chain_path)
-        .map_err(|e| anyhow!(e))?;
+    let chain_path = Chain::find_chain(&path, &witnessd_dir).map_err(|e| anyhow!(e))?;
+    let chain = Chain::load(chain_path).map_err(|e| anyhow!(e))?;
 
     Ok(chain.checkpoints.iter().map(CheckpointInfo::from).collect())
 }
@@ -409,14 +425,15 @@ pub fn get_document_log(path: String) -> Result<Vec<CheckpointInfo>> {
 /// # Returns
 /// Verification result with detailed status
 pub fn verify_document(path: String) -> Result<VerificationResult> {
-    let witnessd_dir = GLOBAL_CONTEXT.witnessd_dir.lock().unwrap()
+    let witnessd_dir = GLOBAL_CONTEXT
+        .witnessd_dir
+        .lock()
+        .unwrap()
         .clone()
         .ok_or_else(|| anyhow!("Witnessd not initialized"))?;
 
-    let chain_path = Chain::find_chain(&path, &witnessd_dir)
-        .map_err(|e| anyhow!(e))?;
-    let chain = Chain::load(chain_path)
-        .map_err(|e| anyhow!(e))?;
+    let chain_path = Chain::find_chain(&path, &witnessd_dir).map_err(|e| anyhow!(e))?;
+    let chain = Chain::load(chain_path).map_err(|e| anyhow!(e))?;
 
     let mut result = VerificationResult {
         valid: true,
@@ -448,36 +465,44 @@ pub fn verify_document(path: String) -> Result<VerificationResult> {
 /// # Returns
 /// Path to the exported evidence file
 pub fn export_evidence(path: String, title: String, _tier: String) -> Result<ExportResult> {
-    let witnessd_dir = GLOBAL_CONTEXT.witnessd_dir.lock().unwrap()
+    let witnessd_dir = GLOBAL_CONTEXT
+        .witnessd_dir
+        .lock()
+        .unwrap()
         .clone()
         .ok_or_else(|| anyhow!("Witnessd not initialized"))?;
 
-    let chain_path = Chain::find_chain(&path, &witnessd_dir)
-        .map_err(|e| anyhow!(e))?;
-    let chain = Chain::load(chain_path)
-        .map_err(|e| anyhow!(e))?;
+    let chain_path = Chain::find_chain(&path, &witnessd_dir).map_err(|e| anyhow!(e))?;
+    let chain = Chain::load(chain_path).map_err(|e| anyhow!(e))?;
 
     // Verify chain first
     chain.verify().map_err(|e| anyhow!(e))?;
 
-    let latest = chain.latest()
+    let latest = chain
+        .latest()
         .ok_or_else(|| anyhow!("No checkpoints in chain"))?;
 
     // Load actual signing key from secure storage
-    let seed = SecureStorage::load_seed()?.ok_or_else(|| anyhow!("No signing key found in secure storage. Run init first."))?;
-    let signing_key = ed25519_dalek::SigningKey::from_bytes(seed[..32].try_into().map_err(|_| anyhow!("Invalid key format"))?);
+    let seed = SecureStorage::load_seed()?
+        .ok_or_else(|| anyhow!("No signing key found in secure storage. Run init first."))?;
+    let signing_key = ed25519_dalek::SigningKey::from_bytes(
+        seed[..32]
+            .try_into()
+            .map_err(|_| anyhow!("Invalid key format"))?,
+    );
 
     // Create a basic declaration (in production, user would provide details)
     let decl = declaration::no_ai_declaration(
         latest.content_hash,
         latest.hash,
         &title,
-        "Author attests to the authenticity of this document."
-    ).sign(&signing_key).map_err(|e| anyhow!(e))?;
+        "Author attests to the authenticity of this document.",
+    )
+    .sign(&signing_key)
+    .map_err(|e| anyhow!(e))?;
 
     // Build the evidence packet
-    let mut builder = evidence::Builder::new(&title, &chain)
-        .with_declaration(&decl);
+    let mut builder = evidence::Builder::new(&title, &chain).with_declaration(&decl);
 
     // Add keystroke evidence if available
     if let Some(session) = GLOBAL_CONTEXT.tracking_session.lock().unwrap().as_ref() {
@@ -498,7 +523,8 @@ pub fn export_evidence(path: String, title: String, _tier: String) -> Result<Exp
     let evidence_dir = witnessd_dir.join("evidence");
     fs::create_dir_all(&evidence_dir)?;
 
-    let filename = format!("{}-{}.json",
+    let filename = format!(
+        "{}-{}.json",
         chain.document_id,
         chrono::Utc::now().format("%Y%m%d-%H%M%S")
     );
@@ -567,8 +593,7 @@ pub fn start_tracking(path: String) -> Result<()> {
     }
 
     let params = jitter::default_parameters();
-    let session = jitter::Session::new(&path, params)
-        .map_err(|e| anyhow!(e))?;
+    let session = jitter::Session::new(&path, params).map_err(|e| anyhow!(e))?;
     *guard = Some(session);
 
     Ok(())
@@ -580,7 +605,8 @@ pub fn start_tracking(path: String) -> Result<()> {
 pub fn stop_tracking() -> Result<TrackingStatistics> {
     let mut guard = GLOBAL_CONTEXT.tracking_session.lock().unwrap();
 
-    let mut session = guard.take()
+    let mut session = guard
+        .take()
         .ok_or_else(|| anyhow!("No active tracking session"))?;
 
     session.end();
@@ -605,11 +631,11 @@ pub fn stop_tracking() -> Result<TrackingStatistics> {
 pub fn record_keystroke() -> Result<(u32, bool)> {
     let mut guard = GLOBAL_CONTEXT.tracking_session.lock().unwrap();
 
-    let session = guard.as_mut()
+    let session = guard
+        .as_mut()
         .ok_or_else(|| anyhow!("No active tracking session"))?;
 
-    session.record_keystroke()
-        .map_err(|e| anyhow!(e))
+    session.record_keystroke().map_err(|e| anyhow!(e))
 }
 
 /// Get the current tracking session status.
@@ -642,7 +668,8 @@ pub fn get_tracking_status() -> TrackingStatus {
 pub fn get_tracking_statistics() -> Result<TrackingStatistics> {
     let guard = GLOBAL_CONTEXT.tracking_session.lock().unwrap();
 
-    let session = guard.as_ref()
+    let session = guard
+        .as_ref()
         .ok_or_else(|| anyhow!("No active tracking session"))?;
 
     let evidence = session.export();
@@ -672,8 +699,7 @@ pub fn start_presence_session() -> Result<String> {
 
     let config = PresenceConfig::default();
     let mut verifier = Verifier::new(config);
-    let session = verifier.start_session()
-        .map_err(|e| anyhow!(e))?;
+    let session = verifier.start_session().map_err(|e| anyhow!(e))?;
     let session_id = session.id.clone();
 
     *guard = Some(verifier);
@@ -685,11 +711,11 @@ pub fn start_presence_session() -> Result<String> {
 pub fn end_presence_session() -> Result<PresenceStatus> {
     let mut guard = GLOBAL_CONTEXT.presence_verifier.lock().unwrap();
 
-    let verifier = guard.as_mut()
+    let verifier = guard
+        .as_mut()
         .ok_or_else(|| anyhow!("No active presence verifier"))?;
 
-    let session = verifier.end_session()
-        .map_err(|e| anyhow!(e))?;
+    let session = verifier.end_session().map_err(|e| anyhow!(e))?;
 
     // Clear pending challenge
     *GLOBAL_CONTEXT.pending_challenge.lock().unwrap() = None;
@@ -722,7 +748,10 @@ pub fn get_pending_challenge() -> Option<ChallengeInfo> {
         }
     }
 
-    GLOBAL_CONTEXT.pending_challenge.lock().unwrap()
+    GLOBAL_CONTEXT
+        .pending_challenge
+        .lock()
+        .unwrap()
         .as_ref()
         .map(ChallengeInfo::from)
 }
@@ -738,13 +767,16 @@ pub fn submit_challenge_response(response: String) -> Result<bool> {
     let mut verifier_guard = GLOBAL_CONTEXT.presence_verifier.lock().unwrap();
     let mut challenge_guard = GLOBAL_CONTEXT.pending_challenge.lock().unwrap();
 
-    let verifier = verifier_guard.as_mut()
+    let verifier = verifier_guard
+        .as_mut()
         .ok_or_else(|| anyhow!("No active presence verifier"))?;
 
-    let challenge = challenge_guard.take()
+    let challenge = challenge_guard
+        .take()
         .ok_or_else(|| anyhow!("No pending challenge"))?;
 
-    let result = verifier.respond_to_challenge(&challenge.id, &response)
+    let result = verifier
+        .respond_to_challenge(&challenge.id, &response)
         .map_err(|e| anyhow!(e))?;
 
     Ok(result)
@@ -755,32 +787,30 @@ pub fn get_presence_status() -> PresenceStatus {
     let guard = GLOBAL_CONTEXT.presence_verifier.lock().unwrap();
 
     match guard.as_ref() {
-        Some(verifier) => {
-            match verifier.active_session() {
-                Some(session) => PresenceStatus {
-                    session_active: session.active,
-                    session_id: Some(session.id.clone()),
-                    started_at: Some(session.start_time.to_rfc3339()),
-                    challenges_issued: session.challenges_issued,
-                    challenges_passed: session.challenges_passed,
-                    challenges_failed: session.challenges_failed,
-                    challenges_missed: session.challenges_missed,
-                    verification_rate: session.verification_rate,
-                    has_pending_challenge: GLOBAL_CONTEXT.pending_challenge.lock().unwrap().is_some(),
-                },
-                None => PresenceStatus {
-                    session_active: false,
-                    session_id: None,
-                    started_at: None,
-                    challenges_issued: 0,
-                    challenges_passed: 0,
-                    challenges_failed: 0,
-                    challenges_missed: 0,
-                    verification_rate: 0.0,
-                    has_pending_challenge: false,
-                },
-            }
-        }
+        Some(verifier) => match verifier.active_session() {
+            Some(session) => PresenceStatus {
+                session_active: session.active,
+                session_id: Some(session.id.clone()),
+                started_at: Some(session.start_time.to_rfc3339()),
+                challenges_issued: session.challenges_issued,
+                challenges_passed: session.challenges_passed,
+                challenges_failed: session.challenges_failed,
+                challenges_missed: session.challenges_missed,
+                verification_rate: session.verification_rate,
+                has_pending_challenge: GLOBAL_CONTEXT.pending_challenge.lock().unwrap().is_some(),
+            },
+            None => PresenceStatus {
+                session_active: false,
+                session_id: None,
+                started_at: None,
+                challenges_issued: 0,
+                challenges_passed: 0,
+                challenges_failed: 0,
+                challenges_missed: 0,
+                verification_rate: 0.0,
+                has_pending_challenge: false,
+            },
+        },
         None => PresenceStatus {
             session_active: false,
             session_id: None,
@@ -810,7 +840,10 @@ pub fn get_presence_status() -> PresenceStatus {
 /// # Returns
 /// Forensic analysis report
 pub fn analyze_document(_path: String) -> Result<ForensicReportInfo> {
-    let _witnessd_dir = GLOBAL_CONTEXT.witnessd_dir.lock().unwrap()
+    let _witnessd_dir = GLOBAL_CONTEXT
+        .witnessd_dir
+        .lock()
+        .unwrap()
         .clone()
         .ok_or_else(|| anyhow!("Witnessd not initialized"))?;
 
@@ -837,7 +870,9 @@ pub fn analyze_document(_path: String) -> Result<ForensicReportInfo> {
 
     if let Some(session) = GLOBAL_CONTEXT.tracking_session.lock().unwrap().as_ref() {
         // Convert to SimpleJitterSamples for cadence evaluation
-        let simple_samples: Vec<SimpleJitterSample> = session.samples.iter()
+        let simple_samples: Vec<SimpleJitterSample> = session
+            .samples
+            .iter()
             .map(|s| SimpleJitterSample {
                 timestamp_ns: s.timestamp.timestamp_nanos_opt().unwrap_or(0),
                 duration_since_last_ns: 0, // Would need to compute from consecutive samples
@@ -888,7 +923,10 @@ pub fn get_forensic_score(_file_path: String) -> f64 {
 
 /// Get the current application configuration.
 pub fn get_config() -> Result<WitnessdConfig> {
-    let witnessd_dir = GLOBAL_CONTEXT.witnessd_dir.lock().unwrap()
+    let witnessd_dir = GLOBAL_CONTEXT
+        .witnessd_dir
+        .lock()
+        .unwrap()
         .clone()
         .unwrap_or_else(|| get_default_data_dir().unwrap_or_default());
 
@@ -913,7 +951,8 @@ pub fn set_config(config: WitnessdConfig) -> Result<()> {
 
 /// Get current VDF parameters.
 pub fn get_vdf_params() -> VdfParams {
-    let cfg = get_config().unwrap_or_else(|_| WitnessdConfig::default_with_dir(&PathBuf::from(".")));
+    let cfg =
+        get_config().unwrap_or_else(|_| WitnessdConfig::default_with_dir(&PathBuf::from(".")));
     VdfParams {
         iterations_per_second: cfg.vdf.iterations_per_second,
         min_iterations: cfg.vdf.min_iterations,
@@ -925,9 +964,8 @@ pub fn get_vdf_params() -> VdfParams {
 ///
 /// Calibrates the VDF computation speed for the current hardware.
 pub fn calibrate_vdf() -> Result<VdfParams> {
-    let params = vdf::calibrate(Duration::from_secs(1))
-        .map_err(|e| anyhow!(e))?;
-    
+    let params = vdf::calibrate(Duration::from_secs(1)).map_err(|e| anyhow!(e))?;
+
     // Save to config
     if let Ok(mut cfg) = get_config() {
         cfg.vdf.iterations_per_second = params.iterations_per_second;
@@ -971,7 +1009,12 @@ pub fn stop_engine() -> Result<()> {
 
 /// Get the current engine status.
 pub fn engine_status() -> Option<EngineStatus> {
-    GLOBAL_CONTEXT.active_engine.lock().unwrap().as_ref().map(|e| e.status())
+    GLOBAL_CONTEXT
+        .active_engine
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|e| e.status())
 }
 
 /// Get list of files being tracked by the engine.
@@ -1028,18 +1071,16 @@ pub fn check_hardware_status() -> HardwareStatus {
 
 #[cfg(feature = "flutter")]
 pub fn start_jitter_stream(sink: crate::frb::StreamSink<SimpleJitterSample>) -> Result<()> {
-    std::thread::spawn(move || {
-        loop {
-            let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
-            let sample = SimpleJitterSample {
-                timestamp_ns: now,
-                duration_since_last_ns: 100,
-                zone: 0,
-            };
+    std::thread::spawn(move || loop {
+        let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        let sample = SimpleJitterSample {
+            timestamp_ns: now,
+            duration_since_last_ns: 100,
+            zone: 0,
+        };
 
-            let _ = sink.add(sample);
-            std::thread::sleep(std::time::Duration::from_millis(500));
-        }
+        let _ = sink.add(sample);
+        std::thread::sleep(std::time::Duration::from_millis(500));
     });
 
     Ok(())
@@ -1053,8 +1094,7 @@ pub fn start_jitter_stream(sink: crate::frb::StreamSink<SimpleJitterSample>) -> 
 fn get_default_data_dir() -> Result<PathBuf> {
     #[cfg(target_os = "macos")]
     {
-        let home = dirs::home_dir()
-            .ok_or_else(|| anyhow!("Failed to resolve home directory"))?;
+        let home = dirs::home_dir().ok_or_else(|| anyhow!("Failed to resolve home directory"))?;
         Ok(home.join("Library/Application Support/Witnessd"))
     }
     #[cfg(target_os = "windows")]
@@ -1065,8 +1105,7 @@ fn get_default_data_dir() -> Result<PathBuf> {
     }
     #[cfg(target_os = "linux")]
     {
-        let home = dirs::home_dir()
-            .ok_or_else(|| anyhow!("Failed to resolve home directory"))?;
+        let home = dirs::home_dir().ok_or_else(|| anyhow!("Failed to resolve home directory"))?;
         Ok(home.join(".witnessd"))
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]

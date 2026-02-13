@@ -11,9 +11,13 @@ use std::time::{Duration, Instant};
 use witnessd_core::config::WitnessdConfig;
 use witnessd_core::declaration::{self, AIExtent, AIPurpose, ModalityType};
 use witnessd_core::evidence;
-use witnessd_core::jitter::{default_parameters as default_jitter_params, Session as JitterSession};
+use witnessd_core::jitter::{
+    default_parameters as default_jitter_params, Session as JitterSession,
+};
 use witnessd_core::keyhierarchy::{derive_master_identity, SoftwarePUF};
-use witnessd_core::presence::{ChallengeStatus, Config as PresenceConfig, Session as PresenceSession, Verifier};
+use witnessd_core::presence::{
+    ChallengeStatus, Config as PresenceConfig, Session as PresenceSession, Verifier,
+};
 use witnessd_core::tpm;
 use witnessd_core::vdf;
 use witnessd_core::vdf::params::{calibrate, Parameters as VdfParameters};
@@ -182,7 +186,8 @@ fn open_secure_store() -> Result<SecureStore> {
     let db_path = dir.join("events.db");
     let key_path = dir.join("signing_key");
 
-    let key_data = fs::read(&key_path).context("Failed to read signing key. Run 'witnessd init' first.")?;
+    let key_data =
+        fs::read(&key_path).context("Failed to read signing key. Run 'witnessd init' first.")?;
     // Handle both 32-byte (seed only) and 64-byte (full keypair) formats
     // Always use the first 32 bytes (seed) for HMAC derivation for consistency
     let seed_data = if key_data.len() >= 32 {
@@ -250,12 +255,19 @@ fn cmd_init() -> Result<()> {
         let key_data = fs::read(&key_path)?;
         // Handle both 32-byte (seed only) and 64-byte (full keypair) formats
         let seed: [u8; 32] = if key_data.len() == 32 {
-            key_data.try_into().map_err(|_| anyhow!("Invalid key file"))? 
+            key_data
+                .try_into()
+                .map_err(|_| anyhow!("Invalid key file"))?
         } else if key_data.len() == 64 {
             // Legacy format: first 32 bytes are the seed
-            key_data[..32].try_into().map_err(|_| anyhow!("Invalid key file"))? 
+            key_data[..32]
+                .try_into()
+                .map_err(|_| anyhow!("Invalid key file"))?
         } else {
-            return Err(anyhow!("Invalid key file: expected 32 or 64 bytes, got {}", key_data.len()));
+            return Err(anyhow!(
+                "Invalid key file: expected 32 or 64 bytes, got {}",
+                key_data.len()
+            ));
         };
         priv_key = SigningKey::from_bytes(&seed);
     }
@@ -279,7 +291,10 @@ fn cmd_init() -> Result<()> {
             "device_id": identity.device_id,
             "created_at": identity.created_at.to_rfc3339(),
         });
-        fs::write(&identity_path, serde_json::to_string_pretty(&identity_data)?)?;
+        fs::write(
+            &identity_path,
+            serde_json::to_string_pretty(&identity_data)?,
+        )?;
 
         println!("  Master Identity: {}", identity.fingerprint);
         println!("  Device ID: {}", identity.device_id);
@@ -420,16 +435,15 @@ fn cmd_log(file_path: &PathBuf) -> Result<()> {
 
     if events.is_empty() {
         println!("No checkpoint history found for: {:?}", file_path);
-        return Ok(())
+        return Ok(());
     }
 
     // Calculate total VDF time
     let config = ensure_dirs()?;
     let vdf_params = load_vdf_params(&config);
     let total_iterations: u64 = events.iter().map(|e| e.vdf_iterations).sum();
-    let total_vdf_time = Duration::from_secs_f64(
-        total_iterations as f64 / vdf_params.iterations_per_second as f64,
-    );
+    let total_vdf_time =
+        Duration::from_secs_f64(total_iterations as f64 / vdf_params.iterations_per_second as f64);
 
     println!(
         "=== Checkpoint History: {} ===",
@@ -530,9 +544,8 @@ fn cmd_export(file_path: &PathBuf, tier: &str, output: Option<PathBuf>) -> Resul
 
     // Calculate totals
     let total_iterations: u64 = events.iter().map(|e| e.vdf_iterations).sum();
-    let total_vdf_time = Duration::from_secs_f64(
-        total_iterations as f64 / vdf_params.iterations_per_second as f64,
-    );
+    let total_vdf_time =
+        Duration::from_secs_f64(total_iterations as f64 / vdf_params.iterations_per_second as f64);
 
     // Parse strength/tier - must match Strength enum variants
     let strength = match tier.to_lowercase().as_str() {
@@ -723,15 +736,12 @@ fn collect_declaration(
 
 fn cmd_verify(file_path: &PathBuf, key: Option<PathBuf>) -> Result<()> {
     // Check if it's a JSON file (evidence packet) or database
-    let ext = file_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("");
+    let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
     if ext == "json" {
         // Verify evidence packet
         let data = fs::read(file_path).context("Failed to read evidence file")?;
-        let packet: evidence::Packet = 
+        let packet: evidence::Packet =
             serde_json::from_slice(&data).context("Failed to parse evidence packet")?;
 
         let config = ensure_dirs()?;
@@ -755,7 +765,8 @@ fn cmd_verify(file_path: &PathBuf, key: Option<PathBuf>) -> Result<()> {
         }
     } else {
         // Verify database
-        let key_path = key.unwrap_or_else(|| witnessd_dir().unwrap_or_default().join("signing_key"));
+        let key_path =
+            key.unwrap_or_else(|| witnessd_dir().unwrap_or_default().join("signing_key"));
 
         println!("Verifying database: {:?}", file_path);
 
@@ -790,7 +801,9 @@ fn cmd_presence(action: PresenceAction) -> Result<()> {
         PresenceAction::Start => {
             // Check for existing session
             if session_file.exists() {
-                return Err(anyhow!("Session already active. Run 'witnessd presence stop' first."));
+                return Err(anyhow!(
+                    "Session already active. Run 'witnessd presence stop' first."
+                ));
             }
 
             let mut verifier = Verifier::new(PresenceConfig::default());
@@ -860,7 +873,7 @@ fn cmd_presence(action: PresenceAction) -> Result<()> {
                 Ok(d) => d,
                 Err(_) => {
                     println!("No active session.");
-                    return Ok(())
+                    return Ok(());
                 }
             };
 
@@ -880,9 +893,8 @@ fn cmd_presence(action: PresenceAction) -> Result<()> {
         }
 
         PresenceAction::Challenge => {
-            let data = fs::read(&session_file).map_err(|_| {
-                anyhow!("No active session. Run 'witnessd presence start' first.")
-            })?;
+            let data = fs::read(&session_file)
+                .map_err(|_| anyhow!("No active session. Run 'witnessd presence start' first."))?;
 
             let mut session = PresenceSession::decode(&data)
                 .map_err(|e| anyhow!("Error loading session: {}", e))?;
@@ -959,7 +971,9 @@ fn cmd_track(action: TrackAction) -> Result<()> {
 
             // Check for existing session
             if current_file.exists() {
-                return Err(anyhow!("Tracking session already active. Run 'witnessd track stop' first."));
+                return Err(anyhow!(
+                    "Tracking session already active. Run 'witnessd track stop' first."
+                ));
             }
 
             // Create a new jitter session
@@ -1026,8 +1040,7 @@ fn cmd_track(action: TrackAction) -> Result<()> {
             println!("Samples: {}", sample_count);
 
             if duration.as_secs() > 0 {
-                let keystrokes_per_min =
-                    keystroke_count as f64 / (duration.as_secs_f64() / 60.0);
+                let keystrokes_per_min = keystroke_count as f64 / (duration.as_secs_f64() / 60.0);
                 println!("Typing rate: {:.0} keystrokes/min", keystrokes_per_min);
             }
 
@@ -1043,7 +1056,7 @@ fn cmd_track(action: TrackAction) -> Result<()> {
                 Ok(d) => d,
                 Err(_) => {
                     println!("No active tracking session.");
-                    return Ok(())
+                    return Ok(());
                 }
             };
 
@@ -1074,8 +1087,7 @@ fn cmd_track(action: TrackAction) -> Result<()> {
             println!("Jitter samples: {}", sample_count);
 
             if duration.as_secs() > 0 && keystroke_count > 0 {
-                let keystrokes_per_min =
-                    keystroke_count as f64 / (duration.as_secs_f64() / 60.0);
+                let keystrokes_per_min = keystroke_count as f64 / (duration.as_secs_f64() / 60.0);
                 println!("Typing rate: {:.0} keystrokes/min", keystrokes_per_min);
             }
         }
@@ -1101,7 +1113,7 @@ fn cmd_track(action: TrackAction) -> Result<()> {
 
             if sessions.is_empty() {
                 println!("No saved tracking sessions.");
-                return Ok(())
+                return Ok(());
             }
 
             println!("Saved tracking sessions:");
@@ -1141,10 +1153,7 @@ fn cmd_track(action: TrackAction) -> Result<()> {
             println!("  Duration: {:?}", ev.statistics.duration);
             println!("  Keystrokes: {}", ev.statistics.total_keystrokes);
             println!("  Samples: {}", ev.statistics.total_samples);
-            println!(
-                "  Document states: {}",
-                ev.statistics.unique_doc_hashes
-            );
+            println!("  Document states: {}", ev.statistics.unique_doc_hashes);
             println!("  Chain valid: {}", ev.statistics.chain_valid);
 
             if ev.is_plausible_human_typing() {
@@ -1407,7 +1416,7 @@ fn cmd_list() -> Result<()> {
 
     if files.is_empty() {
         println!("No tracked documents.");
-        return Ok(())
+        return Ok(());
     }
 
     println!("Tracked documents:");
@@ -1429,7 +1438,9 @@ fn cmd_list() -> Result<()> {
 // =============================================================================
 
 use glob::Pattern;
-use notify::{Config as NotifyConfig, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{
+    Config as NotifyConfig, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
+};
 use std::sync::mpsc as std_mpsc;
 
 /// Watch configuration stored in config
@@ -1468,8 +1479,8 @@ fn save_watch_config(config: &WatchConfig) -> Result<()> {
 async fn cmd_watch(action: WatchAction) -> Result<()> {
     match action {
         WatchAction::Add { path, patterns } => {
-            let abs_path = fs::canonicalize(&path)
-                .with_context(|| format!("Folder not found: {:?}", path))?;
+            let abs_path =
+                fs::canonicalize(&path).with_context(|| format!("Folder not found: {:?}", path))?;
 
             if !abs_path.is_dir() {
                 return Err(anyhow!("Not a directory: {:?}", path));
@@ -1481,7 +1492,7 @@ async fn cmd_watch(action: WatchAction) -> Result<()> {
             // Check if already exists
             if config.folders.iter().any(|f| f.path == path_str) {
                 println!("Folder already being watched: {}", path_str);
-                return Ok(())
+                return Ok(());
             }
 
             let pattern_list: Vec<String> =
@@ -1522,7 +1533,7 @@ async fn cmd_watch(action: WatchAction) -> Result<()> {
                 println!("No folders being watched.");
                 println!();
                 println!("Add a folder with: witnessd watch add <path>");
-                return Ok(())
+                return Ok(());
             }
 
             println!("Watched folders:");
@@ -1558,7 +1569,7 @@ async fn cmd_watch(action: WatchAction) -> Result<()> {
             if config.folders.is_empty() {
                 println!("No folders configured. Add folders first:");
                 println!("  witnessd watch add <path>");
-                return Ok(())
+                return Ok(());
             }
 
             println!("Starting automatic checkpoint watcher...");
@@ -1706,7 +1717,7 @@ fn auto_checkpoint(file_path: &Path) -> Result<()> {
     if let Some(last) = events.last() {
         if last.content_hash == content_hash {
             // Content unchanged, skip
-            return Ok(())
+            return Ok(());
         }
     }
 

@@ -193,9 +193,7 @@ impl AnchorProvider for Rfc3161Provider {
             }
         }
 
-        Err(last_error.unwrap_or(AnchorError::Unavailable(
-            "All TSAs failed".into(),
-        )))
+        Err(last_error.unwrap_or(AnchorError::Unavailable("All TSAs failed".into())))
     }
 
     async fn check_status(&self, proof: &Proof) -> Result<Proof, AnchorError> {

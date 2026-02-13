@@ -1,7 +1,10 @@
-use sysinfo::System;
-use sha2::{Sha256, Digest};
-#[cfg(any(all(target_arch = "x86", target_feature = "sse"), target_arch = "x86_64"))]
+#[cfg(any(
+    all(target_arch = "x86", target_feature = "sse"),
+    target_arch = "x86_64"
+))]
 use raw_cpuid::CpuId;
+use sha2::{Digest, Sha256};
+use sysinfo::System;
 
 pub struct AmbientSensing;
 
@@ -19,8 +22,12 @@ impl AmbientSensing {
         let mut hasher = Sha256::new();
         hasher.update(b"witnessd-ambient-v1");
 
-        if let Some(os_ver) = System::long_os_version() { hasher.update(os_ver.as_bytes()); }
-        if let Some(host) = System::host_name() { hasher.update(host.as_bytes()); }
+        if let Some(os_ver) = System::long_os_version() {
+            hasher.update(os_ver.as_bytes());
+        }
+        if let Some(host) = System::host_name() {
+            hasher.update(host.as_bytes());
+        }
         hasher.update(&sys.total_memory().to_be_bytes());
 
         for (_, process) in sys.processes() {

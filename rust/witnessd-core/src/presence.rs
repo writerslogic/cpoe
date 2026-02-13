@@ -1,8 +1,8 @@
 use chrono::{DateTime, Utc};
+use rand::rngs::{OsRng, StdRng};
 use rand::Rng;
 use rand::SeedableRng;
 use rand::TryRngCore;
-use rand::rngs::{OsRng, StdRng};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::time::{Duration, SystemTime};
@@ -124,7 +124,10 @@ impl Verifier {
     }
 
     pub fn end_session(&mut self) -> Result<Session, String> {
-        let mut session = self.session.take().ok_or_else(|| "no active session".to_string())?;
+        let mut session = self
+            .session
+            .take()
+            .ok_or_else(|| "no active session".to_string())?;
         if !session.active {
             return Err("no active session".to_string());
         }
@@ -137,7 +140,9 @@ impl Verifier {
             match challenge.status {
                 ChallengeStatus::Passed => session.challenges_passed += 1,
                 ChallengeStatus::Failed => session.challenges_failed += 1,
-                ChallengeStatus::Expired | ChallengeStatus::Pending => session.challenges_missed += 1,
+                ChallengeStatus::Expired | ChallengeStatus::Pending => {
+                    session.challenges_missed += 1
+                }
             }
         }
 
@@ -162,7 +167,9 @@ impl Verifier {
         let challenge_type = if self.config.enabled_challenges.is_empty() {
             ChallengeType::TypePhrase
         } else {
-            let index = self.rng.random_range(0..self.config.enabled_challenges.len());
+            let index = self
+                .rng
+                .random_range(0..self.config.enabled_challenges.len());
             self.config.enabled_challenges[index].clone()
         };
 
@@ -200,7 +207,11 @@ impl Verifier {
         Ok(challenge)
     }
 
-    pub fn respond_to_challenge(&mut self, challenge_id: &str, response: &str) -> Result<bool, String> {
+    pub fn respond_to_challenge(
+        &mut self,
+        challenge_id: &str,
+        response: &str,
+    ) -> Result<bool, String> {
         let session = self
             .session
             .as_mut()
@@ -216,7 +227,10 @@ impl Verifier {
             .ok_or_else(|| "challenge not found".to_string())?;
 
         if challenge.status != ChallengeStatus::Pending {
-            return Err(format!("challenge already resolved: {:?}", challenge.status));
+            return Err(format!(
+                "challenge already resolved: {:?}",
+                challenge.status
+            ));
         }
 
         let now = Utc::now();
@@ -301,15 +315,17 @@ impl Verifier {
     fn generate_math(&mut self) -> (String, String) {
         let a = self.rng.random_range(1..=20);
         let b = self.rng.random_range(1..=20);
-        fn add(x: i32, y: i32) -> i32 { x + y }
-        fn sub(x: i32, y: i32) -> i32 { x - y }
-        fn mul(x: i32, y: i32) -> i32 { x * y }
+        fn add(x: i32, y: i32) -> i32 {
+            x + y
+        }
+        fn sub(x: i32, y: i32) -> i32 {
+            x - y
+        }
+        fn mul(x: i32, y: i32) -> i32 {
+            x * y
+        }
 
-        let ops: [(&str, fn(i32, i32) -> i32); 3] = [
-            ("+", add),
-            ("-", sub),
-            ("*", mul),
-        ];
+        let ops: [(&str, fn(i32, i32) -> i32); 3] = [("+", add), ("-", sub), ("*", mul)];
         let (symbol, op) = ops[self.rng.random_range(0..ops.len())];
         let result = op(a, b);
         (format!("Solve: {a} {symbol} {b} = ?"), format!("{result}"))
@@ -458,7 +474,10 @@ mod tests {
         let challenge = verifier.issue_challenge().expect("issue challenge");
 
         // Parse the math problem
-        let prompt = challenge.prompt.strip_prefix("Solve: ").expect("prompt format");
+        let prompt = challenge
+            .prompt
+            .strip_prefix("Solve: ")
+            .expect("prompt format");
         let prompt = prompt.strip_suffix(" = ?").expect("prompt suffix");
 
         // Parse operands and operator
@@ -523,7 +542,9 @@ mod tests {
     fn test_respond_no_session() {
         let mut verifier = Verifier::new(test_config());
 
-        let err = verifier.respond_to_challenge("some-id", "response").unwrap_err();
+        let err = verifier
+            .respond_to_challenge("some-id", "response")
+            .unwrap_err();
         assert!(err.contains("no active session"));
     }
 
@@ -532,7 +553,9 @@ mod tests {
         let mut verifier = Verifier::new(test_config());
 
         verifier.start_session().expect("start session");
-        let err = verifier.respond_to_challenge("nonexistent-id", "response").unwrap_err();
+        let err = verifier
+            .respond_to_challenge("nonexistent-id", "response")
+            .unwrap_err();
         assert!(err.contains("challenge not found"));
     }
 
@@ -574,7 +597,9 @@ mod tests {
             .respond_to_challenge(&challenge.id, word)
             .expect("first respond");
 
-        let err = verifier.respond_to_challenge(&challenge.id, word).unwrap_err();
+        let err = verifier
+            .respond_to_challenge(&challenge.id, word)
+            .unwrap_err();
         assert!(err.contains("already resolved"));
     }
 
@@ -616,14 +641,21 @@ mod tests {
         // Pass 2 challenges
         for _ in 0..2 {
             let challenge = verifier.issue_challenge().expect("issue");
-            let word = challenge.prompt.strip_prefix("Type the word: ").expect("prompt");
-            verifier.respond_to_challenge(&challenge.id, word).expect("respond");
+            let word = challenge
+                .prompt
+                .strip_prefix("Type the word: ")
+                .expect("prompt");
+            verifier
+                .respond_to_challenge(&challenge.id, word)
+                .expect("respond");
         }
 
         // Fail 2 challenges
         for _ in 0..2 {
             let challenge = verifier.issue_challenge().expect("issue");
-            verifier.respond_to_challenge(&challenge.id, "wrong").expect("respond");
+            verifier
+                .respond_to_challenge(&challenge.id, "wrong")
+                .expect("respond");
         }
 
         let session = verifier.end_session().expect("end session");
@@ -691,10 +723,15 @@ mod tests {
         verifier.start_session().expect("start session");
         let challenge = verifier.issue_challenge().expect("issue");
 
-        let word = challenge.prompt.strip_prefix("Type the word: ").expect("prompt");
+        let word = challenge
+            .prompt
+            .strip_prefix("Type the word: ")
+            .expect("prompt");
         let uppercase = word.to_uppercase();
 
-        let ok = verifier.respond_to_challenge(&challenge.id, &uppercase).expect("respond");
+        let ok = verifier
+            .respond_to_challenge(&challenge.id, &uppercase)
+            .expect("respond");
         assert!(ok);
     }
 
@@ -708,10 +745,15 @@ mod tests {
         verifier.start_session().expect("start session");
         let challenge = verifier.issue_challenge().expect("issue");
 
-        let word = challenge.prompt.strip_prefix("Type the word: ").expect("prompt");
+        let word = challenge
+            .prompt
+            .strip_prefix("Type the word: ")
+            .expect("prompt");
         let with_spaces = format!("  {}  ", word);
 
-        let ok = verifier.respond_to_challenge(&challenge.id, &with_spaces).expect("respond");
+        let ok = verifier
+            .respond_to_challenge(&challenge.id, &with_spaces)
+            .expect("respond");
         assert!(ok);
     }
 
@@ -724,8 +766,13 @@ mod tests {
 
         verifier.start_session().expect("start session");
         let challenge = verifier.issue_challenge().expect("issue");
-        let word = challenge.prompt.strip_prefix("Type the word: ").expect("prompt");
-        verifier.respond_to_challenge(&challenge.id, word).expect("respond");
+        let word = challenge
+            .prompt
+            .strip_prefix("Type the word: ")
+            .expect("prompt");
+        verifier
+            .respond_to_challenge(&challenge.id, word)
+            .expect("respond");
         let session = verifier.end_session().expect("end session");
 
         let encoded = session.encode().expect("encode");
@@ -762,7 +809,9 @@ mod tests {
         });
         verifier2.start_session().expect("start");
         let c2 = verifier2.issue_challenge().expect("issue");
-        verifier2.respond_to_challenge(&c2.id, "wrong").expect("respond");
+        verifier2
+            .respond_to_challenge(&c2.id, "wrong")
+            .expect("respond");
         let session2 = verifier2.end_session().expect("end");
 
         let evidence = compile_evidence(&[session1, session2]);
@@ -805,8 +854,13 @@ mod tests {
         let challenge = verifier.issue_challenge().expect("issue");
         assert_eq!(challenge.status, ChallengeStatus::Pending);
 
-        let word = challenge.prompt.strip_prefix("Type the word: ").expect("prompt");
-        verifier.respond_to_challenge(&challenge.id, word).expect("respond");
+        let word = challenge
+            .prompt
+            .strip_prefix("Type the word: ")
+            .expect("prompt");
+        verifier
+            .respond_to_challenge(&challenge.id, word)
+            .expect("respond");
 
         let session = verifier.active_session().unwrap();
         assert_eq!(session.challenges[0].status, ChallengeStatus::Passed);
@@ -877,9 +931,14 @@ mod tests {
 
         verifier.start_session().expect("start session");
         let challenge = verifier.issue_challenge().expect("issue");
-        let word = challenge.prompt.strip_prefix("Type the word: ").expect("prompt");
+        let word = challenge
+            .prompt
+            .strip_prefix("Type the word: ")
+            .expect("prompt");
 
-        verifier.respond_to_challenge(&challenge.id, word).expect("respond");
+        verifier
+            .respond_to_challenge(&challenge.id, word)
+            .expect("respond");
 
         let session = verifier.active_session().unwrap();
         assert!(session.challenges[0].responded_at.is_some());
@@ -888,7 +947,11 @@ mod tests {
 
     #[test]
     fn test_all_challenge_types_verifiable() {
-        for challenge_type in [ChallengeType::TypePhrase, ChallengeType::SimpleMath, ChallengeType::TypeWord] {
+        for challenge_type in [
+            ChallengeType::TypePhrase,
+            ChallengeType::SimpleMath,
+            ChallengeType::TypeWord,
+        ] {
             let mut verifier = Verifier::new(Config {
                 enabled_challenges: vec![challenge_type.clone()],
                 ..test_config()
@@ -899,7 +962,9 @@ mod tests {
 
             // Verify challenge has expected format
             match challenge_type {
-                ChallengeType::TypePhrase => assert!(challenge.prompt.starts_with("Type the phrase:")),
+                ChallengeType::TypePhrase => {
+                    assert!(challenge.prompt.starts_with("Type the phrase:"))
+                }
                 ChallengeType::SimpleMath => assert!(challenge.prompt.starts_with("Solve:")),
                 ChallengeType::TypeWord => assert!(challenge.prompt.starts_with("Type the word:")),
             }

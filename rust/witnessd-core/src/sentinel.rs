@@ -831,13 +831,13 @@ pub mod stub_focus {
 #[cfg(target_os = "windows")]
 pub mod windows_focus {
     use super::*;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        GetForegroundWindow, GetWindowThreadProcessId, GetWindowTextW,
-    };
+    use windows::core::PWSTR;
     use windows::Win32::System::Threading::{
         OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
     };
-    use windows::core::PWSTR;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId,
+    };
 
     pub struct WindowsFocusMonitor {
         config: SentinelConfig,
@@ -905,7 +905,12 @@ pub mod windows_focus {
             let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid)?;
             let mut path = [0u16; 1024];
             let mut size = path.len() as u32;
-            QueryFullProcessImageNameW(handle, Default::default(), PWSTR(path.as_mut_ptr()), &mut size)?;
+            QueryFullProcessImageNameW(
+                handle,
+                Default::default(),
+                PWSTR(path.as_mut_ptr()),
+                &mut size,
+            )?;
             Ok(String::from_utf16_lossy(&path[..size as usize]))
         }
     }
@@ -1167,10 +1172,7 @@ impl Sentinel {
 
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         {
-            (
-                false,
-                "Sentinel not available on this platform".to_string(),
-            )
+            (false, "Sentinel not available on this platform".to_string())
         }
     }
 }
@@ -1297,7 +1299,11 @@ fn focus_document_sync(
         let wal_path = wal_dir.join(format!("{}.wal", session.session_id));
         let mut session_id_bytes = [0u8; 32];
         if session.session_id.len() >= 32 {
-            hex::decode_to_slice(&session.session_id[..64.min(session.session_id.len() * 2)], &mut session_id_bytes).ok();
+            hex::decode_to_slice(
+                &session.session_id[..64.min(session.session_id.len() * 2)],
+                &mut session_id_bytes,
+            )
+            .ok();
         }
         let key = signing_key.read().unwrap().clone();
 
@@ -1543,9 +1549,7 @@ pub fn normalize_document_path(path: &str) -> String {
     let path = Path::new(path);
 
     // Try to get absolute path
-    let abs = path
-        .canonicalize()
-        .unwrap_or_else(|_| path.to_path_buf());
+    let abs = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
 
     abs.to_string_lossy().to_string()
 }
@@ -1608,12 +1612,12 @@ impl DaemonManager {
     /// Read the daemon's PID from the PID file
     pub fn read_pid(&self) -> Result<i32> {
         let data = fs::read_to_string(&self.pid_file)?;
-        data.trim()
-            .parse()
-            .map_err(|_| SentinelError::Io(std::io::Error::new(
+        data.trim().parse().map_err(|_| {
+            SentinelError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "invalid PID file",
-            )))
+            ))
+        })
     }
 
     /// Write the current process PID to the PID file
@@ -1650,8 +1654,12 @@ impl DaemonManager {
         use nix::unistd::Pid;
 
         let pid = self.read_pid()?;
-        kill(Pid::from_raw(pid), Signal::SIGTERM)
-            .map_err(|e| SentinelError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+        kill(Pid::from_raw(pid), Signal::SIGTERM).map_err(|e| {
+            SentinelError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e.to_string(),
+            ))
+        })?;
         Ok(())
     }
 
@@ -1669,8 +1677,12 @@ impl DaemonManager {
         use nix::unistd::Pid;
 
         let pid = self.read_pid()?;
-        kill(Pid::from_raw(pid), Signal::SIGHUP)
-            .map_err(|e| SentinelError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+        kill(Pid::from_raw(pid), Signal::SIGHUP).map_err(|e| {
+            SentinelError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e.to_string(),
+            ))
+        })?;
         Ok(())
     }
 

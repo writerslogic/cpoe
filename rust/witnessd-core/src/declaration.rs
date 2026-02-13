@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use ed25519_dalek::{Signature, SigningKey, VerifyingKey, Signer, Verifier};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -119,7 +119,12 @@ impl Builder {
         }
     }
 
-    pub fn add_modality(mut self, modality_type: ModalityType, percentage: f64, note: Option<String>) -> Self {
+    pub fn add_modality(
+        mut self,
+        modality_type: ModalityType,
+        percentage: f64,
+        note: Option<String>,
+    ) -> Self {
         self.decl.input_modalities.push(InputModality {
             modality_type,
             percentage,
@@ -205,7 +210,10 @@ impl Builder {
             total += modality.percentage;
         }
         if total < 95.0 || total > 105.0 {
-            return Err(format!("modality percentages sum to {:.1}%, expected ~100%", total));
+            return Err(format!(
+                "modality percentages sum to {:.1}%, expected ~100%",
+                total
+            ));
         }
 
         Ok(())
@@ -232,7 +240,9 @@ impl Declaration {
             Err(_) => return false,
         };
         let signature = Signature::from_bytes(&sig_bytes);
-        verifying_key.verify(&self.signing_payload(), &signature).is_ok()
+        verifying_key
+            .verify(&self.signing_payload(), &signature)
+            .is_ok()
     }
 
     pub fn has_ai_usage(&self) -> bool {
@@ -319,7 +329,12 @@ impl Declaration {
         }
 
         hasher.update(self.statement.as_bytes());
-        hasher.update(self.created_at.timestamp_nanos_opt().unwrap_or(0).to_be_bytes());
+        hasher.update(
+            self.created_at
+                .timestamp_nanos_opt()
+                .unwrap_or(0)
+                .to_be_bytes(),
+        );
         hasher.update(self.version.to_be_bytes());
         hasher.update(&self.author_public_key);
 
@@ -425,9 +440,14 @@ mod tests {
         let chain_hash = [2u8; 32];
         let signing_key = test_signing_key();
 
-        let decl = no_ai_declaration(doc_hash, chain_hash, "Test Document", "I wrote this myself.")
-            .sign(&signing_key)
-            .expect("sign declaration");
+        let decl = no_ai_declaration(
+            doc_hash,
+            chain_hash,
+            "Test Document",
+            "I wrote this myself.",
+        )
+        .sign(&signing_key)
+        .expect("sign declaration");
 
         assert_eq!(decl.title, "Test Document");
         assert_eq!(decl.statement, "I wrote this myself.");
@@ -606,7 +626,11 @@ mod tests {
         let signing_key = test_signing_key();
         let decl = Builder::new([1u8; 32], [2u8; 32], "Mixed Input")
             .add_modality(ModalityType::Keyboard, 60.0, None)
-            .add_modality(ModalityType::Dictation, 30.0, Some("voice notes".to_string()))
+            .add_modality(
+                ModalityType::Dictation,
+                30.0,
+                Some("voice notes".to_string()),
+            )
             .add_modality(ModalityType::Paste, 10.0, None)
             .with_statement("I used multiple input methods.")
             .sign(&signing_key)
@@ -621,8 +645,20 @@ mod tests {
         let signing_key = test_signing_key();
         let decl = Builder::new([1u8; 32], [2u8; 32], "Multi AI")
             .add_modality(ModalityType::Keyboard, 100.0, None)
-            .add_ai_tool("ChatGPT", None, AIPurpose::Ideation, None, AIExtent::Minimal)
-            .add_ai_tool("Grammarly", None, AIPurpose::Editing, None, AIExtent::Substantial)
+            .add_ai_tool(
+                "ChatGPT",
+                None,
+                AIPurpose::Ideation,
+                None,
+                AIExtent::Minimal,
+            )
+            .add_ai_tool(
+                "Grammarly",
+                None,
+                AIPurpose::Editing,
+                None,
+                AIExtent::Substantial,
+            )
             .with_statement("I used multiple AI tools.")
             .sign(&signing_key)
             .expect("sign");
@@ -636,7 +672,11 @@ mod tests {
         let signing_key = test_signing_key();
         let decl = Builder::new([1u8; 32], [2u8; 32], "Collaborative")
             .add_modality(ModalityType::Keyboard, 100.0, None)
-            .add_collaborator("Alice", CollaboratorRole::CoAuthor, vec!["Chapter 1".to_string()])
+            .add_collaborator(
+                "Alice",
+                CollaboratorRole::CoAuthor,
+                vec!["Chapter 1".to_string()],
+            )
             .add_collaborator("Bob", CollaboratorRole::Editor, vec![])
             .with_statement("We wrote this together.")
             .sign(&signing_key)
@@ -669,7 +709,13 @@ mod tests {
         let signing_key = test_signing_key();
         let decl = ai_assisted_declaration([1u8; 32], [2u8; 32], "Summary Test")
             .add_modality(ModalityType::Keyboard, 100.0, None)
-            .add_ai_tool("Claude", None, AIPurpose::Research, None, AIExtent::Moderate)
+            .add_ai_tool(
+                "Claude",
+                None,
+                AIPurpose::Research,
+                None,
+                AIExtent::Moderate,
+            )
             .add_collaborator("Alice", CollaboratorRole::Reviewer, vec![])
             .with_statement("Test")
             .sign(&signing_key)

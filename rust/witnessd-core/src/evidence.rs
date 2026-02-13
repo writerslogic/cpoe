@@ -355,7 +355,8 @@ impl Builder {
 
     pub fn with_declaration(mut self, decl: &declaration::Declaration) -> Self {
         if !decl.verify() {
-            self.errors.push("declaration signature invalid".to_string());
+            self.errors
+                .push("declaration signature invalid".to_string());
             return self;
         }
         self.packet.declaration = Some(decl.clone());
@@ -378,7 +379,10 @@ impl Builder {
         if bindings.is_empty() {
             return self;
         }
-        self.packet.hardware = Some(HardwareEvidence { bindings, device_id });
+        self.packet.hardware = Some(HardwareEvidence {
+            bindings,
+            device_id,
+        });
         if self.packet.strength < Strength::Enhanced {
             self.packet.strength = Strength::Enhanced;
         }
@@ -415,7 +419,11 @@ impl Builder {
         self
     }
 
-    pub fn with_behavioral(mut self, regions: Vec<EditRegion>, metrics: Option<ForensicMetrics>) -> Self {
+    pub fn with_behavioral(
+        mut self,
+        regions: Vec<EditRegion>,
+        metrics: Option<ForensicMetrics>,
+    ) -> Self {
         if regions.is_empty() && metrics.is_none() {
             return self;
         }
@@ -490,7 +498,8 @@ impl Builder {
             session_id: evidence.session_id.clone(),
             session_public_key: hex::encode(&evidence.session_public_key),
             session_started: evidence.session_started,
-            session_certificate: general_purpose::STANDARD.encode(&evidence.session_certificate_raw),
+            session_certificate: general_purpose::STANDARD
+                .encode(&evidence.session_certificate_raw),
             ratchet_count: evidence.ratchet_count,
             ratchet_public_keys: evidence
                 .ratchet_public_keys
@@ -634,7 +643,8 @@ impl Builder {
         }
 
         if let Some(external) = &self.packet.external {
-            let count = external.opentimestamps.len() + external.rfc3161.len() + external.proofs.len();
+            let count =
+                external.opentimestamps.len() + external.rfc3161.len() + external.proofs.len();
             self.packet.claims.push(Claim {
                 claim_type: ClaimType::ExternalAnchored,
                 description: format!("Chain anchored to {count} external timestamp authorities"),
@@ -653,7 +663,10 @@ impl Builder {
                 kh.ratchet_count
             );
             if !kh.checkpoint_signatures.is_empty() {
-                desc.push_str(&format!(", {} checkpoint signatures", kh.checkpoint_signatures.len()));
+                desc.push_str(&format!(
+                    ", {} checkpoint signatures",
+                    kh.checkpoint_signatures.len()
+                ));
             }
             self.packet.claims.push(Claim {
                 claim_type: ClaimType::KeyHierarchy,
@@ -664,13 +677,17 @@ impl Builder {
     }
 
     fn generate_limitations(&mut self) {
-        self.packet.limitations.push("Cannot prove cognitive origin of ideas".to_string());
-        self.packet.limitations.push("Cannot prove absence of AI involvement in ideation".to_string());
+        self.packet
+            .limitations
+            .push("Cannot prove cognitive origin of ideas".to_string());
+        self.packet
+            .limitations
+            .push("Cannot prove absence of AI involvement in ideation".to_string());
 
         if self.packet.presence.is_none() {
-            self.packet
-                .limitations
-                .push("No presence verification - cannot confirm human was at keyboard".to_string());
+            self.packet.limitations.push(
+                "No presence verification - cannot confirm human was at keyboard".to_string(),
+            );
         }
 
         if self.packet.keystroke.is_none() {
@@ -687,9 +704,10 @@ impl Builder {
 
         if let Some(decl) = &self.packet.declaration {
             if decl.has_ai_usage() {
-                self.packet
-                    .limitations
-                    .push("Author declares AI tool usage - verify institutional policy compliance".to_string());
+                self.packet.limitations.push(
+                    "Author declares AI tool usage - verify institutional policy compliance"
+                        .to_string(),
+                );
             }
         }
     }
@@ -711,7 +729,10 @@ pub fn convert_anchor_proof(proof: &anchors::Proof) -> AnchorProof {
         verify_url: proof.location.clone(),
     };
 
-    if matches!(proof.provider, anchors::ProviderType::Bitcoin | anchors::ProviderType::Ethereum) {
+    if matches!(
+        proof.provider,
+        anchors::ProviderType::Bitcoin | anchors::ProviderType::Ethereum
+    ) {
         let chain = match proof.provider {
             anchors::ProviderType::Bitcoin => "bitcoin",
             anchors::ProviderType::Ethereum => "ethereum",
@@ -776,9 +797,11 @@ impl Packet {
             }
             prev_hash = cp.hash.clone();
 
-            if let (Some(iterations), Some(input_hex), Some(output_hex)) =
-                (cp.vdf_iterations, cp.vdf_input.as_ref(), cp.vdf_output.as_ref())
-            {
+            if let (Some(iterations), Some(input_hex), Some(output_hex)) = (
+                cp.vdf_iterations,
+                cp.vdf_input.as_ref(),
+                cp.vdf_output.as_ref(),
+            ) {
                 let input = hex::decode(input_hex).map_err(|e| e.to_string())?;
                 let output = hex::decode(output_hex).map_err(|e| e.to_string())?;
                 if input.len() != 32 || output.len() != 32 {
@@ -819,11 +842,9 @@ impl Packet {
                 .decode(&kh.session_certificate)
                 .unwrap_or_default();
 
-            if let Err(err) = keyhierarchy::verify_session_certificate_bytes(
-                &master_pub,
-                &session_pub,
-                &cert_raw,
-            ) {
+            if let Err(err) =
+                keyhierarchy::verify_session_certificate_bytes(&master_pub, &session_pub, &cert_raw)
+            {
                 return Err(format!("key hierarchy verification failed: {err}"));
             }
 
@@ -978,13 +999,19 @@ mod tests {
         fs::write(&path, b"initial").expect("write");
 
         let mut chain = checkpoint::Chain::new(&path, vdf::default_parameters()).expect("chain");
-        chain.commit_with_vdf_duration(None, Duration::from_millis(10)).expect("commit 0");
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit 0");
 
         fs::write(&path, b"updated").expect("update");
-        chain.commit_with_vdf_duration(None, Duration::from_millis(10)).expect("commit 1");
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit 1");
 
         fs::write(&path, b"final").expect("final");
-        chain.commit_with_vdf_duration(None, Duration::from_millis(10)).expect("commit 2");
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit 2");
 
         let decl = create_test_declaration(&chain);
         let packet = Builder::new("Multi Checkpoint", &chain)
@@ -1054,9 +1081,13 @@ mod tests {
         fs::write(&path, b"initial").expect("write");
 
         let mut chain = checkpoint::Chain::new(&path, vdf::default_parameters()).expect("chain");
-        chain.commit_with_vdf_duration(None, Duration::from_millis(10)).expect("commit 0");
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit 0");
         fs::write(&path, b"updated").expect("update");
-        chain.commit_with_vdf_duration(None, Duration::from_millis(10)).expect("commit 1");
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit 1");
 
         let decl = create_test_declaration(&chain);
         let mut packet = Builder::new("Test", &chain)
@@ -1094,9 +1125,13 @@ mod tests {
         fs::write(&path, b"initial").expect("write");
 
         let mut chain = checkpoint::Chain::new(&path, vdf::default_parameters()).expect("chain");
-        chain.commit_with_vdf_duration(None, Duration::from_millis(10)).expect("commit 0");
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit 0");
         fs::write(&path, b"updated").expect("update");
-        chain.commit_with_vdf_duration(None, Duration::from_millis(50)).expect("commit 1");
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(50))
+            .expect("commit 1");
 
         let decl = create_test_declaration(&chain);
         let packet = Builder::new("Test", &chain)
@@ -1141,8 +1176,13 @@ mod tests {
         });
         verifier.start_session().expect("start");
         let challenge = verifier.issue_challenge().expect("issue");
-        let word = challenge.prompt.strip_prefix("Type the word: ").expect("prompt");
-        verifier.respond_to_challenge(&challenge.id, word).expect("respond");
+        let word = challenge
+            .prompt
+            .strip_prefix("Type the word: ")
+            .expect("prompt");
+        verifier
+            .respond_to_challenge(&challenge.id, word)
+            .expect("respond");
         let session = verifier.end_session().expect("end");
 
         let packet = Builder::new("Test", &chain)
@@ -1176,14 +1216,12 @@ mod tests {
         let (chain, _) = create_test_chain(&dir);
         let decl = create_test_declaration(&chain);
 
-        let contexts = vec![
-            ContextPeriod {
-                period_type: "focused".to_string(),
-                note: Some("writing session".to_string()),
-                start_time: Utc::now(),
-                end_time: Utc::now(),
-            },
-        ];
+        let contexts = vec![ContextPeriod {
+            period_type: "focused".to_string(),
+            note: Some("writing session".to_string()),
+            start_time: Utc::now(),
+            end_time: Utc::now(),
+        }];
 
         let packet = Builder::new("Test", &chain)
             .with_declaration(&decl)
@@ -1200,14 +1238,12 @@ mod tests {
         let (chain, _) = create_test_chain(&dir);
         let decl = create_test_declaration(&chain);
 
-        let regions = vec![
-            EditRegion {
-                start_pct: 0.0,
-                end_pct: 50.0,
-                delta_sign: 1,
-                byte_count: 100,
-            },
-        ];
+        let regions = vec![EditRegion {
+            start_pct: 0.0,
+            end_pct: 50.0,
+            delta_sign: 1,
+            byte_count: 100,
+        }];
 
         let metrics = ForensicMetrics {
             monotonic_append_ratio: 0.8,
@@ -1271,8 +1307,14 @@ mod tests {
             .expect("build");
 
         // Should have at least chain integrity and process declared claims
-        assert!(packet.claims.iter().any(|c| matches!(c.claim_type, ClaimType::ChainIntegrity)));
-        assert!(packet.claims.iter().any(|c| matches!(c.claim_type, ClaimType::ProcessDeclared)));
+        assert!(packet
+            .claims
+            .iter()
+            .any(|c| matches!(c.claim_type, ClaimType::ChainIntegrity)));
+        assert!(packet
+            .claims
+            .iter()
+            .any(|c| matches!(c.claim_type, ClaimType::ProcessDeclared)));
     }
 
     #[test]
@@ -1287,7 +1329,10 @@ mod tests {
             .expect("build");
 
         // Should have cognitive origin limitation
-        assert!(packet.limitations.iter().any(|l| l.contains("cognitive origin")));
+        assert!(packet
+            .limitations
+            .iter()
+            .any(|l| l.contains("cognitive origin")));
     }
 
     #[test]
@@ -1300,14 +1345,9 @@ mod tests {
         // No commits
 
         let signing_key = test_signing_key();
-        let decl = declaration::no_ai_declaration(
-            [1u8; 32],
-            [2u8; 32],
-            "Empty Chain",
-            "Test",
-        )
-        .sign(&signing_key)
-        .expect("sign");
+        let decl = declaration::no_ai_declaration([1u8; 32], [2u8; 32], "Empty Chain", "Test")
+            .sign(&signing_key)
+            .expect("sign");
 
         let packet = Builder::new("Empty", &chain)
             .with_declaration(&decl)
@@ -1346,23 +1386,20 @@ mod tests {
 
         let latest = chain.latest().expect("latest");
         let signing_key = test_signing_key();
-        let decl = declaration::ai_assisted_declaration(
-            latest.content_hash,
-            latest.hash,
-            "AI Assisted",
-        )
-        .add_modality(declaration::ModalityType::Keyboard, 80.0, None)
-        .add_modality(declaration::ModalityType::Paste, 20.0, None)
-        .add_ai_tool(
-            "ChatGPT",
-            None,
-            declaration::AIPurpose::Feedback,
-            None,
-            declaration::AIExtent::Moderate,
-        )
-        .with_statement("Used AI for feedback")
-        .sign(&signing_key)
-        .expect("sign");
+        let decl =
+            declaration::ai_assisted_declaration(latest.content_hash, latest.hash, "AI Assisted")
+                .add_modality(declaration::ModalityType::Keyboard, 80.0, None)
+                .add_modality(declaration::ModalityType::Paste, 20.0, None)
+                .add_ai_tool(
+                    "ChatGPT",
+                    None,
+                    declaration::AIPurpose::Feedback,
+                    None,
+                    declaration::AIExtent::Moderate,
+                )
+                .with_statement("Used AI for feedback")
+                .sign(&signing_key)
+                .expect("sign");
 
         let packet = Builder::new("AI Doc", &chain)
             .with_declaration(&decl)
@@ -1370,7 +1407,10 @@ mod tests {
             .expect("build");
 
         // Should have AI-related limitation
-        assert!(packet.limitations.iter().any(|l| l.contains("AI tool usage")));
+        assert!(packet
+            .limitations
+            .iter()
+            .any(|l| l.contains("AI tool usage")));
     }
 
     #[test]
@@ -1401,9 +1441,13 @@ mod tests {
         fs::write(&path, b"initial").expect("write");
 
         let mut chain = checkpoint::Chain::new(&path, vdf::default_parameters()).expect("chain");
-        chain.commit_with_vdf_duration(Some("first commit".to_string()), Duration::from_millis(10)).expect("commit 0");
+        chain
+            .commit_with_vdf_duration(Some("first commit".to_string()), Duration::from_millis(10))
+            .expect("commit 0");
         fs::write(&path, b"updated").expect("update");
-        chain.commit_with_vdf_duration(None, Duration::from_millis(10)).expect("commit 1");
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit 1");
 
         let decl = create_test_declaration(&chain);
         let packet = Builder::new("Test", &chain)
@@ -1482,8 +1526,17 @@ mod tests {
             .build()
             .expect("build");
 
-        assert_eq!(packet.vdf_params.iterations_per_second, chain.vdf_params.iterations_per_second);
-        assert_eq!(packet.vdf_params.min_iterations, chain.vdf_params.min_iterations);
-        assert_eq!(packet.vdf_params.max_iterations, chain.vdf_params.max_iterations);
+        assert_eq!(
+            packet.vdf_params.iterations_per_second,
+            chain.vdf_params.iterations_per_second
+        );
+        assert_eq!(
+            packet.vdf_params.min_iterations,
+            chain.vdf_params.min_iterations
+        );
+        assert_eq!(
+            packet.vdf_params.max_iterations,
+            chain.vdf_params.max_iterations
+        );
     }
 }

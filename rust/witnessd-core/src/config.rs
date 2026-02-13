@@ -1,26 +1,26 @@
-use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
-use std::fs;
-use anyhow::Result;
 use crate::vdf::params::Parameters as VdfParameters;
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WitnessdConfig {
     #[serde(default = "default_data_dir")]
     pub data_dir: PathBuf,
-    
+
     #[serde(default = "default_watch_dirs")]
     pub watch_dirs: Vec<PathBuf>,
-    
+
     #[serde(default = "default_retention_days")]
     pub retention_days: u32,
-    
+
     #[serde(default)]
     pub presence: PresenceConfig,
-    
+
     #[serde(default)]
     pub vdf: VdfConfig,
-    
+
     #[serde(default)]
     pub sentinel: SentinelConfig,
 }
@@ -72,7 +72,7 @@ pub struct SentinelConfig {
     pub heartbeat_interval_secs: u64,
     #[serde(default = "default_checkpoint")]
     pub checkpoint_interval_secs: u64,
-    
+
     // Expanded fields
     #[serde(default = "default_witnessd_dir")]
     pub witnessd_dir: PathBuf,
@@ -106,7 +106,7 @@ impl Default for SentinelConfig {
     fn default() -> Self {
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
         let witnessd_dir = home.join(".witnessd");
-        
+
         Self {
             auto_start: default_false(),
             heartbeat_interval_secs: default_heartbeat(),
@@ -129,12 +129,22 @@ impl Default for SentinelConfig {
 }
 
 // Defaults
-fn default_true() -> bool { true }
-fn default_debounce() -> u64 { 500 }
-fn default_idle() -> u64 { 1800 }
-fn default_poll() -> u64 { 100 }
-fn default_witnessd_dir() -> PathBuf { 
-    dirs::home_dir().map(|h| h.join(".witnessd")).unwrap_or_else(|| PathBuf::from(".witnessd")) 
+fn default_true() -> bool {
+    true
+}
+fn default_debounce() -> u64 {
+    500
+}
+fn default_idle() -> u64 {
+    1800
+}
+fn default_poll() -> u64 {
+    100
+}
+fn default_witnessd_dir() -> PathBuf {
+    dirs::home_dir()
+        .map(|h| h.join(".witnessd"))
+        .unwrap_or_else(|| PathBuf::from(".witnessd"))
 }
 
 fn default_allowed_apps() -> Vec<String> {
@@ -147,10 +157,7 @@ fn default_allowed_apps() -> Vec<String> {
 }
 
 fn default_blocked_apps() -> Vec<String> {
-    vec![
-        "com.apple.finder".to_string(),
-        "explorer".to_string(),
-    ]
+    vec!["com.apple.finder".to_string(), "explorer".to_string()]
 }
 
 impl SentinelConfig {
@@ -161,14 +168,20 @@ impl SentinelConfig {
         self.witnessd_dir = dir;
         self
     }
-    
+
     pub fn is_app_allowed(&self, bundle_id: &str, app_name: &str) -> bool {
         for blocked in &self.blocked_apps {
-            if blocked == bundle_id || blocked == app_name { return false; }
+            if blocked == bundle_id || blocked == app_name {
+                return false;
+            }
         }
-        if self.allowed_apps.is_empty() { return self.track_unknown_apps; }
+        if self.allowed_apps.is_empty() {
+            return self.track_unknown_apps;
+        }
         for allowed in &self.allowed_apps {
-            if allowed == bundle_id || allowed == app_name { return true; }
+            if allowed == bundle_id || allowed == app_name {
+                return true;
+            }
         }
         self.track_unknown_apps
     }
@@ -189,37 +202,63 @@ impl SentinelConfig {
 fn default_data_dir() -> PathBuf {
     #[cfg(target_os = "macos")]
     {
-        dirs::home_dir().map(|h| h.join("Library/Application Support/Witnessd")).unwrap_or_else(|| PathBuf::from(".witnessd"))
+        dirs::home_dir()
+            .map(|h| h.join("Library/Application Support/Witnessd"))
+            .unwrap_or_else(|| PathBuf::from(".witnessd"))
     }
     #[cfg(not(target_os = "macos"))]
     {
-        dirs::home_dir().map(|h| h.join(".witnessd")).unwrap_or_else(|| PathBuf::from(".witnessd"))
+        dirs::home_dir()
+            .map(|h| h.join(".witnessd"))
+            .unwrap_or_else(|| PathBuf::from(".witnessd"))
     }
 }
 
 fn default_watch_dirs() -> Vec<PathBuf> {
     #[cfg(target_os = "macos")]
     {
-        dirs::home_dir().map(|h| vec![h.join("Documents"), h.join("Desktop")]).unwrap_or_default()
+        dirs::home_dir()
+            .map(|h| vec![h.join("Documents"), h.join("Desktop")])
+            .unwrap_or_default()
     }
     #[cfg(not(target_os = "macos"))]
-    { Vec::new() }
+    {
+        Vec::new()
+    }
 }
 
-fn default_retention_days() -> u32 { 30 }
-fn default_interval() -> u64 { 600 }
-fn default_window() -> u64 { 60 }
-fn default_ips() -> u64 { 1_000_000 }
-fn default_min_iter() -> u64 { 100_000 }
-fn default_max_iter() -> u64 { 3_600_000_000 }
-fn default_false() -> bool { false }
-fn default_heartbeat() -> u64 { 60 }
-fn default_checkpoint() -> u64 { 60 }
+fn default_retention_days() -> u32 {
+    30
+}
+fn default_interval() -> u64 {
+    600
+}
+fn default_window() -> u64 {
+    60
+}
+fn default_ips() -> u64 {
+    1_000_000
+}
+fn default_min_iter() -> u64 {
+    100_000
+}
+fn default_max_iter() -> u64 {
+    3_600_000_000
+}
+fn default_false() -> bool {
+    false
+}
+fn default_heartbeat() -> u64 {
+    60
+}
+fn default_checkpoint() -> u64 {
+    60
+}
 
 impl WitnessdConfig {
     pub fn load_or_default(data_dir: &Path) -> Result<Self> {
         let config_path = data_dir.join("witnessd.json");
-        
+
         if config_path.exists() {
             let raw = fs::read_to_string(&config_path)?;
             let mut config: WitnessdConfig = serde_json::from_str(&raw)?;
@@ -236,7 +275,10 @@ impl WitnessdConfig {
             if let Ok(raw) = fs::read_to_string(&cli_path) {
                 if let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw) {
                     if let Some(vdf) = val.get("vdf") {
-                        config.vdf.iterations_per_second = vdf.get("iterations_per_second").and_then(|v| v.as_u64()).unwrap_or(config.vdf.iterations_per_second);
+                        config.vdf.iterations_per_second = vdf
+                            .get("iterations_per_second")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(config.vdf.iterations_per_second);
                     }
                 }
             }
@@ -245,9 +287,16 @@ impl WitnessdConfig {
         if gui_path.exists() {
             if let Ok(raw) = fs::read_to_string(&gui_path) {
                 if let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw) {
-                    config.retention_days = val.get("retention_days").and_then(|v| v.as_u64()).map(|v| v as u32).unwrap_or(config.retention_days);
+                    config.retention_days = val
+                        .get("retention_days")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v as u32)
+                        .unwrap_or(config.retention_days);
                     if let Some(dirs) = val.get("watch_dirs").and_then(|v| v.as_array()) {
-                        config.watch_dirs = dirs.iter().filter_map(|v| v.as_str().map(PathBuf::from)).collect();
+                        config.watch_dirs = dirs
+                            .iter()
+                            .filter_map(|v| v.as_str().map(PathBuf::from))
+                            .collect();
                     }
                 }
             }

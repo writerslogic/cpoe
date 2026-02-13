@@ -6,7 +6,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 /// A string that is stored in memory in an obfuscated form (XORed with a random nonce).
 /// This provides defense-in-depth against memory scraping attacks that look for
 /// plaintext window titles or file paths.
-/// 
+///
 /// Note: This is NOT encryption. It does not provide cryptographic confidentiality
 /// against an attacker who can read the nonce. It is strictly for obfuscation.
 #[derive(Clone, Zeroize, ZeroizeOnDrop)]
@@ -19,10 +19,10 @@ impl ObfuscatedString {
     pub fn new(s: &str) -> Self {
         let mut nonce = [0u8; 8];
         rand::rng().fill_bytes(&mut nonce);
-        
+
         let mut data = s.as_bytes().to_vec();
         Self::xor(&mut data, &nonce);
-        
+
         Self { nonce, data }
     }
 

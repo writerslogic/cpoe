@@ -1,16 +1,16 @@
-mod types;
 mod software;
+mod types;
 mod verification;
 
+#[cfg(target_os = "linux")]
+mod linux;
 #[cfg(target_os = "macos")]
 mod secure_enclave;
 #[cfg(target_os = "windows")]
 mod windows;
-#[cfg(target_os = "linux")]
-mod linux;
 
-pub use types::*;
 pub use software::SoftwareProvider;
+pub use types::*;
 pub use verification::{verify_binding_chain, verify_quote};
 
 use std::sync::Arc;

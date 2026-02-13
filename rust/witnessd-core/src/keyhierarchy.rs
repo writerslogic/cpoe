@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use ed25519_dalek::{Signature, SigningKey, Verifier, VerifyingKey, Signer};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use hkdf::Hkdf;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -161,7 +161,10 @@ fn derive_master_private_key(puf: &dyn PUFProvider) -> Result<SigningKey, KeyHie
     Ok(signing_key)
 }
 
-pub fn start_session(puf: &dyn PUFProvider, document_hash: [u8; 32]) -> Result<Session, KeyHierarchyError> {
+pub fn start_session(
+    puf: &dyn PUFProvider,
+    document_hash: [u8; 32],
+) -> Result<Session, KeyHierarchyError> {
     let master_key = derive_master_private_key(puf)?;
     let master_pub_key = master_key.verifying_key().to_bytes().to_vec();
 
@@ -175,7 +178,11 @@ pub fn start_session(puf: &dyn PUFProvider, document_hash: [u8; 32]) -> Result<S
         bytes
     };
 
-    let mut session_seed = hkdf_expand(master_key.to_bytes().as_slice(), SESSION_DOMAIN.as_bytes(), &session_input)?;
+    let mut session_seed = hkdf_expand(
+        master_key.to_bytes().as_slice(),
+        SESSION_DOMAIN.as_bytes(),
+        &session_input,
+    )?;
     let session_key = SigningKey::from_bytes(&session_seed);
     let session_pub = session_key.verifying_key().to_bytes().to_vec();
 
@@ -209,17 +216,25 @@ pub fn start_session(puf: &dyn PUFProvider, document_hash: [u8; 32]) -> Result<S
 }
 
 impl Session {
-    pub fn sign_checkpoint(&mut self, checkpoint_hash: [u8; 32]) -> Result<CheckpointSignature, KeyHierarchyError> {
+    pub fn sign_checkpoint(
+        &mut self,
+        checkpoint_hash: [u8; 32],
+    ) -> Result<CheckpointSignature, KeyHierarchyError> {
         if self.ratchet.wiped {
             return Err(KeyHierarchyError::RatchetWiped);
         }
 
-        let mut signing_seed = hkdf_expand(&self.ratchet.current, SIGNING_KEY_DOMAIN.as_bytes(), &[])?;
+        let mut signing_seed =
+            hkdf_expand(&self.ratchet.current, SIGNING_KEY_DOMAIN.as_bytes(), &[])?;
         let signing_key = SigningKey::from_bytes(&signing_seed);
         let public_key = signing_key.verifying_key().to_bytes().to_vec();
         let signature = signing_key.sign(&checkpoint_hash).to_bytes();
 
-        let next_ratchet = hkdf_expand(&self.ratchet.current, RATCHET_ADVANCE_DOMAIN.as_bytes(), &checkpoint_hash)?;
+        let next_ratchet = hkdf_expand(
+            &self.ratchet.current,
+            RATCHET_ADVANCE_DOMAIN.as_bytes(),
+            &checkpoint_hash,
+        )?;
 
         let current_ordinal = self.ratchet.ordinal;
         self.ratchet.current.zeroize();
@@ -276,7 +291,10 @@ impl Session {
         evidence
     }
 
-    pub fn export_recovery_state(&self, puf: &dyn PUFProvider) -> Result<SessionRecoveryState, KeyHierarchyError> {
+    pub fn export_recovery_state(
+        &self,
+        puf: &dyn PUFProvider,
+    ) -> Result<SessionRecoveryState, KeyHierarchyError> {
         if self.ratchet.wiped {
             return Err(KeyHierarchyError::RatchetWiped);
         }
@@ -322,7 +340,9 @@ pub fn verify_session_certificate(cert: &SessionCertificate) -> Result<(), KeyHi
         .map_err(|_| KeyHierarchyError::InvalidCert)
 }
 
-pub fn verify_checkpoint_signatures(signatures: &[CheckpointSignature]) -> Result<(), KeyHierarchyError> {
+pub fn verify_checkpoint_signatures(
+    signatures: &[CheckpointSignature],
+) -> Result<(), KeyHierarchyError> {
     for (i, sig) in signatures.iter().enumerate() {
         if sig.ordinal != i as u64 {
             return Err(KeyHierarchyError::OrdinalMismatch);
@@ -429,7 +449,11 @@ pub struct SessionRecoveryState {
     pub last_ratchet_state: Vec<u8>,
 }
 
-pub fn recover_session(puf: &dyn PUFProvider, recovery: &SessionRecoveryState, document_hash: [u8; 32]) -> Result<Session, KeyHierarchyError> {
+pub fn recover_session(
+    puf: &dyn PUFProvider,
+    recovery: &SessionRecoveryState,
+    document_hash: [u8; 32],
+) -> Result<Session, KeyHierarchyError> {
     if recovery.certificate.session_id == [0u8; 32] {
         return Err(KeyHierarchyError::NoRecoveryData);
     }
@@ -452,7 +476,10 @@ pub fn recover_session(puf: &dyn PUFProvider, recovery: &SessionRecoveryState, d
     recover_session_with_new_ratchet(puf, recovery)
 }
 
-fn recover_session_with_ratchet(puf: &dyn PUFProvider, recovery: &SessionRecoveryState) -> Result<Session, KeyHierarchyError> {
+fn recover_session_with_ratchet(
+    puf: &dyn PUFProvider,
+    recovery: &SessionRecoveryState,
+) -> Result<Session, KeyHierarchyError> {
     let challenge = Sha256::digest(b"witnessd-ratchet-recovery-v1");
     let response = puf.get_response(&challenge)?;
     let mut key = hkdf_expand(&response, b"ratchet-recovery-key", &[])?;
@@ -484,7 +511,10 @@ fn recover_session_with_ratchet(puf: &dyn PUFProvider, recovery: &SessionRecover
     })
 }
 
-fn recover_session_with_new_ratchet(puf: &dyn PUFProvider, recovery: &SessionRecoveryState) -> Result<Session, KeyHierarchyError> {
+fn recover_session_with_new_ratchet(
+    puf: &dyn PUFProvider,
+    recovery: &SessionRecoveryState,
+) -> Result<Session, KeyHierarchyError> {
     let mut next_ordinal = 0u64;
     if let Some(last) = recovery.signatures.last() {
         next_ordinal = last.ordinal + 1;
@@ -503,7 +533,11 @@ fn recover_session_with_new_ratchet(puf: &dyn PUFProvider, recovery: &SessionRec
     continuation_input.extend_from_slice(&last_hash);
     continuation_input.extend_from_slice(&recovery.certificate.session_id);
 
-    let ratchet_init = hkdf_expand(&continuation_input, RATCHET_INIT_DOMAIN.as_bytes(), b"continuation")?;
+    let ratchet_init = hkdf_expand(
+        &continuation_input,
+        RATCHET_INIT_DOMAIN.as_bytes(),
+        b"continuation",
+    )?;
 
     Ok(Session {
         certificate: recovery.certificate.clone(),
@@ -581,7 +615,11 @@ pub fn verify_legacy_migration(migration: &LegacyKeyMigration) -> Result<(), Key
         .map_err(|_| KeyHierarchyError::InvalidMigration)
 }
 
-fn build_migration_data(legacy_pub: &[u8], new_master_pub: &[u8], timestamp: DateTime<Utc>) -> Vec<u8> {
+fn build_migration_data(
+    legacy_pub: &[u8],
+    new_master_pub: &[u8],
+    timestamp: DateTime<Utc>,
+) -> Vec<u8> {
     let mut data = Vec::new();
     data.extend_from_slice(b"witnessd-key-migration-v1");
     data.extend_from_slice(legacy_pub);
@@ -625,7 +663,11 @@ pub fn start_session_from_legacy_key(
         bytes
     };
 
-    let mut session_seed = hkdf_expand(legacy_key.to_bytes().as_slice(), SESSION_DOMAIN.as_bytes(), &session_input)?;
+    let mut session_seed = hkdf_expand(
+        legacy_key.to_bytes().as_slice(),
+        SESSION_DOMAIN.as_bytes(),
+        &session_input,
+    )?;
     let session_key = SigningKey::from_bytes(&session_seed);
     let session_pub = session_key.verifying_key().to_bytes().to_vec();
 
@@ -723,7 +765,10 @@ pub struct SessionManager {
 }
 
 impl SessionManager {
-    pub fn new(puf: Box<dyn PUFProvider>, document_path: impl Into<String>) -> Result<Self, KeyHierarchyError> {
+    pub fn new(
+        puf: Box<dyn PUFProvider>,
+        document_path: impl Into<String>,
+    ) -> Result<Self, KeyHierarchyError> {
         let identity = derive_master_identity(puf.as_ref())?;
         let document_path = document_path.into();
         let content = fs::read(&document_path)?;
@@ -739,7 +784,10 @@ impl SessionManager {
         })
     }
 
-    pub fn sign_checkpoint(&mut self, checkpoint: &mut checkpoint::Checkpoint) -> Result<(), KeyHierarchyError> {
+    pub fn sign_checkpoint(
+        &mut self,
+        checkpoint: &mut checkpoint::Checkpoint,
+    ) -> Result<(), KeyHierarchyError> {
         let sig = self.session.sign_checkpoint(checkpoint.hash)?;
         checkpoint.signature = Some(sig.signature.to_vec());
         Ok(())
@@ -768,13 +816,22 @@ pub struct ChainSigner {
 }
 
 impl ChainSigner {
-    pub fn new(chain: checkpoint::Chain, puf: Box<dyn PUFProvider>) -> Result<Self, KeyHierarchyError> {
+    pub fn new(
+        chain: checkpoint::Chain,
+        puf: Box<dyn PUFProvider>,
+    ) -> Result<Self, KeyHierarchyError> {
         let manager = SessionManager::new(puf, chain.document_path.clone())?;
         Ok(Self { chain, manager })
     }
 
-    pub fn commit_and_sign(&mut self, message: Option<String>) -> Result<checkpoint::Checkpoint, KeyHierarchyError> {
-        let mut cp = self.chain.commit(message).map_err(KeyHierarchyError::Crypto)?;
+    pub fn commit_and_sign(
+        &mut self,
+        message: Option<String>,
+    ) -> Result<checkpoint::Checkpoint, KeyHierarchyError> {
+        let mut cp = self
+            .chain
+            .commit(message)
+            .map_err(KeyHierarchyError::Crypto)?;
         self.manager.sign_checkpoint(&mut cp)?;
         Ok(cp)
     }
@@ -1038,7 +1095,9 @@ mod tests {
         session.sign_checkpoint([1u8; 32]).expect("sign");
         session.sign_checkpoint([2u8; 32]).expect("sign");
 
-        let recovery = session.export_recovery_state(&puf).expect("export recovery");
+        let recovery = session
+            .export_recovery_state(&puf)
+            .expect("export recovery");
         let recovered = recover_session(&puf, &recovery, document_hash).expect("recover session");
         assert_eq!(recovered.signatures().len(), session.signatures().len());
         assert_eq!(recovered.current_ordinal(), session.current_ordinal());
@@ -1387,8 +1446,7 @@ mod tests {
         fs::write(&legacy_path, &seed).expect("write legacy key");
 
         let puf = test_puf();
-        let (migration, _identity) = migrate_from_legacy_key(&puf, &legacy_path)
-            .expect("migrate");
+        let (migration, _identity) = migrate_from_legacy_key(&puf, &legacy_path).expect("migrate");
 
         verify_legacy_migration(&migration).expect("verify migration");
     }
@@ -1414,8 +1472,8 @@ mod tests {
         let seed = [42u8; 32];
         fs::write(&legacy_path, &seed).expect("write legacy key");
 
-        let session = start_session_from_legacy_key(&legacy_path, [1u8; 32])
-            .expect("start from legacy");
+        let session =
+            start_session_from_legacy_key(&legacy_path, [1u8; 32]).expect("start from legacy");
         verify_session_certificate(&session.certificate).expect("verify cert");
     }
 

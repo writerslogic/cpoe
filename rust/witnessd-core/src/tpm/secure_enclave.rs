@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 use super::{Attestation, Binding, Capabilities, Provider, Quote, TPMError};
+use anyhow::Result;
 use chrono::Utc;
 use core_foundation::base::{CFType, TCFType};
 use core_foundation::boolean::CFBoolean;
@@ -15,20 +16,19 @@ use security_framework_sys::access_control::{
     SecAccessControlCreateWithFlags,
 };
 use security_framework_sys::base::{errSecSuccess, SecKeyRef};
-use security_framework_sys::key::{
-    kSecKeyAlgorithmECDSASignatureMessageX962SHA256, SecKeyCopyExternalRepresentation,
-    SecKeyCopyPublicKey, SecKeyCreateRandomKey, SecKeyCreateSignature,
-};
-use security_framework_sys::keychain_item::SecItemCopyMatching;
 use security_framework_sys::item::{
     kSecAttrAccessControl, kSecAttrApplicationLabel, kSecAttrIsPermanent, kSecAttrKeySizeInBits,
     kSecAttrKeyType, kSecAttrKeyTypeECSECPrimeRandom, kSecAttrTokenID,
     kSecAttrTokenIDSecureEnclave, kSecClass, kSecClassKey, kSecPrivateKeyAttrs, kSecReturnRef,
 };
+use security_framework_sys::key::{
+    kSecKeyAlgorithmECDSASignatureMessageX962SHA256, SecKeyCopyExternalRepresentation,
+    SecKeyCopyPublicKey, SecKeyCreateRandomKey, SecKeyCreateSignature,
+};
+use security_framework_sys::keychain_item::SecItemCopyMatching;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use anyhow::Result;
 use std::fs;
 use std::path::PathBuf;
 use std::ptr::null_mut;
@@ -282,7 +282,8 @@ fn load_or_create_attestation_key(state: &mut SecureEnclaveState) -> Result<(), 
             unsafe { CFType::wrap_under_create_rule(access as CFTypeRef) },
         ));
     }
-    let private_attrs = core_foundation::dictionary::CFDictionary::from_CFType_pairs(&private_pairs);
+    let private_attrs =
+        core_foundation::dictionary::CFDictionary::from_CFType_pairs(&private_pairs);
 
     let key_size = 256i32;
     let key_size_cf = CFNumber::from(key_size);
@@ -386,7 +387,8 @@ fn load_or_create_key(state: &mut SecureEnclaveState) -> Result<(), TPMError> {
             unsafe { CFType::wrap_under_create_rule(access as CFTypeRef) },
         ));
     }
-    let private_attrs = core_foundation::dictionary::CFDictionary::from_CFType_pairs(&private_pairs);
+    let private_attrs =
+        core_foundation::dictionary::CFDictionary::from_CFType_pairs(&private_pairs);
 
     let key_size = 256i32;
     let key_size_cf = CFNumber::from(key_size);
@@ -415,7 +417,9 @@ fn load_or_create_key(state: &mut SecureEnclaveState) -> Result<(), TPMError> {
     // Note: Do NOT call CFRelease on `access` here - it was passed to wrap_under_create_rule
     // which took ownership and will release it when private_attrs is dropped
     if key_ref.is_null() {
-        return Err(TPMError::KeyGeneration("Secure Enclave key generation failed".into()));
+        return Err(TPMError::KeyGeneration(
+            "Secure Enclave key generation failed".into(),
+        ));
     }
 
     state.key_ref = key_ref;
@@ -529,7 +533,10 @@ impl Provider for SecureEnclaveProvider {
             public_key: state.public_key.clone(),
             monotonic_counter: Some(state.counter),
             safe_clock: Some(true),
-            attestation: Some(Attestation { payload, quote: None }),
+            attestation: Some(Attestation {
+                payload,
+                quote: None,
+            }),
         })
     }
 
@@ -683,7 +690,11 @@ impl SecureEnclaveProvider {
         expected_data.extend_from_slice(&attestation.public_key);
         expected_data.extend_from_slice(attestation.device_id.as_bytes());
 
-        let ts_bytes = attestation.timestamp.timestamp_nanos_opt().unwrap_or(0).to_le_bytes();
+        let ts_bytes = attestation
+            .timestamp
+            .timestamp_nanos_opt()
+            .unwrap_or(0)
+            .to_le_bytes();
         expected_data.extend_from_slice(&ts_bytes);
 
         // Include hardware info if available
@@ -727,13 +738,16 @@ impl SecureEnclaveProvider {
     /// Get information about the attestation key (if separate from signing key).
     pub fn get_attestation_key_info(&self) -> Option<SecureEnclaveKeyInfo> {
         let state = self.state.lock().unwrap();
-        state.attestation_public_key.as_ref().map(|pk| SecureEnclaveKeyInfo {
-            tag: SE_ATTESTATION_KEY_TAG.to_string(),
-            public_key: pk.clone(),
-            created_at: None,
-            hardware_backed: true,
-            key_size: 256,
-        })
+        state
+            .attestation_public_key
+            .as_ref()
+            .map(|pk| SecureEnclaveKeyInfo {
+                tag: SE_ATTESTATION_KEY_TAG.to_string(),
+                public_key: pk.clone(),
+                created_at: None,
+                hardware_backed: true,
+                key_size: 256,
+            })
     }
 
     /// Get hardware information for this device.
@@ -830,7 +844,8 @@ fn verify_ecdsa_signature(
     unsafe {
         // Create key attributes dictionary
         let key_type_key = CFString::wrap_under_get_rule(kSecAttrKeyType);
-        let key_type_value = CFType::wrap_under_get_rule(kSecAttrKeyTypeECSECPrimeRandom as CFTypeRef);
+        let key_type_value =
+            CFType::wrap_under_get_rule(kSecAttrKeyTypeECSECPrimeRandom as CFTypeRef);
         let key_class_key = CFString::new("kSecAttrKeyClass");
         let key_class_value = CFType::wrap_under_get_rule(kSecAttrKeyClassPublic);
 
@@ -901,9 +916,7 @@ fn is_secure_enclave_available() -> bool {
     // If not Apple Silicon, check for T2 chip (Intel Macs with SE)
     if !has_apple_silicon {
         // Check for T2 by looking for AppleT2Controller in ioreg
-        let t2_check = Command::new("ioreg")
-            .args(["-l", "-w0"])
-            .output();
+        let t2_check = Command::new("ioreg").args(["-l", "-w0"]).output();
 
         if let Ok(out) = t2_check {
             if out.status.success() {
@@ -918,9 +931,7 @@ fn is_secure_enclave_available() -> bool {
 
     // We have hardware that supports SE, now check if the Security framework works
     // Use a minimal, safer check via security command
-    let security_check = Command::new("security")
-        .args(["list-keychains"])
-        .output();
+    let security_check = Command::new("security").args(["list-keychains"]).output();
 
     match security_check {
         Ok(out) => out.status.success(),

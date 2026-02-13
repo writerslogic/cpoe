@@ -133,7 +133,9 @@ impl Anchor {
     }
 
     pub fn is_confirmed(&self) -> bool {
-        self.proofs.iter().any(|p| p.status == ProofStatus::Confirmed)
+        self.proofs
+            .iter()
+            .any(|p| p.status == ProofStatus::Confirmed)
     }
 }
 

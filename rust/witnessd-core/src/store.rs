@@ -1,7 +1,7 @@
+use crate::crypto;
+use anyhow::anyhow;
 use rusqlite::{params, Connection};
 use std::path::Path;
-use anyhow::anyhow;
-use crate::crypto;
 
 pub struct SecureStore {
     conn: Connection,
@@ -32,7 +32,7 @@ pub struct SecureEvent {
 impl SecureStore {
     pub fn open<P: AsRef<Path>>(path: P, hmac_key: Vec<u8>) -> anyhow::Result<Self> {
         let conn = Connection::open(path)?;
-        
+
         let _: String = conn.query_row("PRAGMA journal_mode=WAL", [], |row| row.get(0))?;
         // These PRAGMAs may or may not return values depending on SQLite version
         conn.execute_batch("PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;")?;
@@ -110,8 +110,9 @@ impl SecureStore {
             Ok((chain_hash, event_count, stored_hmac)) => {
                 let mut chain_hash_arr = [0u8; 32];
                 chain_hash_arr.copy_from_slice(&chain_hash);
-                
-                let expected_hmac = crypto::compute_integrity_hmac(&self.hmac_key, &chain_hash_arr, event_count);
+
+                let expected_hmac =
+                    crypto::compute_integrity_hmac(&self.hmac_key, &chain_hash_arr, event_count);
                 if stored_hmac != expected_hmac {
                     return Err(anyhow!("Integrity record HMAC mismatch"));
                 }
@@ -120,7 +121,7 @@ impl SecureStore {
                     "SELECT id, event_hash, previous_hash, hmac, device_id, timestamp_ns, file_path, content_hash, file_size, size_delta 
                      FROM secure_events ORDER BY id ASC"
                 )?;
-                
+
                 let mut rows = stmt.query([])?;
                 let mut last_hash = [0u8; 32];
                 let mut count = 0i64;
@@ -137,23 +138,42 @@ impl SecureStore {
                     let file_size: i64 = row.get(8)?;
                     let size_delta: i32 = row.get(9)?;
 
-                    let device_id_arr = device_id.try_into().map_err(|_| anyhow!("Invalid device_id"))?;
-                    let content_hash_arr = content_hash.try_into().map_err(|_| anyhow!("Invalid content_hash"))?;
-                    let previous_hash_arr = previous_hash.try_into().map_err(|_| anyhow!("Invalid previous_hash"))?;
+                    let device_id_arr = device_id
+                        .try_into()
+                        .map_err(|_| anyhow!("Invalid device_id"))?;
+                    let content_hash_arr = content_hash
+                        .try_into()
+                        .map_err(|_| anyhow!("Invalid content_hash"))?;
+                    let previous_hash_arr = previous_hash
+                        .try_into()
+                        .map_err(|_| anyhow!("Invalid previous_hash"))?;
 
                     if count > 0 && previous_hash_arr != last_hash {
                         return Err(anyhow!("Chain break at event {}", id));
                     }
 
                     let expected_event_hash = crypto::compute_event_hash(
-                        &device_id_arr, timestamp_ns, &file_path, &content_hash_arr, file_size, size_delta, &previous_hash_arr
+                        &device_id_arr,
+                        timestamp_ns,
+                        &file_path,
+                        &content_hash_arr,
+                        file_size,
+                        size_delta,
+                        &previous_hash_arr,
                     );
                     if event_hash != expected_event_hash {
                         return Err(anyhow!("Event {} hash mismatch", id));
                     }
 
                     let expected_event_hmac = crypto::compute_event_hmac(
-                        &self.hmac_key, &device_id_arr, timestamp_ns, &file_path, &content_hash_arr, file_size, size_delta, &previous_hash_arr
+                        &self.hmac_key,
+                        &device_id_arr,
+                        timestamp_ns,
+                        &file_path,
+                        &content_hash_arr,
+                        file_size,
+                        size_delta,
+                        &previous_hash_arr,
                     );
                     if stored_event_hmac != expected_event_hmac {
                         return Err(anyhow!("Event {} HMAC mismatch", id));
@@ -170,7 +190,8 @@ impl SecureStore {
             }
             Err(rusqlite::Error::QueryReturnedNoRows) => {
                 self.last_hash = [0u8; 32];
-                let initial_hmac = crypto::compute_integrity_hmac(&self.hmac_key, &self.last_hash, 0);
+                let initial_hmac =
+                    crypto::compute_integrity_hmac(&self.hmac_key, &self.last_hash, 0);
                 self.conn.execute(
                     "INSERT INTO integrity (id, chain_hash, event_count, last_verified, hmac) VALUES (1, ?, 0, ?, ?)",
                     params![&self.last_hash[..], chrono::Utc::now().timestamp_nanos_opt(), &initial_hmac[..]]
@@ -186,11 +207,24 @@ impl SecureStore {
         e.previous_hash = previous_hash;
 
         e.event_hash = crypto::compute_event_hash(
-            &e.device_id, e.timestamp_ns, &e.file_path, &e.content_hash, e.file_size, e.size_delta, &e.previous_hash
+            &e.device_id,
+            e.timestamp_ns,
+            &e.file_path,
+            &e.content_hash,
+            e.file_size,
+            e.size_delta,
+            &e.previous_hash,
         );
-        
+
         let hmac = crypto::compute_event_hmac(
-            &self.hmac_key, &e.device_id, e.timestamp_ns, &e.file_path, &e.content_hash, e.file_size, e.size_delta, &e.previous_hash
+            &self.hmac_key,
+            &e.device_id,
+            e.timestamp_ns,
+            &e.file_path,
+            &e.content_hash,
+            e.file_size,
+            e.size_delta,
+            &e.previous_hash,
         );
 
         let tx = self.conn.transaction()?;
@@ -202,8 +236,8 @@ impl SecureStore {
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params![
                 &e.device_id[..], &e.machine_id, e.timestamp_ns, &e.file_path, &e.content_hash[..], e.file_size, e.size_delta,
-                &e.previous_hash[..], &e.event_hash[..], &hmac[..], e.context_type, e.context_note, 
-                e.vdf_input.as_ref().map(|h| &h[..]), e.vdf_output.as_ref().map(|h| &h[..]), 
+                &e.previous_hash[..], &e.event_hash[..], &hmac[..], e.context_type, e.context_note,
+                e.vdf_input.as_ref().map(|h| &h[..]), e.vdf_output.as_ref().map(|h| &h[..]),
                 e.vdf_iterations as i64, e.forensic_score, e.is_paste as i32
             ]
         )?;
@@ -226,7 +260,13 @@ impl SecureStore {
         let res = self.conn.query_row(
             "SELECT sample_count, mean, m2 FROM physical_baselines WHERE signal_name = ?",
             [signal],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, f64>(1)?, row.get::<_, f64>(2)?))
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, f64>(1)?,
+                    row.get::<_, f64>(2)?,
+                ))
+            },
         );
 
         let (mut count, mut mean, mut m2) = match res {
@@ -249,18 +289,26 @@ impl SecureStore {
     }
 
     pub fn get_baselines(&self) -> anyhow::Result<Vec<(String, f64, f64)>> {
-        let mut stmt = self.conn.prepare("SELECT signal_name, sample_count, mean, m2 FROM physical_baselines")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT signal_name, sample_count, mean, m2 FROM physical_baselines")?;
         let rows = stmt.query_map([], |row| {
             let name: String = row.get(0)?;
             let count: i64 = row.get(1)?;
             let mean: f64 = row.get(2)?;
             let m2: f64 = row.get(3)?;
-            let std_dev = if count > 1 { (m2 / (count - 1) as f64).sqrt() } else { 0.0 };
+            let std_dev = if count > 1 {
+                (m2 / (count - 1) as f64).sqrt()
+            } else {
+                0.0
+            };
             Ok((name, mean, std_dev))
         })?;
 
         let mut results = Vec::new();
-        for row in rows { results.push(row?); }
+        for row in rows {
+            results.push(row?);
+        }
         Ok(results)
     }
 
@@ -271,7 +319,7 @@ impl SecureStore {
                     vdf_iterations, forensic_score, is_paste 
              FROM secure_events WHERE file_path = ? ORDER BY id ASC"
         )?;
-        
+
         let rows = stmt.query_map([path], |row| {
             let device_id: Vec<u8> = row.get(1)?;
             let content_hash: Vec<u8> = row.get(5)?;
@@ -282,15 +330,39 @@ impl SecureStore {
 
             Ok(SecureEvent {
                 id: Some(row.get(0)?),
-                device_id: device_id.try_into().map_err(|_| rusqlite::Error::InvalidColumnType(1, "device_id".into(), rusqlite::types::Type::Blob))?,
+                device_id: device_id.try_into().map_err(|_| {
+                    rusqlite::Error::InvalidColumnType(
+                        1,
+                        "device_id".into(),
+                        rusqlite::types::Type::Blob,
+                    )
+                })?,
                 machine_id: row.get(2)?,
                 timestamp_ns: row.get(3)?,
                 file_path: row.get(4)?,
-                content_hash: content_hash.try_into().map_err(|_| rusqlite::Error::InvalidColumnType(5, "content_hash".into(), rusqlite::types::Type::Blob))?,
+                content_hash: content_hash.try_into().map_err(|_| {
+                    rusqlite::Error::InvalidColumnType(
+                        5,
+                        "content_hash".into(),
+                        rusqlite::types::Type::Blob,
+                    )
+                })?,
                 file_size: row.get(6)?,
                 size_delta: row.get(7)?,
-                previous_hash: previous_hash.try_into().map_err(|_| rusqlite::Error::InvalidColumnType(8, "previous_hash".into(), rusqlite::types::Type::Blob))?,
-                event_hash: event_hash.try_into().map_err(|_| rusqlite::Error::InvalidColumnType(9, "event_hash".into(), rusqlite::types::Type::Blob))?,
+                previous_hash: previous_hash.try_into().map_err(|_| {
+                    rusqlite::Error::InvalidColumnType(
+                        8,
+                        "previous_hash".into(),
+                        rusqlite::types::Type::Blob,
+                    )
+                })?,
+                event_hash: event_hash.try_into().map_err(|_| {
+                    rusqlite::Error::InvalidColumnType(
+                        9,
+                        "event_hash".into(),
+                        rusqlite::types::Type::Blob,
+                    )
+                })?,
                 context_type: row.get(10)?,
                 context_note: row.get(11)?,
                 vdf_input: vdf_input.map(|v| v.try_into().unwrap()),
@@ -302,7 +374,9 @@ impl SecureStore {
         })?;
 
         let mut results = Vec::new();
-        for row in rows { results.push(row?); }
+        for row in rows {
+            results.push(row?);
+        }
         Ok(results)
     }
 
@@ -313,9 +387,7 @@ impl SecureStore {
              GROUP BY file_path
              ORDER BY last_ts DESC",
         )?;
-        let rows = stmt.query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-        })?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
 
         let mut results = Vec::new();
         for row in rows {
@@ -391,13 +463,17 @@ mod tests {
 
         // Insert first event
         let mut event1 = create_test_event("/test/file.txt", [1u8; 32]);
-        store.insert_secure_event(&mut event1).expect("insert event 1");
+        store
+            .insert_secure_event(&mut event1)
+            .expect("insert event 1");
         let hash1 = event1.event_hash;
 
         // Insert second event - should chain from first
         let mut event2 = create_test_event("/test/file.txt", [2u8; 32]);
         event2.timestamp_ns += 1_000_000; // 1ms later
-        store.insert_secure_event(&mut event2).expect("insert event 2");
+        store
+            .insert_secure_event(&mut event2)
+            .expect("insert event 2");
 
         assert_eq!(event2.previous_hash, hash1);
     }
@@ -411,20 +487,30 @@ mod tests {
 
         // Insert events for two different files
         let mut event1 = create_test_event("/test/file1.txt", [1u8; 32]);
-        store.insert_secure_event(&mut event1).expect("insert event 1");
+        store
+            .insert_secure_event(&mut event1)
+            .expect("insert event 1");
 
         let mut event2 = create_test_event("/test/file2.txt", [2u8; 32]);
         event2.timestamp_ns += 1_000_000;
-        store.insert_secure_event(&mut event2).expect("insert event 2");
+        store
+            .insert_secure_event(&mut event2)
+            .expect("insert event 2");
 
         let mut event3 = create_test_event("/test/file1.txt", [3u8; 32]);
         event3.timestamp_ns += 2_000_000;
-        store.insert_secure_event(&mut event3).expect("insert event 3");
+        store
+            .insert_secure_event(&mut event3)
+            .expect("insert event 3");
 
-        let file1_events = store.get_events_for_file("/test/file1.txt").expect("get events");
+        let file1_events = store
+            .get_events_for_file("/test/file1.txt")
+            .expect("get events");
         assert_eq!(file1_events.len(), 2);
 
-        let file2_events = store.get_events_for_file("/test/file2.txt").expect("get events");
+        let file2_events = store
+            .get_events_for_file("/test/file2.txt")
+            .expect("get events");
         assert_eq!(file2_events.len(), 1);
     }
 
@@ -437,11 +523,15 @@ mod tests {
 
         // Insert events for multiple files
         let mut event1 = create_test_event("/test/file1.txt", [1u8; 32]);
-        store.insert_secure_event(&mut event1).expect("insert event 1");
+        store
+            .insert_secure_event(&mut event1)
+            .expect("insert event 1");
 
         let mut event2 = create_test_event("/test/file2.txt", [2u8; 32]);
         event2.timestamp_ns += 1_000_000;
-        store.insert_secure_event(&mut event2).expect("insert event 2");
+        store
+            .insert_secure_event(&mut event2)
+            .expect("insert event 2");
 
         let files = store.list_files().expect("list files");
         assert_eq!(files.len(), 2);
@@ -455,9 +545,15 @@ mod tests {
         let store = SecureStore::open(&db_path, test_hmac_key()).expect("open store");
 
         // Update baseline with some values
-        store.update_baseline("typing_speed", 100.0).expect("update 1");
-        store.update_baseline("typing_speed", 110.0).expect("update 2");
-        store.update_baseline("typing_speed", 90.0).expect("update 3");
+        store
+            .update_baseline("typing_speed", 100.0)
+            .expect("update 1");
+        store
+            .update_baseline("typing_speed", 110.0)
+            .expect("update 2");
+        store
+            .update_baseline("typing_speed", 90.0)
+            .expect("update 3");
 
         let baselines = store.get_baselines().expect("get baselines");
         assert_eq!(baselines.len(), 1);
@@ -560,7 +656,9 @@ mod tests {
 
         store.insert_secure_event(&mut event).expect("insert event");
 
-        let events = store.get_events_for_file("/test/file.txt").expect("get events");
+        let events = store
+            .get_events_for_file("/test/file.txt")
+            .expect("get events");
         assert_eq!(events.len(), 1);
         assert!(events[0].is_paste);
     }
@@ -577,7 +675,9 @@ mod tests {
 
         store.insert_secure_event(&mut event).expect("insert event");
 
-        let events = store.get_events_for_file("/test/file.txt").expect("get events");
+        let events = store
+            .get_events_for_file("/test/file.txt")
+            .expect("get events");
         assert_eq!(events[0].size_delta, -500);
     }
 
@@ -607,7 +707,9 @@ mod tests {
         let db_path = dir.path().join("test.db");
 
         let store = SecureStore::open(&db_path, test_hmac_key()).expect("open store");
-        let events = store.get_events_for_file("/nonexistent.txt").expect("get events");
+        let events = store
+            .get_events_for_file("/nonexistent.txt")
+            .expect("get events");
         assert!(events.is_empty());
     }
 
@@ -625,7 +727,9 @@ mod tests {
             store.insert_secure_event(&mut event).expect("insert event");
         }
 
-        let events = store.get_events_for_file("/test/file.txt").expect("get events");
+        let events = store
+            .get_events_for_file("/test/file.txt")
+            .expect("get events");
         assert_eq!(events.len(), 5);
 
         // Events should be ordered by id (ascending)

@@ -1,7 +1,7 @@
 use crate::mmr::errors::MmrError;
 use crate::mmr::node::{Node, NODE_SIZE};
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write, BufWriter};
+use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::RwLock;
 

@@ -49,7 +49,11 @@ pub fn calibrate(duration: Duration) -> Result<Parameters, String> {
     })
 }
 
-pub fn compute(input: [u8; 32], duration: Duration, params: Parameters) -> Result<VdfProof, String> {
+pub fn compute(
+    input: [u8; 32],
+    duration: Duration,
+    params: Parameters,
+) -> Result<VdfProof, String> {
     VdfProof::compute(input, duration, params)
 }
 

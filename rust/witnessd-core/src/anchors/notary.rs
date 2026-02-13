@@ -24,8 +24,16 @@ impl NotaryProvider {
         Ok(Self::new(endpoint, api_key))
     }
 
-    async fn post_json(&self, path: &str, body: serde_json::Value) -> Result<serde_json::Value, AnchorError> {
-        let url = format!("{}/{}", self.endpoint.trim_end_matches('/'), path.trim_start_matches('/'));
+    async fn post_json(
+        &self,
+        path: &str,
+        body: serde_json::Value,
+    ) -> Result<serde_json::Value, AnchorError> {
+        let url = format!(
+            "{}/{}",
+            self.endpoint.trim_end_matches('/'),
+            path.trim_start_matches('/')
+        );
         let mut req = self.client.post(url).json(&body);
         if let Some(ref key) = self.api_key {
             req = req.bearer_auth(key);
@@ -79,7 +87,11 @@ impl AnchorProvider for NotaryProvider {
             .unwrap_or_default();
 
         Ok(Proof {
-            id: if id.is_empty() { format!("notary-{}", hex::encode(&hash[..8])) } else { id.to_string() },
+            id: if id.is_empty() {
+                format!("notary-{}", hex::encode(&hash[..8]))
+            } else {
+                id.to_string()
+            },
             provider: ProviderType::Notary,
             status: ProofStatus::Pending,
             anchored_hash: *hash,
@@ -114,6 +126,9 @@ impl AnchorProvider for NotaryProvider {
         let response = self
             .post_json("verify", serde_json::json!({"id": proof.id}))
             .await?;
-        Ok(response.get("valid").and_then(|v| v.as_bool()).unwrap_or(false))
+        Ok(response
+            .get("valid")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false))
     }
 }

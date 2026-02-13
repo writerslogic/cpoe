@@ -1,10 +1,13 @@
 use super::{Binding, Quote, TPMError};
-use sha2::{Digest, Sha256};
 use rsa::pkcs1::DecodeRsaPublicKey;
 use rsa::pkcs8::DecodePublicKey;
 use rsa::signature::Verifier as RsaVerifier;
+use sha2::{Digest, Sha256};
 
-pub fn verify_binding_chain(bindings: &[Binding], trusted_keys: &[Vec<u8>]) -> Result<(), TPMError> {
+pub fn verify_binding_chain(
+    bindings: &[Binding],
+    trusted_keys: &[Vec<u8>],
+) -> Result<(), TPMError> {
     if bindings.is_empty() {
         return Ok(());
     }
@@ -32,7 +35,10 @@ pub fn verify_binding(binding: &Binding) -> Result<(), TPMError> {
     verify_binding_with_trusted(binding, &[])
 }
 
-fn verify_binding_with_trusted(binding: &Binding, trusted_keys: &[Vec<u8>]) -> Result<(), TPMError> {
+fn verify_binding_with_trusted(
+    binding: &Binding,
+    trusted_keys: &[Vec<u8>],
+) -> Result<(), TPMError> {
     if binding.attested_hash.len() != 32 {
         return Err(TPMError::InvalidBinding);
     }
@@ -74,7 +80,9 @@ fn verify_binding_with_trusted(binding: &Binding, trusted_keys: &[Vec<u8>]) -> R
                 return Ok(());
             }
         }
-        return Err(TPMError::Verification("signature did not match trusted keys".into()));
+        return Err(TPMError::Verification(
+            "signature did not match trusted keys".into(),
+        ));
     }
 
     Err(TPMError::InvalidSignature)
@@ -83,7 +91,13 @@ fn verify_binding_with_trusted(binding: &Binding, trusted_keys: &[Vec<u8>]) -> R
 fn binding_payload(binding: &Binding) -> Vec<u8> {
     let mut payload = Vec::new();
     payload.extend_from_slice(&binding.attested_hash);
-    payload.extend_from_slice(&binding.timestamp.timestamp_nanos_opt().unwrap_or(0).to_le_bytes());
+    payload.extend_from_slice(
+        &binding
+            .timestamp
+            .timestamp_nanos_opt()
+            .unwrap_or(0)
+            .to_le_bytes(),
+    );
     payload.extend_from_slice(binding.device_id.as_bytes());
     payload
 }

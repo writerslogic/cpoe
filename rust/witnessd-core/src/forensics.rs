@@ -590,7 +590,8 @@ pub fn analyze_cadence(samples: &[SimpleJitterSample]) -> CadenceMetrics {
     metrics.pause_count = pauses.len();
 
     if !bursts.is_empty() {
-        metrics.avg_burst_length = bursts.iter().map(|b| b.length as f64).sum::<f64>() / bursts.len() as f64;
+        metrics.avg_burst_length =
+            bursts.iter().map(|b| b.length as f64).sum::<f64>() / bursts.len() as f64;
     }
 
     if !pauses.is_empty() {
@@ -1065,9 +1066,14 @@ pub fn build_profile(
     let mut sorted = events.to_vec();
     sorted.sort_by_key(|e| e.timestamp_ns);
 
-    let file_path = sorted.first().map(|e| e.file_path.clone()).unwrap_or_default();
-    let first_ts = DateTime::from_timestamp_nanos(sorted.first().map(|e| e.timestamp_ns).unwrap_or(0));
-    let last_ts = DateTime::from_timestamp_nanos(sorted.last().map(|e| e.timestamp_ns).unwrap_or(0));
+    let file_path = sorted
+        .first()
+        .map(|e| e.file_path.clone())
+        .unwrap_or_default();
+    let first_ts =
+        DateTime::from_timestamp_nanos(sorted.first().map(|e| e.timestamp_ns).unwrap_or(0));
+    let last_ts =
+        DateTime::from_timestamp_nanos(sorted.last().map(|e| e.timestamp_ns).unwrap_or(0));
     let time_span = last_ts.signed_duration_since(first_ts);
 
     let sessions = detect_sessions(&sorted, DEFAULT_SESSION_GAP_SEC);
@@ -1124,11 +1130,11 @@ pub fn analyze_forensics(
     // Cadence and Behavioral metrics
     if let Some(samples) = jitter_samples {
         metrics.cadence = analyze_cadence(samples);
-        
+
         // Compute behavioral fingerprint (the "How")
         let fingerprint = BehavioralFingerprint::from_samples(samples);
         metrics.behavioral = Some(fingerprint);
-        
+
         // Run forgery detection
         let forgery = BehavioralFingerprint::detect_forgery(samples);
         metrics.forgery_analysis = Some(forgery.clone());
@@ -1322,14 +1328,14 @@ impl ContentKeystrokeCorrelator {
         if input.total_keystrokes < self.min_keystrokes
             && input.document_length < self.min_document_length
         {
-            result.explanation = "Insufficient data for meaningful correlation analysis".to_string();
+            result.explanation =
+                "Insufficient data for meaningful correlation analysis".to_string();
             return result;
         }
 
         // Calculate effective keystrokes
         let edit_ratio = input.actual_edit_ratio.unwrap_or(self.estimated_edit_ratio);
-        result.effective_keystrokes =
-            (input.total_keystrokes as f64 * (1.0 - edit_ratio)) as i64;
+        result.effective_keystrokes = (input.total_keystrokes as f64 * (1.0 - edit_ratio)) as i64;
 
         // Expected content
         result.expected_content =
@@ -1352,8 +1358,7 @@ impl ContentKeystrokeCorrelator {
 
         // Calculate discrepancy
         result.discrepancy = input.document_length - result.expected_content;
-        result.discrepancy_ratio =
-            result.discrepancy as f64 / result.expected_content as f64;
+        result.discrepancy_ratio = result.discrepancy as f64 / result.expected_content as f64;
 
         // Assess discrepancy
         self.assess_discrepancy(&mut result, input);
@@ -1391,14 +1396,16 @@ impl ContentKeystrokeCorrelator {
                 } else {
                     result.explanation = format!(
                         "Content exceeds expected by {} bytes ({:.0}%)",
-                        result.discrepancy, abs_ratio * 100.0
+                        result.discrepancy,
+                        abs_ratio * 100.0
                     );
                 }
             } else if abs_ratio >= self.suspicious_ratio_threshold {
                 result.status = CorrelationStatus::Suspicious;
                 result.explanation = format!(
                     "Minor discrepancy: content exceeds expected by {} bytes ({:.0}%)",
-                    result.discrepancy, abs_ratio * 100.0
+                    result.discrepancy,
+                    abs_ratio * 100.0
                 );
             } else {
                 result.status = CorrelationStatus::Consistent;
@@ -1481,7 +1488,10 @@ pub struct DimensionScores {
 }
 
 /// Compares two profiles for authorship consistency.
-pub fn compare_profiles(profile_a: &AuthorshipProfile, profile_b: &AuthorshipProfile) -> ProfileComparison {
+pub fn compare_profiles(
+    profile_a: &AuthorshipProfile,
+    profile_b: &AuthorshipProfile,
+) -> ProfileComparison {
     let mut scores = DimensionScores::default();
 
     // Compare metrics with Gaussian similarity
@@ -2156,9 +2166,7 @@ mod tests {
         assert!(metrics.monotonic_append_ratio >= 0.0 && metrics.monotonic_append_ratio <= 1.0);
         assert!(metrics.edit_entropy >= 0.0);
         assert!(metrics.median_interval >= 0.0);
-        assert!(
-            metrics.positive_negative_ratio >= 0.0 && metrics.positive_negative_ratio <= 1.0
-        );
+        assert!(metrics.positive_negative_ratio >= 0.0 && metrics.positive_negative_ratio <= 1.0);
     }
 
     #[test]

@@ -8,13 +8,11 @@ pub struct RoughtimeServer {
     pub public_key_base64: &'static str,
 }
 
-const SERVERS: &[RoughtimeServer] = &[
-    RoughtimeServer {
-        name: "Google-Sandbox",
-        address: "roughtime.sandbox.google.com:2002",
-        public_key_base64: "awF9fwBUowH2mSthU189SdyInUiaYs6+/EP07ZxyjgU=",
-    },
-];
+const SERVERS: &[RoughtimeServer] = &[RoughtimeServer {
+    name: "Google-Sandbox",
+    address: "roughtime.sandbox.google.com:2002",
+    public_key_base64: "awF9fwBUowH2mSthU189SdyInUiaYs6+/EP07ZxyjgU=",
+}];
 
 pub struct RoughtimeClient;
 

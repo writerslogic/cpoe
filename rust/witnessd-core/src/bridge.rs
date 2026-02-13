@@ -161,8 +161,7 @@ pub fn end_presence_session() -> Result<FrbPresenceStatus> {
 /// Returns challenge info, or None.
 #[frb]
 pub fn get_pending_challenge() -> Option<FrbChallengeInfo> {
-    api::get_pending_challenge()
-        .map(FrbChallengeInfo::from)
+    api::get_pending_challenge().map(FrbChallengeInfo::from)
 }
 
 /// Submit a response to the current challenge.
@@ -340,7 +339,9 @@ pub fn open_accessibility_settings() -> Result<()> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        Err(anyhow!("Accessibility settings not available on this platform"))
+        Err(anyhow!(
+            "Accessibility settings not available on this platform"
+        ))
     }
 }
 
@@ -399,7 +400,9 @@ pub fn open_input_monitoring_settings() -> Result<()> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        Err(anyhow!("Input monitoring settings not available on this platform"))
+        Err(anyhow!(
+            "Input monitoring settings not available on this platform"
+        ))
     }
 }
 
@@ -711,7 +714,11 @@ impl From<EngineStatus> for FrbEngineStatus {
         Self {
             running: s.running,
             accessibility_trusted: s.accessibility_trusted,
-            watch_dirs: s.watch_dirs.iter().map(|p| p.to_string_lossy().to_string()).collect(),
+            watch_dirs: s
+                .watch_dirs
+                .iter()
+                .map(|p| p.to_string_lossy().to_string())
+                .collect(),
             events_written: s.events_written,
             jitter_samples: s.jitter_samples,
             last_event_timestamp_ns: s.last_event_timestamp_ns,

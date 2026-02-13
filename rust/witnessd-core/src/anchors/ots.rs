@@ -109,7 +109,10 @@ impl OpenTimestampsProvider {
         Ok(merged)
     }
 
-    fn parse_attestation_path(&self, proof_data: &[u8]) -> Result<Vec<AttestationStep>, AnchorError> {
+    fn parse_attestation_path(
+        &self,
+        proof_data: &[u8],
+    ) -> Result<Vec<AttestationStep>, AnchorError> {
         let mut steps = Vec::new();
         if proof_data.len() < OTS_MAGIC.len() {
             return Err(AnchorError::InvalidFormat("Proof too short".into()));
@@ -246,9 +249,7 @@ impl AnchorProvider for OpenTimestampsProvider {
             }
         }
 
-        Err(last_error.unwrap_or(AnchorError::Unavailable(
-            "All calendars failed".into(),
-        )))
+        Err(last_error.unwrap_or(AnchorError::Unavailable("All calendars failed".into())))
     }
 
     async fn check_status(&self, proof: &Proof) -> Result<Proof, AnchorError> {

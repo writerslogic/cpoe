@@ -55,20 +55,22 @@ impl Engine {
         fs::create_dir_all(&config.data_dir)
             .with_context(|| format!("Failed to create data dir: {:?}", config.data_dir))?;
 
-    #[cfg(target_os = "macos")]
-    let accessibility_trusted = platform::macos::check_accessibility_permissions() || std::env::var("WITNESSD_SKIP_PERMISSIONS").is_ok();
-    #[cfg(not(target_os = "macos"))]
-    let accessibility_trusted = false;
-    #[cfg(target_os = "macos")]
-    let input_trusted = platform::macos::check_input_monitoring_permissions() || std::env::var("WITNESSD_SKIP_PERMISSIONS").is_ok();
-    #[cfg(not(target_os = "macos"))]
-    let input_trusted = true;
+        #[cfg(target_os = "macos")]
+        let accessibility_trusted = platform::macos::check_accessibility_permissions()
+            || std::env::var("WITNESSD_SKIP_PERMISSIONS").is_ok();
+        #[cfg(not(target_os = "macos"))]
+        let accessibility_trusted = false;
+        #[cfg(target_os = "macos")]
+        let input_trusted = platform::macos::check_input_monitoring_permissions()
+            || std::env::var("WITNESSD_SKIP_PERMISSIONS").is_ok();
+        #[cfg(not(target_os = "macos"))]
+        let input_trusted = true;
 
-    if !accessibility_trusted || !input_trusted {
-        return Err(anyhow!(
-            "Accessibility and Input Monitoring permissions required for global key timing"
-        ));
-    }
+        if !accessibility_trusted || !input_trusted {
+            return Err(anyhow!(
+                "Accessibility and Input Monitoring permissions required for global key timing"
+            ));
+        }
 
         let (device_id, machine_id) = load_or_create_device_identity(&config.data_dir)?;
         let hmac_key = load_or_create_hmac_key(&config.data_dir)?;
@@ -101,7 +103,8 @@ impl Engine {
 
         #[cfg(target_os = "macos")]
         if std::env::var("WITNESSD_SKIP_PERMISSIONS").is_err() {
-            let monitor = platform::macos::KeystrokeMonitor::start(Arc::clone(&inner.jitter_session))?;
+            let monitor =
+                platform::macos::KeystrokeMonitor::start(Arc::clone(&inner.jitter_session))?;
             *inner.keystroke_monitor.lock().unwrap() = Some(monitor);
         }
 
@@ -187,8 +190,7 @@ impl Engine {
 
 fn start_file_watcher(inner: &Arc<EngineInner>, watch_dirs: Vec<PathBuf>) -> Result<()> {
     let (tx, rx) = mpsc::channel();
-    let mut watcher: RecommendedWatcher =
-        RecommendedWatcher::new(tx, notify::Config::default())?;
+    let mut watcher: RecommendedWatcher = RecommendedWatcher::new(tx, notify::Config::default())?;
 
     for dir in &watch_dirs {
         if dir.exists() {
@@ -237,7 +239,9 @@ fn process_file_event(inner: &Arc<EngineInner>, path: &Path) -> Result<()> {
 
     let size_delta = {
         let mut map = inner.file_sizes.lock().unwrap();
-        let previous = map.insert(path.to_path_buf(), file_size).unwrap_or(file_size);
+        let previous = map
+            .insert(path.to_path_buf(), file_size)
+            .unwrap_or(file_size);
         (file_size - previous) as i32
     };
 
@@ -296,7 +300,13 @@ fn load_or_create_device_identity(data_dir: &Path) -> Result<([u8; 16], String)>
     });
     fs::write(&path, payload.to_string())?;
 
-    Ok((device_id, payload["machine_id"].as_str().unwrap_or("unknown").to_string()))
+    Ok((
+        device_id,
+        payload["machine_id"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_string(),
+    ))
 }
 
 fn load_or_create_hmac_key(data_dir: &Path) -> Result<Vec<u8>> {
@@ -312,7 +322,10 @@ fn load_or_create_hmac_key(data_dir: &Path) -> Result<Vec<u8>> {
         if key.len() == 32 {
             // Migrate to secure storage
             if let Err(e) = SecureStorage::save_hmac_key(&key) {
-                eprintln!("Warning: Failed to migrate HMAC key to secure storage: {}", e);
+                eprintln!(
+                    "Warning: Failed to migrate HMAC key to secure storage: {}",
+                    e
+                );
             } else {
                 // Delete legacy file after successful migration
                 let _ = fs::remove_file(&path);
@@ -324,10 +337,10 @@ fn load_or_create_hmac_key(data_dir: &Path) -> Result<Vec<u8>> {
     // 3. Generate new key
     let mut key = vec![0u8; 32];
     rand::rng().fill_bytes(&mut key);
-    
+
     // Save to secure storage
     SecureStorage::save_hmac_key(&key)?;
-    
+
     Ok(key)
 }
 

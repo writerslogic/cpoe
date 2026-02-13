@@ -17,7 +17,11 @@ struct MmrState {
 impl MMR {
     pub fn new(store: Box<dyn Store>) -> Result<Self, MmrError> {
         let size = store.size()?;
-        let peaks = if size == 0 { Vec::new() } else { find_peaks(size) };
+        let peaks = if size == 0 {
+            Vec::new()
+        } else {
+            find_peaks(size)
+        };
         Ok(Self {
             store,
             state: RwLock::new(MmrState { size, peaks }),
@@ -180,7 +184,11 @@ impl MMR {
         })
     }
 
-    pub fn generate_range_proof(&self, start_leaf: u64, end_leaf: u64) -> Result<RangeProof, MmrError> {
+    pub fn generate_range_proof(
+        &self,
+        start_leaf: u64,
+        end_leaf: u64,
+    ) -> Result<RangeProof, MmrError> {
         let state = self.state.read().unwrap();
         if state.size == 0 {
             return Err(MmrError::Empty);
@@ -280,7 +288,10 @@ impl MMR {
         Ok((0, 0, false, false))
     }
 
-    fn generate_range_merkle_path(&self, leaf_indices: &[u64]) -> Result<(Vec<ProofElement>, u64), MmrError> {
+    fn generate_range_merkle_path(
+        &self,
+        leaf_indices: &[u64],
+    ) -> Result<(Vec<ProofElement>, u64), MmrError> {
         use std::collections::HashMap;
         if leaf_indices.is_empty() {
             return Err(MmrError::InvalidProof);
@@ -299,7 +310,8 @@ impl MMR {
             let mut next_level = Vec::new();
             let mut processed_parents: HashMap<u64, bool> = HashMap::new();
             for pos in &current_level {
-                let (sibling_pos, parent_pos, is_right_child, found) = self.find_family(*pos, height)?;
+                let (sibling_pos, parent_pos, is_right_child, found) =
+                    self.find_family(*pos, height)?;
                 if !found {
                     peak_index = *pos;
                     continue;

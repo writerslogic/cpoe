@@ -1,5 +1,5 @@
-use sha2::{Digest, Sha256};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::time::{Duration, Instant};
 
 use crate::vdf::Parameters;
@@ -14,8 +14,13 @@ pub struct VdfProof {
 }
 
 impl VdfProof {
-    pub fn compute(input: [u8; 32], target_duration: Duration, params: Parameters) -> Result<Self, String> {
-        let mut iterations = (target_duration.as_secs_f64() * params.iterations_per_second as f64) as u64;
+    pub fn compute(
+        input: [u8; 32],
+        target_duration: Duration,
+        params: Parameters,
+    ) -> Result<Self, String> {
+        let mut iterations =
+            (target_duration.as_secs_f64() * params.iterations_per_second as f64) as u64;
 
         if iterations < params.min_iterations {
             iterations = params.min_iterations;

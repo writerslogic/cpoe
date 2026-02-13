@@ -46,7 +46,11 @@ impl BitcoinProvider {
         Ok(Self::new(rpc_url, rpc_user, rpc_password, network))
     }
 
-    async fn rpc_call(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value, AnchorError> {
+    async fn rpc_call(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, AnchorError> {
         let request = serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -168,9 +172,10 @@ impl AnchorProvider for BitcoinProvider {
             proof_data: txid.as_bytes().to_vec(),
             location: Some(txid),
             attestation_path: None,
-            extra: [
-                ("network".to_string(), serde_json::json!(format!("{:?}", self.network))),
-            ]
+            extra: [(
+                "network".to_string(),
+                serde_json::json!(format!("{:?}", self.network)),
+            )]
             .into_iter()
             .collect(),
         })

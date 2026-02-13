@@ -1,9 +1,9 @@
-use witnessd_core::api;
-use witnessd_core::config::WitnessdConfig;
-use tempfile::TempDir;
 use std::fs;
 use std::thread;
 use std::time::Duration;
+use tempfile::TempDir;
+use witnessd_core::api;
+use witnessd_core::config::WitnessdConfig;
 
 #[test]
 fn test_full_pipeline() {
@@ -14,7 +14,8 @@ fn test_full_pipeline() {
     fs::create_dir_all(&watch_dir).unwrap();
 
     // 1. Initialize
-    let fingerprint = api::init_witnessd(Some(data_dir.to_string_lossy().to_string()), None).unwrap();
+    let fingerprint =
+        api::init_witnessd(Some(data_dir.to_string_lossy().to_string()), None).unwrap();
     assert!(!fingerprint.is_empty());
     assert!(api::is_initialized());
 
@@ -30,14 +31,17 @@ fn test_full_pipeline() {
     // 4. Create a file and wait for watcher
     let test_file = watch_dir.join("test.txt");
     fs::write(&test_file, "Hello Witnessd").unwrap();
-    
+
     // Give watcher and engine time to process
     thread::sleep(Duration::from_millis(2000));
 
     // 5. Verify report
     let reports = api::report_files().unwrap();
     assert!(!reports.is_empty(), "No reports found after file creation");
-    let report = reports.iter().find(|r| r.file_path.contains("test.txt")).expect("Test file not in reports");
+    let report = reports
+        .iter()
+        .find(|r| r.file_path.contains("test.txt"))
+        .expect("Test file not in reports");
     assert!(report.event_count >= 1);
 
     // 6. Stop engine

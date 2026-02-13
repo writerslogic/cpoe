@@ -10,8 +10,8 @@ pub mod macos {
     use core_foundation::string::CFString;
     use core_foundation_sys::base::{kCFAllocatorDefault, CFAllocatorRef, CFIndex, CFTypeRef};
     use core_foundation_sys::dictionary::{
-        CFDictionaryCreateMutable, CFDictionaryRef, CFDictionarySetValue,
-        kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks,
+        kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks, CFDictionaryCreateMutable,
+        CFDictionaryRef, CFDictionarySetValue,
     };
     use core_foundation_sys::number::{kCFNumberIntType, CFNumberCreate};
     use core_foundation_sys::string::CFStringRef;
@@ -49,14 +49,16 @@ pub mod macos {
         );
         fn IOHIDManagerRegisterInputValueCallback(
             manager: *mut std::ffi::c_void,
-            callback: extern "C" fn(*mut std::ffi::c_void, i32, *mut std::ffi::c_void, *mut std::ffi::c_void),
+            callback: extern "C" fn(
+                *mut std::ffi::c_void,
+                i32,
+                *mut std::ffi::c_void,
+                *mut std::ffi::c_void,
+            ),
             context: *mut std::ffi::c_void,
         );
 
-        fn IOHIDDeviceGetProperty(
-            device: *mut std::ffi::c_void,
-            key: CFStringRef,
-        ) -> CFTypeRef;
+        fn IOHIDDeviceGetProperty(device: *mut std::ffi::c_void, key: CFStringRef) -> CFTypeRef;
 
         fn CFSetGetCount(set: *mut std::ffi::c_void) -> CFIndex;
         fn CFSetGetValues(set: *mut std::ffi::c_void, values: *mut *const std::ffi::c_void);
@@ -377,7 +379,10 @@ pub mod macos {
         cf_number.to_i64()
     }
 
-    unsafe fn get_device_string_property(device: *mut std::ffi::c_void, key: &str) -> Option<String> {
+    unsafe fn get_device_string_property(
+        device: *mut std::ffi::c_void,
+        key: &str,
+    ) -> Option<String> {
         let key_cf = CFString::new(key);
         let value = IOHIDDeviceGetProperty(device, key_cf.as_concrete_TypeRef());
         if value.is_null() {
@@ -385,7 +390,8 @@ pub mod macos {
         }
 
         // Try to extract as CFString
-        let cf_string = CFString::wrap_under_get_rule(value as core_foundation_sys::string::CFStringRef);
+        let cf_string =
+            CFString::wrap_under_get_rule(value as core_foundation_sys::string::CFStringRef);
         Some(cf_string.to_string())
     }
 
@@ -482,17 +488,22 @@ pub mod macos {
         }
     }
 
-    unsafe fn get_ax_string_attribute(element: *mut std::ffi::c_void, attribute: &str) -> Option<String> {
+    unsafe fn get_ax_string_attribute(
+        element: *mut std::ffi::c_void,
+        attribute: &str,
+    ) -> Option<String> {
         let mut value: CFTypeRef = null_mut();
         let attr_name = CFString::new(attribute);
-        let result = AXUIElementCopyAttributeValue(element, attr_name.as_concrete_TypeRef(), &mut value);
+        let result =
+            AXUIElementCopyAttributeValue(element, attr_name.as_concrete_TypeRef(), &mut value);
 
         if result != K_AX_ERROR_SUCCESS || value.is_null() {
             return None;
         }
 
         // Try to interpret as CFString
-        let cf_string = CFString::wrap_under_create_rule(value as core_foundation_sys::string::CFStringRef);
+        let cf_string =
+            CFString::wrap_under_create_rule(value as core_foundation_sys::string::CFStringRef);
         let s = cf_string.to_string();
         if s.is_empty() {
             None
@@ -504,7 +515,8 @@ pub mod macos {
     unsafe fn get_ax_url_as_path(element: *mut std::ffi::c_void) -> Option<String> {
         let mut value: CFTypeRef = null_mut();
         let attr_name = CFString::new(K_AX_URL_ATTRIBUTE);
-        let result = AXUIElementCopyAttributeValue(element, attr_name.as_concrete_TypeRef(), &mut value);
+        let result =
+            AXUIElementCopyAttributeValue(element, attr_name.as_concrete_TypeRef(), &mut value);
 
         if result != K_AX_ERROR_SUCCESS || value.is_null() {
             return None;
@@ -726,7 +738,8 @@ pub mod macos {
 
         // Allow small discrepancy due to timing differences
         // But if CG count is significantly higher, synthetic events detected
-        let synthetic_detected = discrepancy > 5 && (discrepancy as f64 / hid_count.max(1) as f64) > 0.1;
+        let synthetic_detected =
+            discrepancy > 5 && (discrepancy as f64 / hid_count.max(1) as f64) > 0.1;
 
         DualLayerValidation {
             cg_count,
@@ -939,18 +952,19 @@ pub mod macos {
 
 #[cfg(target_os = "windows")]
 pub mod windows {
-    use std::sync::{Arc, Mutex};
-    use anyhow::{anyhow, Result};
-    use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
-    use windows::Win32::UI::WindowsAndMessaging::{
-        GetForegroundWindow, GetWindowThreadProcessId, SetWinEventHook,
-        CallNextHookEx, SetWindowsHookExW, GetMessageW,
-        EVENT_SYSTEM_FOREGROUND, MSG, WINEVENT_OUTOFCONTEXT,
-        WH_KEYBOARD_LL, KBDLLHOOKSTRUCT, WM_KEYDOWN, WM_SYSKEYDOWN,
-    };
-    use windows::Win32::UI::Accessibility::{IUIAutomation, CUIAutomation};
-    use windows::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION};
     use crate::jitter::SimpleJitterSession;
+    use anyhow::{anyhow, Result};
+    use std::sync::{Arc, Mutex};
+    use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomation};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CallNextHookEx, GetForegroundWindow, GetMessageW, GetWindowThreadProcessId,
+        SetWinEventHook, SetWindowsHookExW, EVENT_SYSTEM_FOREGROUND, KBDLLHOOKSTRUCT, MSG,
+        WH_KEYBOARD_LL, WINEVENT_OUTOFCONTEXT, WM_KEYDOWN, WM_SYSKEYDOWN,
+    };
 
     pub struct FocusInfo {
         pub app_name: String,
@@ -986,7 +1000,12 @@ pub mod windows {
             let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid)?;
             let mut path = [0u16; 1024];
             let mut size = path.len() as u32;
-            QueryFullProcessImageNameW(handle, Default::default(), windows::core::PWSTR(path.as_mut_ptr()), &mut size)?;
+            QueryFullProcessImageNameW(
+                handle,
+                Default::default(),
+                windows::core::PWSTR(path.as_mut_ptr()),
+                &mut size,
+            )?;
             Ok(String::from_utf16_lossy(&path[..size as usize]))
         }
     }
@@ -1002,17 +1021,25 @@ pub mod windows {
         pub fn start(session: Arc<Mutex<SimpleJitterSession>>) -> Result<Self> {
             unsafe {
                 GLOBAL_SESSION = Some(Arc::clone(&session));
-                let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(low_level_keyboard_proc), None, 0)?;
+                let hook =
+                    SetWindowsHookExW(WH_KEYBOARD_LL, Some(low_level_keyboard_proc), None, 0)?;
                 std::thread::spawn(|| {
                     let mut msg = MSG::default();
                     while GetMessageW(&mut msg, None, 0, 0).into() {}
                 });
-                Ok(Self { session, _hook: hook.0 as isize })
+                Ok(Self {
+                    session,
+                    _hook: hook.0 as isize,
+                })
             }
         }
     }
 
-    unsafe extern "system" fn low_level_keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    unsafe extern "system" fn low_level_keyboard_proc(
+        code: i32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
         if code >= 0 && (wparam.0 as u32 == WM_KEYDOWN || wparam.0 as u32 == WM_SYSKEYDOWN) {
             let kbd = *(lparam.0 as *const KBDLLHOOKSTRUCT);
             let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);

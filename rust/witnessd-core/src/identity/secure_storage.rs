@@ -1,6 +1,6 @@
-use keyring::Entry;
 use anyhow::{anyhow, Result};
-use base64::{Engine as _, engine::general_purpose};
+use base64::{engine::general_purpose, Engine as _};
+use keyring::Entry;
 
 const SERVICE_NAME: &str = "com.witnessd.identity";
 const SEED_ACCOUNT: &str = "default_seed";
@@ -15,9 +15,10 @@ impl SecureStorage {
     fn save(account: &str, data: &[u8]) -> Result<()> {
         let entry = Entry::new(SERVICE_NAME, account)
             .map_err(|e| anyhow!("Failed to access keyring: {}", e))?;
-        
+
         let encoded = general_purpose::STANDARD.encode(data);
-        entry.set_password(&encoded)
+        entry
+            .set_password(&encoded)
             .map_err(|e| anyhow!("Failed to save to keyring: {}", e))?;
         Ok(())
     }
@@ -25,10 +26,11 @@ impl SecureStorage {
     fn load(account: &str) -> Result<Option<Vec<u8>>> {
         let entry = Entry::new(SERVICE_NAME, account)
             .map_err(|e| anyhow!("Failed to access keyring: {}", e))?;
-        
+
         match entry.get_password() {
             Ok(encoded) => {
-                let data = general_purpose::STANDARD.decode(&encoded)
+                let data = general_purpose::STANDARD
+                    .decode(&encoded)
                     .map_err(|e| anyhow!("Failed to decode data from keyring: {}", e))?;
                 Ok(Some(data))
             }
@@ -40,7 +42,7 @@ impl SecureStorage {
     fn delete(account: &str) -> Result<()> {
         let entry = Entry::new(SERVICE_NAME, account)
             .map_err(|e| anyhow!("Failed to access keyring: {}", e))?;
-        
+
         match entry.delete_password() {
             Ok(_) => Ok(()),
             Err(keyring::Error::NoEntry) => Ok(()),
@@ -77,8 +79,8 @@ impl SecureStorage {
     pub fn load_mnemonic() -> Result<Option<String>> {
         let bytes = Self::load(MNEMONIC_ACCOUNT)?;
         if let Some(b) = bytes {
-            let s = String::from_utf8(b)
-                .map_err(|e| anyhow!("Invalid UTF-8 in mnemonic: {}", e))?;
+            let s =
+                String::from_utf8(b).map_err(|e| anyhow!("Invalid UTF-8 in mnemonic: {}", e))?;
             Ok(Some(s))
         } else {
             Ok(None)

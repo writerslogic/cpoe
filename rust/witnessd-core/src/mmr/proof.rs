@@ -146,7 +146,8 @@ impl InclusionProof {
         if offset + 2 > data.len() {
             return Err(MmrError::InvalidNodeData);
         }
-        let peak_position = u16::from_be_bytes(data[offset..offset + 2].try_into().unwrap()) as usize;
+        let peak_position =
+            u16::from_be_bytes(data[offset..offset + 2].try_into().unwrap()) as usize;
         offset += 2;
         if peaks.is_empty() || peak_position >= peaks.len() {
             return Err(MmrError::InvalidProof);
@@ -316,7 +317,20 @@ impl RangeProof {
         let hashes_size = leaves_count * 32;
         let path_size = self.sibling_path.len() * 33;
         let peaks_size = self.peaks.len() * 32;
-        let total = 1 + 1 + 8 + 8 + 2 + indices_size + hashes_size + 2 + path_size + 2 + peaks_size + 2 + 8 + 32;
+        let total = 1
+            + 1
+            + 8
+            + 8
+            + 2
+            + indices_size
+            + hashes_size
+            + 2
+            + path_size
+            + 2
+            + peaks_size
+            + 2
+            + 8
+            + 32;
         let mut buf = vec![0u8; total];
         let mut offset = 0;
         buf[offset] = PROOF_VERSION;
@@ -382,7 +396,9 @@ impl RangeProof {
         offset += 2;
         let mut leaf_indices = Vec::with_capacity(leaves_len);
         for _ in 0..leaves_len {
-            leaf_indices.push(u64::from_be_bytes(data[offset..offset + 8].try_into().unwrap()));
+            leaf_indices.push(u64::from_be_bytes(
+                data[offset..offset + 8].try_into().unwrap(),
+            ));
             offset += 8;
         }
         let mut leaf_hashes = Vec::with_capacity(leaves_len);
@@ -412,7 +428,8 @@ impl RangeProof {
             offset += 32;
             peaks.push(peak);
         }
-        let peak_position = u16::from_be_bytes(data[offset..offset + 2].try_into().unwrap()) as usize;
+        let peak_position =
+            u16::from_be_bytes(data[offset..offset + 2].try_into().unwrap()) as usize;
         offset += 2;
         if peaks.is_empty() || peak_position >= peaks.len() {
             return Err(MmrError::InvalidProof);

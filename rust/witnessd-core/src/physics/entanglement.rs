@@ -1,8 +1,8 @@
-use crate::PhysicalContext;
 use crate::vdf;
+use crate::PhysicalContext;
 use crate::VdfProof;
-use std::time::Duration;
 use sha2::Digest;
+use std::time::Duration;
 
 /// Entangles physical landscape noise with the Arrow of Time.
 /// This creates a non-repudiable anchor that Root cannot forge offline.
@@ -15,7 +15,7 @@ impl Entanglement {
         sha2::Digest::update(&mut hasher, b"witnessd-entanglement-v1");
         sha2::Digest::update(&mut hasher, &content_hash);
         sha2::Digest::update(&mut hasher, &physics.combined_hash);
-        
+
         let result = sha2::Digest::finalize(hasher);
         let mut out = [0u8; 32];
         out.copy_from_slice(&result);

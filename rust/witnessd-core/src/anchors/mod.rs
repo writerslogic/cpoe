@@ -1,10 +1,10 @@
-mod types;
-mod verification;
-mod ots;
-mod rfc3161;
 mod bitcoin;
 mod ethereum;
 mod notary;
+mod ots;
+mod rfc3161;
+mod types;
+mod verification;
 
 pub use types::*;
 pub use verification::verify_proof;
@@ -101,9 +101,9 @@ impl AnchorManager {
         }
 
         if anchor.proofs.is_empty() {
-            return Err(last_error.unwrap_or(AnchorError::Unavailable(
-                "No providers available".into(),
-            )));
+            return Err(
+                last_error.unwrap_or(AnchorError::Unavailable("No providers available".into()))
+            );
         }
 
         Ok(anchor)

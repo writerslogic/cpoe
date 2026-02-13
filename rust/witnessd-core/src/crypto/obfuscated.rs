@@ -1,9 +1,9 @@
 //! Memory-resident data obfuscation to defeat casual memory scraping.
 //! NOT cryptographically secure—designed to raise the bar, not provide guarantees.
 
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
 use zeroize::Zeroize;
-use serde::{Serialize, Deserialize};
 
 /// Rolling XOR key that changes every N accesses
 static ROLLING_KEY: AtomicU64 = AtomicU64::new(0xDEADBEEF_CAFEBABE);
@@ -27,9 +27,10 @@ pub struct Obfuscated<T> {
 // Any type that can be serialized/deserialized can be obfuscated
 impl<T: Serialize + for<'de> Deserialize<'de>> Obfuscated<T> {
     pub fn new(value: &T) -> Self {
-        let serialized = bincode::serde::encode_to_vec(value, bincode::config::standard()).expect("serialization failed");
+        let serialized = bincode::serde::encode_to_vec(value, bincode::config::standard())
+            .expect("serialization failed");
         let mask_key = next_key();
-        
+
         // XOR mask the data
         Self {
             masked_data: Self::xor_data(&serialized, mask_key),
@@ -37,15 +38,17 @@ impl<T: Serialize + for<'de> Deserialize<'de>> Obfuscated<T> {
             _phantom: std::marker::PhantomData,
         }
     }
-    
+
     pub fn reveal(&self) -> T {
         let mut unmasked = Self::xor_data(&self.masked_data, self.mask_key);
-        
-        let (value, _): (T, usize) = bincode::serde::decode_from_slice(&unmasked, bincode::config::standard()).expect("deserialization failed");
-        
+
+        let (value, _): (T, usize) =
+            bincode::serde::decode_from_slice(&unmasked, bincode::config::standard())
+                .expect("deserialization failed");
+
         // Zeroize temporary buffer
         unmasked.zeroize();
-        
+
         value
     }
 
@@ -57,7 +60,7 @@ impl<T: Serialize + for<'de> Deserialize<'de>> Obfuscated<T> {
         }
         out
     }
-    
+
     /// Re-mask with a new key (call periodically to frustrate memory snapshots)
     pub fn rotate(&mut self) {
         let value = self.reveal();

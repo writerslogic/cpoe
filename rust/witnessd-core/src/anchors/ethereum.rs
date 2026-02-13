@@ -24,7 +24,11 @@ impl EthereumProvider {
         Ok(Self::new(rpc_url, raw_tx_template))
     }
 
-    async fn rpc_call(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value, AnchorError> {
+    async fn rpc_call(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, AnchorError> {
         let request = serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,

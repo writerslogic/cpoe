@@ -61,8 +61,8 @@ impl Chain {
     }
 
     pub fn commit(&mut self, message: Option<String>) -> Result<Checkpoint, String> {
-        let content = fs::read(&self.document_path)
-            .map_err(|e| format!("failed to read document: {e}"))?;
+        let content =
+            fs::read(&self.document_path).map_err(|e| format!("failed to read document: {e}"))?;
         let content_hash: [u8; 32] = Sha256::digest(&content).into();
         let ordinal = self.checkpoints.len() as u64;
 
@@ -110,8 +110,8 @@ impl Chain {
         message: Option<String>,
         vdf_duration: Duration,
     ) -> Result<Checkpoint, String> {
-        let content = fs::read(&self.document_path)
-            .map_err(|e| format!("failed to read document: {e}"))?;
+        let content =
+            fs::read(&self.document_path).map_err(|e| format!("failed to read document: {e}"))?;
         let content_hash: [u8; 32] = Sha256::digest(&content).into();
         let ordinal = self.checkpoints.len() as u64;
 
@@ -161,10 +161,9 @@ impl Chain {
             }
 
             if i > 0 {
-                let vdf = checkpoint
-                    .vdf
-                    .as_ref()
-                    .ok_or_else(|| format!("checkpoint {i}: missing VDF proof (required for time verification)"))?;
+                let vdf = checkpoint.vdf.as_ref().ok_or_else(|| {
+                    format!("checkpoint {i}: missing VDF proof (required for time verification)")
+                })?;
                 let expected_input = vdf::chain_input(
                     checkpoint.content_hash,
                     checkpoint.previous_hash,
@@ -218,30 +217,34 @@ impl Chain {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| format!("failed to create directory: {e}"))?;
         }
-        let data = serde_json::to_vec_pretty(self).map_err(|e| format!("failed to marshal chain: {e}"))?;
+        let data =
+            serde_json::to_vec_pretty(self).map_err(|e| format!("failed to marshal chain: {e}"))?;
         fs::write(path, data).map_err(|e| format!("failed to write chain: {e}"))?;
         Ok(())
     }
 
     pub fn load(path: impl AsRef<Path>) -> Result<Self, String> {
         let data = fs::read(path.as_ref()).map_err(|e| format!("failed to read chain: {e}"))?;
-        let mut chain: Chain = serde_json::from_slice(&data)
-            .map_err(|e| format!("failed to unmarshal chain: {e}"))?;
+        let mut chain: Chain =
+            serde_json::from_slice(&data).map_err(|e| format!("failed to unmarshal chain: {e}"))?;
         chain.storage_path = Some(path.as_ref().to_path_buf());
         Ok(chain)
     }
 
-    pub fn find_chain(document_path: impl AsRef<Path>, witnessd_dir: impl AsRef<Path>) -> Result<PathBuf, String> {
+    pub fn find_chain(
+        document_path: impl AsRef<Path>,
+        witnessd_dir: impl AsRef<Path>,
+    ) -> Result<PathBuf, String> {
         let abs_path = fs::canonicalize(document_path.as_ref())
             .map_err(|e| format!("invalid document path: {e}"))?;
         let path_hash = Sha256::digest(abs_path.to_string_lossy().as_bytes());
         let doc_id = hex::encode(&path_hash[0..8]);
-        let chain_path = witnessd_dir.as_ref().join("chains").join(format!("{doc_id}.json"));
+        let chain_path = witnessd_dir
+            .as_ref()
+            .join("chains")
+            .join(format!("{doc_id}.json"));
         if !chain_path.exists() {
-            return Err(format!(
-                "no chain found for {}",
-                abs_path.to_string_lossy()
-            ));
+            return Err(format!("no chain found for {}", abs_path.to_string_lossy()));
         }
         Ok(chain_path)
     }
@@ -358,7 +361,9 @@ mod tests {
     fn test_single_commit() {
         let (_dir, path) = temp_document();
         let mut chain = Chain::new(&path, test_vdf_params()).expect("create chain");
-        let checkpoint = chain.commit(Some("first commit".to_string())).expect("commit");
+        let checkpoint = chain
+            .commit(Some("first commit".to_string()))
+            .expect("commit");
 
         assert_eq!(checkpoint.ordinal, 0);
         assert_eq!(checkpoint.previous_hash, [0u8; 32]);
@@ -374,7 +379,9 @@ mod tests {
         let mut chain = Chain::new(&path, test_vdf_params()).expect("create chain");
 
         // First commit
-        let cp0 = chain.commit_with_vdf_duration(None, Duration::from_millis(10)).expect("commit 0");
+        let cp0 = chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit 0");
         assert_eq!(cp0.ordinal, 0);
         assert!(cp0.vdf.is_none());
 
@@ -382,7 +389,9 @@ mod tests {
         fs::write(&path, b"updated content").expect("update content");
 
         // Second commit
-        let cp1 = chain.commit_with_vdf_duration(None, Duration::from_millis(10)).expect("commit 1");
+        let cp1 = chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit 1");
         assert_eq!(cp1.ordinal, 1);
         assert!(cp1.vdf.is_some());
         assert_eq!(cp1.previous_hash, cp0.hash);
@@ -391,7 +400,9 @@ mod tests {
         fs::write(&path, b"final content").expect("update content again");
 
         // Third commit
-        let cp2 = chain.commit_with_vdf_duration(None, Duration::from_millis(10)).expect("commit 2");
+        let cp2 = chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit 2");
         assert_eq!(cp2.ordinal, 2);
         assert!(cp2.vdf.is_some());
         assert_eq!(cp2.previous_hash, cp1.hash);
@@ -406,10 +417,14 @@ mod tests {
     fn test_chain_verification_valid() {
         let (dir, path) = temp_document();
         let mut chain = Chain::new(&path, test_vdf_params()).expect("create chain");
-        chain.commit_with_vdf_duration(None, Duration::from_millis(10)).expect("commit 0");
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit 0");
 
         fs::write(&path, b"updated").expect("update");
-        chain.commit_with_vdf_duration(None, Duration::from_millis(10)).expect("commit 1");
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit 1");
 
         chain.verify().expect("verification should pass");
         drop(dir);
@@ -419,7 +434,9 @@ mod tests {
     fn test_chain_verification_hash_mismatch() {
         let (dir, path) = temp_document();
         let mut chain = Chain::new(&path, test_vdf_params()).expect("create chain");
-        chain.commit_with_vdf_duration(None, Duration::from_millis(10)).expect("commit");
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit");
 
         // Tamper with the checkpoint hash
         chain.checkpoints[0].hash = [0xFFu8; 32];
@@ -433,10 +450,14 @@ mod tests {
     fn test_chain_verification_broken_chain_link() {
         let (dir, path) = temp_document();
         let mut chain = Chain::new(&path, test_vdf_params()).expect("create chain");
-        chain.commit_with_vdf_duration(None, Duration::from_millis(10)).expect("commit 0");
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit 0");
 
         fs::write(&path, b"updated").expect("update");
-        chain.commit_with_vdf_duration(None, Duration::from_millis(10)).expect("commit 1");
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit 1");
 
         // Tamper with the previous_hash to break the chain
         chain.checkpoints[1].previous_hash = [0xFFu8; 32];
@@ -444,7 +465,11 @@ mod tests {
         chain.checkpoints[1].hash = chain.checkpoints[1].compute_hash();
 
         let err = chain.verify().unwrap_err();
-        assert!(err.contains("broken chain link"), "Expected 'broken chain link', got: {}", err);
+        assert!(
+            err.contains("broken chain link"),
+            "Expected 'broken chain link', got: {}",
+            err
+        );
         drop(dir);
     }
 
@@ -452,7 +477,9 @@ mod tests {
     fn test_chain_verification_nonzero_first_previous_hash() {
         let (dir, path) = temp_document();
         let mut chain = Chain::new(&path, test_vdf_params()).expect("create chain");
-        chain.commit_with_vdf_duration(None, Duration::from_millis(10)).expect("commit");
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit");
 
         // Tamper with first checkpoint's previous_hash
         chain.checkpoints[0].previous_hash = [0x01u8; 32];
@@ -468,7 +495,9 @@ mod tests {
     fn test_save_and_load_chain() {
         let (dir, path) = temp_document();
         let mut chain = Chain::new(&path, test_vdf_params()).expect("create chain");
-        chain.commit_with_vdf_duration(Some("test".to_string()), Duration::from_millis(10)).expect("commit");
+        chain
+            .commit_with_vdf_duration(Some("test".to_string()), Duration::from_millis(10))
+            .expect("commit");
 
         let chain_path = dir.path().join("chain.json");
         chain.save(&chain_path).expect("save chain");
@@ -487,10 +516,14 @@ mod tests {
     fn test_chain_summary() {
         let (dir, path) = temp_document();
         let mut chain = Chain::new(&path, test_vdf_params()).expect("create chain");
-        chain.commit_with_vdf_duration(None, Duration::from_millis(10)).expect("commit 0");
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit 0");
 
         fs::write(&path, b"updated").expect("update");
-        chain.commit_with_vdf_duration(None, Duration::from_millis(10)).expect("commit 1");
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit 1");
 
         let summary = chain.summary();
         assert_eq!(summary.checkpoint_count, 2);
@@ -508,12 +541,16 @@ mod tests {
         let mut chain = Chain::new(&path, test_vdf_params()).expect("create chain");
         assert!(chain.latest().is_none());
 
-        chain.commit_with_vdf_duration(None, Duration::from_millis(10)).expect("commit 0");
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit 0");
         assert!(chain.latest().is_some());
         assert_eq!(chain.latest().unwrap().ordinal, 0);
 
         fs::write(&path, b"updated").expect("update");
-        chain.commit_with_vdf_duration(None, Duration::from_millis(10)).expect("commit 1");
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit 1");
         assert_eq!(chain.latest().unwrap().ordinal, 1);
 
         assert_eq!(chain.at(0).unwrap().ordinal, 0);
@@ -529,11 +566,15 @@ mod tests {
         let mut chain = Chain::new(&path, test_vdf_params()).expect("create chain");
 
         // First commit has no VDF, so no elapsed time
-        chain.commit_with_vdf_duration(None, Duration::from_millis(10)).expect("commit 0");
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit 0");
         assert_eq!(chain.total_elapsed_time(), Duration::from_secs(0));
 
         fs::write(&path, b"updated").expect("update");
-        chain.commit_with_vdf_duration(None, Duration::from_millis(50)).expect("commit 1");
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(50))
+            .expect("commit 1");
 
         // Should have some elapsed time from VDF
         let elapsed = chain.total_elapsed_time();
@@ -578,11 +619,15 @@ mod tests {
         let (dir, path) = temp_document();
         let mut chain = Chain::new(&path, test_vdf_params()).expect("create chain");
 
-        chain.commit_with_vdf_duration(None, Duration::from_millis(10)).expect("commit 0");
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit 0");
         let hash0 = chain.checkpoints[0].content_hash;
 
         fs::write(&path, b"different content").expect("update");
-        chain.commit_with_vdf_duration(None, Duration::from_millis(10)).expect("commit 1");
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit 1");
         let hash1 = chain.checkpoints[1].content_hash;
 
         assert_ne!(hash0, hash1);
@@ -595,9 +640,13 @@ mod tests {
         let (dir, path) = temp_document();
         let mut chain = Chain::new(&path, test_vdf_params()).expect("create chain");
 
-        chain.commit_with_vdf_duration(None, Duration::from_millis(10)).expect("commit 0");
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit 0");
         fs::write(&path, b"updated").expect("update");
-        chain.commit_with_vdf_duration(None, Duration::from_millis(10)).expect("commit 1");
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit 1");
 
         // Tamper with VDF output
         if let Some(ref mut vdf) = chain.checkpoints[1].vdf {
@@ -607,7 +656,11 @@ mod tests {
         chain.checkpoints[1].hash = chain.checkpoints[1].compute_hash();
 
         let err = chain.verify().unwrap_err();
-        assert!(err.contains("VDF verification failed"), "Expected 'VDF verification failed', got: {}", err);
+        assert!(
+            err.contains("VDF verification failed"),
+            "Expected 'VDF verification failed', got: {}",
+            err
+        );
 
         drop(dir);
     }
@@ -617,9 +670,13 @@ mod tests {
         let (dir, path) = temp_document();
         let mut chain = Chain::new(&path, test_vdf_params()).expect("create chain");
 
-        chain.commit_with_vdf_duration(None, Duration::from_millis(10)).expect("commit 0");
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit 0");
         fs::write(&path, b"updated").expect("update");
-        chain.commit_with_vdf_duration(None, Duration::from_millis(10)).expect("commit 1");
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit 1");
 
         // Tamper with VDF input
         if let Some(ref mut vdf) = chain.checkpoints[1].vdf {
@@ -629,7 +686,11 @@ mod tests {
         chain.checkpoints[1].hash = chain.checkpoints[1].compute_hash();
 
         let err = chain.verify().unwrap_err();
-        assert!(err.contains("VDF input mismatch"), "Expected 'VDF input mismatch', got: {}", err);
+        assert!(
+            err.contains("VDF input mismatch"),
+            "Expected 'VDF input mismatch', got: {}",
+            err
+        );
 
         drop(dir);
     }

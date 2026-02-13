@@ -1,7 +1,7 @@
-use sha2::{Sha256, Digest};
+use crate::jitter::SimpleJitterSample;
 use crate::physics::clock::ClockSkew;
 use crate::physics::puf::SiliconPUF;
-use crate::jitter::SimpleJitterSample;
+use sha2::{Digest, Sha256};
 
 /// The "Contextual Salt" generated from multi-source physical synthesis.
 pub struct PhysicalContext {
@@ -18,7 +18,7 @@ impl PhysicalContext {
         let skew = ClockSkew::measure();
         let io_latency = measure_io_latency();
         let puf = SiliconPUF::generate_fingerprint();
-        
+
         let thermal = measure_thermal_proxy();
 
         let mut hasher = Sha256::new();
@@ -27,7 +27,7 @@ impl PhysicalContext {
         hasher.update(&thermal.to_be_bytes());
         hasher.update(&puf);
         hasher.update(&io_latency.to_be_bytes());
-        
+
         // Bind the biological signature
         for sample in biological_cadence.iter().take(10) {
             hasher.update(&sample.duration_since_last_ns.to_be_bytes());
@@ -50,7 +50,7 @@ impl PhysicalContext {
 fn measure_io_latency() -> u64 {
     let start = std::time::Instant::now();
     // Perform a tiny, non-destructive read from a system file to measure bus latency
-    let _ = std::fs::metadata("/etc/hosts").map(|m| m.len()); 
+    let _ = std::fs::metadata("/etc/hosts").map(|m| m.len());
     start.elapsed().as_nanos() as u64
 }
 
@@ -59,9 +59,9 @@ fn measure_thermal_proxy() -> u32 {
     // Variations in this number (jitter) correlate with CPU thermal throttling and phonon noise.
     let start_wall = std::time::Instant::now();
     let start_tsc = ClockSkew::measure();
-    
+
     while start_wall.elapsed() < std::time::Duration::from_millis(1) {}
-    
+
     let end_tsc = ClockSkew::measure();
     (end_tsc.wrapping_sub(start_tsc)) as u32
 }

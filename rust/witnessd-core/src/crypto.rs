@@ -1,10 +1,10 @@
-use sha2::{Sha256, Digest};
 use hmac::{Hmac, Mac};
+use sha2::{Digest, Sha256};
 
-pub mod obfuscation;
 pub mod obfuscated;
-pub use obfuscation::ObfuscatedString;
+pub mod obfuscation;
 pub use obfuscated::Obfuscated;
+pub use obfuscation::ObfuscatedString;
 
 pub type HmacSha256 = Hmac<Sha256>;
 
@@ -26,7 +26,7 @@ pub fn compute_event_hash(
     hasher.update(&file_size.to_be_bytes());
     hasher.update(&size_delta.to_be_bytes());
     hasher.update(previous_hash);
-    
+
     let result = hasher.finalize();
     let mut out = [0u8; 32];
     out.copy_from_slice(&result);
@@ -52,7 +52,7 @@ pub fn compute_event_hmac(
     mac.update(&file_size.to_be_bytes());
     mac.update(&size_delta.to_be_bytes());
     mac.update(previous_hash);
-    
+
     let result = mac.finalize();
     let mut out = [0u8; 32];
     out.copy_from_slice(&result.into_bytes());
@@ -64,7 +64,7 @@ pub fn compute_integrity_hmac(key: &[u8], chain_hash: &[u8; 32], event_count: i6
     mac.update(b"witnessd-integrity-v1");
     mac.update(chain_hash);
     mac.update(&event_count.to_be_bytes());
-    
+
     let result = mac.finalize();
     let mut out = [0u8; 32];
     out.copy_from_slice(&result.into_bytes());

@@ -95,7 +95,12 @@ impl Sample {
     fn compute_hash(&self) -> [u8; 32] {
         let mut hasher = Sha256::new();
         hasher.update(b"witnessd-jitter-sample-v1");
-        hasher.update(self.timestamp.timestamp_nanos_opt().unwrap_or(0).to_be_bytes());
+        hasher.update(
+            self.timestamp
+                .timestamp_nanos_opt()
+                .unwrap_or(0)
+                .to_be_bytes(),
+        );
         hasher.update(self.keystroke_count.to_be_bytes());
         hasher.update(self.document_hash);
         hasher.update(self.jitter_micros.to_be_bytes());
@@ -418,7 +423,8 @@ impl Evidence {
 
     pub fn typing_rate(&self) -> f64 {
         if self.statistics.duration.as_secs_f64() > 0.0 {
-            self.statistics.total_keystrokes as f64 / (self.statistics.duration.as_secs_f64() / 60.0)
+            self.statistics.total_keystrokes as f64
+                / (self.statistics.duration.as_secs_f64() / 60.0)
         } else {
             0.0
         }
@@ -477,8 +483,7 @@ pub fn verify_chain(samples: &[Sample], seed: &[u8], params: Parameters) -> Resu
 
     for (i, sample) in samples.iter().enumerate() {
         let prev = if i > 0 { Some(&samples[i - 1]) } else { None };
-        verify_sample(sample, prev, seed, params)
-            .map_err(|e| format!("sample {i}: {e}"))?;
+        verify_sample(sample, prev, seed, params).map_err(|e| format!("sample {i}: {e}"))?;
     }
 
     Ok(())
@@ -563,7 +568,11 @@ pub fn verify_chain_detailed(
     result
 }
 
-pub fn verify_chain_with_seed(samples: &[Sample], seed: [u8; 32], params: Parameters) -> Result<(), String> {
+pub fn verify_chain_with_seed(
+    samples: &[Sample],
+    seed: [u8; 32],
+    params: Parameters,
+) -> Result<(), String> {
     verify_chain(samples, &seed, params)
 }
 
@@ -597,8 +606,9 @@ pub fn encode_sample_binary(sample: &Sample) -> Vec<u8> {
     let mut buf = vec![0u8; 116];
     let mut offset = 0usize;
 
-    buf[offset..offset + 8]
-        .copy_from_slice(&(sample.timestamp.timestamp_nanos_opt().unwrap_or(0) as u64).to_be_bytes());
+    buf[offset..offset + 8].copy_from_slice(
+        &(sample.timestamp.timestamp_nanos_opt().unwrap_or(0) as u64).to_be_bytes(),
+    );
     offset += 8;
     buf[offset..offset + 8].copy_from_slice(&sample.keystroke_count.to_be_bytes());
     offset += 8;
@@ -615,7 +625,10 @@ pub fn encode_sample_binary(sample: &Sample) -> Vec<u8> {
 
 pub fn decode_sample_binary(data: &[u8]) -> Result<Sample, String> {
     if data.len() != 116 {
-        return Err(format!("invalid sample data length: expected 116, got {}", data.len()));
+        return Err(format!(
+            "invalid sample data length: expected 116, got {}",
+            data.len()
+        ));
     }
 
     let mut offset = 0usize;
@@ -635,7 +648,9 @@ pub fn decode_sample_binary(data: &[u8]) -> Result<Sample, String> {
     previous_hash.copy_from_slice(&data[offset..offset + 32]);
 
     Ok(Sample {
-        timestamp: DateTime::<Utc>::from(SystemTime::UNIX_EPOCH + Duration::from_nanos(timestamp_nanos)),
+        timestamp: DateTime::<Utc>::from(
+            SystemTime::UNIX_EPOCH + Duration::from_nanos(timestamp_nanos),
+        ),
         keystroke_count,
         document_hash,
         jitter_micros,
@@ -698,7 +713,10 @@ pub fn decode_chain_binary(data: &[u8]) -> Result<(Vec<Sample>, Parameters), Str
 
     let expected_len = 18 + sample_count * 116;
     if data.len() != expected_len {
-        return Err(format!("invalid data length: expected {expected_len}, got {}", data.len()));
+        return Err(format!(
+            "invalid data length: expected {expected_len}, got {}",
+            data.len()
+        ));
     }
 
     let mut samples = Vec::with_capacity(sample_count);
@@ -819,7 +837,9 @@ pub fn validate_sample_format(sample: &Sample) -> Result<(), String> {
 pub fn marshal_sample_for_signing(sample: &Sample) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.extend_from_slice(b"witnessd-sample-v1\n");
-    buf.extend_from_slice(&(sample.timestamp.timestamp_nanos_opt().unwrap_or(0) as u64).to_be_bytes());
+    buf.extend_from_slice(
+        &(sample.timestamp.timestamp_nanos_opt().unwrap_or(0) as u64).to_be_bytes(),
+    );
     buf.extend_from_slice(&sample.keystroke_count.to_be_bytes());
     buf.extend_from_slice(&sample.document_hash);
     buf.extend_from_slice(&sample.jitter_micros.to_be_bytes());
@@ -844,7 +864,9 @@ fn compute_jitter_value(
 
     let hash = mac.finalize().into_bytes();
     let raw = u32::from_be_bytes(hash[0..4].try_into().unwrap());
-    let jitter_range = params.max_jitter_micros.saturating_sub(params.min_jitter_micros);
+    let jitter_range = params
+        .max_jitter_micros
+        .saturating_sub(params.min_jitter_micros);
     if jitter_range == 0 {
         return params.min_jitter_micros;
     }
@@ -898,7 +920,11 @@ impl JitterEngine {
         }
     }
 
-    pub fn on_keystroke(&mut self, key_code: u16, doc_hash: [u8; 32]) -> (u32, Option<JitterSample>) {
+    pub fn on_keystroke(
+        &mut self,
+        key_code: u16,
+        doc_hash: [u8; 32],
+    ) -> (u32, Option<JitterSample>) {
         let now = Utc::now();
         let zone = keycode_to_zone(key_code);
         if zone < 0 {
@@ -911,7 +937,8 @@ impl JitterEngine {
         if self.prev_zone >= 0 {
             zone_transition = encode_zone_transition(self.prev_zone, zone);
             let interval = now.signed_duration_since(self.prev_time);
-            interval_bucket = interval_to_bucket(interval.to_std().unwrap_or(Duration::from_secs(0)));
+            interval_bucket =
+                interval_to_bucket(interval.to_std().unwrap_or(Duration::from_secs(0)));
             self.update_profile(self.prev_zone, zone, interval_bucket);
         }
 
@@ -959,7 +986,10 @@ impl JitterEngine {
     }
 
     fn update_profile(&mut self, from_zone: i32, to_zone: i32, bucket: u8) {
-        let trans = ZoneTransition { from: from_zone, to: to_zone };
+        let trans = ZoneTransition {
+            from: from_zone,
+            to: to_zone,
+        };
         if trans.is_same_finger() {
             self.profile.same_finger_hist[bucket as usize] += 1;
         } else if trans.is_same_hand() {
@@ -1243,10 +1273,8 @@ pub fn verify_with_content(samples: &[JitterSample], content: &[u8]) -> ContentV
 
     result.expected_transitions = expected_transition_histogram(content);
     result.recorded_transitions = extract_transition_histogram(samples);
-    result.transition_divergence = transition_histogram_divergence(
-        result.expected_transitions,
-        result.recorded_transitions,
-    );
+    result.transition_divergence =
+        transition_histogram_divergence(result.expected_transitions, result.recorded_transitions);
 
     if result.transition_divergence > 0.3 {
         result.zones_compatible = false;
@@ -1260,7 +1288,9 @@ pub fn verify_with_content(samples: &[JitterSample], content: &[u8]) -> ContentV
 
     result.profile_plausible = is_human_plausible(recorded.clone());
     if !result.profile_plausible {
-        result.warnings.push("typing profile does not appear human-plausible".to_string());
+        result
+            .warnings
+            .push("typing profile does not appear human-plausible".to_string());
     }
 
     result.profile_score = compare_profiles(expected, recorded);
@@ -1309,7 +1339,13 @@ pub fn verify_with_secret(samples: &[JitterSample], secret: [u8; 32]) -> Result<
 fn compute_jitter_sample_hash(sample: &JitterSample) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(sample.ordinal.to_be_bytes());
-    hasher.update(sample.timestamp.timestamp_nanos_opt().unwrap_or(0).to_be_bytes());
+    hasher.update(
+        sample
+            .timestamp
+            .timestamp_nanos_opt()
+            .unwrap_or(0)
+            .to_be_bytes(),
+    );
     hasher.update(sample.doc_hash);
     hasher.update([sample.zone_transition, sample.interval_bucket]);
     hasher.update(sample.jitter_micros.to_be_bytes());
@@ -1361,7 +1397,8 @@ pub fn analyze_document_zones(content: &[u8]) -> TypingProfile {
     }
 
     if profile.total_transitions > 0 {
-        profile.hand_alternation = profile.alternating_count as f32 / profile.total_transitions as f32;
+        profile.hand_alternation =
+            profile.alternating_count as f32 / profile.total_transitions as f32;
     }
 
     profile
@@ -1393,7 +1430,8 @@ pub fn extract_recorded_zones(samples: &[JitterSample]) -> TypingProfile {
     }
 
     if profile.total_transitions > 0 {
-        profile.hand_alternation = profile.alternating_count as f32 / profile.total_transitions as f32;
+        profile.hand_alternation =
+            profile.alternating_count as f32 / profile.total_transitions as f32;
     }
 
     profile
@@ -1558,7 +1596,9 @@ pub fn verify_jitter_chain(samples: &[JitterSample]) -> Result<(), String> {
         }
         if i > 0 {
             if sample.timestamp <= samples[i - 1].timestamp {
-                return Err(format!("sample {i}: timestamp not monotonically increasing"));
+                return Err(format!(
+                    "sample {i}: timestamp not monotonically increasing"
+                ));
             }
             if sample.ordinal <= samples[i - 1].ordinal {
                 return Err(format!("sample {i}: ordinal not increasing"));
@@ -1625,7 +1665,10 @@ pub fn text_to_zone_sequence(text: &str) -> Vec<ZoneTransition> {
         let zone = char_to_zone(c);
         if zone >= 0 {
             if prev_zone >= 0 {
-                transitions.push(ZoneTransition { from: prev_zone, to: zone });
+                transitions.push(ZoneTransition {
+                    from: prev_zone,
+                    to: zone,
+                });
             }
             prev_zone = zone;
         }
@@ -1771,8 +1814,7 @@ mod tests {
         let path = temp_document_path();
         fs::write(&path, b"test").expect("write");
 
-        let session = Session::new_with_id(&path, test_params(), "custom-id-123")
-            .expect("session");
+        let session = Session::new_with_id(&path, test_params(), "custom-id-123").expect("session");
         assert_eq!(session.id, "custom-id-123");
 
         let _ = fs::remove_file(&path);
@@ -1873,7 +1915,11 @@ mod tests {
         evidence.samples[1].hash = evidence.samples[1].compute_hash();
 
         let err = evidence.verify().unwrap_err();
-        assert!(err.contains("broken chain link"), "Expected 'broken chain link', got: {}", err);
+        assert!(
+            err.contains("broken chain link"),
+            "Expected 'broken chain link', got: {}",
+            err
+        );
 
         let _ = fs::remove_file(&path);
     }
@@ -1897,7 +1943,11 @@ mod tests {
         // Rate should be ~1000 keystrokes per minute or less
         let rate = evidence.typing_rate();
         assert!(rate <= 1000.0, "typing rate {} is too high", rate);
-        assert!(evidence.is_plausible_human_typing(), "typing should be plausible, rate={}", rate);
+        assert!(
+            evidence.is_plausible_human_typing(),
+            "typing should be plausible, rate={}",
+            rate
+        );
 
         let _ = fs::remove_file(&path);
     }
@@ -1916,7 +1966,10 @@ mod tests {
         let (decoded_samples, decoded_params) = decode_chain(&encoded).expect("decode");
 
         assert_eq!(decoded_samples.len(), session.samples.len());
-        assert_eq!(decoded_params.min_jitter_micros, session.params.min_jitter_micros);
+        assert_eq!(
+            decoded_params.min_jitter_micros,
+            session.params.min_jitter_micros
+        );
 
         let _ = fs::remove_file(&path);
     }
@@ -1935,7 +1988,10 @@ mod tests {
         let (decoded_samples, decoded_params) = decode_chain_binary(&encoded).expect("decode");
 
         assert!(compare_chains(&session.samples, &decoded_samples));
-        assert_eq!(decoded_params.sample_interval, session.params.sample_interval);
+        assert_eq!(
+            decoded_params.sample_interval,
+            session.params.sample_interval
+        );
 
         let _ = fs::remove_file(&path);
     }

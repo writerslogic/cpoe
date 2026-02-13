@@ -1,6 +1,4 @@
-use super::{
-    Binding, Capabilities, Provider, Quote, TPMError,
-};
+use super::{Binding, Capabilities, Provider, Quote, TPMError};
 use chrono::Utc;
 use sha2::{Digest, Sha256};
 use std::sync::Mutex;
@@ -99,7 +97,10 @@ impl Provider for SoftwareProvider {
             public_key: Vec::new(),
             monotonic_counter: Some(state.counter),
             safe_clock: Some(true),
-            attestation: Some(super::Attestation { payload, quote: None }),
+            attestation: Some(super::Attestation {
+                payload,
+                quote: None,
+            }),
         })
     }
 
@@ -112,6 +113,8 @@ impl Provider for SoftwareProvider {
     }
 
     fn unseal(&self, _sealed: &[u8]) -> Result<Vec<u8>, TPMError> {
-        Err(TPMError::Unsealing("software provider cannot unseal".into()))
+        Err(TPMError::Unsealing(
+            "software provider cannot unseal".into(),
+        ))
     }
 }

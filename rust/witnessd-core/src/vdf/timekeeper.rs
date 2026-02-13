@@ -1,6 +1,6 @@
-use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum TimeAnchor {
@@ -41,24 +41,34 @@ impl TimeKeeper {
     }
 
     /// Calculates the "Forensic Timestamp".
-    /// If online, returns the NTP time. 
+    /// If online, returns the NTP time.
     /// If offline, returns [Last NTP] + [VDF Duration].
-    pub fn get_current_forensic_time(&self, current_ntp: Option<DateTime<Utc>>) -> (DateTime<Utc>, TimeAnchor) {
+    pub fn get_current_forensic_time(
+        &self,
+        current_ntp: Option<DateTime<Utc>>,
+    ) -> (DateTime<Utc>, TimeAnchor) {
         match current_ntp {
-            Some(ntp) => (ntp, TimeAnchor::Network {
-                timestamp: ntp,
-                sources: vec!["pool.ntp.org".to_string(), "time.apple.com".to_string()],
-            }),
+            Some(ntp) => (
+                ntp,
+                TimeAnchor::Network {
+                    timestamp: ntp,
+                    sources: vec!["pool.ntp.org".to_string(), "time.apple.com".to_string()],
+                },
+            ),
             None => {
                 let elapsed = self.start_instant.elapsed();
-                let estimated = self.last_network_sync
+                let estimated = self
+                    .last_network_sync
                     .map(|last| last + chrono::Duration::from_std(elapsed).unwrap())
                     .unwrap_or_else(Utc::now);
-                
-                (estimated, TimeAnchor::Physical {
-                    duration_since_anchor: elapsed,
-                    vdf_proof: [0u8; 32], // Bound to the actual VDF in the next step
-                })
+
+                (
+                    estimated,
+                    TimeAnchor::Physical {
+                        duration_since_anchor: elapsed,
+                        vdf_proof: [0u8; 32], // Bound to the actual VDF in the next step
+                    },
+                )
             }
         }
     }

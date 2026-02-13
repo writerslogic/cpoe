@@ -1,9 +1,9 @@
-use bip39::{Mnemonic, Language};
 use crate::physics::SiliconPUF;
-use sha2::{Sha256, Digest};
 use anyhow::{anyhow, Result};
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use bip39::{Language, Mnemonic};
 use rand::Rng;
+use sha2::{Digest, Sha256};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 #[derive(Zeroize, ZeroizeOnDrop)]
 pub struct SensitiveSeed([u8; 64]);
@@ -18,7 +18,7 @@ pub struct MnemonicHandler;
 
 impl MnemonicHandler {
     pub fn generate() -> String {
-        let mut entropy = [0u8; 16]; 
+        let mut entropy = [0u8; 16];
         rand::rng().fill(&mut entropy);
         let mnemonic = Mnemonic::from_entropy(&entropy).unwrap();
         mnemonic.to_string()
@@ -26,25 +26,24 @@ impl MnemonicHandler {
 
     pub fn derive_silicon_seed(phrase: &str) -> Result<SensitiveSeed> {
         let mut phrase_owned = phrase.to_string();
-        let mnemonic = Mnemonic::parse_in(Language::English, &phrase_owned)
-            .map_err(|_| {
-                phrase_owned.zeroize();
-                anyhow!("Invalid mnemonic phrase")
-            })?;
-        
+        let mnemonic = Mnemonic::parse_in(Language::English, &phrase_owned).map_err(|_| {
+            phrase_owned.zeroize();
+            anyhow!("Invalid mnemonic phrase")
+        })?;
+
         let seed = mnemonic.to_seed("");
         let seed_bytes = seed.as_ref();
 
         let puf = SiliconPUF::generate_fingerprint();
-        
+
         let mut hasher = Sha256::new();
         hasher.update(seed_bytes);
         hasher.update(&puf);
-        
+
         let mut out = [0u8; 64];
         let hash_result = hasher.finalize();
         out[..32].copy_from_slice(&hash_result);
-        
+
         let mut hasher2 = Sha256::new();
         hasher2.update(&hash_result);
         hasher2.update(b"expansion");
