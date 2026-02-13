@@ -961,8 +961,7 @@ pub mod windows {
     use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomation};
     use windows::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, GetForegroundWindow, GetMessageW, GetWindowThreadProcessId,
-        SetWinEventHook, SetWindowsHookExW, EVENT_SYSTEM_FOREGROUND, KBDLLHOOKSTRUCT, MSG,
-        WH_KEYBOARD_LL, WINEVENT_OUTOFCONTEXT, WM_KEYDOWN, WM_SYSKEYDOWN,
+        SetWindowsHookExW, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN,
     };
 
     pub struct FocusInfo {
@@ -974,7 +973,7 @@ pub mod windows {
     pub fn get_active_focus() -> Result<FocusInfo> {
         unsafe {
             let hwnd = GetForegroundWindow();
-            if hwnd.0 == 0 {
+            if hwnd.0.is_null() {
                 return Err(anyhow!("No active window"));
             }
 

@@ -857,14 +857,14 @@ pub mod windows_focus {
         fn get_active_window(&self) -> Option<WindowInfo> {
             unsafe {
                 let hwnd = GetForegroundWindow();
-                if hwnd.0 == 0 {
+                if hwnd.0.is_null() {
                     return None;
                 }
 
                 let mut pid = 0u32;
                 GetWindowThreadProcessId(hwnd, Some(&mut pid));
 
-                let path = get_process_path(pid).ok()?;
+                let path = get_process_path(pid)?;
                 let app_name = Path::new(&path)
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
@@ -899,9 +899,9 @@ pub mod windows_focus {
         }
     }
 
-    fn get_process_path(pid: u32) -> Result<String, std::io::Error> {
+    fn get_process_path(pid: u32) -> Option<String> {
         unsafe {
-            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid)?;
+            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
             let mut path = [0u16; 1024];
             let mut size = path.len() as u32;
             QueryFullProcessImageNameW(
@@ -909,8 +909,9 @@ pub mod windows_focus {
                 Default::default(),
                 PWSTR(path.as_mut_ptr()),
                 &mut size,
-            )?;
-            Ok(String::from_utf16_lossy(&path[..size as usize]))
+            )
+            .ok()?;
+            Some(String::from_utf16_lossy(&path[..size as usize]))
         }
     }
 }
