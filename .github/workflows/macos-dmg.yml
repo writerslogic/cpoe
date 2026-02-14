@@ -188,7 +188,7 @@ jobs:
           ls -lh "$DMG_FILE"
 
       - name: Upload DMG artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: witnessd-macos-dmg
           path: |

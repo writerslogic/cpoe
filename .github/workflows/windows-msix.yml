@@ -94,7 +94,7 @@ jobs:
           go build -trimpath -ldflags "$ldflags" -o "build/windows_${{ matrix.arch }}/witnessctl.exe" ./cmd/witnessctl
 
       - name: Upload binaries
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: windows-binaries-${{ matrix.arch }}
           path: build/windows_${{ matrix.arch }}/
@@ -147,7 +147,7 @@ jobs:
             /link /DLL /OUT:build/windows_${{ matrix.arch }}/witnessd-tsf.dll
 
       - name: Upload TSF DLL
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: windows-tsf-${{ matrix.arch }}
           path: build/windows_${{ matrix.arch }}/witnessd-tsf.dll
@@ -185,7 +185,7 @@ jobs:
           }
 
       - name: Upload assets
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: windows-assets
           path: platforms/windows/assets/*.png
@@ -279,7 +279,7 @@ jobs:
           }
 
       - name: Upload MSIX packages
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: msix-packages
           path: |
@@ -342,7 +342,7 @@ jobs:
             -CertificateThumbprint $cert.Thumbprint
 
       - name: Upload signed packages
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: msix-packages-signed
           path: |
@@ -382,7 +382,7 @@ jobs:
           }
 
       - name: Upload validation reports
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         if: always()
         with:
           name: validation-reports

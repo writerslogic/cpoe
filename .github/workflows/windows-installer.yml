@@ -104,7 +104,7 @@ jobs:
             -o build/${{ matrix.arch }}/witnessctl.exe ./cmd/witnessctl
 
       - name: Upload binaries
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: windows-binaries-${{ matrix.arch }}
           path: build/${{ matrix.arch }}/
@@ -151,7 +151,7 @@ jobs:
           cl /EHsc /LD /O2 /DNDEBUG cmd\witnessd-tsf\tsf\*.cpp build\${{ matrix.arch }}\witnessd.a /Fe"build\${{ matrix.arch }}\witnessd-tsf.dll" /link ole32.lib oleaut32.lib advapi32.lib
 
       - name: Upload TSF DLL
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: windows-tsf-${{ matrix.arch }}
           path: build/${{ matrix.arch }}/witnessd-tsf.dll
@@ -257,7 +257,7 @@ jobs:
             $WixSources
 
       - name: Upload MSI
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: windows-installer-${{ matrix.arch }}
           path: build/installer/*.msi
@@ -316,7 +316,7 @@ jobs:
 
       - name: Upload signed MSI
         if: env.CODE_SIGNING_THUMBPRINT != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: windows-installer-signed-${{ matrix.arch }}
           path: build/installer/*.msi
@@ -360,7 +360,7 @@ jobs:
 
       - name: Upload test logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: installer-test-logs-${{ matrix.arch }}
           path: build/test-logs/

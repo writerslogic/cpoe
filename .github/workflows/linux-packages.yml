@@ -84,7 +84,7 @@ jobs:
           dpkg-buildpackage -us -uc -b
 
       - name: Upload Debian package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: deb-${{ matrix.arch }}
           path: build/deb/*.deb
@@ -137,7 +137,7 @@ jobs:
           rpmbuild -ba ~/rpmbuild/SPECS/witnessd.spec
 
       - name: Upload RPM package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: rpm-${{ matrix.arch }}
           path: ~/rpmbuild/RPMS/**/*.rpm
@@ -182,7 +182,7 @@ jobs:
           platforms/linux/scripts/build-appimage.sh ${{ steps.version.outputs.version }} ${{ matrix.arch }}
 
       - name: Upload AppImage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: appimage-${{ matrix.arch }}
           path: build/*.AppImage
