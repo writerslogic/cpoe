@@ -1,9 +1,9 @@
 //! Unix domain socket IPC with peer credential verification
 
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::os::unix::io::AsRawFd;
+use std::os::fd::AsFd;
 use std::path::Path;
-use nix::sys::socket::{getsockopt, sockopt::PeerCredentials};
+use nix::sys::socket::getsockopt;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -26,6 +26,44 @@ pub enum IpcError {
     },
 }
 
+/// Peer credentials obtained from the socket
+pub struct PeerCreds {
+    pub uid: u32,
+    pub pid: i32,
+}
+
+/// Get peer credentials from a Unix socket.
+/// Uses platform-specific socket options (SO_PEERCRED on Linux, LOCAL_PEERCRED on macOS).
+#[cfg(target_os = "linux")]
+fn get_peer_creds(stream: &UnixStream) -> Result<PeerCreds, IpcError> {
+    use nix::sys::socket::sockopt::PeerCredentials;
+    let creds = getsockopt(&stream.as_fd(), PeerCredentials)?;
+    Ok(PeerCreds {
+        uid: creds.uid(),
+        pid: creds.pid(),
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn get_peer_creds(stream: &UnixStream) -> Result<PeerCreds, IpcError> {
+    use nix::sys::socket::sockopt::{LocalPeerCred, LocalPeerPid};
+    // On macOS, we get UID from LocalPeerCred and PID from LocalPeerPid
+    let creds = getsockopt(&stream.as_fd(), LocalPeerCred)?;
+    let pid = getsockopt(&stream.as_fd(), LocalPeerPid).unwrap_or(0);
+    Ok(PeerCreds {
+        uid: creds.uid(),
+        pid,
+    })
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn get_peer_creds(_stream: &UnixStream) -> Result<PeerCreds, IpcError> {
+    // On other platforms, we can't verify peer credentials
+    // Return current user's credentials as fallback
+    let uid = nix::unistd::getuid().as_raw();
+    Ok(PeerCreds { uid, pid: 0 })
+}
+
 pub struct SecureUnixSocket {
     listener: UnixListener,
     allowed_uid: u32,
@@ -37,35 +75,35 @@ impl SecureUnixSocket {
         if path.exists() {
             let _ = std::fs::remove_file(path);
         }
-        
+
         let listener = UnixListener::bind(path)?;
-        
+
         // Set restrictive permissions (owner only)
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-        
+
         let allowed_uid = nix::unistd::getuid().as_raw();
-        
+
         Ok(Self { listener, allowed_uid })
     }
-    
+
     pub fn accept(&self) -> Result<VerifiedConnection, IpcError> {
         let (stream, _addr) = self.listener.accept()?;
-        
+
         // Verify peer credentials
-        let creds = getsockopt(stream.as_raw_fd(), PeerCredentials)?;
-        
-        if creds.uid() != self.allowed_uid {
+        let creds = get_peer_creds(&stream)?;
+
+        if creds.uid != self.allowed_uid {
             return Err(IpcError::UnauthorizedPeer {
                 expected_uid: self.allowed_uid,
-                actual_uid: creds.uid(),
+                actual_uid: creds.uid,
             });
         }
-        
+
         Ok(VerifiedConnection {
             stream,
-            peer_pid: creds.pid(),
-            peer_uid: creds.uid(),
+            peer_pid: creds.pid,
+            peer_uid: creds.uid,
         })
     }
 }

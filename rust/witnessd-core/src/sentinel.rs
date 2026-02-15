@@ -14,6 +14,7 @@
 
 use crate::config::SentinelConfig;
 use crate::crypto::ObfuscatedString;
+use crate::ipc::{IpcClient, IpcErrorCode, IpcMessage, IpcMessageHandler, IpcServer};
 use crate::wal::{EntryType, Wal, WalError};
 use ed25519_dalek::SigningKey;
 use sha2::{Digest, Sha256};
@@ -68,6 +69,9 @@ pub enum SentinelError {
 
     #[error("sentinel: channel error - {0}")]
     Channel(String),
+
+    #[error("sentinel: ipc error - {0}")]
+    Ipc(String),
 
     #[error(transparent)]
     Anyhow(#[from] anyhow::Error),
@@ -1176,6 +1180,222 @@ impl Sentinel {
             (false, "Sentinel not available on this platform".to_string())
         }
     }
+
+    /// Start tracking a specific file.
+    /// This is called internally when receiving a StartWitnessing IPC message.
+    pub fn start_witnessing(&self, file_path: &Path) -> std::result::Result<(), (IpcErrorCode, String)> {
+        // Check if file exists
+        if !file_path.exists() {
+            return Err((
+                IpcErrorCode::FileNotFound,
+                format!("File not found: {}", file_path.display()),
+            ));
+        }
+
+        let path_str = file_path.to_string_lossy().to_string();
+
+        // Check if already tracking
+        {
+            let sessions = self.sessions.read().unwrap();
+            if sessions.contains_key(&path_str) {
+                return Err((
+                    IpcErrorCode::AlreadyTracking,
+                    format!("Already tracking: {}", file_path.display()),
+                ));
+            }
+        }
+
+        // Create a new session for this file
+        let mut sessions = self.sessions.write().unwrap();
+        let mut session = DocumentSession::new(
+            path_str.clone(),
+            "cli".to_string(),       // app_bundle_id for CLI-initiated tracking
+            "witnessd".to_string(),  // app_name
+            ObfuscatedString::new(&path_str),
+        );
+
+        // Compute initial hash if file exists
+        if let Ok(hash) = compute_file_hash(&path_str) {
+            session.initial_hash = Some(hash.clone());
+            session.current_hash = Some(hash);
+        }
+
+        // Open WAL for session
+        let wal_path = self.config.wal_dir.join(format!("{}.wal", session.session_id));
+        let mut session_id_bytes = [0u8; 32];
+        if session.session_id.len() >= 32 {
+            hex::decode_to_slice(
+                &session.session_id[..64.min(session.session_id.len() * 2)],
+                &mut session_id_bytes,
+            )
+            .ok();
+        }
+        let key = self.signing_key.read().unwrap().clone();
+
+        if let Ok(wal) = Wal::open(&wal_path, session_id_bytes, key) {
+            let payload = create_session_start_payload(&session);
+            let _ = wal.append(EntryType::SessionStart, payload);
+        }
+
+        // Emit session started event
+        let _ = self.session_events_tx.send(SessionEvent {
+            event_type: SessionEventType::Started,
+            session_id: session.session_id.clone(),
+            document_path: path_str.clone(),
+            timestamp: SystemTime::now(),
+        });
+
+        sessions.insert(path_str, session);
+        Ok(())
+    }
+
+    /// Stop tracking a specific file.
+    /// This is called internally when receiving a StopWitnessing IPC message.
+    pub fn stop_witnessing(&self, file_path: &Path) -> std::result::Result<(), (IpcErrorCode, String)> {
+        let path_str = file_path.to_string_lossy().to_string();
+
+        // Remove the session
+        let session = self.sessions.write().unwrap().remove(&path_str);
+
+        if let Some(session) = session {
+            // Emit session ended event
+            let _ = self.session_events_tx.send(SessionEvent {
+                event_type: SessionEventType::Ended,
+                session_id: session.session_id,
+                document_path: path_str,
+                timestamp: SystemTime::now(),
+            });
+
+            // Clean up shadow buffer if exists
+            if let Some(shadow_id) = session.shadow_id {
+                let _ = self.shadow.delete(&shadow_id);
+            }
+
+            Ok(())
+        } else {
+            Err((
+                IpcErrorCode::NotTracking,
+                format!("Not tracking: {}", file_path.display()),
+            ))
+        }
+    }
+
+    /// Get a list of all currently tracked file paths.
+    pub fn tracked_files(&self) -> Vec<String> {
+        self.sessions.read().unwrap().keys().cloned().collect()
+    }
+
+    /// Get the start time of the sentinel (for uptime calculation).
+    pub fn start_time(&self) -> Option<SystemTime> {
+        // We don't currently track start time in Sentinel itself,
+        // so we'll return None and let the daemon state handle it
+        None
+    }
+}
+
+// ============================================================================
+// IPC Message Handler for Sentinel
+// ============================================================================
+
+/// IPC message handler that routes messages to a Sentinel instance.
+pub struct SentinelIpcHandler {
+    sentinel: Arc<Sentinel>,
+    start_time: SystemTime,
+    version: String,
+}
+
+impl SentinelIpcHandler {
+    /// Create a new IPC handler for a Sentinel instance.
+    pub fn new(sentinel: Arc<Sentinel>) -> Self {
+        Self {
+            sentinel,
+            start_time: SystemTime::now(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+        }
+    }
+}
+
+impl IpcMessageHandler for SentinelIpcHandler {
+    fn handle(&self, msg: IpcMessage) -> IpcMessage {
+        match msg {
+            IpcMessage::Handshake { version } => {
+                // Check version compatibility (for now, just acknowledge)
+                IpcMessage::HandshakeAck {
+                    version,
+                    server_version: self.version.clone(),
+                }
+            }
+
+            IpcMessage::Heartbeat => {
+                let timestamp_ns = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_nanos() as u64)
+                    .unwrap_or(0);
+                IpcMessage::HeartbeatAck { timestamp_ns }
+            }
+
+            IpcMessage::StartWitnessing { file_path } => {
+                match self.sentinel.start_witnessing(&file_path) {
+                    Ok(()) => IpcMessage::Ok {
+                        message: Some(format!("Now tracking: {}", file_path.display())),
+                    },
+                    Err((code, message)) => IpcMessage::Error { code, message },
+                }
+            }
+
+            IpcMessage::StopWitnessing { file_path } => {
+                match file_path {
+                    Some(path) => match self.sentinel.stop_witnessing(&path) {
+                        Ok(()) => IpcMessage::Ok {
+                            message: Some(format!("Stopped tracking: {}", path.display())),
+                        },
+                        Err((code, message)) => IpcMessage::Error { code, message },
+                    },
+                    None => {
+                        // Stop all witnessing - for now just return an error
+                        // as we don't want to accidentally stop all tracking
+                        IpcMessage::Error {
+                            code: IpcErrorCode::InvalidMessage,
+                            message: "Must specify a file path to stop witnessing".to_string(),
+                        }
+                    }
+                }
+            }
+
+            IpcMessage::GetStatus => {
+                let tracked_files = self.sentinel.tracked_files();
+                let uptime_secs = self
+                    .start_time
+                    .elapsed()
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+
+                IpcMessage::StatusResponse {
+                    running: self.sentinel.is_running(),
+                    tracked_files,
+                    uptime_secs,
+                }
+            }
+
+            // Response messages should not be received by the server
+            IpcMessage::Ok { .. }
+            | IpcMessage::Error { .. }
+            | IpcMessage::HandshakeAck { .. }
+            | IpcMessage::HeartbeatAck { .. }
+            | IpcMessage::StatusResponse { .. } => IpcMessage::Error {
+                code: IpcErrorCode::InvalidMessage,
+                message: "Unexpected response message received as request".to_string(),
+            },
+
+            // Push events are sent from server to client, not the other way
+            IpcMessage::Pulse(_)
+            | IpcMessage::CheckpointCreated { .. }
+            | IpcMessage::SystemAlert { .. } => IpcMessage::Error {
+                code: IpcErrorCode::InvalidMessage,
+                message: "Push events cannot be sent to the server".to_string(),
+            },
+        }
+    }
 }
 
 // Event handling functions (synchronous to avoid Send issues with RwLock guards)
@@ -1774,7 +1994,12 @@ fn is_process_running(_pid: i32) -> bool {
 // CLI Command Handlers
 // ============================================================================
 
-/// Start the sentinel daemon
+/// Start the sentinel daemon with IPC server.
+///
+/// This function:
+/// 1. Creates and starts the Sentinel for document tracking
+/// 2. Starts an IPC server to handle client requests
+/// 3. Writes the PID and state files for daemon management
 pub async fn cmd_start(witnessd_dir: &Path) -> Result<()> {
     let daemon_mgr = DaemonManager::new(witnessd_dir);
 
@@ -1789,8 +2014,26 @@ pub async fn cmd_start(witnessd_dir: &Path) -> Result<()> {
     let config = SentinelConfig::default().with_witnessd_dir(witnessd_dir);
 
     // Create and start sentinel
-    let sentinel = Sentinel::new(config)?;
+    let sentinel = Arc::new(Sentinel::new(config)?);
     sentinel.start().await?;
+
+    // Create IPC server
+    let socket_path = witnessd_dir.join("sentinel.sock");
+    let ipc_server = IpcServer::bind(socket_path.clone())
+        .map_err(|e| SentinelError::Ipc(format!("Failed to bind IPC socket: {}", e)))?;
+
+    // Create IPC handler
+    let ipc_handler = Arc::new(SentinelIpcHandler::new(Arc::clone(&sentinel)));
+
+    // Create shutdown channel for IPC server
+    let (ipc_shutdown_tx, ipc_shutdown_rx) = mpsc::channel::<()>(1);
+
+    // Start IPC server in background
+    let ipc_handle = tokio::spawn(async move {
+        if let Err(e) = ipc_server.run_with_shutdown(ipc_handler, ipc_shutdown_rx).await {
+            eprintln!("IPC server error: {}", e);
+        }
+    });
 
     // Write PID and state
     daemon_mgr.write_pid()?;
@@ -1803,6 +2046,100 @@ pub async fn cmd_start(witnessd_dir: &Path) -> Result<()> {
         version: env!("CARGO_PKG_VERSION").to_string(),
         identity: None,
     })?;
+
+    // Store shutdown sender for later use (when stopping)
+    // For now, we'll just drop it since the daemon will be stopped via signal
+    // In a production setup, you'd want to store this in the DaemonManager
+    // or use a different shutdown mechanism
+    drop(ipc_shutdown_tx);
+    drop(ipc_handle);
+
+    Ok(())
+}
+
+/// Start the sentinel daemon and run until shutdown signal.
+///
+/// This is the main entry point for running the daemon as a foreground process.
+/// It will block until a shutdown signal (SIGTERM, SIGINT) is received.
+pub async fn cmd_start_foreground(witnessd_dir: &Path) -> Result<()> {
+    let daemon_mgr = DaemonManager::new(witnessd_dir);
+
+    if daemon_mgr.is_running() {
+        let status = daemon_mgr.status();
+        if let Some(pid) = status.pid {
+            return Err(SentinelError::DaemonAlreadyRunning(pid));
+        }
+    }
+
+    // Create config
+    let config = SentinelConfig::default().with_witnessd_dir(witnessd_dir);
+
+    // Create and start sentinel
+    let sentinel = Arc::new(Sentinel::new(config)?);
+    sentinel.start().await?;
+
+    // Create IPC server
+    let socket_path = witnessd_dir.join("sentinel.sock");
+    let ipc_server = IpcServer::bind(socket_path.clone())
+        .map_err(|e| SentinelError::Ipc(format!("Failed to bind IPC socket: {}", e)))?;
+
+    // Create IPC handler
+    let ipc_handler = Arc::new(SentinelIpcHandler::new(Arc::clone(&sentinel)));
+
+    // Create shutdown channel for IPC server
+    let (ipc_shutdown_tx, ipc_shutdown_rx) = mpsc::channel::<()>(1);
+
+    // Write PID and state
+    daemon_mgr.write_pid()?;
+    daemon_mgr.write_state(&DaemonState {
+        pid: std::process::id() as i32,
+        started_at: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        identity: None,
+    })?;
+
+    // Start IPC server in background
+    let sentinel_clone = Arc::clone(&sentinel);
+    let ipc_handle = tokio::spawn(async move {
+        if let Err(e) = ipc_server.run_with_shutdown(ipc_handler, ipc_shutdown_rx).await {
+            eprintln!("IPC server error: {}", e);
+        }
+    });
+
+    // Wait for shutdown signal
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut sigterm = signal(SignalKind::terminate()).expect("Failed to install SIGTERM handler");
+        let mut sigint = signal(SignalKind::interrupt()).expect("Failed to install SIGINT handler");
+
+        tokio::select! {
+            _ = sigterm.recv() => {
+                println!("Received SIGTERM, shutting down...");
+            }
+            _ = sigint.recv() => {
+                println!("Received SIGINT, shutting down...");
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        // On non-Unix platforms, just wait for Ctrl+C
+        tokio::signal::ctrl_c().await.expect("Failed to install Ctrl+C handler");
+        println!("Received shutdown signal, shutting down...");
+    }
+
+    // Shutdown sequence
+    let _ = ipc_shutdown_tx.send(()).await;
+    sentinel_clone.stop().await?;
+    ipc_handle.abort();
+
+    // Cleanup
+    daemon_mgr.cleanup();
 
     Ok(())
 }
@@ -1828,7 +2165,9 @@ pub fn cmd_status(witnessd_dir: &Path) -> DaemonStatus {
     daemon_mgr.status()
 }
 
-/// Track a file (placeholder for IPC implementation)
+/// Track a file via IPC to the running daemon.
+///
+/// Sends a StartWitnessing message to the daemon and waits for a response.
 pub fn cmd_track(witnessd_dir: &Path, file_path: &Path) -> Result<()> {
     let daemon_mgr = DaemonManager::new(witnessd_dir);
 
@@ -1836,15 +2175,61 @@ pub fn cmd_track(witnessd_dir: &Path, file_path: &Path) -> Result<()> {
         return Err(SentinelError::DaemonNotRunning);
     }
 
-    // TODO: Implement IPC to send track command to running daemon
+    // Canonicalize the file path to get absolute path
     let abs_path = file_path.canonicalize()?;
-    println!("Would track: {}", abs_path.display());
-    println!("Note: IPC to running daemon not yet implemented.");
 
-    Ok(())
+    // Connect to the daemon socket
+    let socket_path = witnessd_dir.join("sentinel.sock");
+    let mut client = IpcClient::connect(socket_path)
+        .map_err(|e| SentinelError::Ipc(format!("Failed to connect to daemon: {}", e)))?;
+
+    // Send StartWitnessing message
+    let msg = IpcMessage::StartWitnessing {
+        file_path: abs_path.clone(),
+    };
+    let response = client
+        .send_and_recv(&msg)
+        .map_err(|e| SentinelError::Ipc(format!("Failed to communicate with daemon: {}", e)))?;
+
+    // Handle response
+    match response {
+        IpcMessage::Ok { message } => {
+            if let Some(msg) = message {
+                println!("{}", msg);
+            } else {
+                println!("Now tracking: {}", abs_path.display());
+            }
+            Ok(())
+        }
+        IpcMessage::Error { code, message } => {
+            // Map IPC error codes to appropriate sentinel errors
+            match code {
+                IpcErrorCode::FileNotFound => Err(SentinelError::Ipc(format!(
+                    "File not found: {}",
+                    abs_path.display()
+                ))),
+                IpcErrorCode::AlreadyTracking => {
+                    // Not necessarily an error - just inform user
+                    println!("Already tracking: {}", abs_path.display());
+                    Ok(())
+                }
+                IpcErrorCode::PermissionDenied => Err(SentinelError::Ipc(format!(
+                    "Permission denied: {}",
+                    abs_path.display()
+                ))),
+                _ => Err(SentinelError::Ipc(message)),
+            }
+        }
+        _ => Err(SentinelError::Ipc(format!(
+            "Unexpected response from daemon: {:?}",
+            response
+        ))),
+    }
 }
 
-/// Untrack a file (placeholder for IPC implementation)
+/// Untrack a file via IPC to the running daemon.
+///
+/// Sends a StopWitnessing message to the daemon and waits for a response.
 pub fn cmd_untrack(witnessd_dir: &Path, file_path: &Path) -> Result<()> {
     let daemon_mgr = DaemonManager::new(witnessd_dir);
 
@@ -1852,12 +2237,56 @@ pub fn cmd_untrack(witnessd_dir: &Path, file_path: &Path) -> Result<()> {
         return Err(SentinelError::DaemonNotRunning);
     }
 
-    // TODO: Implement IPC to send untrack command to running daemon
+    // Canonicalize the file path to get absolute path
     let abs_path = file_path.canonicalize()?;
-    println!("Would untrack: {}", abs_path.display());
-    println!("Note: IPC to running daemon not yet implemented.");
 
-    Ok(())
+    // Connect to the daemon socket
+    let socket_path = witnessd_dir.join("sentinel.sock");
+    let mut client = IpcClient::connect(socket_path)
+        .map_err(|e| SentinelError::Ipc(format!("Failed to connect to daemon: {}", e)))?;
+
+    // Send StopWitnessing message
+    let msg = IpcMessage::StopWitnessing {
+        file_path: Some(abs_path.clone()),
+    };
+    let response = client
+        .send_and_recv(&msg)
+        .map_err(|e| SentinelError::Ipc(format!("Failed to communicate with daemon: {}", e)))?;
+
+    // Handle response
+    match response {
+        IpcMessage::Ok { message } => {
+            if let Some(msg) = message {
+                println!("{}", msg);
+            } else {
+                println!("Stopped tracking: {}", abs_path.display());
+            }
+            Ok(())
+        }
+        IpcMessage::Error { code, message } => {
+            // Map IPC error codes to appropriate sentinel errors
+            match code {
+                IpcErrorCode::FileNotFound => Err(SentinelError::Ipc(format!(
+                    "File not found: {}",
+                    abs_path.display()
+                ))),
+                IpcErrorCode::NotTracking => {
+                    // Not necessarily an error - just inform user
+                    println!("Not currently tracking: {}", abs_path.display());
+                    Ok(())
+                }
+                IpcErrorCode::PermissionDenied => Err(SentinelError::Ipc(format!(
+                    "Permission denied: {}",
+                    abs_path.display()
+                ))),
+                _ => Err(SentinelError::Ipc(message)),
+            }
+        }
+        _ => Err(SentinelError::Ipc(format!(
+            "Unexpected response from daemon: {:?}",
+            response
+        ))),
+    }
 }
 
 // ============================================================================

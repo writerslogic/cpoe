@@ -13,7 +13,7 @@ pub struct SecureChannel<T> {
     _phantom: std::marker::PhantomData<T>,
 }
 
-struct EncryptedMessage {
+pub struct EncryptedMessage {
     nonce: [u8; 12],
     ciphertext: Vec<u8>,
 }
