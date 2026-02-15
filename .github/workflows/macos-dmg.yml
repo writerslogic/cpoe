@@ -41,11 +41,15 @@ jobs:
 
       - name: Determine version
         id: version
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          GIT_REF: ${{ github.ref }}
+          GIT_REF_NAME: ${{ github.ref_name }}
         run: |
-          if [ -n "${{ github.event.inputs.version }}" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            VERSION="${{ github.ref_name }}"
+          if [ -n "$INPUT_VERSION" ]; then
+            VERSION="$INPUT_VERSION"
+          elif [[ "$GIT_REF" == refs/tags/v* ]]; then
+            VERSION="$GIT_REF_NAME"
             VERSION="${VERSION#v}"
           else
             VERSION="$(git describe --tags --always --dirty | sed 's/^v//')"
@@ -154,11 +158,12 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           SIGNING_IDENTITY: ${{ secrets.APPLE_DEVELOPER_ID }}
           NOTARYTOOL_PROFILE: notarytool
+          SKIP_NOTARIZATION: ${{ github.event.inputs.skip_notarization }}
         run: |
           cd platforms/macos/WitnessdApp/scripts
           chmod +x create-dmg.sh
 
-          if [ "${{ github.event.inputs.skip_notarization }}" == "true" ]; then
+          if [ "$SKIP_NOTARIZATION" == "true" ]; then
             ./create-dmg.sh create --no-notarize --version "$VERSION"
           else
             ./create-dmg.sh release --version "$VERSION"
@@ -172,15 +177,18 @@ jobs:
           cat checksums-macos.txt
 
       - name: Verify DMG
+        env:
+          DMG_NAME: ${{ steps.version.outputs.dmg_name }}
+          SKIP_NOTARIZATION: ${{ github.event.inputs.skip_notarization }}
         run: |
           cd platforms/macos/WitnessdApp/build
-          DMG_FILE="${{ steps.version.outputs.dmg_name }}"
+          DMG_FILE="$DMG_NAME"
 
           # Verify code signature
           codesign --verify --verbose "$DMG_FILE"
 
           # Verify Gatekeeper (if notarized)
-          if [ "${{ github.event.inputs.skip_notarization }}" != "true" ]; then
+          if [ "$SKIP_NOTARIZATION" != "true" ]; then
             spctl --assess --type open --context context:primary-signature "$DMG_FILE" || true
           fi
 

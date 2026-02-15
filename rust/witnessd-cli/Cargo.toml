@@ -3,6 +3,10 @@ name = "witnessd-cli"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+physjitter = ["witnessd-core/physjitter"]
+
 [dependencies]
 witnessd-core = { path = "../witnessd-core" }
 clap = { version = "4.4", features = ["derive"] }

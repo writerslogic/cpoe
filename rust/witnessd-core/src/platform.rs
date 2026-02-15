@@ -905,6 +905,124 @@ pub mod macos {
         pub fn synthetic_injection_detected(&self) -> bool {
             self.rejected_count.load(Ordering::SeqCst) > 0
         }
+
+        /// Start the keystroke monitor with a hybrid jitter session (physjitter-backed).
+        ///
+        /// This variant uses physjitter's hardware entropy when available,
+        /// with automatic fallback to HMAC-based jitter.
+        #[cfg(feature = "physjitter")]
+        pub fn start_with_hybrid(
+            session: Arc<Mutex<crate::physjitter_bridge::HybridJitterSession>>,
+        ) -> Result<Self> {
+            Self::start_with_hybrid_callback(session, None)
+        }
+
+        /// Start the keystroke monitor with a hybrid jitter session and optional callback.
+        #[cfg(feature = "physjitter")]
+        pub fn start_with_hybrid_callback(
+            session: Arc<Mutex<crate::physjitter_bridge::HybridJitterSession>>,
+            callback: Option<KeystrokeCallback>,
+        ) -> Result<Self> {
+            let session_clone = Arc::clone(&session);
+            let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+
+            let keystroke_count = Arc::new(AtomicU64::new(0));
+            let verified_count = Arc::new(AtomicU64::new(0));
+            let rejected_count = Arc::new(AtomicU64::new(0));
+
+            let ks_count = Arc::clone(&keystroke_count);
+            let ver_count = Arc::clone(&verified_count);
+            let rej_count = Arc::clone(&rejected_count);
+
+            let thread = std::thread::spawn(move || {
+                let events = vec![CGEventType::KeyDown];
+                let tap = CGEventTap::new(
+                    CGEventTapLocation::HID,
+                    CGEventTapPlacement::HeadInsertEventTap,
+                    CGEventTapOptions::Default,
+                    events,
+                    move |_proxy, event_type, event| {
+                        if matches!(event_type, CGEventType::KeyDown) {
+                            // Verify event source
+                            let verification = verify_event_source(event);
+
+                            match verification {
+                                EventVerificationResult::Synthetic => {
+                                    // Reject synthetic events
+                                    rej_count.fetch_add(1, Ordering::SeqCst);
+                                    return Some(event.to_owned());
+                                }
+                                EventVerificationResult::Hardware => {
+                                    ver_count.fetch_add(1, Ordering::SeqCst);
+                                }
+                                EventVerificationResult::Suspicious => {
+                                    ver_count.fetch_add(1, Ordering::SeqCst);
+                                }
+                            }
+
+                            let keycode = event.get_integer_value_field(62) as u16;
+                            let zone = crate::jitter::keycode_to_zone(keycode);
+
+                            ks_count.fetch_add(1, Ordering::SeqCst);
+
+                            // Record keystroke in hybrid session
+                            if let Ok(mut s) = session_clone.lock() {
+                                // Ignore errors from record_keystroke (e.g., file not found)
+                                let _ = s.record_keystroke(keycode);
+                            }
+
+                            if let Some(ref cb) = callback {
+                                let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+                                let info = KeystrokeInfo {
+                                    timestamp_ns: now,
+                                    keycode: keycode as i64,
+                                    zone: if zone >= 0 { zone as u8 } else { 0xFF },
+                                    verification,
+                                    device_hint: None,
+                                };
+                                cb(info);
+                            }
+                        }
+                        Some(event.to_owned())
+                    },
+                );
+
+                let tap = match tap {
+                    Ok(tap) => tap,
+                    Err(_) => {
+                        let _ = ready_tx.send(Err(anyhow!("Failed to create CGEventTap")));
+                        return;
+                    }
+                };
+
+                let loop_source = match tap.mach_port.create_runloop_source(0) {
+                    Ok(source) => source,
+                    Err(_) => {
+                        let _ = ready_tx.send(Err(anyhow!("Failed to create runloop source")));
+                        return;
+                    }
+                };
+
+                let _ = ready_tx.send(Ok(()));
+                let current_loop = CFRunLoop::get_current();
+                unsafe {
+                    current_loop.add_source(&loop_source, kCFRunLoopCommonModes);
+                }
+                tap.enable();
+                CFRunLoop::run_current();
+            });
+
+            match ready_rx.recv() {
+                Ok(Ok(())) => Ok(Self {
+                    _thread: thread,
+                    keystroke_count,
+                    verified_count,
+                    rejected_count,
+                }),
+                Ok(Err(err)) => Err(err),
+                Err(_) => Err(anyhow!("Failed to initialize CGEventTap thread")),
+            }
+        }
     }
 
     // =============================================================================

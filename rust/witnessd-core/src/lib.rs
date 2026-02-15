@@ -16,6 +16,8 @@ mod frb_generated; /* AUTO INJECTED BY flutter_rust_bridge. This line may not be
 pub mod identity;
 pub mod jitter;
 pub mod keyhierarchy;
+#[cfg(feature = "physjitter")]
+pub mod physjitter_bridge;
 pub mod mmr;
 pub mod physics;
 pub mod platform;
@@ -42,6 +44,11 @@ pub use crate::research::{
 };
 pub use crate::store::{SecureEvent, SecureStore};
 pub use crate::vdf::{RoughtimeClient, TimeAnchor, TimeKeeper, VdfProof};
+
+#[cfg(feature = "physjitter")]
+pub use crate::physjitter_bridge::{
+    EntropyQuality, HybridEvidence, HybridJitterSession, HybridSample, ZoneTrackingEngine,
+};
 
 #[cfg(target_os = "macos")]
 #[macro_use]

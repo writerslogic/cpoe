@@ -130,6 +130,10 @@ enum TrackAction {
     Start {
         /// Path to the document to track
         file: PathBuf,
+        /// Use hardware entropy when available (physjitter)
+        #[cfg(feature = "physjitter")]
+        #[arg(long, help = "Use hardware entropy when available")]
+        physjitter: bool,
     },
     /// Stop tracking and save evidence
     Stop,
@@ -952,6 +956,98 @@ fn cmd_presence(action: PresenceAction) -> Result<()> {
 // Track Command Implementation
 // =============================================================================
 
+/// Helper function for track start command
+#[allow(unused_variables)]
+fn cmd_track_start(
+    file: &PathBuf,
+    tracking_dir: &PathBuf,
+    current_file: &PathBuf,
+    use_physjitter: bool,
+) -> Result<()> {
+    // Get absolute path for the file
+    let abs_path = fs::canonicalize(file)
+        .with_context(|| format!("Error resolving path: {:?}", file))?;
+
+    // Check file exists
+    if !abs_path.exists() {
+        return Err(anyhow!("File not found: {:?}", file));
+    }
+
+    // Check for existing session
+    if current_file.exists() {
+        return Err(anyhow!(
+            "Tracking session already active. Run 'witnessd track stop' first."
+        ));
+    }
+
+    #[cfg(feature = "physjitter")]
+    if use_physjitter {
+        // Create a new hybrid jitter session with physjitter
+        let jitter_params = default_jitter_params();
+        let session = witnessd_core::HybridJitterSession::new(&abs_path, Some(jitter_params))
+            .map_err(|e| anyhow!("Error creating hybrid session: {}", e))?;
+
+        // Save session info with hybrid marker
+        let session_info = serde_json::json!({
+            "id": session.id,
+            "document_path": abs_path.to_string_lossy(),
+            "started_at": chrono::Utc::now().to_rfc3339(),
+            "hybrid": true,
+        });
+
+        fs::write(current_file, serde_json::to_string_pretty(&session_info)?)?;
+
+        // Save the session itself
+        let session_path = tracking_dir.join(format!("{}.hybrid.json", session.id));
+        session
+            .save(&session_path)
+            .map_err(|e| anyhow!("Error saving session: {}", e))?;
+
+        println!("Keystroke tracking started (physjitter mode).");
+        println!("Session ID: {}", session.id);
+        println!("Document: {:?}", abs_path);
+        println!();
+        println!("Hardware entropy: enabled (with automatic fallback)");
+        println!("PRIVACY NOTE: Only keystroke counts are recorded, NOT key values.");
+        println!();
+        println!("Run 'witnessd track status' to check progress.");
+        println!("Run 'witnessd track stop' when done.");
+        return Ok(());
+    }
+
+    // Standard jitter session (no physjitter or feature not enabled)
+    let jitter_params = default_jitter_params();
+    let session = JitterSession::new(&abs_path, jitter_params)
+        .map_err(|e| anyhow!("Error creating session: {}", e))?;
+
+    // Save session info
+    let session_info = serde_json::json!({
+        "id": session.id,
+        "document_path": abs_path.to_string_lossy(),
+        "started_at": chrono::Utc::now().to_rfc3339(),
+        "hybrid": false,
+    });
+
+    fs::write(current_file, serde_json::to_string_pretty(&session_info)?)?;
+
+    // Save the session itself
+    let session_path = tracking_dir.join(format!("{}.session.json", session.id));
+    session
+        .save(&session_path)
+        .map_err(|e| anyhow!("Error saving session: {}", e))?;
+
+    println!("Keystroke tracking started.");
+    println!("Session ID: {}", session.id);
+    println!("Document: {:?}", abs_path);
+    println!();
+    println!("PRIVACY NOTE: Only keystroke counts are recorded, NOT key values.");
+    println!();
+    println!("Run 'witnessd track status' to check progress.");
+    println!("Run 'witnessd track stop' when done.");
+
+    Ok(())
+}
+
 fn cmd_track(action: TrackAction) -> Result<()> {
     let config = ensure_dirs()?;
     let dir = config.data_dir;
@@ -959,51 +1055,13 @@ fn cmd_track(action: TrackAction) -> Result<()> {
     let current_file = tracking_dir.join("current_session.json");
 
     match action {
+        #[cfg(feature = "physjitter")]
+        TrackAction::Start { file, physjitter } => {
+            cmd_track_start(&file, &tracking_dir, &current_file, physjitter)?;
+        }
+        #[cfg(not(feature = "physjitter"))]
         TrackAction::Start { file } => {
-            // Get absolute path for the file
-            let abs_path = fs::canonicalize(&file)
-                .with_context(|| format!("Error resolving path: {:?}", file))?;
-
-            // Check file exists
-            if !abs_path.exists() {
-                return Err(anyhow!("File not found: {:?}", file));
-            }
-
-            // Check for existing session
-            if current_file.exists() {
-                return Err(anyhow!(
-                    "Tracking session already active. Run 'witnessd track stop' first."
-                ));
-            }
-
-            // Create a new jitter session
-            let jitter_params = default_jitter_params();
-            let session = JitterSession::new(&abs_path, jitter_params)
-                .map_err(|e| anyhow!("Error creating session: {}", e))?;
-
-            // Save session info
-            let session_info = serde_json::json!({
-                "id": session.id,
-                "document_path": abs_path.to_string_lossy(),
-                "started_at": chrono::Utc::now().to_rfc3339(),
-            });
-
-            fs::write(&current_file, serde_json::to_string_pretty(&session_info)?)?;
-
-            // Save the session itself
-            let session_path = tracking_dir.join(format!("{}.session.json", session.id));
-            session
-                .save(&session_path)
-                .map_err(|e| anyhow!("Error saving session: {}", e))?;
-
-            println!("Keystroke tracking started.");
-            println!("Session ID: {}", session.id);
-            println!("Document: {:?}", abs_path);
-            println!();
-            println!("PRIVACY NOTE: Only keystroke counts are recorded, NOT key values.");
-            println!();
-            println!("Run 'witnessd track status' to check progress.");
-            println!("Run 'witnessd track stop' when done.");
+            cmd_track_start(&file, &tracking_dir, &current_file, false)?;
         }
 
         TrackAction::Stop => {
@@ -1015,19 +1073,60 @@ fn cmd_track(action: TrackAction) -> Result<()> {
                 .get("id")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow!("Invalid session info"))?;
+            #[allow(unused_variables)]
+            let is_hybrid = session_info
+                .get("hybrid")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
 
-            // Load session
+            #[cfg(feature = "physjitter")]
+            if is_hybrid {
+                // Load hybrid session
+                let session_path = tracking_dir.join(format!("{}.hybrid.json", session_id));
+                let mut session = witnessd_core::HybridJitterSession::load(&session_path)
+                    .map_err(|e| anyhow!("Error loading hybrid session: {}", e))?;
+
+                session.end();
+                session
+                    .save(&session_path)
+                    .map_err(|e| anyhow!("Error saving session: {}", e))?;
+
+                fs::remove_file(&current_file)?;
+
+                let duration = session.duration();
+                let keystroke_count = session.keystroke_count();
+                let sample_count = session.sample_count();
+                let phys_ratio = session.phys_ratio();
+
+                println!("Tracking session stopped (physjitter mode).");
+                println!("Duration: {:?}", duration);
+                println!("Keystrokes: {}", keystroke_count);
+                println!("Samples: {}", sample_count);
+                println!("Hardware entropy ratio: {:.1}%", phys_ratio * 100.0);
+
+                if duration.as_secs() > 0 {
+                    let keystrokes_per_min = keystroke_count as f64 / (duration.as_secs_f64() / 60.0);
+                    println!("Typing rate: {:.0} keystrokes/min", keystrokes_per_min);
+                }
+
+                println!();
+                println!("Session saved: {}", session_id);
+                println!();
+                println!("Include this tracking evidence when exporting:");
+                println!("  witnessd track export {}", session_id);
+                return Ok(());
+            }
+
+            // Standard session
             let session_path = tracking_dir.join(format!("{}.session.json", session_id));
             let mut session = JitterSession::load(&session_path)
                 .map_err(|e| anyhow!("Error loading session: {}", e))?;
 
-            // End and save
             session.end();
             session
                 .save(&session_path)
                 .map_err(|e| anyhow!("Error saving session: {}", e))?;
 
-            // Remove current session marker
             fs::remove_file(&current_file)?;
 
             let duration = session.duration();
@@ -1065,8 +1164,43 @@ fn cmd_track(action: TrackAction) -> Result<()> {
                 .get("id")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow!("Invalid session info"))?;
+            #[allow(unused_variables)]
+            let is_hybrid = session_info
+                .get("hybrid")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
 
-            // Load session
+            #[cfg(feature = "physjitter")]
+            if is_hybrid {
+                let session_path = tracking_dir.join(format!("{}.hybrid.json", session_id));
+                let session = witnessd_core::HybridJitterSession::load(&session_path)
+                    .map_err(|e| anyhow!("Error loading hybrid session: {}", e))?;
+
+                let duration = session.duration();
+                let keystroke_count = session.keystroke_count();
+                let sample_count = session.sample_count();
+                let phys_ratio = session.phys_ratio();
+
+                println!("=== Active Tracking Session (physjitter) ===");
+                println!("Session ID: {}", session.id);
+                println!("Document: {}", session.document_path);
+                println!(
+                    "Started: {}",
+                    session.started_at.format("%Y-%m-%dT%H:%M:%S%.3fZ")
+                );
+                println!("Duration: {:?}", duration);
+                println!("Keystrokes: {}", keystroke_count);
+                println!("Jitter samples: {}", sample_count);
+                println!("Hardware entropy ratio: {:.1}%", phys_ratio * 100.0);
+
+                if duration.as_secs() > 0 && keystroke_count > 0 {
+                    let keystrokes_per_min = keystroke_count as f64 / (duration.as_secs_f64() / 60.0);
+                    println!("Typing rate: {:.0} keystrokes/min", keystrokes_per_min);
+                }
+                return Ok(());
+            }
+
+            // Standard session
             let session_path = tracking_dir.join(format!("{}.session.json", session_id));
             let session = JitterSession::load(&session_path)
                 .map_err(|e| anyhow!("Error loading session: {}", e))?;
@@ -1096,28 +1230,41 @@ fn cmd_track(action: TrackAction) -> Result<()> {
             let entries =
                 fs::read_dir(&tracking_dir).with_context(|| "Error reading tracking directory")?;
 
-            let mut sessions = Vec::new();
+            let mut standard_sessions = Vec::new();
+            #[cfg(feature = "physjitter")]
+            let mut hybrid_sessions = Vec::new();
+
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .map(|n| n.ends_with(".session.json"))
-                    .unwrap_or(false)
-                {
+                let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+
+                if filename.ends_with(".session.json") {
                     if let Ok(session) = JitterSession::load(&path) {
-                        sessions.push(session);
+                        standard_sessions.push(session);
+                    }
+                }
+
+                #[cfg(feature = "physjitter")]
+                if filename.ends_with(".hybrid.json") {
+                    if let Ok(session) = witnessd_core::HybridJitterSession::load(&path) {
+                        hybrid_sessions.push(session);
                     }
                 }
             }
 
-            if sessions.is_empty() {
+            #[cfg(feature = "physjitter")]
+            let total = standard_sessions.len() + hybrid_sessions.len();
+            #[cfg(not(feature = "physjitter"))]
+            let total = standard_sessions.len();
+
+            if total == 0 {
                 println!("No saved tracking sessions.");
                 return Ok(());
             }
 
             println!("Saved tracking sessions:");
-            for session in sessions {
+
+            for session in standard_sessions {
                 let duration = session.duration();
                 println!(
                     "  {}: {} keystrokes, {} samples, {:?}",
@@ -1127,9 +1274,69 @@ fn cmd_track(action: TrackAction) -> Result<()> {
                     duration
                 );
             }
+
+            #[cfg(feature = "physjitter")]
+            for session in hybrid_sessions {
+                let duration = session.duration();
+                let phys_ratio = session.phys_ratio();
+                println!(
+                    "  {} [physjitter]: {} keystrokes, {} samples, {:?}, {:.0}% hardware",
+                    session.id,
+                    session.keystroke_count(),
+                    session.sample_count(),
+                    duration,
+                    phys_ratio * 100.0
+                );
+            }
         }
 
         TrackAction::Export { session_id } => {
+            // Try to load hybrid session first
+            #[cfg(feature = "physjitter")]
+            {
+                let hybrid_path = tracking_dir.join(format!("{}.hybrid.json", session_id));
+                if hybrid_path.exists() {
+                    let session = witnessd_core::HybridJitterSession::load(&hybrid_path)
+                        .map_err(|e| anyhow!("Error loading hybrid session: {}", e))?;
+
+                    let ev = session.export();
+
+                    // Verify the evidence
+                    ev.verify()
+                        .map_err(|e| anyhow!("Evidence verification failed: {}", e))?;
+
+                    // Export to JSON
+                    let out_path = format!("{}.hybrid-jitter.json", session_id);
+                    let data = ev
+                        .encode()
+                        .map_err(|e| anyhow!("Error encoding evidence: {}", e))?;
+                    fs::write(&out_path, &data)?;
+
+                    println!("Hybrid jitter evidence exported to: {}", out_path);
+                    println!();
+                    println!("Evidence summary:");
+                    println!("  Duration: {:?}", ev.statistics.duration);
+                    println!("  Keystrokes: {}", ev.statistics.total_keystrokes);
+                    println!("  Samples: {}", ev.statistics.total_samples);
+                    println!("  Document states: {}", ev.statistics.unique_doc_hashes);
+                    println!("  Chain valid: {}", ev.statistics.chain_valid);
+                    println!();
+                    println!("Entropy quality:");
+                    println!("  Hardware ratio: {:.1}%", ev.entropy_quality.phys_ratio * 100.0);
+                    println!("  Physics samples: {}", ev.entropy_quality.phys_samples);
+                    println!("  Pure HMAC samples: {}", ev.entropy_quality.pure_samples);
+                    println!("  Source: {}", ev.entropy_source());
+
+                    if ev.is_plausible_human_typing() {
+                        println!("  Plausibility: consistent with human typing");
+                    } else {
+                        println!("  Plausibility: unusual patterns detected");
+                    }
+                    return Ok(());
+                }
+            }
+
+            // Standard session
             let session_path = tracking_dir.join(format!("{}.session.json", session_id));
             let session = JitterSession::load(&session_path)
                 .map_err(|e| anyhow!("Error loading session: {}", e))?;

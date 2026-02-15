@@ -109,6 +109,12 @@ pub struct AnonymizedStatistics {
     pub min_jitter_micros: u32,
     /// Maximum jitter value
     pub max_jitter_micros: u32,
+    /// Physics/hardware entropy ratio (0.0 to 1.0), only present with physjitter
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phys_ratio: Option<f64>,
+    /// Entropy source description, only present with physjitter
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entropy_source: Option<String>,
 }
 
 /// Research data export format
@@ -345,6 +351,35 @@ fn compute_anonymized_statistics(
         jitter_std_dev: std_dev,
         min_jitter_micros: min_jitter,
         max_jitter_micros: max_jitter,
+        phys_ratio: None,
+        entropy_source: None,
+    }
+}
+
+/// Compute anonymized statistics from hybrid evidence (with physjitter).
+#[cfg(feature = "physjitter")]
+pub fn compute_anonymized_statistics_hybrid(
+    stats: &Statistics,
+    samples: &[AnonymizedSample],
+    phys_ratio: f64,
+) -> AnonymizedStatistics {
+    let mut base = compute_anonymized_statistics(stats, samples);
+    base.phys_ratio = Some(phys_ratio);
+    base.entropy_source = Some(describe_entropy_source(phys_ratio));
+    base
+}
+
+/// Describe the entropy source based on physics ratio.
+#[cfg(feature = "physjitter")]
+fn describe_entropy_source(phys_ratio: f64) -> String {
+    if phys_ratio > 0.9 {
+        "hardware (TSC-based)".to_string()
+    } else if phys_ratio > 0.5 {
+        "hybrid (hardware + HMAC)".to_string()
+    } else if phys_ratio > 0.0 {
+        "mostly HMAC (limited hardware)".to_string()
+    } else {
+        "pure HMAC (no hardware entropy)".to_string()
     }
 }
 
