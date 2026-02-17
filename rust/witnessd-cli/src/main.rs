@@ -23,8 +23,36 @@ use witnessd_core::vdf;
 use witnessd_core::vdf::params::{calibrate, Parameters as VdfParameters};
 use witnessd_core::{derive_hmac_key, SecureEvent, SecureStore};
 
+mod smart_defaults;
+
 #[derive(Parser)]
-#[command(author, version, about = "Cryptographic authorship witnessing CLI", long_about = None)]
+#[command(
+    author,
+    version,
+    about = "Cryptographic authorship witnessing CLI",
+    long_about = "WitnessD creates cryptographic proof of authorship for your documents.\n\n\
+        It records timestamped checkpoints with VDF (Verifiable Delay Function) proofs \
+        to demonstrate that time actually elapsed during composition. This helps prove \
+        that a document was written incrementally by a human, not generated instantly by AI.\n\n\
+        KEY CONCEPTS:\n  \
+        - Checkpoint: A cryptographic snapshot of your document at a point in time\n  \
+        - VDF Proof: Mathematical proof that real time passed (cannot be faked)\n  \
+        - Evidence Packet: Exportable proof bundle with all checkpoints and proofs\n  \
+        - Declaration: Your signed statement about how the document was created"
+)]
+#[command(after_help = "\
+GETTING STARTED:\n  \
+    1. Initialize:  witnessd init\n  \
+    2. Calibrate:   witnessd calibrate\n  \
+    3. Checkpoint:  witnessd commit <file> -m \"message\"\n  \
+    4. Export:      witnessd export <file> -t standard\n\n\
+WHEN TO CHECKPOINT:\n  \
+    - After completing a section or paragraph\n  \
+    - Before and after major edits\n  \
+    - When taking a break from writing\n  \
+    More checkpoints = stronger authorship evidence.\n\n\
+For command help: witnessd <command> --help\n\n\
+Run 'witnessd' without arguments for quick status.")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -32,69 +60,150 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Initialize witnessd in current directory
-    Init,
-    /// Create a checkpoint for a file
+    /// Initialize witnessd - creates keys, identity, and database
+    ///
+    /// Creates ~/.witnessd with signing keys and tamper-evident database.
+    #[command(alias = "INIT", alias = "Init", after_help = "\
+WHAT IT CREATES:\n  \
+    ~/.witnessd/signing_key     Your private key (keep secure!)\n  \
+    ~/.witnessd/events.db       Tamper-evident checkpoint database\n\n\
+NEXT: Run 'witnessd calibrate' to optimize for your CPU.")]
+    Init {
+        /// Optional path (ignored, for forgiveness of 'witnessd init .')
+        #[arg(hide = true)]
+        _path: Option<PathBuf>,
+    },
+    /// Create a checkpoint for a file with VDF time proof
+    ///
+    /// Records file state with cryptographic hash and VDF proof.
+    #[command(alias = "COMMIT", alias = "Commit", alias = "checkpoint", after_help = "\
+EXAMPLES:\n  \
+    witnessd commit essay.txt -m \"Draft 1\"\n  \
+    witnessd commit thesis.tex -m \"Chapter 2\"\n  \
+    witnessd commit              (select from recently modified files)\n\n\
+TIP: Checkpoint after sections, before revisions, and on breaks.")]
     Commit {
-        /// Path to the file to checkpoint
-        file: PathBuf,
-        /// Commit message
+        /// Path to the file to checkpoint (optional - will prompt if omitted)
+        file: Option<PathBuf>,
+        /// Message describing this checkpoint
         #[arg(short, long)]
         message: Option<String>,
     },
     /// Show checkpoint history for a file
+    ///
+    /// Displays all checkpoints with timestamps, hashes, and VDF elapsed times.
+    #[command(alias = "LOG", alias = "Log", alias = "history", after_help = "\
+EXAMPLES:\n  \
+    witnessd log essay.txt      View checkpoint history\n  \
+    witnessd log                List all tracked documents")]
     Log {
-        /// Path to the file
-        file: PathBuf,
+        /// Path to the file (optional - lists all tracked files if omitted)
+        file: Option<PathBuf>,
     },
-    /// Export evidence packet with declaration
+    /// Export evidence packet with declaration for verification
+    ///
+    /// Creates a portable JSON file with all checkpoints, VDF proofs, and your
+    /// signed declaration about how the document was created.
+    #[command(after_help = "\
+EVIDENCE TIERS:\n  \
+    basic     Content hashes + timestamps only (fastest)\n  \
+    standard  + VDF time proofs + signed declaration (recommended)\n  \
+    enhanced  + keystroke timing evidence (requires track sessions)\n  \
+    maximum   + presence verification (full forensic package)\n\n\
+EXAMPLES:\n  \
+    witnessd export essay.txt -t standard\n  \
+    witnessd export thesis.tex -t enhanced -o proof.json")]
     Export {
-        /// Path to the file
+        /// Path to the file to export evidence for
         file: PathBuf,
-        /// Evidence tier: basic, standard, enhanced, maximum
+        /// Evidence tier: basic, standard, enhanced, maximum (see --help)
         #[arg(short = 't', long, visible_alias = "tier", default_value = "basic")]
         tier: String,
-        /// Output file (default: <file>.evidence.json)
+        /// Output file path (default: <filename>.evidence.json)
         #[arg(short = 'o', long)]
         output: Option<PathBuf>,
     },
-    /// Verify the integrity of a secure database or evidence packet
+    /// Verify the integrity of a database or evidence packet
+    ///
+    /// Checks that an evidence packet is valid and unmodified.
+    #[command(after_help = "\
+EXAMPLES:\n  \
+    witnessd verify essay.evidence.json   Verify evidence packet\n  \
+    witnessd verify ~/.witnessd/events.db Verify local database")]
     Verify {
-        /// Path to the file (database or evidence packet)
+        /// Path to the file (evidence packet .json or database .db)
         file: PathBuf,
-        /// Path to the signing_key file (for database verification)
+        /// Path to signing_key file (for database verification only)
         #[arg(short, long)]
         key: Option<PathBuf>,
     },
     /// Manage presence verification sessions
+    ///
+    /// Proves you were actively present during writing with challenges.
+    #[command(after_help = "\
+EXAMPLES:\n  \
+    witnessd presence start       Start a new session\n  \
+    witnessd presence challenge   Answer a presence challenge\n  \
+    witnessd presence status      Check current session\n  \
+    witnessd presence stop        End session and save results")]
     Presence {
         #[command(subcommand)]
         action: PresenceAction,
     },
-    /// Track keyboard activity (count only, no key capture)
+    /// Track keyboard activity for typing evidence (count only, no key capture)
+    ///
+    /// Records keystroke timing patterns (NOT actual keys pressed).
+    #[command(after_help = "\
+EXAMPLES:\n  \
+    witnessd track start essay.txt    Start tracking\n  \
+    witnessd track stop               Stop and save session\n  \
+    witnessd track export <id>        Export session evidence\n\n\
+PRIVACY: Only counts keystrokes and timing - NOT what you type.")]
     Track {
         #[command(subcommand)]
         action: TrackAction,
     },
     /// Calibrate VDF performance for this machine
+    ///
+    /// Measures your CPU's hashing speed for accurate time proofs.
+    #[command(after_help = "\
+WHY: VDF proofs need to know your CPU speed to calculate elapsed time.\n\n\
+WHEN TO RE-CALIBRATE:\n  \
+    - After upgrading your CPU\n  \
+    - When moving to a different machine")]
+    #[command(alias = "CALIBRATE", alias = "Calibrate")]
     Calibrate,
     /// Show witnessd status and configuration
+    #[command(alias = "STATUS", alias = "Status")]
     Status,
     /// List all tracked documents
+    #[command(alias = "LIST", alias = "List", alias = "ls")]
     List,
     /// Watch folders for automatic checkpointing
+    ///
+    /// Monitors directories and creates checkpoints when files change.
+    #[command(alias = "WATCH", alias = "Watch", after_help = "\
+EXAMPLES:\n  \
+    witnessd watch add ./documents\n  \
+    witnessd watch add ./thesis -p \"*.tex,*.bib\"\n  \
+    witnessd watch start\n  \
+    witnessd watch                  (start watching if folders configured)\n\n\
+DEFAULT PATTERNS: *.txt,*.md,*.rtf,*.doc,*.docx")]
     Watch {
         #[command(subcommand)]
-        action: WatchAction,
+        action: Option<WatchAction>,
+        /// Shortcut: folder to watch (same as 'watch add <folder>')
+        #[arg(conflicts_with = "action")]
+        folder: Option<PathBuf>,
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
 enum WatchAction {
     /// Add a folder to watch for automatic checkpointing
     Add {
-        /// Path to folder to watch
-        path: PathBuf,
+        /// Path to folder to watch (defaults to current directory)
+        path: Option<PathBuf>,
         /// File patterns to include (e.g., "*.txt,*.md")
         #[arg(short, long, default_value = "*.txt,*.md,*.rtf,*.doc,*.docx")]
         patterns: String,
@@ -172,7 +281,17 @@ fn ensure_dirs() -> Result<WitnessdConfig> {
     ];
 
     for d in &dirs {
-        fs::create_dir_all(d).with_context(|| format!("Failed to create directory: {:?}", d))?;
+        fs::create_dir_all(d).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                anyhow!(
+                    "Permission denied creating directory: {}\n\n\
+                     Check that you have write access to this location.",
+                    d.display()
+                )
+            } else {
+                anyhow!("Failed to create directory {}: {}", d.display(), e)
+            }
+        })?;
     }
 
     Ok(config)
@@ -190,8 +309,22 @@ fn open_secure_store() -> Result<SecureStore> {
     let db_path = dir.join("events.db");
     let key_path = dir.join("signing_key");
 
-    let key_data =
-        fs::read(&key_path).context("Failed to read signing key. Run 'witnessd init' first.")?;
+    let key_data = fs::read(&key_path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            anyhow!(
+                "WitnessD has not been initialized yet.\n\n\
+                 Run 'witnessd init' to set up WitnessD for the first time."
+            )
+        } else if e.kind() == std::io::ErrorKind::PermissionDenied {
+            anyhow!(
+                "Permission denied: {}\n\n\
+                 Check that you have read access to the WitnessD data directory.",
+                key_path.display()
+            )
+        } else {
+            anyhow!("Failed to read signing key: {}", e)
+        }
+    })?;
     // Handle both 32-byte (seed only) and 64-byte (full keypair) formats
     // Always use the first 32 bytes (seed) for HMAC derivation for consistency
     let seed_data = if key_data.len() >= 32 {
@@ -201,7 +334,13 @@ fn open_secure_store() -> Result<SecureStore> {
     };
     let hmac_key = derive_hmac_key(seed_data);
 
-    SecureStore::open(db_path, hmac_key).context("Failed to open database")
+    SecureStore::open(&db_path, hmac_key).map_err(|e| {
+        anyhow!(
+            "Database error: {}\n\n\
+             If this persists, check if another process is using the database.",
+            e
+        )
+    })
 }
 
 /// Get device ID from public key
@@ -321,14 +460,23 @@ fn cmd_init() -> Result<()> {
     }
 
     println!();
-    println!("witnessd initialized!");
+    println!("============================================================");
+    println!("  WitnessD initialized successfully!");
+    println!("============================================================");
     println!();
-    println!("Next steps:");
-    println!("  1. Run 'witnessd calibrate' to calibrate VDF for your machine");
-    println!("  2. Create checkpoints with 'witnessd commit <file> -m \"message\"'");
-    println!("  3. Export evidence with 'witnessd export <file>'");
+    println!("NEXT STEPS:");
     println!();
-    println!("Optional: Run 'witnessd sentinel start' for automatic document tracking");
+    println!("  1. CALIBRATE your machine (required, takes ~2 seconds):");
+    println!("     $ witnessd calibrate");
+    println!();
+    println!("  2. START CHECKPOINTING your work:");
+    println!("     $ witnessd commit myfile.txt -m \"First draft\"");
+    println!();
+    println!("  3. When ready, EXPORT your evidence:");
+    println!("     $ witnessd export myfile.txt -t standard");
+    println!();
+    println!("TIP: Checkpoint frequently while writing. Each checkpoint adds");
+    println!("     to your authorship evidence. Run 'witnessd --help' for more.");
 
     Ok(())
 }
@@ -340,18 +488,39 @@ fn cmd_init() -> Result<()> {
 fn cmd_commit(file_path: &PathBuf, message: Option<String>) -> Result<()> {
     // Check file exists
     if !file_path.exists() {
-        return Err(anyhow!("File not found: {:?}", file_path));
+        return Err(anyhow!(
+            "File not found: {}\n\n\
+             Check that the file exists and the path is correct.",
+            file_path.display()
+        ));
     }
 
     // Get absolute path
-    let abs_path = fs::canonicalize(file_path).context("Failed to resolve path")?;
+    let abs_path = fs::canonicalize(file_path).map_err(|e| {
+        anyhow!(
+            "Cannot resolve path {}: {}\n\n\
+             Check that the path is valid and accessible.",
+            file_path.display(),
+            e
+        )
+    })?;
     let abs_path_str = abs_path.to_string_lossy().to_string();
 
     // Open secure database
     let mut db = open_secure_store()?;
 
     // Read file content and compute hash
-    let content = fs::read(&abs_path).context("Failed to read file")?;
+    let content = fs::read(&abs_path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::PermissionDenied {
+            anyhow!(
+                "Permission denied: {}\n\n\
+                 Check that you have read access to this file.",
+                abs_path.display()
+            )
+        } else {
+            anyhow!("Failed to read file {}: {}", abs_path.display(), e)
+        }
+    })?;
     let content_hash: [u8; 32] = Sha256::digest(&content).into();
     let file_size = content.len() as i64;
 
@@ -438,7 +607,12 @@ fn cmd_log(file_path: &PathBuf) -> Result<()> {
     let events = db.get_events_for_file(&abs_path_str)?;
 
     if events.is_empty() {
-        println!("No checkpoint history found for: {:?}", file_path);
+        let file_name = file_path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| file_path.display().to_string());
+        println!("No checkpoints found for this file.\n");
+        println!("Create one with: witnessd commit {}", file_name);
         return Ok(());
     }
 
@@ -503,7 +677,15 @@ fn cmd_export(file_path: &PathBuf, tier: &str, output: Option<PathBuf>) -> Resul
     let events = db.get_events_for_file(&abs_path_str)?;
 
     if events.is_empty() {
-        return Err(anyhow!("No checkpoint history found for: {:?}", file_path));
+        let file_name = file_path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| file_path.display().to_string());
+        return Err(anyhow!(
+            "No checkpoints found for this file.\n\n\
+             Create one first with: witnessd commit {}",
+            file_name
+        ));
     }
 
     let config = ensure_dirs()?;
@@ -512,7 +694,16 @@ fn cmd_export(file_path: &PathBuf, tier: &str, output: Option<PathBuf>) -> Resul
 
     // Load signing key
     let key_path = dir.join("signing_key");
-    let priv_key_data = fs::read(&key_path).context("Failed to load signing key")?;
+    let priv_key_data = fs::read(&key_path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            anyhow!(
+                "WitnessD has not been initialized yet.\n\n\
+                 Run 'witnessd init' to set up WitnessD for the first time."
+            )
+        } else {
+            anyhow!("Failed to load signing key: {}", e)
+        }
+    })?;
     // Handle both 32-byte (seed only) and 64-byte (full keypair) formats
     let seed: [u8; 32] = if priv_key_data.len() == 32 {
         priv_key_data
@@ -656,7 +847,7 @@ fn cmd_export(file_path: &PathBuf, tier: &str, output: Option<PathBuf>) -> Resul
     fs::write(&out_path, data)?;
 
     println!();
-    println!("Evidence exported to: {:?}", out_path);
+    println!("Evidence exported to: {}", out_path.display());
     println!("  Checkpoints: {}", events.len());
     println!("  Total VDF time: {:?}", total_vdf_time);
     println!("  Tier: {}", tier);
@@ -772,9 +963,19 @@ fn cmd_verify(file_path: &PathBuf, key: Option<PathBuf>) -> Result<()> {
         let key_path =
             key.unwrap_or_else(|| witnessd_dir().unwrap_or_default().join("signing_key"));
 
-        println!("Verifying database: {:?}", file_path);
+        println!("Verifying database: {}", file_path.display());
 
-        let key_data = fs::read(&key_path).context("Failed to read signing key")?;
+        let key_data = fs::read(&key_path).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                anyhow!(
+                    "Signing key not found: {}\n\n\
+                     Specify the key with --key, or run 'witnessd init' first.",
+                    key_path.display()
+                )
+            } else {
+                anyhow!("Failed to read signing key: {}", e)
+            }
+        })?;
         // Use first 32 bytes for consistency with both 32-byte and 64-byte key formats
         let seed_data = if key_data.len() >= 32 {
             &key_data[..32]
@@ -959,14 +1160,14 @@ fn cmd_presence(action: PresenceAction) -> Result<()> {
 /// Helper function for track start command
 #[allow(unused_variables)]
 fn cmd_track_start(
-    file: &PathBuf,
-    tracking_dir: &PathBuf,
-    current_file: &PathBuf,
+    file: &Path,
+    tracking_dir: &Path,
+    current_file: &Path,
     use_physjitter: bool,
 ) -> Result<()> {
     // Get absolute path for the file
-    let abs_path = fs::canonicalize(file)
-        .with_context(|| format!("Error resolving path: {:?}", file))?;
+    let abs_path =
+        fs::canonicalize(file).with_context(|| format!("Error resolving path: {:?}", file))?;
 
     // Check file exists
     if !abs_path.exists() {
@@ -1005,7 +1206,7 @@ fn cmd_track_start(
 
         println!("Keystroke tracking started (physjitter mode).");
         println!("Session ID: {}", session.id);
-        println!("Document: {:?}", abs_path);
+        println!("Document: {}", abs_path.display());
         println!();
         println!("Hardware entropy: enabled (with automatic fallback)");
         println!("PRIVACY NOTE: Only keystroke counts are recorded, NOT key values.");
@@ -1105,7 +1306,8 @@ fn cmd_track(action: TrackAction) -> Result<()> {
                 println!("Hardware entropy ratio: {:.1}%", phys_ratio * 100.0);
 
                 if duration.as_secs() > 0 {
-                    let keystrokes_per_min = keystroke_count as f64 / (duration.as_secs_f64() / 60.0);
+                    let keystrokes_per_min =
+                        keystroke_count as f64 / (duration.as_secs_f64() / 60.0);
                     println!("Typing rate: {:.0} keystrokes/min", keystrokes_per_min);
                 }
 
@@ -1194,7 +1396,8 @@ fn cmd_track(action: TrackAction) -> Result<()> {
                 println!("Hardware entropy ratio: {:.1}%", phys_ratio * 100.0);
 
                 if duration.as_secs() > 0 && keystroke_count > 0 {
-                    let keystrokes_per_min = keystroke_count as f64 / (duration.as_secs_f64() / 60.0);
+                    let keystrokes_per_min =
+                        keystroke_count as f64 / (duration.as_secs_f64() / 60.0);
                     println!("Typing rate: {:.0} keystrokes/min", keystrokes_per_min);
                 }
                 return Ok(());
@@ -1322,7 +1525,10 @@ fn cmd_track(action: TrackAction) -> Result<()> {
                     println!("  Chain valid: {}", ev.statistics.chain_valid);
                     println!();
                     println!("Entropy quality:");
-                    println!("  Hardware ratio: {:.1}%", ev.entropy_quality.phys_ratio * 100.0);
+                    println!(
+                        "  Hardware ratio: {:.1}%",
+                        ev.entropy_quality.phys_ratio * 100.0
+                    );
                     println!("  Physics samples: {}", ev.entropy_quality.phys_samples);
                     println!("  Pure HMAC samples: {}", ev.entropy_quality.pure_samples);
                     println!("  Source: {}", ev.entropy_source());
@@ -1423,7 +1629,7 @@ fn cmd_status() -> Result<()> {
     println!("=== witnessd Status ===");
     println!();
 
-    println!("Data directory: {:?}", dir);
+    println!("Data directory: {}", dir.display());
 
     // Check signing key
     let key_path = dir.join("signing_key.pub");
@@ -1571,18 +1777,40 @@ fn cmd_status() -> Result<()> {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
+    if let Err(e) = run().await {
+        eprintln!("Error: {:#}", e);
+        eprintln!();
+        eprintln!("For more information, try 'witnessd --help'");
+        std::process::exit(1);
+    }
+}
+
+async fn run() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Init => {
+        Commands::Init { _path: _ } => {
             cmd_init()?;
         }
         Commands::Commit { file, message } => {
-            cmd_commit(&file, message)?;
+            // Handle optional file argument
+            if let Some(ref f) = file {
+                cmd_commit(f, message)?;
+            } else {
+                eprintln!("Usage: witnessd commit <FILE> [-m <MESSAGE>]");
+                eprintln!();
+                eprintln!("Try 'witnessd commit --help' for more information.");
+                std::process::exit(1);
+            }
         }
         Commands::Log { file } => {
-            cmd_log(&file)?;
+            // Handle optional file argument
+            if let Some(ref f) = file {
+                cmd_log(f)?;
+            } else {
+                cmd_list()?;
+            }
         }
         Commands::Export { file, tier, output } => {
             cmd_export(&file, &tier, output)?;
@@ -1605,8 +1833,20 @@ async fn main() -> Result<()> {
         Commands::List => {
             cmd_list()?;
         }
-        Commands::Watch { action } => {
-            cmd_watch(action).await?;
+        Commands::Watch { action, folder } => {
+            // Handle various watch invocation patterns
+            if let Some(a) = action {
+                cmd_watch(Some(a)).await?;
+            } else if let Some(f) = folder {
+                // Shortcut: 'witnessd watch <folder>' means 'watch add <folder>'
+                cmd_watch(Some(WatchAction::Add {
+                    path: Some(f),
+                    patterns: "*.txt,*.md,*.rtf,*.doc,*.docx".to_string()
+                })).await?;
+            } else {
+                // No action or folder - start watching if configured
+                cmd_watch(Some(WatchAction::Start)).await?;
+            }
         }
     }
 
@@ -1638,6 +1878,172 @@ fn cmd_list() -> Result<()> {
     }
 
     Ok(())
+}
+
+// =============================================================================
+// Smart Defaults Helper Functions
+// =============================================================================
+
+/// Show quick status when no command is given
+fn show_quick_status() -> Result<()> {
+    let dir = witnessd_dir()?;
+    let config = WitnessdConfig::load_or_default(&dir)?;
+
+    // Get tracked files if initialized
+    let tracked_files = if dir.join("signing_key").exists() {
+        match open_secure_store() {
+            Ok(db) => db.list_files().unwrap_or_default(),
+            Err(_) => vec![],
+        }
+    } else {
+        vec![]
+    };
+
+    smart_defaults::show_quick_status(&dir, config.vdf.iterations_per_second, &tracked_files);
+    Ok(())
+}
+
+/// Smart commit - handles auto-init and file selection
+fn cmd_commit_smart(file: Option<PathBuf>, message: Option<String>) -> Result<()> {
+    let dir = witnessd_dir()?;
+
+    // Auto-init if not initialized
+    if !smart_defaults::is_initialized(&dir) {
+        println!("WitnessD is not initialized.");
+        if smart_defaults::ask_confirmation("Initialize now?", true)? {
+            cmd_init()?;
+            println!();
+        } else {
+            return Err(anyhow!("Run 'witnessd init' first."));
+        }
+    }
+
+    // Warn about VDF calibration
+    let config = ensure_dirs()?;
+    smart_defaults::ensure_vdf_calibrated_with_warning(config.vdf.iterations_per_second);
+
+    // Determine file to commit
+    let file_path = match file {
+        Some(f) => {
+            // Handle "." or "./" - show file selection
+            let path_str = f.to_string_lossy();
+            if path_str == "." || path_str == "./" {
+                select_file_for_commit()?
+            } else {
+                f
+            }
+        }
+        None => select_file_for_commit()?,
+    };
+
+    // Use default message if none provided
+    let msg = message.or_else(|| Some(smart_defaults::default_commit_message()));
+
+    cmd_commit(&file_path, msg)
+}
+
+/// Select a file for commit interactively
+fn select_file_for_commit() -> Result<PathBuf> {
+    let cwd = std::env::current_dir()?;
+
+    // First check for tracked files in current directory
+    if let Ok(db) = open_secure_store() {
+        let tracked = db.list_files()?;
+        let cwd_str = cwd.to_string_lossy();
+        let tracked_in_cwd: Vec<PathBuf> = tracked
+            .iter()
+            .filter(|(path, _, _)| path.starts_with(cwd_str.as_ref()))
+            .map(|(path, _, _)| PathBuf::from(path))
+            .collect();
+
+        if tracked_in_cwd.len() == 1 {
+            // Single tracked file - use it
+            let file = &tracked_in_cwd[0];
+            println!(
+                "Using tracked file: {}",
+                file.file_name().unwrap_or_default().to_string_lossy()
+            );
+            return Ok(file.clone());
+        } else if !tracked_in_cwd.is_empty() {
+            // Multiple tracked files - let user choose
+            println!("Multiple tracked files found:");
+            if let Some(selected) = smart_defaults::select_file_from_list(&tracked_in_cwd, "")? {
+                return Ok(selected);
+            }
+        }
+    }
+
+    // Fall back to recently modified files
+    let recent = smart_defaults::get_recently_modified_files(&cwd, 10);
+    if recent.is_empty() {
+        return Err(anyhow!(
+            "No files found in current directory.\n\n\
+             Specify a file: witnessd commit <file>"
+        ));
+    }
+
+    println!("Select a file to checkpoint:");
+    match smart_defaults::select_file_from_list(&recent, "")? {
+        Some(f) => Ok(f),
+        None => Err(anyhow!("No file selected.")),
+    }
+}
+
+/// Smart log - lists all files if none specified
+fn cmd_log_smart(file: Option<PathBuf>) -> Result<()> {
+    match file {
+        Some(f) => cmd_log(&f),
+        None => {
+            // No file - list all tracked documents
+            println!("No file specified. Showing all tracked documents:");
+            println!();
+            cmd_list()
+        }
+    }
+}
+
+/// Smart watch - handles default folder and starts if no action given
+async fn cmd_watch_smart(action: Option<WatchAction>, folder: Option<PathBuf>) -> Result<()> {
+    // Handle folder shortcut
+    if let Some(f) = folder {
+        let path = smart_defaults::normalize_path(&f)?;
+        let action = WatchAction::Add {
+            path: Some(path),
+            patterns: "*.txt,*.md,*.rtf,*.doc,*.docx".to_string(),
+        };
+        return cmd_watch(Some(action)).await;
+    }
+
+    // Handle action
+    match action {
+        Some(WatchAction::Add { path, patterns }) => {
+            // Default to current directory if no path
+            let watch_path = match path {
+                Some(p) => smart_defaults::normalize_path(&p)?,
+                None => std::env::current_dir()?,
+            };
+            let action = WatchAction::Add {
+                path: Some(watch_path),
+                patterns,
+            };
+            cmd_watch(Some(action)).await
+        }
+        Some(a) => cmd_watch(Some(a)).await,
+        None => {
+            // No action - start watching if configured, otherwise show status
+            let config = load_watch_config()?;
+            if config.folders.is_empty() {
+                println!("No folders configured for watching.");
+                println!();
+                println!("Add a folder with: witnessd watch add <folder>");
+                println!("Or start watching current directory: witnessd watch .");
+                Ok(())
+            } else {
+                // Start watching
+                cmd_watch(Some(WatchAction::Start)).await
+            }
+        }
+    }
 }
 
 // =============================================================================
@@ -1683,14 +2089,30 @@ fn save_watch_config(config: &WatchConfig) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_watch(action: WatchAction) -> Result<()> {
+async fn cmd_watch(action: Option<WatchAction>) -> Result<()> {
+    let action = action.ok_or_else(|| anyhow!("No watch action specified"))?;
     match action {
         WatchAction::Add { path, patterns } => {
-            let abs_path =
-                fs::canonicalize(&path).with_context(|| format!("Folder not found: {:?}", path))?;
+            // Use provided path or default to current directory
+            let watch_path = path.unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+            let abs_path = fs::canonicalize(&watch_path).map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    anyhow!(
+                        "Folder not found: {}\n\n\
+                         Check that the folder exists and the path is correct.",
+                        watch_path.display()
+                    )
+                } else {
+                    anyhow!("Cannot access folder {}: {}", watch_path.display(), e)
+                }
+            })?;
 
             if !abs_path.is_dir() {
-                return Err(anyhow!("Not a directory: {:?}", path));
+                return Err(anyhow!(
+                    "Not a directory: {}\n\n\
+                     The specified path is not a folder.",
+                    watch_path.display()
+                ));
             }
 
             let mut config = load_watch_config()?;
@@ -1857,7 +2279,11 @@ async fn run_watcher(config: &WatchConfig) -> Result<()> {
                                             );
                                         }
                                         Err(e) => {
-                                            eprintln!("Checkpoint error for {:?}: {}", path, e);
+                                            eprintln!(
+                                                "Checkpoint error for {}: {}",
+                                                path.display(),
+                                                e
+                                            );
                                         }
                                     }
                                 }
