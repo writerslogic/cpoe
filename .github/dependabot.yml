@@ -1,57 +1,42 @@
 version: 2
 
-registries:
-  # Configure private Go modules registry if needed
-  go-modules:
-    type: git
-    url: https://github.com
-    username: x-access-token
-    password: ${{ secrets.GITHUB_TOKEN }}
-
 updates:
   # ============================================================================
-  # Go Modules
+  # Rust/Cargo Dependencies
   # ============================================================================
-  - package-ecosystem: "gomod"
-    directory: "/"
+  - package-ecosystem: "cargo"
+    directory: "/rust/witnessd-core"
     schedule:
       interval: "weekly"
       day: "monday"
       time: "06:00"
       timezone: "America/Los_Angeles"
     open-pull-requests-limit: 10
-    reviewers:
-      - "writerslogic/maintainers"
     labels:
       - "dependencies"
-      - "go"
+      - "rust"
       - "automated"
     commit-message:
-      prefix: "deps(go)"
+      prefix: "deps(rust)"
       include: "scope"
     groups:
-      # Security-critical crypto libraries - update immediately
+      # Security-critical crypto libraries
       crypto-updates:
         patterns:
-          - "golang.org/x/crypto"
-          - "crypto/*"
+          - "sha2"
+          - "ed25519-dalek"
+          - "chacha20poly1305"
+          - "hkdf"
+          - "hmac"
+          - "rsa"
         update-types:
           - "minor"
           - "patch"
-      # Standard library extensions
-      golang-x:
+      # Async runtime
+      async-runtime:
         patterns:
-          - "golang.org/x/*"
-        exclude-patterns:
-          - "golang.org/x/crypto"
-        update-types:
-          - "minor"
-          - "patch"
-      # Testing dependencies
-      testing-deps:
-        patterns:
-          - "github.com/stretchr/testify"
-          - "github.com/google/go-cmp"
+          - "tokio"
+          - "async-trait"
         update-types:
           - "minor"
           - "patch"
@@ -59,10 +44,6 @@ updates:
       all-minor-patch:
         patterns:
           - "*"
-        exclude-patterns:
-          - "golang.org/x/*"
-          - "github.com/stretchr/testify"
-          - "github.com/google/go-cmp"
         update-types:
           - "minor"
           - "patch"
@@ -70,9 +51,23 @@ updates:
       # Ignore major version bumps that may break compatibility
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
-    # Allow security updates for all dependencies
-    allow:
-      - dependency-type: "all"
+
+  - package-ecosystem: "cargo"
+    directory: "/rust/witnessd-cli"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "America/Los_Angeles"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "rust"
+      - "cli"
+      - "automated"
+    commit-message:
+      prefix: "deps(cli)"
+      include: "scope"
 
   # ============================================================================
   # GitHub Actions
@@ -85,8 +80,6 @@ updates:
       time: "06:00"
       timezone: "America/Los_Angeles"
     open-pull-requests-limit: 5
-    reviewers:
-      - "writerslogic/maintainers"
     labels:
       - "dependencies"
       - "ci"
@@ -106,66 +99,7 @@ updates:
       security-actions:
         patterns:
           - "github/codeql-action"
-          - "securego/gosec"
           - "aquasecurity/trivy-action"
         update-types:
           - "minor"
           - "patch"
-      # Build and release actions
-      build-actions:
-        patterns:
-          - "goreleaser/goreleaser-action"
-          - "docker/*"
-        update-types:
-          - "minor"
-          - "patch"
-
-  # ============================================================================
-  # Docker (Development Containers)
-  # ============================================================================
-  - package-ecosystem: "docker"
-    directory: "/.devcontainer"
-    schedule:
-      interval: "monthly"
-      day: "monday"
-      time: "06:00"
-    open-pull-requests-limit: 2
-    labels:
-      - "dependencies"
-      - "docker"
-      - "devcontainer"
-    commit-message:
-      prefix: "docker(devcontainer)"
-
-  # ============================================================================
-  # Docker (Production)
-  # ============================================================================
-  - package-ecosystem: "docker"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "06:00"
-    open-pull-requests-limit: 3
-    labels:
-      - "dependencies"
-      - "docker"
-    commit-message:
-      prefix: "docker"
-
-  # ============================================================================
-  # npm (if any Node.js tooling)
-  # ============================================================================
-  - package-ecosystem: "npm"
-    directory: "/tools"
-    schedule:
-      interval: "monthly"
-    open-pull-requests-limit: 3
-    labels:
-      - "dependencies"
-      - "javascript"
-    commit-message:
-      prefix: "deps(npm)"
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
