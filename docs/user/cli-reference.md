@@ -535,7 +535,6 @@ witnessd v1.0.0
   Build:    2026-01-15T10:00:00Z
   Commit:   abc12345
   Platform: darwin/arm64
-  Go:       go1.21.5
 ```
 
 ---

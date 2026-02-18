@@ -37,3 +37,25 @@ impl SiliconPUF {
         out
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_puf_generates_fingerprint() {
+        let fp = SiliconPUF::generate_fingerprint();
+        assert_ne!(fp, [0u8; 32]);
+    }
+
+    #[test]
+    fn test_puf_uniqueness() {
+        let fp1 = SiliconPUF::generate_fingerprint();
+        let fp2 = SiliconPUF::generate_fingerprint();
+        
+        // Due to the nature of cache timing, two consecutive runs are 
+        // extremely unlikely to have identical timing for 100 samples.
+        assert_ne!(fp1, fp2, "PUF should generate unique fingerprints each time");
+    }
+}
+

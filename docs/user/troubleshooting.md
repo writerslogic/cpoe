@@ -40,22 +40,21 @@ Solutions to common issues with witnessd.
    brew reinstall witnessd
    ```
 
-### Build Fails with Go Errors
+### Build Fails with Rust Errors
 
-**Cause:** Incompatible Go version or missing dependencies.
+**Cause:** Incompatible Rust version or missing dependencies.
 
 **Solution:**
 ```bash
-# Check Go version (requires 1.21+)
-go version
+# Check Rust version (requires 1.75+)
+rustc --version
 
-# Update Go
-brew upgrade go
+# Update Rust
+rustup update stable
 
 # Clean and rebuild
-make clean
-go mod tidy
-make build
+cargo clean
+cargo build --release
 ```
 
 ### Permission Denied During Install

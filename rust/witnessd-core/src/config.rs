@@ -402,3 +402,42 @@ impl From<WitnessdConfig> for VdfParameters {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_config_defaults() {
+        let dir = tempdir().unwrap();
+        let config = WitnessdConfig::default_with_dir(dir.path());
+        
+        assert_eq!(config.data_dir, dir.path());
+        assert_eq!(config.retention_days, 30);
+        assert!(config.vdf.iterations_per_second > 0);
+        assert!(!config.sentinel.allowed_apps.is_empty());
+    }
+
+    #[test]
+    fn test_config_persistence() {
+        let dir = tempdir().unwrap();
+        let config = WitnessdConfig::default_with_dir(dir.path());
+        config.persist().expect("persist failed");
+
+        let loaded = WitnessdConfig::load_or_default(dir.path()).expect("load failed");
+        assert_eq!(loaded.data_dir, config.data_dir);
+        assert_eq!(loaded.vdf.iterations_per_second, config.vdf.iterations_per_second);
+    }
+
+    #[test]
+    fn test_sentinel_app_blocking() {
+        let config = SentinelConfig::default();
+        // Check defaults
+        assert!(config.is_app_allowed("com.apple.TextEdit", "TextEdit"));
+        assert!(!config.is_app_allowed("com.apple.finder", "Finder"));
+        
+        // Check unknown (assuming track_unknown_apps is true by default)
+        assert!(config.is_app_allowed("com.unknown.App", "Unknown"));
+    }
+}

@@ -21,7 +21,7 @@ Witnessd is a cryptographic authorship witnessing system that creates tamper-evi
 | CPU | 64-bit processor (x86_64 or ARM64) |
 | RAM | 512 MB available |
 | Storage | 100 MB for installation, plus space for evidence data |
-| Go | 1.21+ (for building from source) |
+| Rust | 1.75+ (for building from source) |
 
 ### Optional Hardware
 
@@ -81,7 +81,6 @@ witnessd v1.0.0
   Build:    2026-01-15T10:00:00Z
   Commit:   abc1234
   Platform: darwin/arm64
-  Go:       go1.21.5
 ```
 
 ## Initial Setup

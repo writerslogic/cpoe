@@ -20,16 +20,15 @@ you are expected to uphold this code.
 ### Development Setup
 
 1. **Prerequisites**
-   - Go 1.21 or later
-   - Make (or Task)
+   - Rust 1.75 or later (stable toolchain)
+   - Cargo (included with Rust)
    - Pre-commit (recommended)
-   - Docker (for integration tests)
+   - System dependencies (e.g., OpenSSL headers, `tpm2-tss-dev` on Linux)
 
 2. **Clone and Setup**
    ```bash
    git clone https://github.com/writerslogic/witnessd.git
    cd witnessd
-   make setup
    ```
 
 3. **Install Pre-commit Hooks**
@@ -39,9 +38,13 @@ you are expected to uphold this code.
 
 4. **Run Tests**
    ```bash
-   make test              # Unit tests
-   make test-integration  # Integration tests (requires Docker)
-   make test-forensics    # Forensic analysis tests
+   # Run core library tests
+   cd rust/witnessd-core
+   cargo test
+
+   # Run CLI tests
+   cd ../witnessd-cli
+   cargo test
    ```
 
 ### Making Changes
@@ -67,9 +70,10 @@ you are expected to uphold this code.
 
 4. **Run All Checks**
    ```bash
-   make lint    # Linters
-   make test    # Tests
-   make build   # Build verification
+   # From project root or rust/ directory
+   cargo fmt --all -- --check  # Check formatting
+   cargo clippy --all-targets --all-features -- -D warnings  # Linting
+   cargo test --all-features   # Run all tests
    ```
 
 5. **Submit Pull Request**
@@ -79,18 +83,18 @@ you are expected to uphold this code.
 
 ### Code Style
 
-- Follow standard Go conventions (`gofmt`, `goimports`)
+- Follow standard Rust conventions (`rustfmt`, idiomatic Rust)
 - Use meaningful names for variables and functions
-- Document exported functions and types
+- Document exported functions and types with doc comments (`///`)
 - Keep functions focused and reasonably sized
 
 ### Cryptographic Code Guidelines
 
 Extra care is required for cryptographic code:
 
-1. **No Custom Primitives:** Use stdlib `crypto/*` or `golang.org/x/crypto`
+1. **No Custom Primitives:** Use established crates like `sha2`, `ed25519-dalek`, `hmac`.
 2. **Document Assumptions:** Security assumptions and threat models
-3. **Constant-Time Operations:** Use `subtle.ConstantTimeCompare` for secrets
+3. **Constant-Time Operations:** Use constant-time comparison crates/functions for secrets
 4. **Review Required:** Crypto changes require security-experienced maintainer review
 
 ### Documentation
@@ -111,7 +115,7 @@ Extra care is required for cryptographic code:
 
 Releases are managed by maintainers:
 - Semantic versioning (MAJOR.MINOR.PATCH)
-- Goreleaser for builds
+- Github Actions / `cargo-dist` for builds
 - SLSA provenance for supply chain security
 - SBOM generation for compliance
 

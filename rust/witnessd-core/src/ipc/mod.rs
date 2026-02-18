@@ -929,3 +929,108 @@ impl Default for AsyncIpcClient {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use tempfile::tempdir;
+
+    struct TestHandler;
+    impl IpcMessageHandler for TestHandler {
+        fn handle(&self, msg: IpcMessage) -> IpcMessage {
+            match msg {
+                IpcMessage::Handshake { version } => IpcMessage::HandshakeAck {
+                    version,
+                    server_version: "1.0.0-test".to_string(),
+                },
+                IpcMessage::GetStatus => IpcMessage::StatusResponse {
+                    running: true,
+                    tracked_files: vec!["test.txt".to_string()],
+                    uptime_secs: 42,
+                },
+                IpcMessage::Heartbeat => IpcMessage::HeartbeatAck {
+                    timestamp_ns: 123456789,
+                },
+                _ => IpcMessage::Ok { message: Some("Handled".to_string()) },
+            }
+        }
+    }
+
+    #[test]
+    fn test_message_serialization_roundtrip() {
+        let messages = vec![
+            IpcMessage::Handshake { version: "1.0".to_string() },
+            IpcMessage::StartWitnessing { file_path: PathBuf::from("/tmp/test") },
+            IpcMessage::StopWitnessing { file_path: None },
+            IpcMessage::GetStatus,
+            IpcMessage::Heartbeat,
+            IpcMessage::Pulse(SimpleJitterSample {
+                timestamp_ns: 1000,
+                duration_since_last_ns: 10,
+                zone: 1,
+            }),
+            IpcMessage::CheckpointCreated { id: 1, hash: [0u8; 32] },
+            IpcMessage::SystemAlert { level: "info".to_string(), message: "hello".to_string() },
+            IpcMessage::Ok { message: Some("all good".to_string()) },
+            IpcMessage::Error { code: IpcErrorCode::FileNotFound, message: "not found".to_string() },
+            IpcMessage::HandshakeAck { version: "1.0".to_string(), server_version: "1.1".to_string() },
+            IpcMessage::HeartbeatAck { timestamp_ns: 999 },
+            IpcMessage::StatusResponse {
+                running: true,
+                tracked_files: vec!["a.txt".to_string(), "b.txt".to_string()],
+                uptime_secs: 3600,
+            },
+        ];
+
+        for msg in messages {
+            let encoded = encode_message(&msg).expect("encode failed");
+            let decoded = decode_message(&encoded).expect("decode failed");
+            // Check that they are the same by re-serializing and comparing
+            let re_encoded = encode_message(&decoded).expect("re-encode failed");
+            assert_eq!(encoded, re_encoded, "Roundtrip failed for {:?}", msg);
+        }
+    }
+
+    #[tokio::test]
+    #[cfg(not(target_os = "windows"))]
+    async fn test_ipc_server_client_interaction() {
+        let dir = tempdir().unwrap();
+        let socket_path = dir.path().join("test.sock");
+        
+        let server = IpcServer::bind(socket_path.clone()).expect("bind failed");
+        let handler = Arc::new(TestHandler);
+        
+        let (shutdown_tx, shutdown_rx) = tokio::sync::mpsc::channel(1);
+        
+        let server_path = socket_path.clone();
+        let server_handle = tokio::spawn(async move {
+            server.run_with_shutdown(handler, shutdown_rx).await.expect("server run failed");
+        });
+
+        // Give server a moment to start
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Use AsyncIpcClient
+        let mut client = AsyncIpcClient::connect(&server_path).await.expect("client connect failed");
+        
+        let version = client.handshake("0.1.0").await.expect("handshake failed");
+        assert_eq!(version, "1.0.0-test");
+
+        let (running, files, uptime) = client.get_status().await.expect("get_status failed");
+        assert!(running);
+        assert_eq!(files, vec!["test.txt".to_string()]);
+        assert_eq!(uptime, 42);
+
+        let ts = client.heartbeat().await.expect("heartbeat failed");
+        assert_eq!(ts, 123456789);
+
+        // Test start_witnessing
+        client.start_witnessing(PathBuf::from("new.txt")).await.expect("start_witnessing failed");
+
+        // Shutdown server
+        shutdown_tx.send(()).await.unwrap();
+        server_handle.await.unwrap();
+    }
+}
+

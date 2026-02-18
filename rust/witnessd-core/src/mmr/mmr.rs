@@ -396,3 +396,75 @@ pub fn leaf_count_from_size(size: u64) -> u64 {
     }
     count
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mmr::store::MemoryStore;
+
+    #[test]
+    fn test_find_peaks() {
+        assert_eq!(find_peaks(0), Vec::<u64>::new());
+        assert_eq!(find_peaks(1), vec![0]);
+        // Size 3 (perfect tree) -> peak at 2
+        assert_eq!(find_peaks(3), vec![2]);
+        // Size 4: 3 (perfect) + 1 leaf (idx 3)
+        assert_eq!(find_peaks(4), vec![2, 3]);
+        // Size 7: 3 (perfect) + 3 (perfect) + 1 parent = 7 (perfect)
+        assert_eq!(find_peaks(7), vec![6]);
+    }
+
+    #[test]
+    fn test_mmr_append_and_root() {
+        let store = Box::new(MemoryStore::new());
+        let mmr = MMR::new(store).unwrap();
+
+        // 1. Append first leaf
+        let idx1 = mmr.append(b"1").unwrap();
+        assert_eq!(idx1, 0);
+        assert_eq!(mmr.size(), 1);
+        let root1 = mmr.get_root().unwrap();
+        
+        // 2. Append second leaf -> creates parent
+        let idx2 = mmr.append(b"2").unwrap();
+        assert_eq!(idx2, 1);
+        assert_eq!(mmr.size(), 3); // 0, 1, and parent 2
+        let root2 = mmr.get_root().unwrap();
+        assert_ne!(root1, root2);
+
+        // 3. Append third leaf
+        let idx3 = mmr.append(b"3").unwrap();
+        assert_eq!(idx3, 3);
+        assert_eq!(mmr.size(), 4);
+    }
+
+    #[test]
+    fn test_leaf_count_from_size() {
+        assert_eq!(leaf_count_from_size(0), 0);
+        assert_eq!(leaf_count_from_size(1), 1);
+        assert_eq!(leaf_count_from_size(3), 2);
+        assert_eq!(leaf_count_from_size(4), 3);
+        assert_eq!(leaf_count_from_size(7), 4);
+    }
+
+    #[test]
+    fn test_inclusion_proof() {
+        let store = Box::new(MemoryStore::new());
+        let mmr = MMR::new(store).unwrap();
+        
+        for i in 0..10 {
+            mmr.append(&[i as u8]).unwrap();
+        }
+
+        // Verify proof for a few leaves
+        for i in 0..10 {
+            // Note: leaf index in MMR != leaf ordinal (0..N)
+            // We need to find the node index for leaf ordinal i
+            let leaf_idx = mmr.get_leaf_index(i).unwrap();
+            let proof = mmr.generate_proof(leaf_idx).unwrap();
+            
+            assert_eq!(proof.leaf_index, leaf_idx);
+            assert_eq!(proof.root, mmr.get_root().unwrap());
+        }
+    }
+}

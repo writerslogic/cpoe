@@ -34,3 +34,20 @@ impl RoughtimeClient {
         Self::fetch_time(&SERVERS[0])
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fetch_time_stub() {
+        // This test validates the current stub behavior.
+        // It should be updated when real Roughtime support is implemented.
+        let time = RoughtimeClient::get_verified_time();
+        assert!(time.is_ok());
+        
+        let ts = time.unwrap();
+        // Check reasonable bounds (e.g. not 0, not in far future)
+        assert!(ts > 1_600_000_000_000_000); // > Year 2020 in micros
+    }
+}

@@ -206,3 +206,31 @@ impl AnchorProvider for BitcoinProvider {
         Ok(confirmations > 0)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bitcoin_provider_init() {
+        let provider = BitcoinProvider::new(
+            "http://localhost:8332".to_string(),
+            "user".to_string(),
+            "pass".to_string(),
+            BitcoinNetwork::Testnet,
+        );
+        assert_eq!(provider.provider_type(), ProviderType::Bitcoin);
+        assert_eq!(provider.name(), "Bitcoin");
+    }
+
+    #[test]
+    fn test_bitcoin_provider_from_env_missing() {
+        // Ensure it returns error when env vars are missing
+        // This assumes the test environment doesn't have them set, or we unset them.
+        // Rust tests run in parallel, so modifying env vars is risky.
+        // We'll verify that IF they are missing, it errors.
+        if std::env::var("BITCOIN_RPC_URL").is_err() {
+            assert!(BitcoinProvider::from_env().is_err());
+        }
+    }
+}

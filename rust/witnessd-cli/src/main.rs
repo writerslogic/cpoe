@@ -55,7 +55,7 @@ For command help: witnessd <command> --help\n\n\
 Run 'witnessd' without arguments for quick status.")]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -665,7 +665,12 @@ fn cmd_log(file_path: &PathBuf) -> Result<()> {
 // Export Command Implementation
 // =============================================================================
 
-fn cmd_export(file_path: &PathBuf, tier: &str, output: Option<PathBuf>) -> Result<()> {
+fn cmd_export(
+    file_path: &PathBuf,
+    tier: &str,
+    output: Option<PathBuf>,
+    session_id: Option<String>,
+) -> Result<()> {
     // Get absolute path
     let abs_path = fs::canonicalize(file_path).context("Failed to resolve path")?;
     let abs_path_str = abs_path.to_string_lossy().to_string();
@@ -720,6 +725,83 @@ fn cmd_export(file_path: &PathBuf, tier: &str, output: Option<PathBuf>) -> Resul
 
     // Get latest event
     let latest = events.last().unwrap();
+
+    // Look for tracking evidence
+    let mut keystroke_evidence = serde_json::Value::Null;
+    if tier.to_lowercase() == "enhanced" || tier.to_lowercase() == "maximum" {
+        let tracking_dir = dir.join("tracking");
+        let mut session_to_load = session_id;
+
+        // If no session ID provided, try to find one matching the file
+        if session_to_load.is_none() && tracking_dir.exists() {
+            if let Ok(entries) = fs::read_dir(&tracking_dir) {
+                let mut candidates = Vec::new();
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().is_some_and(|e| e == "json") {
+                        // Quick check of content without full parse
+                        if let Ok(content) = fs::read_to_string(&path) {
+                            if content.contains(&abs_path_str) {
+                                // Found a candidate
+                                if let Ok(meta) = fs::metadata(&path) {
+                                    if let Ok(modified) = meta.modified() {
+                                        candidates.push((path, modified));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // Pick most recent
+                candidates.sort_by(|a, b| b.1.cmp(&a.1));
+                if let Some((path, _)) = candidates.first() {
+                    println!("Found matching tracking session: {:?}", path.file_name().unwrap());
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                        // Extract ID from filename (id.session.json or id.hybrid.json)
+                        let id = name.split('.').next().unwrap_or("").to_string();
+                        if !id.is_empty() {
+                            session_to_load = Some(id);
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(id) = session_to_load {
+            let session_path = tracking_dir.join(format!("{}.session.json", id));
+            let hybrid_path = tracking_dir.join(format!("{}.hybrid.json", id));
+            
+            keystroke_evidence = if hybrid_path.exists() {
+                #[cfg(feature = "physjitter")]
+                {
+                    match witnessd_core::HybridJitterSession::load(&hybrid_path) {
+                        Ok(s) => serde_json::to_value(s.export()).unwrap_or(serde_json::Value::Null),
+                        Err(_) => serde_json::Value::Null
+                    }
+                }
+                #[cfg(not(feature = "physjitter"))]
+                {
+                    serde_json::Value::Null
+                }
+            } else if session_path.exists() {
+                match JitterSession::load(&session_path) {
+                    Ok(s) => serde_json::to_value(s.export()).unwrap_or(serde_json::Value::Null),
+                    Err(_) => serde_json::Value::Null
+                }
+            } else {
+                serde_json::Value::Null
+            };
+
+            if keystroke_evidence != serde_json::Value::Null {
+                println!("Including keystroke evidence from session {}", id);
+            } else if session_path.exists() || hybrid_path.exists() {
+                println!("Warning: Could not load tracking session {}", id);
+            }
+        } else {
+            println!("No matching tracking session found for this document.");
+            println!("Tip: Run 'witnessd track start' before writing to generate enhanced evidence.");
+        }
+    }
 
     // Collect declaration
     println!("=== Process Declaration ===");
@@ -799,7 +881,7 @@ fn cmd_export(file_path: &PathBuf, tier: &str, output: Option<PathBuf>) -> Resul
         "declaration": decl,
         "presence": null,
         "hardware": null,
-        "keystroke": null,
+        "keystroke": keystroke_evidence,
         "behavioral": null,
         "contexts": [],
         "external": null,
@@ -1790,63 +1872,48 @@ async fn run() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Init { _path: _ } => {
+        Some(Commands::Init { _path: _ }) => {
             cmd_init()?;
         }
-        Commands::Commit { file, message } => {
-            // Handle optional file argument
-            if let Some(ref f) = file {
-                cmd_commit(f, message)?;
-            } else {
-                eprintln!("Usage: witnessd commit <FILE> [-m <MESSAGE>]");
-                eprintln!();
-                eprintln!("Try 'witnessd commit --help' for more information.");
-                std::process::exit(1);
-            }
+        Some(Commands::Commit { file, message }) => {
+            // Use smart commit to handle optional file and auto-init
+            cmd_commit_smart(file, message)?;
         }
-        Commands::Log { file } => {
-            // Handle optional file argument
-            if let Some(ref f) = file {
-                cmd_log(f)?;
-            } else {
-                cmd_list()?;
-            }
+        Some(Commands::Log { file }) => {
+            // Use smart log to handle optional file
+            cmd_log_smart(file)?;
         }
-        Commands::Export { file, tier, output } => {
-            cmd_export(&file, &tier, output)?;
+        Some(Commands::Export {
+            file,
+            tier,
+            output,
+        }) => {
+            cmd_export(&file, &tier, output, None)?;
         }
-        Commands::Verify { file, key } => {
+        Some(Commands::Verify { file, key }) => {
             cmd_verify(&file, key)?;
         }
-        Commands::Presence { action } => {
+        Some(Commands::Presence { action }) => {
             cmd_presence(action)?;
         }
-        Commands::Track { action } => {
+        Some(Commands::Track { action }) => {
             cmd_track(action)?;
         }
-        Commands::Calibrate => {
+        Some(Commands::Calibrate) => {
             cmd_calibrate()?;
         }
-        Commands::Status => {
+        Some(Commands::Status) => {
             cmd_status()?;
         }
-        Commands::List => {
+        Some(Commands::List) => {
             cmd_list()?;
         }
-        Commands::Watch { action, folder } => {
-            // Handle various watch invocation patterns
-            if let Some(a) = action {
-                cmd_watch(Some(a)).await?;
-            } else if let Some(f) = folder {
-                // Shortcut: 'witnessd watch <folder>' means 'watch add <folder>'
-                cmd_watch(Some(WatchAction::Add {
-                    path: Some(f),
-                    patterns: "*.txt,*.md,*.rtf,*.doc,*.docx".to_string()
-                })).await?;
-            } else {
-                // No action or folder - start watching if configured
-                cmd_watch(Some(WatchAction::Start)).await?;
-            }
+        Some(Commands::Watch { action, folder }) => {
+            cmd_watch_smart(action, folder).await?;
+        }
+        None => {
+            // No command provided - show smart status dashboard
+            show_quick_status()?;
         }
     }
 

@@ -1363,3 +1363,87 @@ fn get_default_data_dir() -> Result<PathBuf> {
         Ok(std::env::current_dir()?.join(".witnessd"))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+    use std::fs;
+
+    #[test]
+    fn test_api_full_lifecycle() {
+        let dir = tempdir().unwrap();
+        let data_dir = dir.path().to_string_lossy().to_string();
+        
+        // 1. Init
+        let fingerprint = init_witnessd(Some(data_dir.clone()), None).expect("init failed");
+        assert!(!fingerprint.is_empty());
+        assert!(is_initialized());
+        assert_eq!(get_identity_fingerprint().unwrap(), fingerprint);
+
+        // 2. Document Operations
+        let doc_path = dir.path().join("test_doc.txt");
+        fs::write(&doc_path, "Hello Witnessd").unwrap();
+        // Canonicalize to avoid /private/var vs /var mismatch on macOS
+        let doc_path = fs::canonicalize(&doc_path).unwrap();
+        let path_str = doc_path.to_string_lossy().to_string();
+
+        let info = commit_document(path_str.clone(), Some("Initial commit".to_string())).expect("commit failed");
+        assert_eq!(info.ordinal, 0);
+        assert_eq!(info.message, Some("Initial commit".to_string()));
+
+        let log = get_document_log(path_str.clone()).expect("get log failed");
+        assert_eq!(log.len(), 1);
+        assert_eq!(log[0].ordinal, 0);
+
+        let verify = verify_document(path_str.clone()).expect("verify failed");
+        assert!(verify.valid);
+        assert_eq!(verify.checkpoint_count, 1);
+
+        // 3. Tracking
+        start_tracking(path_str.clone()).expect("start tracking failed");
+        let status = get_tracking_status();
+        assert!(status.active);
+        // Compare with canonicalized path string
+        assert_eq!(status.document_path, Some(path_str.clone()));
+
+        record_keystroke().expect("record keystroke failed");
+        let stats = get_tracking_statistics().expect("get stats failed");
+        assert_eq!(stats.total_keystrokes, 1);
+
+        let final_stats = stop_tracking().expect("stop tracking failed");
+        assert_eq!(final_stats.total_keystrokes, 1);
+        assert!(!get_tracking_status().active);
+
+        // 4. Presence
+        let session_id = start_presence_session().expect("start presence failed");
+        assert!(!session_id.is_empty());
+        
+        let presence_status = get_presence_status();
+        assert!(presence_status.session_active);
+        
+        // Depending on timing, a challenge might not be issued immediately 
+        // unless we force it or wait.
+        let _ = get_pending_challenge(); 
+
+        let final_presence = end_presence_session().expect("end presence failed");
+        assert!(!final_presence.session_active);
+
+        // 5. Config
+        let mut config = get_config().expect("get config failed");
+        config.retention_days = 99;
+        set_config(config).expect("set config failed");
+        
+        let updated_config = get_config().expect("get config failed");
+        assert_eq!(updated_config.retention_days, 99);
+    }
+
+    #[test]
+    fn test_mnemonic_generation() {
+        let m1 = generate_mnemonic();
+        let m2 = generate_mnemonic();
+        assert_ne!(m1, m2);
+        assert_eq!(m1.split_whitespace().count(), 12);
+    }
+}
+

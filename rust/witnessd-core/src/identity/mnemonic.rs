@@ -60,3 +60,64 @@ impl MnemonicHandler {
         Ok(hex::encode(&hasher.finalize()[..8]))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mnemonic_generation_and_validation() {
+        let phrase = MnemonicHandler::generate();
+        let words: Vec<&str> = phrase.split_whitespace().collect();
+        assert_eq!(words.len(), 12); // 128-bit entropy = 12 words
+
+        // Validate it works with BIP39 library directly
+        let mnemonic = Mnemonic::parse_in(Language::English, &phrase);
+        assert!(mnemonic.is_ok());
+    }
+
+    #[test]
+    fn test_invalid_mnemonic() {
+        let invalid_phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon invalid";
+        let result = MnemonicHandler::derive_silicon_seed(invalid_phrase);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_silicon_seed_derivation_structure() {
+        let phrase = MnemonicHandler::generate();
+        let seed_result = MnemonicHandler::derive_silicon_seed(&phrase);
+        assert!(seed_result.is_ok());
+        let seed = seed_result.unwrap();
+        assert_eq!(seed.as_ref().len(), 64);
+        
+        // Ensure it's not all zeros
+        assert_ne!(seed.as_ref(), &[0u8; 64]);
+    }
+
+    #[test]
+    fn test_machine_fingerprint_structure() {
+        let phrase = MnemonicHandler::generate();
+        let fp_result = MnemonicHandler::get_machine_fingerprint(&phrase);
+        assert!(fp_result.is_ok());
+        let fp = fp_result.unwrap();
+        
+        // 8 bytes hex encoded = 16 chars
+        assert_eq!(fp.len(), 16);
+        // Should be valid hex
+        assert!(hex::decode(&fp).is_ok());
+    }
+
+    #[test]
+    fn test_derive_silicon_seed_determinism_fail() {
+        // This documents the current behavior: derivation is NOT deterministic due to PUF jitter.
+        // If the implementation changes to be deterministic, this test should be updated to assert_eq!.
+        let phrase = MnemonicHandler::generate();
+        let seed1 = MnemonicHandler::derive_silicon_seed(&phrase).unwrap();
+        let seed2 = MnemonicHandler::derive_silicon_seed(&phrase).unwrap();
+        
+        // Currently expected to be different because of SiliconPUF::generate_fingerprint()
+        // If this starts failing (i.e., they ARE equal), it means the PUF became stable or mocked.
+        assert_ne!(seed1.as_ref(), seed2.as_ref(), "Warning: Seed derivation is unexpectedly deterministic (PUF might be broken or mocked)");
+    }
+}

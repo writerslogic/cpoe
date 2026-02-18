@@ -211,3 +211,52 @@ impl Default for Rfc3161Provider {
         Self::new(DEFAULT_TSA_URLS.iter().map(|s| s.to_string()).collect())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_provider_init() {
+        let provider = Rfc3161Provider::default();
+        assert!(!provider.tsa_urls.is_empty());
+        assert!(provider.tsa_urls[0].contains("http"));
+    }
+
+    #[test]
+    fn test_verify_token_too_short() {
+        let provider = Rfc3161Provider::default();
+        let hash = [0u8; 32];
+        let token = vec![0u8; 50]; // < 100 bytes
+        let result = provider.verify_timestamp_token(&token, &hash);
+        assert!(result.is_err());
+        match result {
+            Err(AnchorError::InvalidFormat(msg)) => assert_eq!(msg, "Token too short"),
+            _ => panic!("Expected InvalidFormat error"),
+        }
+    }
+
+    #[test]
+    fn test_verify_token_invalid_asn1() {
+        let provider = Rfc3161Provider::default();
+        let hash = [0u8; 32];
+        let mut token = vec![0u8; 150];
+        token[0] = 0xFF; // Not 0x30
+        let result = provider.verify_timestamp_token(&token, &hash);
+        assert!(result.is_err());
+        match result {
+            Err(AnchorError::InvalidFormat(msg)) => assert_eq!(msg, "Invalid ASN.1 structure"),
+            _ => panic!("Expected InvalidFormat error"),
+        }
+    }
+
+    #[test]
+    fn test_verify_token_valid_stub() {
+        let provider = Rfc3161Provider::default();
+        let hash = [0u8; 32];
+        let mut token = vec![0u8; 150];
+        token[0] = 0x30; // ASN.1 SEQUENCE
+        let result = provider.verify_timestamp_token(&token, &hash);
+        assert!(result.is_ok());
+    }
+}

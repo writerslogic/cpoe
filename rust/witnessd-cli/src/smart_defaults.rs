@@ -57,26 +57,6 @@ pub fn ask_confirmation(prompt: &str, default: bool) -> Result<bool> {
     }
 }
 
-/// Read a line of input with an optional default
-pub fn read_line_with_default(prompt: &str, default: &str) -> Result<String> {
-    if default.is_empty() {
-        print!("{}: ", prompt);
-    } else {
-        print!("{} [{}]: ", prompt, default);
-    }
-    io::stdout().flush()?;
-
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    let input = input.trim();
-
-    if input.is_empty() {
-        Ok(default.to_string())
-    } else {
-        Ok(input.to_string())
-    }
-}
-
 // =============================================================================
 // File Selection
 // =============================================================================
@@ -354,4 +334,30 @@ mod tests {
 
         let _ = fs::remove_dir_all(&temp);
     }
+
+    #[test]
+    fn test_normalize_path() {
+        let cwd = std::env::current_dir().unwrap();
+        let normalized = normalize_path(Path::new(".")).unwrap();
+        assert_eq!(normalized, cwd);
+    }
+
+    #[test]
+    fn test_get_recently_modified_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let f1 = dir.path().join("a.txt");
+        let f2 = dir.path().join("b.txt");
+        
+        fs::write(&f1, "a").unwrap();
+        // Wait a bit to ensure different mtime if filesystem precision is low
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        fs::write(&f2, "b").unwrap();
+
+        let files = get_recently_modified_files(dir.path(), 10);
+        assert_eq!(files.len(), 2);
+        // Most recent first
+        assert_eq!(files[0].file_name().unwrap(), "b.txt");
+        assert_eq!(files[1].file_name().unwrap(), "a.txt");
+    }
 }
+

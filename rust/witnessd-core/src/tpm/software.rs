@@ -124,3 +124,49 @@ impl Provider for SoftwareProvider {
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_software_provider_lifecycle() {
+        let provider = SoftwareProvider::new();
+        
+        // 1. Capabilities
+        let caps = provider.capabilities();
+        assert!(!caps.hardware_backed);
+        assert!(caps.supports_attestation);
+        assert!(caps.monotonic_counter);
+        assert!(!caps.supports_sealing);
+
+        // 2. Device ID
+        let device_id = provider.device_id();
+        assert!(device_id.starts_with("sw-"));
+
+        // 3. Binding
+        let data = b"test-binding";
+        let binding = provider.bind(data).expect("bind failed");
+        assert_eq!(binding.provider_type, "software");
+        assert_eq!(binding.device_id, device_id);
+        
+        provider.verify(&binding).expect("verify failed");
+
+        // 4. Quote
+        let nonce = b"nonce";
+        let quote = provider.quote(nonce, &[]).expect("quote failed");
+        assert_eq!(quote.nonce, nonce);
+        crate::tpm::verify_quote(&quote).expect("quote verify failed");
+
+        // 5. Counter
+        // Since we can't easily access internal state directly without consuming the provider or using a lock,
+        // we implicitly tested it via bind() which increments the counter.
+        // Let's call bind again and check if it might be exposed (it's in the binding).
+        let binding2 = provider.bind(data).expect("bind 2");
+        assert!(binding2.monotonic_counter.unwrap() > binding.monotonic_counter.unwrap());
+
+        // 6. Sealing (unsupported)
+        assert!(provider.seal(b"secret", &[]).is_err());
+        assert!(provider.unseal(b"sealed").is_err());
+    }
+}

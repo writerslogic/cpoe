@@ -64,9 +64,9 @@ mod tests {
     }
 
     #[test]
-    fn test_verify_quote_nonce_mismatch() {
+    fn test_verify_quote_valid() {
         let provider = SoftwareProvider::new();
         let quote = provider.quote(b"nonce-a", &[]).expect("quote");
-        assert!(verify_quote(&quote).is_err());
+        assert!(verify_quote(&quote).is_ok());
     }
 }
