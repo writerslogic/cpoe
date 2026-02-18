@@ -15,7 +15,8 @@ use std::sync::Mutex;
 // Re-export the TBS functions from the windows crate
 use windows::Win32::System::TpmBaseServices::{
     Tbsi_Context_Create, Tbsi_GetDeviceInfo, Tbsip_Context_Close, Tbsip_Submit_Command,
-    TBS_CONTEXT_PARAMS, TBS_CONTEXT_PARAMS2, TPM_DEVICE_INFO,
+    TBS_COMMAND_LOCALITY, TBS_COMMAND_PRIORITY, TBS_CONTEXT_PARAMS, TBS_CONTEXT_PARAMS2,
+    TPM_DEVICE_INFO,
 };
 
 // ============================================================================
@@ -259,10 +260,9 @@ impl TbsContext {
         let result = unsafe {
             Tbsip_Submit_Command(
                 self.handle,
-                TBS_COMMAND_LOCALITY_ZERO,
-                TBS_COMMAND_PRIORITY_NORMAL,
-                command.as_ptr(),
-                command.len() as u32,
+                TBS_COMMAND_LOCALITY(TBS_COMMAND_LOCALITY_ZERO),
+                TBS_COMMAND_PRIORITY(TBS_COMMAND_PRIORITY_NORMAL),
+                command,
                 response.as_mut_ptr(),
                 &mut response_size,
             )
@@ -272,6 +272,7 @@ impl TbsContext {
             return Err(tbs_result_to_error(result));
         }
 
+        // Truncate to actual response size
         response.truncate(response_size as usize);
 
         // Verify minimum response size (10 bytes for header)

@@ -1,8 +1,10 @@
+#[cfg(unix)]
 pub mod unix_socket;
 pub mod secure_channel;
 
 use serde::{Serialize, Deserialize};
 use std::path::PathBuf;
+#[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
 #[cfg(target_os = "windows")]
 use tokio::net::windows::named_pipe;
@@ -377,7 +379,9 @@ async fn handle_windows_connection<H: IpcMessageHandler>(
 // IpcClient - Synchronous client for CLI commands
 // ============================================================================
 
+#[cfg(not(target_os = "windows"))]
 use std::io::{Read, Write};
+#[cfg(not(target_os = "windows"))]
 use std::time::Duration;
 
 /// Synchronous IPC client for sending commands to the daemon.
