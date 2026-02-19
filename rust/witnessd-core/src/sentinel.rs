@@ -15,6 +15,7 @@
 use crate::config::SentinelConfig;
 use crate::crypto::ObfuscatedString;
 use crate::ipc::{IpcClient, IpcErrorCode, IpcMessage, IpcMessageHandler, IpcServer};
+use crate::platform::{KeystrokeCapture, MouseCapture};
 use crate::wal::{EntryType, Wal, WalError};
 use ed25519_dalek::SigningKey;
 use sha2::{Digest, Sha256};
@@ -326,6 +327,118 @@ fn generate_session_id() -> String {
     let mut rng = rand::rng();
     let bytes: [u8; 16] = rng.random();
     hex::encode(bytes)
+}
+
+// ============================================================================
+// Session Binding - Context for sessions without file paths
+// ============================================================================
+
+/// Session binding type for universal authorship monitoring.
+///
+/// Allows tracking sessions that may not have a traditional file path,
+/// such as unsaved documents, browser editors, or universal keystrokes.
+#[derive(Debug, Clone)]
+pub enum SessionBinding {
+    /// Traditional file path binding
+    FilePath(PathBuf),
+
+    /// App context for unsaved documents
+    AppContext {
+        /// Application bundle ID or path
+        bundle_id: String,
+        /// Hash of window identifier
+        window_hash: String,
+        /// Shadow buffer ID for content
+        shadow_id: String,
+    },
+
+    /// URL context for browser-based editors
+    UrlContext {
+        /// Hashed domain (privacy)
+        domain_hash: String,
+        /// Hashed page identifier
+        page_hash: String,
+    },
+
+    /// Universal session (no specific document)
+    Universal {
+        /// Unique session identifier
+        session_id: String,
+    },
+}
+
+impl SessionBinding {
+    /// Create a file path binding.
+    pub fn file(path: impl Into<PathBuf>) -> Self {
+        Self::FilePath(path.into())
+    }
+
+    /// Create an app context binding.
+    pub fn app_context(bundle_id: impl Into<String>, window_title: &str) -> Self {
+        let window_hash = hash_string(window_title);
+        let shadow_id = generate_session_id();
+        Self::AppContext {
+            bundle_id: bundle_id.into(),
+            window_hash,
+            shadow_id,
+        }
+    }
+
+    /// Create a URL context binding.
+    pub fn url_context(url: &str) -> Self {
+        // Parse URL and hash components for privacy
+        let (domain, path) = parse_url_parts(url);
+        Self::UrlContext {
+            domain_hash: hash_string(&domain),
+            page_hash: hash_string(&path),
+        }
+    }
+
+    /// Create a universal session binding.
+    pub fn universal() -> Self {
+        Self::Universal {
+            session_id: generate_session_id(),
+        }
+    }
+
+    /// Get the binding key for session lookup.
+    pub fn key(&self) -> String {
+        match self {
+            Self::FilePath(path) => path.to_string_lossy().to_string(),
+            Self::AppContext { shadow_id, .. } => format!("app:{}", shadow_id),
+            Self::UrlContext { domain_hash, page_hash } => format!("url:{}:{}", domain_hash, page_hash),
+            Self::Universal { session_id } => format!("universal:{}", session_id),
+        }
+    }
+
+    /// Check if this binding has a file path.
+    pub fn has_file_path(&self) -> bool {
+        matches!(self, Self::FilePath(_))
+    }
+
+    /// Get the file path if available.
+    pub fn file_path(&self) -> Option<&Path> {
+        match self {
+            Self::FilePath(path) => Some(path),
+            _ => None,
+        }
+    }
+}
+
+fn hash_string(s: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(s.as_bytes());
+    let result = hasher.finalize();
+    hex::encode(&result[..8]) // Short hash for keys
+}
+
+fn parse_url_parts(url: &str) -> (String, String) {
+    // Simple URL parsing
+    let url = url.trim_start_matches("https://").trim_start_matches("http://");
+    let parts: Vec<&str> = url.splitn(2, '/').collect();
+    let domain = parts.first().unwrap_or(&"").to_string();
+    let path = parts.get(1).unwrap_or(&"").to_string();
+    (domain, path)
 }
 
 // ============================================================================
@@ -934,6 +1047,18 @@ pub struct Sentinel {
     signing_key: Arc<RwLock<SigningKey>>,
     session_events_tx: broadcast::Sender<SessionEvent>,
     shutdown_tx: Arc<Mutex<Option<mpsc::Sender<()>>>>,
+    /// Activity fingerprint accumulator for authorship verification
+    activity_accumulator: Arc<RwLock<crate::fingerprint::ActivityFingerprintAccumulator>>,
+    /// Keystroke event receiver handle
+    keystroke_receiver: Arc<Mutex<Option<std::sync::mpsc::Receiver<crate::platform::KeystrokeEvent>>>>,
+    /// Voice collector for writing style (if consent given)
+    voice_collector: Arc<RwLock<Option<crate::fingerprint::VoiceCollector>>>,
+    /// Mouse idle statistics for fingerprinting
+    mouse_idle_stats: Arc<RwLock<crate::platform::MouseIdleStats>>,
+    /// Mouse event receiver handle
+    mouse_receiver: Arc<Mutex<Option<std::sync::mpsc::Receiver<crate::platform::MouseEvent>>>>,
+    /// Mouse steganography engine
+    mouse_stego_engine: Arc<RwLock<crate::platform::MouseStegoEngine>>,
 }
 
 impl Sentinel {
@@ -945,6 +1070,10 @@ impl Sentinel {
         let shadow = ShadowManager::new(&config.shadow_dir)?;
         let (session_events_tx, _) = broadcast::channel(100);
 
+        // Initialize mouse steganography engine with a temporary seed
+        // The seed will be updated when the signing key is set
+        let mouse_stego_seed = [0u8; 32];
+
         Ok(Self {
             config,
             sessions: Arc::new(RwLock::new(HashMap::new())),
@@ -954,7 +1083,85 @@ impl Sentinel {
             signing_key: Arc::new(RwLock::new(SigningKey::from_bytes(&[0u8; 32]))),
             session_events_tx,
             shutdown_tx: Arc::new(Mutex::new(None)),
+            activity_accumulator: Arc::new(RwLock::new(
+                crate::fingerprint::ActivityFingerprintAccumulator::new(),
+            )),
+            keystroke_receiver: Arc::new(Mutex::new(None)),
+            voice_collector: Arc::new(RwLock::new(None)),
+            mouse_idle_stats: Arc::new(RwLock::new(crate::platform::MouseIdleStats::new())),
+            mouse_receiver: Arc::new(Mutex::new(None)),
+            mouse_stego_engine: Arc::new(RwLock::new(crate::platform::MouseStegoEngine::new(mouse_stego_seed))),
         })
+    }
+
+    /// Enable voice fingerprinting (requires consent).
+    pub fn enable_voice_fingerprinting(&self) {
+        let mut collector = self.voice_collector.write().unwrap();
+        if collector.is_none() {
+            *collector = Some(crate::fingerprint::VoiceCollector::new());
+        }
+    }
+
+    /// Disable voice fingerprinting.
+    pub fn disable_voice_fingerprinting(&self) {
+        let mut collector = self.voice_collector.write().unwrap();
+        *collector = None;
+    }
+
+    /// Get the current activity fingerprint.
+    pub fn current_activity_fingerprint(&self) -> crate::fingerprint::ActivityFingerprint {
+        self.activity_accumulator.read().unwrap().current_fingerprint()
+    }
+
+    /// Get the current voice fingerprint (if enabled).
+    pub fn current_voice_fingerprint(&self) -> Option<crate::fingerprint::VoiceFingerprint> {
+        self.voice_collector.read().unwrap().as_ref().map(|c| c.current_fingerprint())
+    }
+
+    /// Get the current mouse idle statistics for fingerprinting.
+    pub fn mouse_idle_stats(&self) -> crate::platform::MouseIdleStats {
+        self.mouse_idle_stats.read().unwrap().clone()
+    }
+
+    /// Reset mouse idle statistics.
+    pub fn reset_mouse_idle_stats(&self) {
+        *self.mouse_idle_stats.write().unwrap() = crate::platform::MouseIdleStats::new();
+    }
+
+    /// Record a mouse event for fingerprinting.
+    fn record_mouse_event(&self, event: &crate::platform::MouseEvent) {
+        if event.is_idle && event.is_micro_movement() {
+            self.mouse_idle_stats.write().unwrap().record(event);
+        }
+    }
+
+    /// Get the mouse steganography engine for configuration.
+    pub fn mouse_stego_engine(&self) -> &Arc<RwLock<crate::platform::MouseStegoEngine>> {
+        &self.mouse_stego_engine
+    }
+
+    /// Update the mouse steganography seed from the signing key.
+    fn update_mouse_stego_seed(&self) {
+        let key = self.signing_key.read().unwrap();
+        let seed = key.to_bytes();
+        self.mouse_stego_engine.write().unwrap().reset();
+        *self.mouse_stego_engine.write().unwrap() = crate::platform::MouseStegoEngine::new(seed);
+    }
+
+    /// Record a keystroke event for fingerprinting.
+    fn record_keystroke(&self, event: &crate::platform::KeystrokeEvent) {
+        // Update activity fingerprint
+        let sample = crate::jitter::SimpleJitterSample {
+            timestamp_ns: event.timestamp_ns,
+            duration_since_last_ns: 0, // Will be calculated by accumulator
+            zone: event.zone,
+        };
+        self.activity_accumulator.write().unwrap().add_sample(&sample);
+
+        // Update voice fingerprint if enabled
+        if let Some(ref mut collector) = *self.voice_collector.write().unwrap() {
+            collector.record_keystroke(event.keycode, event.char_value);
+        }
     }
 
     /// Set the signing key for WAL integrity
@@ -1021,17 +1228,115 @@ impl Sentinel {
         let mut focus_rx = focus_monitor.focus_events();
         let mut change_rx = focus_monitor.change_events();
 
+        // Start platform keystroke capture and bridge to tokio channel
+        let (keystroke_tx, mut keystroke_rx) = tokio::sync::mpsc::channel::<crate::platform::KeystrokeEvent>(1000);
+        let keystroke_running = Arc::clone(&running);
+
+        #[cfg(target_os = "macos")]
+        let keystroke_capture_result = crate::platform::macos::MacOSKeystrokeCapture::new();
+        #[cfg(target_os = "windows")]
+        let keystroke_capture_result = crate::platform::windows::WindowsKeystrokeCapture::new();
+        #[cfg(target_os = "linux")]
+        let keystroke_capture_result = crate::platform::linux::LinuxKeystrokeCapture::new();
+        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+        let keystroke_capture_result: anyhow::Result<Box<dyn crate::platform::KeystrokeCapture>> =
+            Err(anyhow::anyhow!("Keystroke capture not supported on this platform"));
+
+        if let Ok(mut keystroke_capture) = keystroke_capture_result {
+            if let Ok(sync_rx) = keystroke_capture.start() {
+                let sync_rx: std::sync::mpsc::Receiver<crate::platform::KeystrokeEvent> = sync_rx;
+                // Bridge sync channel to tokio channel
+                std::thread::spawn(move || {
+                    while *keystroke_running.read().unwrap() {
+                        match sync_rx.recv_timeout(std::time::Duration::from_millis(100)) {
+                            Ok(event) => {
+                                let _ = keystroke_tx.blocking_send(event);
+                            }
+                            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                        }
+                    }
+                });
+            }
+        }
+
+        // Start platform mouse capture and bridge to tokio channel
+        let (mouse_tx, mut mouse_rx) = tokio::sync::mpsc::channel::<crate::platform::MouseEvent>(1000);
+        let mouse_running = Arc::clone(&running);
+
+        #[cfg(target_os = "macos")]
+        let mouse_capture_result = crate::platform::macos::MacOSMouseCapture::new();
+        #[cfg(not(target_os = "macos"))]
+        let mouse_capture_result: anyhow::Result<crate::platform::macos::MacOSMouseCapture> =
+            Err(anyhow::anyhow!("Mouse capture not yet implemented for this platform"));
+
+        if let Ok(mut mouse_capture) = mouse_capture_result {
+            if let Ok(sync_rx) = mouse_capture.start() {
+                let sync_rx: std::sync::mpsc::Receiver<crate::platform::MouseEvent> = sync_rx;
+                // Bridge sync channel to tokio channel
+                std::thread::spawn(move || {
+                    while *mouse_running.read().unwrap() {
+                        match sync_rx.recv_timeout(std::time::Duration::from_millis(100)) {
+                            Ok(event) => {
+                                let _ = mouse_tx.blocking_send(event);
+                            }
+                            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                        }
+                    }
+                });
+            }
+        }
+
+        // Clone references for the event loop
+        let activity_accumulator = Arc::clone(&self.activity_accumulator);
+        let voice_collector = Arc::clone(&self.voice_collector);
+        let mouse_idle_stats = Arc::clone(&self.mouse_idle_stats);
+        let mouse_stego_engine = Arc::clone(&self.mouse_stego_engine);
+
         // Main event loop
         tokio::spawn(async move {
             let mut debounce_timer: Option<tokio::time::Instant> = None;
             let mut pending_focus: Option<FocusEvent> = None;
             let mut idle_check_interval = interval(Duration::from_secs(60));
+            let mut last_keystroke_time = std::time::Instant::now();
 
             loop {
                 tokio::select! {
                     _ = shutdown_rx.recv() => {
                         // Graceful shutdown
                         break;
+                    }
+
+                    Some(event) = keystroke_rx.recv() => {
+                        // Record keystroke for activity fingerprinting
+                        let sample = crate::jitter::SimpleJitterSample {
+                            timestamp_ns: event.timestamp_ns,
+                            duration_since_last_ns: 0,
+                            zone: event.zone,
+                        };
+                        activity_accumulator.write().unwrap().add_sample(&sample);
+
+                        // Record for voice fingerprinting if enabled
+                        if let Some(ref mut collector) = *voice_collector.write().unwrap() {
+                            collector.record_keystroke(event.keycode, event.char_value);
+                        }
+
+                        // Update last keystroke time for mouse idle detection
+                        last_keystroke_time = std::time::Instant::now();
+                    }
+
+                    Some(event) = mouse_rx.recv() => {
+                        // Only record micro-movements during keyboard activity (idle jitter)
+                        let is_during_typing = last_keystroke_time.elapsed() < Duration::from_secs(2);
+                        if is_during_typing && event.is_micro_movement() {
+                            mouse_idle_stats.write().unwrap().record(&event);
+                        }
+
+                        // Compute steganographic jitter (for evidence chain)
+                        if let Ok(mut engine) = mouse_stego_engine.write() {
+                            let _ = engine.next_jitter(); // Advances the chain
+                        }
                     }
 
                     Some(event) = focus_rx.recv() => {

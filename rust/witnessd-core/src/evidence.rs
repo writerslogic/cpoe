@@ -169,6 +169,10 @@ pub struct KeystrokeEvidence {
     pub chain_valid: bool,
     pub plausible_human_rate: bool,
     pub samples: Vec<jitter::Sample>,
+    /// Ratio of samples using hardware entropy (0.0 to 1.0).
+    /// Only set when using HybridJitterSession with physjitter feature.
+    #[serde(default)]
+    pub phys_ratio: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -410,12 +414,86 @@ impl Builder {
             chain_valid: evidence.statistics.chain_valid,
             plausible_human_rate: evidence.is_plausible_human_typing(),
             samples: evidence.samples.clone(),
+            phys_ratio: None,
         };
 
         self.packet.keystroke = Some(keystroke);
         if self.packet.strength < Strength::Standard {
             self.packet.strength = Strength::Standard;
         }
+        self
+    }
+
+    /// Add hybrid keystroke evidence with hardware entropy metrics.
+    ///
+    /// If phys_ratio > 0.8 (80% hardware entropy), boosts evidence strength
+    /// to Enhanced level, providing stronger assurance that keystrokes
+    /// originated from real hardware rather than software injection.
+    #[cfg(feature = "physjitter")]
+    pub fn with_hybrid_keystroke(
+        mut self,
+        evidence: &crate::physjitter_bridge::HybridEvidence,
+    ) -> Self {
+        if evidence.statistics.total_keystrokes == 0 {
+            return self;
+        }
+        if evidence.verify().is_err() {
+            self.errors.push("hybrid keystroke evidence invalid".to_string());
+            return self;
+        }
+
+        // Convert HybridSample to jitter::Sample for backward compatibility
+        let samples: Vec<jitter::Sample> = evidence
+            .samples
+            .iter()
+            .map(|hs| jitter::Sample {
+                timestamp: hs.timestamp,
+                keystroke_count: hs.keystroke_count,
+                document_hash: hs.document_hash,
+                jitter_micros: hs.jitter_micros,
+                hash: hs.hash,
+                previous_hash: hs.previous_hash,
+            })
+            .collect();
+
+        let keystroke = KeystrokeEvidence {
+            session_id: evidence.session_id.clone(),
+            started_at: evidence.started_at,
+            ended_at: evidence.ended_at,
+            duration: evidence.statistics.duration,
+            total_keystrokes: evidence.statistics.total_keystrokes,
+            total_samples: evidence.statistics.total_samples,
+            keystrokes_per_minute: evidence.statistics.keystrokes_per_min,
+            unique_doc_states: evidence.statistics.unique_doc_hashes,
+            chain_valid: evidence.statistics.chain_valid,
+            plausible_human_rate: evidence.is_plausible_human_typing(),
+            samples,
+            phys_ratio: Some(evidence.entropy_quality.phys_ratio),
+        };
+
+        self.packet.keystroke = Some(keystroke);
+
+        // Boost to Standard for any keystroke evidence
+        if self.packet.strength < Strength::Standard {
+            self.packet.strength = Strength::Standard;
+        }
+
+        // Boost to Enhanced if >80% hardware entropy
+        // High hardware entropy strongly indicates genuine human input
+        if evidence.entropy_quality.phys_ratio > 0.8 {
+            if self.packet.strength < Strength::Enhanced {
+                self.packet.strength = Strength::Enhanced;
+            }
+            self.packet.claims.push(Claim {
+                claim_type: ClaimType::KeystrokesVerified,
+                description: format!(
+                    "Hardware entropy ratio {:.0}% - strong assurance of genuine input",
+                    evidence.entropy_quality.phys_ratio * 100.0
+                ),
+                confidence: "high".to_string(),
+            });
+        }
+
         self
     }
 

@@ -19,14 +19,15 @@
 <p align="center">
   <a href="#installation">Installation</a> •
   <a href="#quick-start">Quick Start</a> •
-  <a href="#architecture">Architecture</a> •
+  <a href="#how-it-works">How It Works</a> •
   <a href="#features">Features</a> •
-  <a href="#verification">Verification</a>
+  <a href="#citation">Citation</a>
 </p>
 
 ---
 
-> **Patent Pending:** USPTO Application No. 19/460,364 — "Falsifiable Process Evidence via Cryptographic Causality Locks and Behavioral Attestation"
+> [!NOTE]
+> **Patent Pending:** USPTO Application No. 19/460,364 — *"Falsifiable Process Evidence via Cryptographic Causality Locks and Behavioral Attestation"*
 
 ---
 
@@ -34,236 +35,218 @@
 
 **witnessd** creates tamper-evident cryptographic records of document authorship through commit-based temporal witnessing. It provides irrefutable proof that you wrote what you wrote, when you wrote it.
 
-### Key Benefits
-
-- **Prove authorship** — Cryptographic evidence chain linking you to your work
-- **Detect AI content** — Forensic analysis identifies non-human writing patterns
-- **Hardware-backed** — TPM 2.0 and Secure Enclave integration for device binding
-- **Verify independently** — Evidence can be verified by anyone, anywhere
+| Capability | Description |
+|:-----------|:------------|
+| **Prove authorship** | Cryptographic evidence chain linking you to your work |
+| **Detect AI content** | Forensic analysis identifies non-human writing patterns |
+| **Hardware-backed** | TPM 2.0 and Secure Enclave integration for device binding |
+| **Verify independently** | Evidence can be verified by anyone, anywhere |
 
 ## Installation
 
-### macOS
+### Package Managers
 
-**Homebrew (recommended):**
-```bash
-brew install writerslogic/tap/witnessd
-```
+| Platform | Command |
+|:---------|:--------|
+| **macOS** | `brew install writerslogic/tap/witnessd` |
+| **Linux** | `brew install writerslogic/tap/witnessd` |
+| **Windows** | `scoop bucket add witnessd https://github.com/writerslogic/scoop-bucket && scoop install witnessd` |
 
-**Or install via script:**
+### Quick Install Script
+
 ```bash
 curl -sSf https://raw.githubusercontent.com/writerslogic/witnessd/main/install.sh | sh
 ```
 
-### Linux
+<details>
+<summary><strong>Manual Installation</strong></summary>
 
-**Homebrew:**
-```bash
-brew install writerslogic/tap/witnessd
-```
+#### Direct Download
 
-**Or install via script:**
-```bash
-curl -sSf https://raw.githubusercontent.com/writerslogic/witnessd/main/install.sh | sh
-```
+Download the appropriate binary from [GitHub Releases](https://github.com/writerslogic/witnessd/releases/latest):
 
-**Or download directly:**
-```bash
-# x86_64
-curl -LO https://github.com/writerslogic/witnessd/releases/latest/download/witnessd_v0.1.1_x86_64-unknown-linux-gnu.tar.gz
-tar -xzf witnessd_v0.1.1_x86_64-unknown-linux-gnu.tar.gz
-sudo mv witnessd-cli /usr/local/bin/witnessd
-
-# ARM64
-curl -LO https://github.com/writerslogic/witnessd/releases/latest/download/witnessd_v0.1.1_aarch64-unknown-linux-gnu.tar.gz
-tar -xzf witnessd_v0.1.1_aarch64-unknown-linux-gnu.tar.gz
-sudo mv witnessd-cli /usr/local/bin/witnessd
-```
-
-### Windows
-
-**Download from releases:**
-1. Download [witnessd_v0.1.1_x86_64-pc-windows-msvc.zip](https://github.com/writerslogic/witnessd/releases/latest)
-2. Extract and add to your PATH
-
-**Or using PowerShell:**
-```powershell
-# Download and extract
-Invoke-WebRequest -Uri "https://github.com/writerslogic/witnessd/releases/latest/download/witnessd_v0.1.1_x86_64-pc-windows-msvc.zip" -OutFile "witnessd.zip"
-Expand-Archive -Path "witnessd.zip" -DestinationPath "$env:LOCALAPPDATA\witnessd"
-
-# Add to PATH (current session)
-$env:PATH += ";$env:LOCALAPPDATA\witnessd"
-```
-
-### From Source
+| Platform | Architecture | Download |
+|:---------|:-------------|:---------|
+| Linux | x86_64 | `witnessd_*_x86_64-unknown-linux-gnu.tar.gz` |
+| Linux | ARM64 | `witnessd_*_aarch64-unknown-linux-gnu.tar.gz` |
+| macOS | Apple Silicon | `witnessd_*_aarch64-apple-darwin.tar.gz` |
+| macOS | Intel | `witnessd_*_x86_64-apple-darwin.tar.gz` |
+| Windows | x86_64 | `witnessd_*_x86_64-pc-windows-msvc.zip` |
 
 ```bash
-# Clone the repository
-git clone https://github.com/writerslogic/witnessd-rust
-cd witnessd-rust
-
-# Build and install the CLI
-cd rust/witnessd-cli
-cargo build --release
-sudo cp target/release/witnessd-cli /usr/local/bin/witnessd
+# Example: Linux x86_64
+tar -xzf witnessd_*.tar.gz && sudo mv witnessd-cli /usr/local/bin/witnessd
 ```
 
-### Binary Releases
+#### Build from Source
 
-Download from [GitHub Releases](https://github.com/writerslogic/witnessd-rust/releases)
+```bash
+git clone https://github.com/writerslogic/witnessd && cd witnessd/rust/witnessd-cli
+cargo build --release && sudo cp target/release/witnessd-cli /usr/local/bin/witnessd
+```
 
-All releases include:
-- SHA256 checksums
-- SLSA Level 3 provenance attestations
-- SBOM (SPDX and CycloneDX)
+</details>
+
+<details>
+<summary><strong>Verify Release Artifacts (SLSA)</strong></summary>
+
+All releases include SHA256 checksums, SLSA Level 3 provenance attestations, and SBOMs.
+
+```bash
+# Install slsa-verifier
+go install github.com/slsa-framework/slsa-verifier/v2/cli/slsa-verifier@latest
+
+# Verify provenance
+slsa-verifier verify-artifact witnessd_*.tar.gz \
+  --provenance-path multiple.intoto.jsonl \
+  --source-uri github.com/writerslogic/witnessd
+```
+
+</details>
 
 ## Quick Start
 
 ```bash
-# Initialize witnessd
-witnessd init
-
-# Calibrate VDF for your machine
-witnessd calibrate
-
-# Create checkpoints as you write
-witnessd commit document.md -m "First draft"
-
-# View history
-witnessd log document.md
-
-# Export evidence
-witnessd export document.md --tier enhanced
-
-# Verify evidence
-witnessd verify evidence-packet.json
+witnessd init                              # Initialize witnessd
+witnessd calibrate                         # Calibrate VDF for your machine
+witnessd commit document.md -m "Draft"     # Create checkpoint
+witnessd log document.md                   # View history
+witnessd export document.md --tier enhanced # Export evidence
+witnessd verify evidence-packet.json       # Verify evidence
 ```
+
+## How It Works
+
+```mermaid
+flowchart LR
+    subgraph Capture["Real-time Capture"]
+        K[Keystroke Monitor] --> J[Jitter Seal]
+        M[Mouse Idle] --> J
+    end
+
+    subgraph Chain["Evidence Chain"]
+        J --> C[Checkpoint]
+        C --> H[HMAC Chain]
+        H --> V[VDF Proof]
+    end
+
+    subgraph Anchor["Trust Anchors"]
+        V --> T[TPM/Enclave]
+        V --> R[Roughtime]
+        V --> B[Blockchain]
+    end
+
+    Anchor --> E[Evidence Packet]
+```
+
+> [!TIP]
+> **Jitter seals** embed imperceptible microsecond delays (derived from HMAC) into your typing rhythm. These seals are cryptographically bound to document content — any tampering breaks the chain.[^1]
+
+### Evidence Tiers
+
+| Tier | Contents | Use Case |
+|:-----|:---------|:---------|
+| **Basic** | Checkpoint chain, VDF proof, declaration | Personal records |
+| **Standard** | + Presence verification | Professional work |
+| **Enhanced** | + Forensic analysis, keystroke patterns | Legal evidence |
+| **Maximum** | + Hardware attestation, external anchors | Litigation-ready |
+
+## Features
+
+<details>
+<summary><strong>Cryptographic Checkpointing</strong></summary>
+
+- SHA-256 content hashing with HMAC chain integrity
+- Unbreakable checkpoint chain — any modification invalidates subsequent proofs
+- Merkle Mountain Range (MMR) for efficient verification
+
+</details>
+
+<details>
+<summary><strong>Verifiable Delay Functions</strong></summary>
+
+- Pietrzak VDF implementation proving minimum elapsed time
+- Hardware-calibrated iterations (auto-tuned during `witnessd calibrate`)
+- Prevents backdating — computation *must* take the claimed time
+
+</details>
+
+<details>
+<summary><strong>Forensic Analysis</strong></summary>
+
+- **Edit topology** — Insertion/deletion patterns across document regions
+- **Keystroke cadence** — Inter-key interval distributions unique to individuals
+- **Monotonic append detection** — Flags AI-generated content (sequential writes only)
+- **Session gap analysis** — Identifies unnatural pauses or time manipulation
+
+</details>
+
+<details>
+<summary><strong>Hardware Security</strong></summary>
+
+| Platform | Hardware | Capability |
+|:---------|:---------|:-----------|
+| Windows/Linux | TPM 2.0 | Device binding, monotonic counters |
+| macOS | Secure Enclave | Device binding, key attestation |
+
+</details>
 
 ## Architecture
 
 ```
 witnessd-rust/
 ├── rust/
-│   ├── witnessd-core/     # Cryptographic core library
-│   │   ├── src/
-│   │   │   ├── crypto.rs      # HMAC, hashing primitives
-│   │   │   ├── checkpoint.rs  # Document checkpointing
-│   │   │   ├── vdf/           # Verifiable delay functions
-│   │   │   ├── forensics.rs   # Authorship analysis
-│   │   │   ├── presence.rs    # Human verification
-│   │   │   ├── tpm/           # Hardware security (TPM/Secure Enclave)
-│   │   │   └── evidence.rs    # Evidence export
-│   │   └── Cargo.toml
-│   │
-│   └── witnessd-cli/      # Command-line interface
-│
-└── platforms/             # Platform-specific code
-    ├── macos/             # SwiftUI app (coming soon)
-    ├── windows/           # Windows packaging
-    └── linux/             # Linux packaging
-```
-
-## Features
-
-### Cryptographic Checkpointing
-- SHA-256 content hashing
-- HMAC chain integrity
-- Unbreakable checkpoint chain
-
-### Verifiable Delay Functions (VDF)
-- Pietrzak VDF implementation
-- Proves minimum elapsed time
-- Hardware-calibrated iterations
-
-### Forensic Analysis
-- Edit topology analysis
-- Keystroke cadence patterns
-- Monotonic append detection (AI indicator)
-- Session gap analysis
-
-### Presence Verification
-- Random cryptographic challenges
-- Multiple challenge types
-- Response time tracking
-
-### Hardware Security
-- TPM 2.0 support (Windows/Linux)
-- macOS Secure Enclave integration
-- Device identity binding
-
-### Evidence Tiers
-
-| Tier | Contents |
-|------|----------|
-| **Basic** | Checkpoint chain, VDF proof, declaration |
-| **Standard** | + Presence verification |
-| **Enhanced** | + Forensic analysis, keystroke patterns |
-| **Maximum** | + Hardware attestation, external anchors |
-
-## Verification
-
-### Verify Release Artifacts
-
-```bash
-# Install slsa-verifier
-go install github.com/slsa-framework/slsa-verifier/v2/cli/slsa-verifier@latest
-
-# Verify SLSA provenance
-slsa-verifier verify-artifact witnessd-rust_v1.0.0_x86_64-unknown-linux-gnu.tar.gz \
-  --provenance-path multiple.intoto.jsonl \
-  --source-uri github.com/writerslogic/witnessd-rust
-```
-
-### Verify Evidence Packets
-
-```bash
-# Using the CLI
-witnessd verify evidence-packet.json
-
-# Outputs verification report with:
-# - Chain integrity status
-# - VDF proof verification
-# - Declaration signature check
-# - Forensic analysis summary
+│   ├── witnessd-core/          # Cryptographic core library
+│   │   ├── checkpoint.rs       # Document checkpointing
+│   │   ├── vdf/                # Verifiable delay functions
+│   │   ├── forensics.rs        # Authorship analysis
+│   │   ├── platform/           # OS-specific capture (keys, mouse)
+│   │   ├── tpm/                # Hardware security modules
+│   │   └── evidence.rs         # Evidence export/verify
+│   └── witnessd-cli/           # Command-line interface
+└── platforms/                  # Native apps (coming soon)
 ```
 
 ## Security
 
-- **SLSA Level 3** compliant builds
-- **SBOM** included with every release
-- Automated security scanning (cargo-audit, Trivy, Semgrep)
-- See [SECURITY.md](SECURITY.md) and [docs/SLSA.md](docs/SLSA.md)
-
-## Supply Chain Security
+> [!IMPORTANT]
+> witnessd provides **falsifiable** evidence, not absolute proof. A kernel-level adversary with complete system control can defeat any software-based attestation. The value lies in converting unsubstantiated doubt into testable claims across independent trust boundaries.[^1]
 
 | Artifact | Attestation |
-|----------|-------------|
-| Binaries | SLSA v1.0 provenance |
-| Dependencies | Vendored + Cargo.lock |
+|:---------|:------------|
+| Binaries | SLSA v1.0 Level 3 provenance |
+| Dependencies | Vendored + `Cargo.lock` |
 | SBOMs | SPDX + CycloneDX |
+
+See [SECURITY.md](SECURITY.md) and [docs/SLSA.md](docs/SLSA.md) for details.
 
 ## Development
 
 ```bash
-# Run tests
 cd rust/witnessd-core
-cargo test --all-features
-
-# Run lints
-cargo clippy --all-targets --all-features -- -D warnings
-
-# Format code
-cargo fmt --all
-
-# Security audit
-cargo audit
-cargo deny check
+cargo test --all-features      # Run tests
+cargo clippy -- -D warnings    # Lint
+cargo fmt --all                # Format
+cargo audit && cargo deny check # Security audit
 ```
 
-## Contributing
+## Citation
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines.
+If you use witnessd in academic work, please cite:
+
+```bibtex
+@article{condrey2026witnessd,
+  title={Witnessd: Proof-of-process via Adversarial Collapse},
+  author={Condrey, David},
+  journal={arXiv preprint arXiv:2602.01663},
+  year={2026},
+  doi={10.48550/arXiv.2602.01663}
+}
+```
+
+> **Abstract:** Digital signatures prove key possession but not authorship. We introduce *proof-of-process* — a mechanism combining jitter seals (imperceptible HMAC-derived timing), Verifiable Delay Functions, timestamp anchors, keystroke validation, and optional hardware attestation. The system converts unsubstantiated doubt into testable, falsifiable claims.
+>
+> — [arXiv:2602.01663](https://arxiv.org/abs/2602.01663) [cs.CR]
 
 ## License
 
@@ -271,13 +254,10 @@ Dual licensed:
 - **Non-Commercial**: Free for personal, academic, research, and open-source projects
 - **Commercial**: Requires a commercial license — contact licensing@writerslogic.com
 
-## Related Projects
-
-- [witnessd (Go)](https://github.com/writerslogic/witnessd/tree/legacy-go-v1) — Original Go implementation (archived)
-- [C2PA](https://c2pa.org/) — Content Authenticity Initiative (interoperability planned)
-
 ## Links
 
-- [Documentation](https://docs.writerslogic.com/witnessd)
-- [SLSA Compliance](docs/SLSA.md)
-- [Evidence Format Specification](specs/evidence-format.md)
+[Documentation](https://docs.writerslogic.com/witnessd) • [SLSA Compliance](docs/SLSA.md) • [Evidence Format Spec](specs/evidence-format.md) • [Contributing](CONTRIBUTING.md)
+
+---
+
+[^1]: Condrey, D. (2026). *Witnessd: Proof-of-process via Adversarial Collapse*. arXiv:2602.01663. https://doi.org/10.48550/arXiv.2602.01663

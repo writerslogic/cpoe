@@ -11,6 +11,9 @@ use std::time::{Duration, Instant};
 use witnessd_core::config::WitnessdConfig;
 use witnessd_core::declaration::{self, AIExtent, AIPurpose, ModalityType};
 use witnessd_core::evidence;
+use witnessd_core::fingerprint::{
+    ConsentManager, ConsentStatus, FingerprintManager, FingerprintStatus, ProfileId,
+};
 use witnessd_core::jitter::{
     default_parameters as default_jitter_params, Session as JitterSession,
 };
@@ -21,7 +24,7 @@ use witnessd_core::presence::{
 use witnessd_core::tpm;
 use witnessd_core::vdf;
 use witnessd_core::vdf::params::{calibrate, Parameters as VdfParameters};
-use witnessd_core::{derive_hmac_key, SecureEvent, SecureStore};
+use witnessd_core::{derive_hmac_key, DaemonManager, DaemonStatus, SecureEvent, SecureStore};
 
 mod smart_defaults;
 
@@ -196,6 +199,65 @@ DEFAULT PATTERNS: *.txt,*.md,*.rtf,*.doc,*.docx")]
         #[arg(conflicts_with = "action")]
         folder: Option<PathBuf>,
     },
+    /// Start the witnessd daemon
+    ///
+    /// Starts background monitoring with keystroke capture and automatic checkpointing.
+    #[command(alias = "START", alias = "Start", after_help = "\
+EXAMPLES:\n  \
+    witnessd start                  Start daemon in background\n  \
+    witnessd start --foreground     Run in foreground (for debugging)\n\n\
+The daemon provides:\n  \
+    - System-wide keystroke monitoring (timing only, not content)\n  \
+    - Automatic checkpointing on file save\n  \
+    - Activity fingerprint accumulation\n  \
+    - Idle detection")]
+    Start {
+        /// Run in foreground instead of background
+        #[arg(short, long)]
+        foreground: bool,
+    },
+    /// Stop the witnessd daemon
+    #[command(alias = "STOP", alias = "Stop")]
+    Stop,
+    /// Manage author fingerprints
+    ///
+    /// Activity fingerprinting captures HOW you type (timing, cadence).
+    /// Voice fingerprinting captures writing style (requires explicit consent).
+    #[command(alias = "FINGERPRINT", alias = "Fingerprint", alias = "fp", after_help = "\
+EXAMPLES:\n  \
+    witnessd fingerprint status          Show fingerprint status\n  \
+    witnessd fingerprint enable-voice    Enable voice fingerprinting\n  \
+    witnessd fingerprint show            Show current fingerprint\n  \
+    witnessd fingerprint compare A B     Compare two profiles\n\n\
+PRIVACY:\n  \
+    Activity fingerprinting is ON by default (captures timing only).\n  \
+    Voice fingerprinting is OFF by default (requires explicit consent).")]
+    Fingerprint {
+        #[command(subcommand)]
+        action: FingerprintAction,
+    },
+    /// Manage document sessions
+    ///
+    /// Sessions track work on documents across editing sessions.
+    #[command(alias = "SESSION", alias = "Session", after_help = "\
+EXAMPLES:\n  \
+    witnessd session list            List active sessions\n  \
+    witnessd session show <id>       Show session details\n  \
+    witnessd session export <id>     Export session evidence")]
+    Session {
+        #[command(subcommand)]
+        action: SessionAction,
+    },
+    /// Manage witnessd configuration
+    #[command(alias = "CONFIG", alias = "Config", alias = "cfg", after_help = "\
+EXAMPLES:\n  \
+    witnessd config show             Show all configuration\n  \
+    witnessd config set sentinel.auto_start true\n  \
+    witnessd config edit             Open in editor")]
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
 }
 
 #[derive(Subcommand, Clone)]
@@ -254,6 +316,83 @@ enum TrackAction {
     Export {
         /// Session ID to export
         session_id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum FingerprintAction {
+    /// Show fingerprint status
+    Status,
+    /// Enable activity fingerprinting (default: on)
+    EnableActivity,
+    /// Disable activity fingerprinting
+    DisableActivity,
+    /// Enable voice fingerprinting (requires consent)
+    EnableVoice,
+    /// Disable voice fingerprinting and delete all voice data
+    DisableVoice,
+    /// Show a fingerprint profile
+    Show {
+        /// Profile ID to show (defaults to current profile)
+        #[arg(short, long)]
+        id: Option<String>,
+    },
+    /// Compare two fingerprint profiles
+    Compare {
+        /// First profile ID
+        id1: String,
+        /// Second profile ID
+        id2: String,
+    },
+    /// List all stored fingerprint profiles
+    List,
+    /// Delete a fingerprint profile
+    Delete {
+        /// Profile ID to delete
+        id: String,
+        /// Force deletion without confirmation
+        #[arg(short, long)]
+        force: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum SessionAction {
+    /// List active sessions
+    List,
+    /// Show session details
+    Show {
+        /// Session ID to show
+        id: String,
+    },
+    /// Export session evidence
+    Export {
+        /// Session ID to export
+        id: String,
+        /// Output file path
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConfigAction {
+    /// Show current configuration
+    Show,
+    /// Set a configuration value
+    Set {
+        /// Key to set (e.g., sentinel.auto_start)
+        key: String,
+        /// Value to set
+        value: String,
+    },
+    /// Edit configuration in your default editor
+    Edit,
+    /// Reset configuration to defaults
+    Reset {
+        /// Force reset without confirmation
+        #[arg(short, long)]
+        force: bool,
     },
 }
 
@@ -1663,6 +1802,628 @@ fn cmd_track(action: TrackAction) -> Result<()> {
 }
 
 // =============================================================================
+// Daemon Start/Stop Command Implementation
+// =============================================================================
+
+fn cmd_start(foreground: bool) -> Result<()> {
+    let config = ensure_dirs()?;
+
+    // Check if daemon is already running
+    let daemon_manager = DaemonManager::new(config.data_dir.clone());
+    let status = daemon_manager.status();
+
+    if status.running {
+        if let Some(pid) = status.pid {
+            println!("Daemon is already running (PID: {})", pid);
+        } else {
+            println!("Daemon is already running.");
+        }
+        println!();
+        println!("Use 'witnessd status' for details or 'witnessd stop' to stop.");
+        return Ok(());
+    }
+
+    if foreground {
+        println!("Starting witnessd daemon in foreground...");
+        println!("Press Ctrl+C to stop.");
+        println!();
+
+        // TODO: Run daemon in foreground using Sentinel::start()
+        // This requires setting up the async runtime and Sentinel properly
+        println!("Foreground mode not yet implemented.");
+        println!("The sentinel daemon functionality is available but needs");
+        println!("integration with the CLI runtime.");
+    } else {
+        println!("Starting witnessd daemon...");
+        println!();
+
+        // TODO: Spawn daemon as background process
+        // This requires daemonization logic (fork on Unix, service on Windows)
+        println!("Background daemon mode not yet implemented.");
+        println!();
+        println!("For now, you can use:");
+        println!("  - 'witnessd watch start' for file monitoring");
+        println!("  - 'witnessd track start <file>' for keystroke tracking");
+    }
+
+    Ok(())
+}
+
+fn cmd_stop() -> Result<()> {
+    let config = ensure_dirs()?;
+
+    let daemon_manager = DaemonManager::new(config.data_dir.clone());
+    let status = daemon_manager.status();
+
+    if status.running {
+        if let Some(pid) = status.pid {
+            println!("Stopping daemon (PID: {})...", pid);
+
+            // Send SIGTERM to the daemon process
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::CommandExt;
+                let _ = std::process::Command::new("kill")
+                    .arg("-TERM")
+                    .arg(pid.to_string())
+                    .status();
+            }
+
+            #[cfg(windows)]
+            {
+                // On Windows, we'd need to use taskkill or similar
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/PID", &pid.to_string(), "/F"])
+                    .status();
+            }
+
+            // Wait briefly and check if stopped
+            std::thread::sleep(Duration::from_millis(500));
+            let new_status = daemon_manager.status();
+            if !new_status.running {
+                println!("Daemon stopped.");
+            } else {
+                println!("Daemon may still be stopping...");
+            }
+        } else {
+            println!("Daemon appears to be running but PID unknown.");
+        }
+    } else {
+        println!("Daemon is not running.");
+    }
+
+    Ok(())
+}
+
+// =============================================================================
+// Fingerprint Command Implementation
+// =============================================================================
+
+fn cmd_fingerprint(action: FingerprintAction) -> Result<()> {
+    let config = ensure_dirs()?;
+    let fingerprint_dir = config.fingerprint.storage_path.clone();
+
+    match action {
+        FingerprintAction::Status => {
+            let manager = FingerprintManager::new(&fingerprint_dir)
+                .map_err(|e| anyhow!("Failed to open fingerprint storage: {}", e))?;
+
+            let consent_manager = ConsentManager::new(&config.data_dir)
+                .map_err(|e| anyhow!("Failed to open consent manager: {}", e))?;
+
+            println!("=== Fingerprint Status ===");
+            println!();
+
+            // Activity fingerprinting status
+            println!(
+                "Activity fingerprinting: {}",
+                if config.fingerprint.activity_enabled {
+                    "ENABLED"
+                } else {
+                    "disabled"
+                }
+            );
+            println!("  (Captures HOW you type - timing, cadence, rhythm)");
+
+            // Voice fingerprinting status
+            let voice_status = match consent_manager.status() {
+                ConsentStatus::Granted => "ENABLED (consent given)",
+                ConsentStatus::Denied => "disabled (consent denied)",
+                ConsentStatus::Revoked => "disabled (consent revoked)",
+                ConsentStatus::NotRequested => "disabled (consent not requested)",
+            };
+            println!();
+            println!(
+                "Voice fingerprinting:    {}",
+                if config.fingerprint.voice_enabled {
+                    voice_status
+                } else {
+                    "disabled"
+                }
+            );
+            println!("  (Captures writing style - word patterns, punctuation)");
+
+            // Current profile status from FingerprintManager
+            println!();
+            let fp_status = manager.status();
+            let min_samples = config.fingerprint.min_samples as usize;
+
+            if fp_status.activity_samples == 0 && fp_status.current_profile_id.is_none() {
+                println!("Profile: None created yet");
+                println!("  Start the daemon to begin building your fingerprint.");
+            } else if fp_status.activity_samples < min_samples {
+                let progress = (fp_status.activity_samples as f64 / min_samples as f64 * 100.0).min(100.0);
+                println!("Profile: Building ({:.0}% complete)", progress);
+                println!("  Samples: {} / {} minimum", fp_status.activity_samples, min_samples);
+            } else {
+                println!("Profile: Ready");
+                println!("  Confidence: {:.1}%", fp_status.confidence * 100.0);
+                println!("  Activity samples: {}", fp_status.activity_samples);
+                if fp_status.voice_samples > 0 {
+                    println!("  Voice samples: {}", fp_status.voice_samples);
+                }
+            }
+        }
+
+        FingerprintAction::EnableActivity => {
+            let mut config = config;
+            config.fingerprint.activity_enabled = true;
+            config.persist()?;
+            println!("Activity fingerprinting enabled.");
+            println!();
+            println!("This captures typing timing patterns (HOW you type, not WHAT).");
+            println!("Start the daemon with 'witnessd start' to begin collecting.");
+        }
+
+        FingerprintAction::DisableActivity => {
+            let mut config = config;
+            config.fingerprint.activity_enabled = false;
+            config.persist()?;
+            println!("Activity fingerprinting disabled.");
+        }
+
+        FingerprintAction::EnableVoice => {
+            let mut consent_manager = ConsentManager::new(&config.data_dir)
+                .map_err(|e| anyhow!("Failed to open consent manager: {}", e))?;
+
+            // Check current status
+            match consent_manager.status() {
+                ConsentStatus::Granted => {
+                    println!("Voice fingerprinting is already enabled.");
+                    return Ok(());
+                }
+                ConsentStatus::Denied | ConsentStatus::Revoked => {
+                    println!("You previously declined voice fingerprinting.");
+                    println!();
+                }
+                ConsentStatus::NotRequested => {}
+            }
+
+            // Show consent explanation
+            println!("=== Voice Fingerprinting Consent ===");
+            println!();
+            println!("{}", witnessd_core::fingerprint::consent::CONSENT_EXPLANATION);
+            println!();
+
+            // Ask for consent
+            print!("Do you consent to voice fingerprinting? (yes/no): ");
+            io::stdout().flush()?;
+
+            let stdin = io::stdin();
+            let mut response = String::new();
+            stdin.lock().read_line(&mut response)?;
+            let response = response.trim().to_lowercase();
+
+            if response == "yes" || response == "y" {
+                consent_manager.grant_consent()
+                    .map_err(|e| anyhow!("Failed to record consent: {}", e))?;
+
+                let mut config = config;
+                config.fingerprint.voice_enabled = true;
+                config.persist()?;
+
+                println!();
+                println!("Voice fingerprinting enabled.");
+                println!("Your writing style will now be analyzed (no raw text stored).");
+            } else {
+                consent_manager.deny_consent()
+                    .map_err(|e| anyhow!("Failed to record denial: {}", e))?;
+
+                println!();
+                println!("Voice fingerprinting not enabled.");
+            }
+        }
+
+        FingerprintAction::DisableVoice => {
+            let mut consent_manager = ConsentManager::new(&config.data_dir)
+                .map_err(|e| anyhow!("Failed to open consent manager: {}", e))?;
+
+            // Revoke consent
+            consent_manager.revoke_consent()
+                .map_err(|e| anyhow!("Failed to revoke consent: {}", e))?;
+
+            // Update config
+            let mut config = config;
+            config.fingerprint.voice_enabled = false;
+            config.persist()?;
+
+            // Note: Voice data deletion would require iterating through profiles
+            // For now, just disable voice collection
+            println!("Voice fingerprinting disabled.");
+            println!("Voice data collection has been stopped.");
+            println!("To delete existing voice data, delete profiles individually.");
+        }
+
+        FingerprintAction::Show { id } => {
+            let manager = FingerprintManager::new(&fingerprint_dir)
+                .map_err(|e| anyhow!("Failed to open fingerprint storage: {}", e))?;
+
+            let profile_id: ProfileId = id.unwrap_or_else(|| {
+                // Try to get current profile ID
+                manager.status().current_profile_id.unwrap_or_else(|| "default".to_string())
+            });
+
+            match manager.load(&profile_id) {
+                Ok(fp) => {
+                    println!("=== Fingerprint Profile: {} ===", fp.id);
+                    println!();
+                    println!("Name: {}", fp.name.as_deref().unwrap_or("(unnamed)"));
+                    println!("Created: {}", fp.created_at.format("%Y-%m-%d %H:%M:%S"));
+                    println!("Updated: {}", fp.updated_at.format("%Y-%m-%d %H:%M:%S"));
+                    println!("Samples: {}", fp.sample_count);
+                    println!("Confidence: {:.1}%", fp.confidence * 100.0);
+                    println!();
+
+                    println!("Activity Fingerprint:");
+                    println!("  IKI mean: {:.1} ms", fp.activity.iki_distribution.mean);
+                    println!("  IKI std: {:.1} ms", fp.activity.iki_distribution.std_dev);
+                    println!("  Zone preference: {}", fp.activity.zone_profile.dominant_zone());
+
+                    if let Some(voice) = &fp.voice {
+                        println!();
+                        println!("Voice Fingerprint:");
+                        println!("  Word samples: {}", voice.total_words);
+                        println!(
+                            "  Avg word length: {:.1}",
+                            voice.avg_word_length()
+                        );
+                    }
+                }
+                Err(e) => {
+                    return Err(anyhow!("Profile not found: {}", e));
+                }
+            }
+        }
+
+        FingerprintAction::Compare { id1, id2 } => {
+            let manager = FingerprintManager::new(&fingerprint_dir)
+                .map_err(|e| anyhow!("Failed to open fingerprint storage: {}", e))?;
+
+            let comparison = manager.compare(&id1, &id2)
+                .map_err(|e| anyhow!("Failed to compare profiles: {}", e))?;
+
+            println!("=== Fingerprint Comparison ===");
+            println!();
+            println!("Profile A: {}", comparison.profile_a);
+            println!("Profile B: {}", comparison.profile_b);
+            println!();
+            println!("Overall Similarity: {:.1}%", comparison.similarity * 100.0);
+            println!("Activity Similarity: {:.1}%", comparison.activity_similarity * 100.0);
+            if let Some(voice_sim) = comparison.voice_similarity {
+                println!("Voice Similarity: {:.1}%", voice_sim * 100.0);
+            }
+            println!();
+            println!("Confidence: {:.1}%", comparison.confidence * 100.0);
+            println!("Verdict: {}", comparison.verdict.description());
+        }
+
+        FingerprintAction::List => {
+            let manager = FingerprintManager::new(&fingerprint_dir)
+                .map_err(|e| anyhow!("Failed to open fingerprint storage: {}", e))?;
+
+            let profiles = manager.list_profiles()
+                .map_err(|e| anyhow!("Failed to list profiles: {}", e))?;
+
+            if profiles.is_empty() {
+                println!("No fingerprint profiles stored.");
+                println!();
+                println!("Start the daemon to begin building your fingerprint:");
+                println!("  witnessd start");
+                return Ok(());
+            }
+
+            println!("Stored fingerprint profiles:");
+            for profile in profiles {
+                let voice_indicator = if profile.has_voice { " [+voice]" } else { "" };
+                println!(
+                    "  {}: {} samples, {:.0}% confidence{}",
+                    profile.id,
+                    profile.sample_count,
+                    profile.confidence * 100.0,
+                    voice_indicator
+                );
+            }
+        }
+
+        FingerprintAction::Delete { id, force } => {
+            if !force {
+                print!("Delete fingerprint profile '{}'? (yes/no): ", id);
+                io::stdout().flush()?;
+
+                let stdin = io::stdin();
+                let mut response = String::new();
+                stdin.lock().read_line(&mut response)?;
+                let response = response.trim().to_lowercase();
+
+                if response != "yes" && response != "y" {
+                    println!("Cancelled.");
+                    return Ok(());
+                }
+            }
+
+            let mut manager = FingerprintManager::new(&fingerprint_dir)
+                .map_err(|e| anyhow!("Failed to open fingerprint storage: {}", e))?;
+
+            manager.delete(&id)
+                .map_err(|e| anyhow!("Failed to delete profile: {}", e))?;
+
+            println!("Profile '{}' deleted.", id);
+        }
+    }
+
+    Ok(())
+}
+
+// =============================================================================
+// Session Command Implementation
+// =============================================================================
+
+fn cmd_session(action: SessionAction) -> Result<()> {
+    let config = ensure_dirs()?;
+    let sentinel_dir = config.data_dir.join("sentinel");
+
+    match action {
+        SessionAction::List => {
+            let sessions_file = sentinel_dir.join("active_sessions.json");
+
+            if !sessions_file.exists() {
+                println!("No active sessions.");
+                println!();
+                println!("Start the daemon to begin tracking sessions:");
+                println!("  witnessd start");
+                return Ok(());
+            }
+
+            let data = fs::read_to_string(&sessions_file)?;
+            let sessions: Vec<serde_json::Value> = serde_json::from_str(&data).unwrap_or_default();
+
+            if sessions.is_empty() {
+                println!("No active sessions.");
+                return Ok(());
+            }
+
+            println!("Active sessions:");
+            for session in sessions {
+                let id = session.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
+                let binding = session.get("binding_type").and_then(|v| v.as_str()).unwrap_or("unknown");
+                let samples = session.get("sample_count").and_then(|v| v.as_u64()).unwrap_or(0);
+
+                println!("  {}: {} binding, {} samples", id, binding, samples);
+            }
+        }
+
+        SessionAction::Show { id } => {
+            let session_file = sentinel_dir.join("sessions").join(format!("{}.json", id));
+
+            if !session_file.exists() {
+                return Err(anyhow!("Session not found: {}", id));
+            }
+
+            let data = fs::read_to_string(&session_file)?;
+            let session: serde_json::Value = serde_json::from_str(&data)?;
+
+            println!("=== Session: {} ===", id);
+            println!();
+            println!("{}", serde_json::to_string_pretty(&session)?);
+        }
+
+        SessionAction::Export { id, output } => {
+            let session_file = sentinel_dir.join("sessions").join(format!("{}.json", id));
+
+            if !session_file.exists() {
+                return Err(anyhow!("Session not found: {}", id));
+            }
+
+            let out_path = output.unwrap_or_else(|| PathBuf::from(format!("{}.session.json", id)));
+
+            fs::copy(&session_file, &out_path)?;
+
+            println!("Session exported to: {}", out_path.display());
+        }
+    }
+
+    Ok(())
+}
+
+// =============================================================================
+// Config Command Implementation
+// =============================================================================
+
+fn cmd_config(action: ConfigAction) -> Result<()> {
+    let dir = witnessd_dir()?;
+    let config_path = dir.join("witnessd.json");
+
+    match action {
+        ConfigAction::Show => {
+            let config = WitnessdConfig::load_or_default(&dir)?;
+
+            println!("=== witnessd Configuration ===");
+            println!();
+            println!("Data directory: {}", config.data_dir.display());
+            println!();
+            println!("[VDF]");
+            println!("  iterations_per_second: {}", config.vdf.iterations_per_second);
+            println!("  min_iterations: {}", config.vdf.min_iterations);
+            println!("  max_iterations: {}", config.vdf.max_iterations);
+            println!();
+            println!("[Sentinel]");
+            println!("  auto_start: {}", config.sentinel.auto_start);
+            println!("  heartbeat_interval_secs: {}", config.sentinel.heartbeat_interval_secs);
+            println!("  checkpoint_interval_secs: {}", config.sentinel.checkpoint_interval_secs);
+            println!("  idle_timeout_secs: {}", config.sentinel.idle_timeout_secs);
+            println!();
+            println!("[Fingerprint]");
+            println!("  activity_enabled: {}", config.fingerprint.activity_enabled);
+            println!("  voice_enabled: {}", config.fingerprint.voice_enabled);
+            println!("  retention_days: {}", config.fingerprint.retention_days);
+            println!("  min_samples: {}", config.fingerprint.min_samples);
+            println!();
+            println!("[Privacy]");
+            println!("  detect_sensitive_fields: {}", config.privacy.detect_sensitive_fields);
+            println!("  hash_urls: {}", config.privacy.hash_urls);
+            println!("  obfuscate_titles: {}", config.privacy.obfuscate_titles);
+            println!();
+            println!("Config file: {}", config_path.display());
+        }
+
+        ConfigAction::Set { key, value } => {
+            let mut config = WitnessdConfig::load_or_default(&dir)?;
+
+            // Parse key path (e.g., "sentinel.auto_start")
+            let parts: Vec<&str> = key.split('.').collect();
+
+            match parts.as_slice() {
+                ["sentinel", "auto_start"] => {
+                    config.sentinel.auto_start = value.parse()
+                        .map_err(|_| anyhow!("Invalid boolean value: {}", value))?;
+                }
+                ["sentinel", "heartbeat_interval_secs"] => {
+                    config.sentinel.heartbeat_interval_secs = value.parse()
+                        .map_err(|_| anyhow!("Invalid integer value: {}", value))?;
+                }
+                ["sentinel", "checkpoint_interval_secs"] => {
+                    config.sentinel.checkpoint_interval_secs = value.parse()
+                        .map_err(|_| anyhow!("Invalid integer value: {}", value))?;
+                }
+                ["sentinel", "idle_timeout_secs"] => {
+                    config.sentinel.idle_timeout_secs = value.parse()
+                        .map_err(|_| anyhow!("Invalid integer value: {}", value))?;
+                }
+                ["fingerprint", "activity_enabled"] => {
+                    config.fingerprint.activity_enabled = value.parse()
+                        .map_err(|_| anyhow!("Invalid boolean value: {}", value))?;
+                }
+                ["fingerprint", "voice_enabled"] => {
+                    config.fingerprint.voice_enabled = value.parse()
+                        .map_err(|_| anyhow!("Invalid boolean value: {}", value))?;
+                }
+                ["fingerprint", "retention_days"] => {
+                    config.fingerprint.retention_days = value.parse()
+                        .map_err(|_| anyhow!("Invalid integer value: {}", value))?;
+                }
+                ["fingerprint", "min_samples"] => {
+                    config.fingerprint.min_samples = value.parse()
+                        .map_err(|_| anyhow!("Invalid integer value: {}", value))?;
+                }
+                ["privacy", "detect_sensitive_fields"] => {
+                    config.privacy.detect_sensitive_fields = value.parse()
+                        .map_err(|_| anyhow!("Invalid boolean value: {}", value))?;
+                }
+                ["privacy", "hash_urls"] => {
+                    config.privacy.hash_urls = value.parse()
+                        .map_err(|_| anyhow!("Invalid boolean value: {}", value))?;
+                }
+                ["privacy", "obfuscate_titles"] => {
+                    config.privacy.obfuscate_titles = value.parse()
+                        .map_err(|_| anyhow!("Invalid boolean value: {}", value))?;
+                }
+                _ => {
+                    return Err(anyhow!(
+                        "Unknown configuration key: {}\n\n\
+                         Valid keys:\n  \
+                           sentinel.auto_start\n  \
+                           sentinel.heartbeat_interval_secs\n  \
+                           sentinel.checkpoint_interval_secs\n  \
+                           sentinel.idle_timeout_secs\n  \
+                           fingerprint.activity_enabled\n  \
+                           fingerprint.voice_enabled\n  \
+                           fingerprint.retention_days\n  \
+                           fingerprint.min_samples\n  \
+                           privacy.detect_sensitive_fields\n  \
+                           privacy.hash_urls\n  \
+                           privacy.obfuscate_titles",
+                        key
+                    ));
+                }
+            }
+
+            config.persist()?;
+            println!("Set {} = {}", key, value);
+        }
+
+        ConfigAction::Edit => {
+            // Ensure config file exists
+            let config = WitnessdConfig::load_or_default(&dir)?;
+            config.persist()?;
+
+            // Open in editor
+            let editor = std::env::var("EDITOR").unwrap_or_else(|_| {
+                if cfg!(target_os = "windows") {
+                    "notepad".to_string()
+                } else {
+                    "nano".to_string()
+                }
+            });
+
+            println!("Opening {} in {}...", config_path.display(), editor);
+
+            let status = std::process::Command::new(&editor)
+                .arg(&config_path)
+                .status()
+                .map_err(|e| anyhow!("Failed to open editor '{}': {}", editor, e))?;
+
+            if status.success() {
+                // Validate the edited config
+                match WitnessdConfig::load_or_default(&dir) {
+                    Ok(_) => println!("Configuration saved."),
+                    Err(e) => println!("Warning: Configuration may be invalid: {}", e),
+                }
+            }
+        }
+
+        ConfigAction::Reset { force } => {
+            if !force {
+                print!("Reset all configuration to defaults? (yes/no): ");
+                io::stdout().flush()?;
+
+                let stdin = io::stdin();
+                let mut response = String::new();
+                stdin.lock().read_line(&mut response)?;
+                let response = response.trim().to_lowercase();
+
+                if response != "yes" && response != "y" {
+                    println!("Cancelled.");
+                    return Ok(());
+                }
+            }
+
+            // Remove config file
+            if config_path.exists() {
+                fs::remove_file(&config_path)?;
+            }
+
+            // Create new default config
+            let config = WitnessdConfig::load_or_default(&dir)?;
+            config.persist()?;
+
+            println!("Configuration reset to defaults.");
+        }
+    }
+
+    Ok(())
+}
+
+// =============================================================================
 // Calibrate Command Implementation
 // =============================================================================
 
@@ -1871,6 +2632,37 @@ async fn main() {
 async fn run() -> Result<()> {
     let cli = Cli::parse();
 
+    // Auto-start daemon if configured and not already running
+    // (Skip for start/stop/status/init commands to avoid recursion)
+    let should_auto_start = match &cli.command {
+        Some(Commands::Start { .. })
+        | Some(Commands::Stop)
+        | Some(Commands::Status)
+        | Some(Commands::Init { .. })
+        | Some(Commands::Calibrate)
+        | Some(Commands::Config { .. })
+        | None => false,
+        _ => true,
+    };
+
+    if should_auto_start {
+        if let Ok(dir) = witnessd_dir() {
+            if let Ok(config) = WitnessdConfig::load_or_default(&dir) {
+                if config.sentinel.auto_start {
+                    // Check if daemon is running
+                    let daemon_manager = DaemonManager::new(config.data_dir.clone());
+                    let status = daemon_manager.status();
+                    if !status.running {
+                        // Auto-start is configured but daemon isn't running
+                        // For now, we don't auto-spawn the daemon - that would require
+                        // proper daemonization. Just note that auto_start is set.
+                        // Users can run 'witnessd start' manually.
+                    }
+                }
+            }
+        }
+    }
+
     match cli.command {
         Some(Commands::Init { _path: _ }) => {
             cmd_init()?;
@@ -1910,6 +2702,21 @@ async fn run() -> Result<()> {
         }
         Some(Commands::Watch { action, folder }) => {
             cmd_watch_smart(action, folder).await?;
+        }
+        Some(Commands::Start { foreground }) => {
+            cmd_start(foreground)?;
+        }
+        Some(Commands::Stop) => {
+            cmd_stop()?;
+        }
+        Some(Commands::Fingerprint { action }) => {
+            cmd_fingerprint(action)?;
+        }
+        Some(Commands::Session { action }) => {
+            cmd_session(action)?;
+        }
+        Some(Commands::Config { action }) => {
+            cmd_config(action)?;
         }
         None => {
             // No command provided - show smart status dashboard

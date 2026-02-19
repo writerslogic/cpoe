@@ -26,6 +26,104 @@ pub struct WitnessdConfig {
 
     #[serde(default)]
     pub research: ResearchConfig,
+
+    #[serde(default)]
+    pub fingerprint: FingerprintConfig,
+
+    #[serde(default)]
+    pub privacy: PrivacyConfig,
+}
+
+/// Configuration for author fingerprinting.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FingerprintConfig {
+    /// Enable activity fingerprinting (typing dynamics).
+    /// Default: true (captures HOW you type, not WHAT you type)
+    #[serde(default = "default_true")]
+    pub activity_enabled: bool,
+
+    /// Enable voice fingerprinting (writing style).
+    /// Default: false (requires explicit consent)
+    #[serde(default = "default_false")]
+    pub voice_enabled: bool,
+
+    /// Retention period for fingerprint profiles in days.
+    #[serde(default = "default_fingerprint_retention")]
+    pub retention_days: u32,
+
+    /// Minimum samples before creating a fingerprint.
+    #[serde(default = "default_min_fingerprint_samples")]
+    pub min_samples: u32,
+
+    /// Directory for fingerprint storage.
+    #[serde(default = "default_fingerprint_dir")]
+    pub storage_path: PathBuf,
+}
+
+impl Default for FingerprintConfig {
+    fn default() -> Self {
+        Self {
+            activity_enabled: true,
+            voice_enabled: false,
+            retention_days: 365,
+            min_samples: 100,
+            storage_path: default_fingerprint_dir(),
+        }
+    }
+}
+
+fn default_fingerprint_retention() -> u32 {
+    365
+}
+
+fn default_min_fingerprint_samples() -> u32 {
+    100
+}
+
+fn default_fingerprint_dir() -> PathBuf {
+    dirs::home_dir()
+        .map(|h| h.join(".witnessd").join("fingerprints"))
+        .unwrap_or_else(|| PathBuf::from(".witnessd/fingerprints"))
+}
+
+/// Privacy configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrivacyConfig {
+    /// Detect and skip sensitive input fields (password, etc.).
+    #[serde(default = "default_true")]
+    pub detect_sensitive_fields: bool,
+
+    /// Hash URLs before storing (privacy).
+    #[serde(default = "default_true")]
+    pub hash_urls: bool,
+
+    /// Obfuscate window titles.
+    #[serde(default = "default_true")]
+    pub obfuscate_titles: bool,
+
+    /// Excluded applications (never track).
+    #[serde(default = "default_privacy_excluded")]
+    pub excluded_apps: Vec<String>,
+}
+
+impl Default for PrivacyConfig {
+    fn default() -> Self {
+        Self {
+            detect_sensitive_fields: true,
+            hash_urls: true,
+            obfuscate_titles: true,
+            excluded_apps: default_privacy_excluded(),
+        }
+    }
+}
+
+fn default_privacy_excluded() -> Vec<String> {
+    vec![
+        "1Password".to_string(),
+        "Keychain Access".to_string(),
+        "System Preferences".to_string(),
+        "Terminal".to_string(),
+    ]
 }
 
 /// Configuration for anonymous research data contribution.
@@ -381,6 +479,11 @@ impl WitnessdConfig {
                 research_data_dir: data_dir.join("research"),
                 ..Default::default()
             },
+            fingerprint: FingerprintConfig {
+                storage_path: data_dir.join("fingerprints"),
+                ..Default::default()
+            },
+            privacy: PrivacyConfig::default(),
         }
     }
 
