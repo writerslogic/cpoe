@@ -915,8 +915,19 @@ fn is_secure_enclave_available() -> bool {
 
     // If not Apple Silicon, check for T2 chip (Intel Macs with SE)
     if !has_apple_silicon {
+        // In CI environments, skip T2 detection entirely - CI runners typically
+        // don't have T2 chips and even if they did, we lack the entitlements
+        if std::env::var("CI").is_ok() || std::env::var("GITHUB_ACTIONS").is_ok() {
+            log::info!("Skipping T2 detection in CI environment");
+            return false;
+        }
+
         // Check for T2 by looking for AppleT2Controller in ioreg
-        let t2_check = Command::new("ioreg").args(["-l", "-w0"]).output();
+        // Use targeted query (-c class, -d1 depth) instead of full registry dump
+        // to avoid hanging on large IOKit registries
+        let t2_check = Command::new("ioreg")
+            .args(["-l", "-d1", "-c", "AppleT2Controller"])
+            .output();
 
         if let Ok(out) = t2_check {
             if out.status.success() {
@@ -926,6 +937,9 @@ fn is_secure_enclave_available() -> bool {
                     return false;
                 }
             }
+        } else {
+            // ioreg command failed, assume no T2
+            return false;
         }
     }
 
