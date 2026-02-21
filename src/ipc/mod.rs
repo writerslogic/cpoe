@@ -1014,8 +1014,9 @@ fn verify_windows_pipe_peer(pipe: &named_pipe::NamedPipeServer) -> Result<()> {
 #[cfg(target_os = "windows")]
 unsafe fn get_token_user_sid(token: windows::Win32::Foundation::HANDLE) -> Result<String> {
     use windows::Win32::Security::{
-        ConvertSidToStringSidW, GetTokenInformation, TokenUser, TOKEN_USER,
+        GetTokenInformation, TokenUser, TOKEN_USER,
     };
+    use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
 
     // First call to get buffer size
     let mut size: u32 = 0;
@@ -1034,26 +1035,20 @@ unsafe fn get_token_user_sid(token: windows::Win32::Foundation::HANDLE) -> Resul
     let token_user = &*(buffer.as_ptr() as *const TOKEN_USER);
     let sid = token_user.User.Sid;
 
-    // Convert SID to string (Win32 allocates the string — must LocalFree)
+    // Convert SID to string
     let mut sid_string = windows::core::PWSTR::null();
     ConvertSidToStringSidW(sid, &mut sid_string)
         .map_err(|e| anyhow!("ConvertSidToStringSid failed: {}", e))?;
 
-    // RAII guard for LocalFree — ensures cleanup even if to_string() fails
-    struct LocalFreeGuard(windows::core::PWSTR);
-    impl Drop for LocalFreeGuard {
-        fn drop(&mut self) {
-            unsafe {
-                windows::Win32::System::Memory::LocalFree(
-                    windows::Win32::Foundation::HLOCAL(self.0.as_ptr() as *mut _),
-                );
-            }
-        }
-    }
-    let _guard = LocalFreeGuard(sid_string);
+    let result = sid_string.to_string()
+        .map_err(|e| anyhow!("SID string conversion failed: {}", e));
 
-    sid_string.to_string()
-        .map_err(|e| anyhow!("SID string conversion failed: {}", e))
+    // Free the Win32-allocated string
+    windows::Win32::Foundation::LocalFree(
+        windows::Win32::Foundation::HLOCAL(sid_string.as_ptr() as *mut _),
+    );
+
+    result
 }
 
 #[cfg(target_os = "windows")]
