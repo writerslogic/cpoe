@@ -4,7 +4,7 @@
 //! and evidence sizes across multiple parameter configurations.
 
 use std::time::{Duration, Instant};
-use witnessd_core::vdf::{self, Parameters, VdfProof};
+use witnessd_core::vdf::{self, VdfProof};
 
 fn main() {
     println!("=== witnessd Empirical Benchmark Suite ===\n");
@@ -193,7 +193,7 @@ fn main() {
     ] {
         let accel_rate = base_rate * accel_factor;
         let accel_time = iters_30s as f64 / accel_rate as f64;
-        let speedup = 30.0 / accel_time;
+        let _speedup = 30.0 / accel_time;
         println!(
             "    {:<25}: {:>12} iter/sec  → {:.2}s to replay ({}× faster than wall clock = {:.1}s floor)",
             accel_name,

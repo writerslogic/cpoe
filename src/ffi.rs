@@ -178,7 +178,7 @@ pub fn ffi_verify_evidence(path: String) -> FfiVerifyResult {
     let vdf_ips = packet.vdf_params.iterations_per_second;
 
     // Run verification
-    match packet.verify(packet.vdf_params.clone()) {
+    match packet.verify(packet.vdf_params) {
         Ok(()) => FfiVerifyResult {
             success: true,
             checkpoint_count,
@@ -517,7 +517,7 @@ pub fn ffi_get_compact_ref(path: String) -> String {
 
     // Build a compact reference from the most recent event hash
     let last_event = &events[events.len() - 1];
-    let hash_hex = hex::encode(&last_event.event_hash);
+    let hash_hex = hex::encode(last_event.event_hash);
 
     // Format: witnessd:<first 12 chars of hash>:<checkpoint count>
     format!(

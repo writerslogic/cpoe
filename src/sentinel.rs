@@ -1889,7 +1889,7 @@ impl IpcMessageHandler for SentinelIpcHandler {
                                     .hardware
                                     .as_ref()
                                     .and_then(|hw| hw.attestation_nonce)
-                                    .map(|n| hex::encode(n));
+                                    .map(hex::encode);
 
                                 let nonce_valid =
                                     match (&expected_nonce, packet.get_verifier_nonce()) {
@@ -2706,9 +2706,8 @@ fn create_session_start_payload(session: &DocumentSession) -> Vec<u8> {
         .as_ref()
         .and_then(|h| {
             hex::decode(h)
-                .map_err(|e| {
+                .inspect_err(|e| {
                     log::warn!("Failed to decode initial hash '{}': {}", h, e);
-                    e
                 })
                 .ok()
         })
