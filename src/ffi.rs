@@ -102,14 +102,15 @@ fn open_store() -> Result<crate::store::SecureStore, String> {
     let db_path = get_db_path()
         .filter(|p| p.exists())
         .ok_or_else(|| "Database not found".to_string())?;
-    let hmac_key = load_hmac_key()
-        .ok_or_else(|| "Failed to load signing key".to_string())?;
+    let hmac_key = load_hmac_key().ok_or_else(|| "Failed to load signing key".to_string())?;
     crate::store::SecureStore::open(&db_path, hmac_key)
         .map_err(|e| format!("Failed to open database: {}", e))
 }
 
 /// Convert SecureEvents to forensic EventData.
-fn events_to_forensic_data(events: &[crate::store::SecureEvent]) -> Vec<crate::forensics::EventData> {
+fn events_to_forensic_data(
+    events: &[crate::store::SecureEvent],
+) -> Vec<crate::forensics::EventData> {
     events
         .iter()
         .enumerate()
@@ -444,7 +445,11 @@ pub fn ffi_compute_process_score(path: String) -> FfiProcessScore {
 
     // Compute Process Score components from forensic metrics
     // R (Residency): Based on chain integrity and continuous coverage
-    let residency = if events.len() >= 5 { 1.0 } else { events.len() as f64 / 5.0 };
+    let residency = if events.len() >= 5 {
+        1.0
+    } else {
+        events.len() as f64 / 5.0
+    };
 
     // S (Sequence): Based on edit entropy and monotonic append ratio
     let sequence = (metrics.primary.edit_entropy.min(3.0) / 3.0 * 0.5)
@@ -515,7 +520,11 @@ pub fn ffi_get_compact_ref(path: String) -> String {
     let hash_hex = hex::encode(&last_event.event_hash);
 
     // Format: witnessd:<first 12 chars of hash>:<checkpoint count>
-    format!("witnessd:{}:{}", &hash_hex[..hash_hex.len().min(12)], events.len())
+    format!(
+        "witnessd:{}:{}",
+        &hash_hex[..hash_hex.len().min(12)],
+        events.len()
+    )
 }
 
 /// Create a manual checkpoint for a file with an optional message.
