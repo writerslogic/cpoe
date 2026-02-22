@@ -9,6 +9,11 @@ on:
         description: 'Version to update (e.g., 0.1.6)'
         required: true
 
+# Each package manager update must complete
+concurrency:
+  group: package-managers-${{ github.event.release.tag_name || github.event.inputs.version }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
 

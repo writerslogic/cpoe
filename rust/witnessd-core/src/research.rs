@@ -277,6 +277,7 @@ fn detect_memory_bucket() -> String {
     "unknown".to_string()
 }
 
+#[allow(dead_code)]
 fn memory_gb_to_bucket(gb: u64) -> String {
     match gb {
         0..=4 => "<=4GB",

@@ -198,6 +198,8 @@ impl TbsContext {
 
         // Set includeTpm20 = 1 via the anonymous union
         // The union has a field `asUINT32` where bit 2 is includeTpm20
+        // Note: Accessing union fields no longer requires unsafe in recent Rust
+        #[allow(unused_unsafe)]
         unsafe {
             // includeTpm20 is bit 2 (value 4) in the flags
             // Bit 0: requestRaw
@@ -358,6 +360,7 @@ impl Drop for TbsContext {
 
 /// Information about the TPM device.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct TpmDeviceInfo {
     /// Structure version (should be TPM_VERSION_20)
     pub struct_version: u32,
@@ -427,6 +430,7 @@ pub fn build_get_random_command(num_bytes: u16) -> Vec<u8> {
 /// - TPM2B_DIGEST:
 ///   - size: u16
 ///   - buffer: [u8; size]
+#[allow(dead_code)]
 pub fn parse_get_random_response(response: &[u8]) -> Result<Vec<u8>, TPMError> {
     // Validate minimum response size
     if response.len() < TPM2_RESPONSE_HEADER_SIZE {
@@ -529,6 +533,7 @@ pub fn build_pcr_read_command(pcr_selection: &[u32]) -> Vec<u8> {
 ///
 /// # Response Code Location
 /// The response code is at bytes 6-9 (big-endian u32) in the response header.
+#[allow(dead_code)]
 pub fn parse_response_code(response: &[u8]) -> Result<u32, TPMError> {
     if response.len() < TPM2_RESPONSE_HEADER_SIZE {
         return Err(TPMError::Quote(format!(
@@ -695,7 +700,7 @@ impl WindowsTpmProvider {
 
         // Read each digest (TPM2B_DIGEST: size: u16 + buffer)
         let mut values = Vec::new();
-        for (i, &pcr) in pcrs.iter().take(digest_count as usize).enumerate() {
+        for (_i, &pcr) in pcrs.iter().take(digest_count as usize).enumerate() {
             if offset + 2 > response.len() {
                 break;
             }

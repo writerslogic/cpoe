@@ -10,7 +10,6 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use witnessd_core::config::WitnessdConfig;
 use witnessd_core::declaration::{self, AIExtent, AIPurpose, ModalityType};
-use witnessd_core::war;
 use witnessd_core::evidence;
 use witnessd_core::fingerprint::{ConsentManager, ConsentStatus, FingerprintManager, ProfileId};
 use witnessd_core::jitter::{
@@ -23,6 +22,7 @@ use witnessd_core::presence::{
 use witnessd_core::tpm;
 use witnessd_core::vdf;
 use witnessd_core::vdf::params::{calibrate, Parameters as VdfParameters};
+use witnessd_core::war;
 use witnessd_core::{derive_hmac_key, DaemonManager, SecureEvent, SecureStore};
 
 mod smart_defaults;
@@ -2844,7 +2844,12 @@ async fn run() -> Result<()> {
             // Use smart log to handle optional file
             cmd_log_smart(file)?;
         }
-        Some(Commands::Export { file, tier, output, format }) => {
+        Some(Commands::Export {
+            file,
+            tier,
+            output,
+            format,
+        }) => {
             cmd_export(&file, &tier, output, None, &format)?;
         }
         Some(Commands::Verify { file, key }) => {

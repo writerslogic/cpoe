@@ -1060,7 +1060,9 @@ impl Default for AsyncIpcClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
     use std::sync::Arc;
+    #[allow(unused_imports)]
     use tempfile::tempdir;
 
     struct TestHandler;
@@ -1265,8 +1267,7 @@ mod tests {
                 // If it somehow decoded, it shouldn't match original
                 let re_encoded = encode_message(&decoded).unwrap();
                 assert_ne!(
-                    re_encoded,
-                    full_bytes,
+                    re_encoded, full_bytes,
                     "Truncated message should not decode to original"
                 );
             }

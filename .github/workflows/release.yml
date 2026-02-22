@@ -10,6 +10,11 @@ on:
         description: 'Tag to release (e.g., v0.1.7)'
         required: true
 
+# Each release must complete - do not cancel
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
   id-token: write
@@ -198,7 +203,7 @@ jobs:
     uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
     with:
       base64-subjects: "${{ needs.aggregate-hashes.outputs.hashes }}"
-      upload-assets: true
+      upload-assets: false
 
   # ============================================================================
   # Generate SBOM
@@ -248,6 +253,12 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      - name: Download SLSA provenance
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.slsa-provenance.outputs.provenance-name }}
+          path: artifacts
+
       - name: Generate checksums
         run: |
           cd artifacts
@@ -282,8 +293,9 @@ jobs:
             artifacts/*.tar.gz
             artifacts/*.zip
             artifacts/checksums.txt
-            artifacts/witnessd-rust-sbom.spdx.json
-            artifacts/witnessd-rust-sbom.cdx.json
+            artifacts/witnessd-sbom.spdx.json
+            artifacts/witnessd-sbom.cdx.json
+            artifacts/*.intoto.jsonl
           body: |
             ## witnessd ${{ needs.validate.outputs.tag }}
 
