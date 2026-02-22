@@ -825,18 +825,100 @@ func VerifyKeystrokeWithSecret(ke *KeystrokeEvidence, secret [32]byte) error {
 }
 ```
 
+## WAR Block Format (ASCII-Armored)
+
+In addition to JSON packets, evidence can be exported as WAR (Witnessd Authorship Record) blocks. WAR blocks are ASCII-armored, human-readable representations of evidence suitable for email, git commits, or plaintext contexts.
+
+### WAR Block Structure
+
+```text
+-----BEGIN WITNESSD AUTHORSHIP RECORD-----
+Version: WAR/1.1
+Author: key:a1b2c3d4e5f6a7b8
+Document-ID: a3f2b8c9d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1
+Timestamp: 2026-01-25T14:30:00Z
+
+I declare this document was authored entirely by me. The content was
+created through direct keyboard input over multiple sessions, with
+revisions made incrementally as documented in the checkpoint chain.
+
+-----BEGIN SEAL-----
+H1:a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1
+H2:b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2
+H3:c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3
+SIG:...base64-encoded Ed25519 signature...
+KEY:...base64-encoded public key...
+-----END SEAL-----
+-----END WITNESSD AUTHORSHIP RECORD-----
+```
+
+### WAR Versions
+
+| Version | Description | Key Features |
+|---------|-------------|--------------|
+| WAR/1.0 | Legacy parallel mode | VDF computed independently from jitter |
+| WAR/1.1 | Entangled mode | VDF seeded from previous output + jitter + content |
+
+### WAR Seal (Hash Chain)
+
+The seal binds all evidence together through a chained hash structure:
+
+```
+H1 = SHA-256(document ‖ checkpoint_root ‖ declaration)
+H2 = SHA-256(H1 ‖ jitter_hash ‖ public_key)
+H3 = SHA-256(H2 ‖ vdf_output ‖ document)
+H4 = Ed25519_sign(H3, private_key)
+```
+
+This structure ensures:
+- Document content is bound (H1)
+- Typing proof (jitter) is bound (H2)
+- Time proof (VDF) is bound (H3)
+- Author identity is bound (H4/signature)
+
+### WAR/1.1 Entanglement
+
+In WAR/1.1 mode, each checkpoint's VDF is seeded by the previous checkpoint's output combined with accumulated jitter entropy:
+
+```
+VDF_input[n] = SHA-256(
+    "witnessd-vdf-entangled-v1" ‖
+    VDF_output[n-1] ‖
+    jitter_hash[n] ‖
+    content_hash[n] ‖
+    ordinal[n]
+)
+```
+
+This creates a chain where:
+1. Each checkpoint depends on all previous checkpoints
+2. Jitter evidence is woven into the VDF chain
+3. Parallel precomputation becomes impossible
+4. Evidence is strongly bound to the authorship timeline
+
+### WAR Verification
+
+WAR blocks support multi-level verification:
+
+1. **Signature Only**: Verify H4 signature of H3 (fast, requires only the WAR block)
+2. **Chain Verify**: Recompute H1→H2→H3 chain (requires full evidence)
+3. **Full Verify**: Verify VDF proofs and declaration signatures (complete verification)
+
 ## File Format
 
-### MIME Type
+### MIME Types
 
 ```
-application/vnd.witnessd.evidence+json
+application/vnd.witnessd.evidence+json    # JSON evidence packet
+text/plain; charset=utf-8                  # WAR block (ASCII-armored)
 ```
 
-### File Extension
+### File Extensions
 
 ```
-.wpkt
+.wpkt     # JSON evidence packet (legacy)
+.json     # JSON evidence packet
+.war      # ASCII-armored WAR block
 ```
 
 ### Encoding
@@ -1013,15 +1095,37 @@ if err := packet.Verify(vdfParams); err != nil {
 ### CLI Usage
 
 ```bash
-# Export evidence
-witnessd export --file document.md --output evidence.wpkt
+# Export evidence as JSON (default)
+witnessd export document.md -t standard -o evidence.json
 
-# Verify evidence
-witnessctl verify evidence.wpkt
+# Export evidence as WAR block (ASCII-armored)
+witnessd export document.md -t standard -f war -o proof.war
 
-# Verify with full report
-witnessctl verify --verbose evidence.wpkt
+# Verify JSON evidence packet
+witnessd verify evidence.json
+
+# Verify WAR block
+witnessd verify proof.war
+
+# Verify local database
+witnessd verify ~/.witnessd/events.db
 ```
+
+### Export Formats
+
+| Format | Extension | Description |
+|--------|-----------|-------------|
+| `json` | `.json` | Machine-readable JSON packet (default) |
+| `war`  | `.war`  | ASCII-armored WAR block (human-readable) |
+
+### Evidence Tiers
+
+| Tier | Flag | Description |
+|------|------|-------------|
+| `basic` | `-t basic` | Checkpoints + timestamps (fastest) |
+| `standard` | `-t standard` | + VDF proofs + declaration (recommended) |
+| `enhanced` | `-t enhanced` | + keystroke timing evidence |
+| `maximum` | `-t maximum` | + presence verification (full forensic) |
 
 ## References
 

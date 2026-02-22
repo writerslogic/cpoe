@@ -79,6 +79,10 @@
       "type": "string",
       "description": "Ed25519 signature over canonical payload (base64 or hex encoded, 64 bytes raw). See specs/process-declaration.md for signing algorithm.",
       "minLength": 64
+    },
+    "jitter_sealed": {
+      "$ref": "#/$defs/DeclarationJitter",
+      "description": "Jitter seal captured during interactive declaration (WAR/1.1)"
     }
   },
   "$defs": {
@@ -216,6 +220,42 @@
         "transcriber",
         "other"
       ]
+    },
+    "DeclarationJitter": {
+      "type": "object",
+      "description": "Jitter seal captured during interactive declaration (WAR/1.1). Binds typing proof to the declaration for enhanced authenticity.",
+      "required": ["jitter_hash", "keystroke_count", "duration_ms", "avg_interval_ms", "entropy_bits", "hardware_sealed"],
+      "properties": {
+        "jitter_hash": {
+          "type": "string",
+          "description": "SHA-256 hash of accumulated jitter samples (hex-encoded)",
+          "pattern": "^[a-fA-F0-9]{64}$"
+        },
+        "keystroke_count": {
+          "type": "integer",
+          "description": "Total keystrokes during declaration",
+          "minimum": 0
+        },
+        "duration_ms": {
+          "type": "integer",
+          "description": "Duration of declaration typing in milliseconds",
+          "minimum": 0
+        },
+        "avg_interval_ms": {
+          "type": "number",
+          "description": "Average interval between keystrokes in milliseconds",
+          "minimum": 0
+        },
+        "entropy_bits": {
+          "type": "number",
+          "description": "Estimated entropy in bits from timing jitter",
+          "minimum": 0
+        },
+        "hardware_sealed": {
+          "type": "boolean",
+          "description": "Whether jitter was captured via hardware entropy source (physjitter)"
+        }
+      }
     }
   },
   "examples": [

@@ -47,7 +47,9 @@
 
 ## Overview
 
-**witnessd** creates tamper-evident cryptographic records of document authorship through commit-based temporal witnessing. It provides irrefutable proof that you wrote what you wrote, when you wrote it.
+**witnessd** produces independently verifiable, tamper-evident process evidence that constrains when and how a document could have been created, enabling adversarial review without relying on content analysis or trust in the recorder.
+
+Faking it requires **more effort, more time, and more risk** than simply doing the work honestly — and any shortcut leaves detectable inconsistencies.
 
 | Capability | Description |
 |:-----------|:------------|
@@ -125,8 +127,10 @@ witnessd init                              # Initialize witnessd
 witnessd calibrate                         # Calibrate VDF for your machine
 witnessd commit document.md -m "Draft"     # Create checkpoint
 witnessd log document.md                   # View history
-witnessd export document.md --tier enhanced # Export evidence
-witnessd verify evidence-packet.json       # Verify evidence
+witnessd export document.md -t enhanced    # Export as JSON
+witnessd export document.md -f war -o proof.war  # Export as WAR block
+witnessd verify evidence.json              # Verify JSON packet
+witnessd verify proof.war                  # Verify WAR block
 ```
 
 ## How It Works
@@ -164,6 +168,30 @@ flowchart LR
 | **Standard** | + Presence verification | Professional work |
 | **Enhanced** | + Forensic analysis, keystroke patterns | Legal evidence |
 | **Maximum** | + Hardware attestation, external anchors | Litigation-ready |
+
+### Export Formats
+
+| Format | Extension | Description |
+|:-------|:----------|:------------|
+| **JSON** | `.json` | Machine-readable evidence packet (default) |
+| **WAR** | `.war` | ASCII-armored block (human-readable, email-safe) |
+
+> [!NOTE]
+> **WAR/1.1** blocks use entangled VDF computation where each checkpoint's time proof is cryptographically bound to accumulated keystroke jitter, making parallel precomputation impossible.
+
+### Standards & Registrations
+
+| Registry | Identifier | Description |
+|:---------|:-----------|:------------|
+| **IANA PEN** | 65074 | Private Enterprise Number (WritersLogic) |
+| **CBOR Tag** | 1463894560 (0x57415220) | Writers Authenticity Report (.war) |
+| **CBOR Tag** | 1347571280 (0x50505020) | Proof of Process Packet (.pop) |
+| **CBOR Tag** | 1347571281 (0x50505021) | Compact Evidence Reference |
+| **MIME Type** | `vnd.writerslogic.pop+cbor` | Proof of Process Packet |
+| **MIME Type** | `vnd.writerslogic.war+cbor` | Writers Authenticity Report |
+
+> [!NOTE]
+> The Proof of Process specification has been submitted to the IETF RATS Working Group as Internet-Drafts: [draft-condrey-rats-pop](https://datatracker.ietf.org/doc/draft-condrey-rats-pop/) (core), [draft-condrey-rats-pop-schema](https://datatracker.ietf.org/doc/draft-condrey-rats-pop-schema/) (CDDL schema), and [draft-condrey-rats-pop-examples](https://datatracker.ietf.org/doc/draft-condrey-rats-pop-examples/) (implementation examples).
 
 ## Features
 
@@ -224,7 +252,7 @@ witnessd-rust/
 ## Security
 
 > [!IMPORTANT]
-> witnessd provides **falsifiable** evidence, not absolute proof. A kernel-level adversary with complete system control can defeat any software-based attestation. The value lies in converting unsubstantiated doubt into testable claims across independent trust boundaries.[^1]
+> witnessd provides **independently verifiable, tamper-evident process evidence**, not absolute proof. A kernel-level adversary with complete system control can defeat any software-based attestation. The value lies in converting unsubstantiated doubt into testable claims across independent trust boundaries.[^1]
 
 | Artifact | Attestation |
 |:---------|:------------|
