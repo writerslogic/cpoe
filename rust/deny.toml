@@ -39,14 +39,7 @@ allow = [
 ]
 confidence-threshold = 0.8
 
-# Our own crates use AGPL-3.0-only license (custom, non-SPDX)
-[[licenses.exceptions]]
-name = "witnessd-core"
-allow = ["AGPL-3.0-only"]
-
-[[licenses.exceptions]]
-name = "witnessd-cli"
-allow = ["AGPL-3.0-only"]
+# Our own crates use Apache-2.0 (already in the allow list above)
 
 # allo-isolate doesn't specify a license in Cargo.toml but is MIT licensed
 [[licenses.clarify]]

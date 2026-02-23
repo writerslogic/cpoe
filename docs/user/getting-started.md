@@ -57,7 +57,7 @@ The macOS app includes:
 #### Using the Install Script
 
 ```bash
-curl -fsSL https://witnessd.io/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/writerslogic/witnessd/main/install.sh | bash
 ```
 
 #### Building from Source
@@ -272,9 +272,9 @@ Overall: VERIFIED
 
 ## Getting Help
 
-- **Documentation**: https://docs.witnessd.io
+- **Documentation**: https://docs.writerslogic.com/witnessd
 - **Issues**: https://github.com/writerslogic/witnessd/issues
-- **Community**: https://discord.gg/witnessd
+- **Website**: https://writerslogic.com
 
 ---
 

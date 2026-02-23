@@ -1,5 +1,5 @@
 witnessd - Falsifiable Process Evidence System
-Copyright (c) 2024-2025 David Condrey / Writerslogic Inc.
+Copyright (c) 2024-2026 David Condrey / Writerslogic Inc.
 
 ================================================================================
                               PATENT NOTICE
@@ -13,24 +13,17 @@ This software implements technology that is the subject of:
   Filed: 2025
   Applicant: David Condrey
 
-Use of this software may be subject to patent rights. Please review the LICENSE
-file for terms and conditions, including patent license grants for non-commercial
-use and requirements for commercial licensing.
+Use of this software may be subject to patent rights. The Apache License 2.0
+includes a patent license grant for use of the software.
 
 ================================================================================
                               LICENSING
 ================================================================================
 
-This software is available under a dual license:
+This software is licensed under the Apache License, Version 2.0.
+See LICENSE file for complete terms.
 
-1. NON-COMMERCIAL LICENSE
-   Free for personal, academic, research, and open-source use.
-   See LICENSE file for complete terms.
-
-2. COMMERCIAL LICENSE
-   Required for commercial products, services, and for-profit use.
-   Contact: licensing@writerslogic.com
-   Web: https://writerslogic.com/licensing
+For licensing inquiries, contact: admin@writerslogic.com
 
 ================================================================================
                            THIRD-PARTY NOTICES

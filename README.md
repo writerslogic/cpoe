@@ -26,7 +26,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/writerslogic/witnessd/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-dual-blue" alt="License"></a>
+  <a href="https://github.com/writerslogic/witnessd/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License"></a>
   <img src="https://img.shields.io/badge/Patent-US%2019%2F460%2C364%20Pending-blue" alt="Patent Pending">
 </p>
 
@@ -131,6 +131,9 @@ witnessd export document.md -t enhanced    # Export as JSON
 witnessd export document.md -f war -o proof.war  # Export as WAR block
 witnessd verify evidence.json              # Verify JSON packet
 witnessd verify proof.war                  # Verify WAR block
+
+# Or verify online without installing:
+# https://writerslogic.com/verify
 ```
 
 ## How It Works
@@ -301,9 +304,7 @@ If you use witnessd in academic work, please cite:
 
 ## License
 
-Dual licensed:
-- **Non-Commercial**: Free for personal, academic, research, and open-source projects
-- **Commercial**: Requires a commercial license — contact licensing@writerslogic.com
+Licensed under the [Apache License, Version 2.0](LICENSE). See [LICENSE](LICENSE) for details.
 
 ## Links
 

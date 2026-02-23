@@ -45,3 +45,18 @@ rfc/
 
 # PKI keys and certificates (private)
 pki/
+
+# Patent documents (private)
+patent/
+
+# Research data (private)
+data/
+
+# Docs directories (keep only user/ and man/)
+docs/dev/
+docs/research/
+docs/schema/
+docs/spec/
+docs/*.md
+!docs/user/
+!docs/man/

@@ -15,7 +15,7 @@ the latest version.
 
 ### Preferred Method
 
-Report vulnerabilities via email to: **security@witnessd.dev**
+Report vulnerabilities via email to: **admin@writerslogic.com**
 
 Include:
 - Type of issue (cryptographic weakness, privilege escalation, etc.)

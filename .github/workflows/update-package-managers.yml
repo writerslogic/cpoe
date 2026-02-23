@@ -63,7 +63,7 @@ jobs:
             homepage "https://writerslogic.com"
             url "https://github.com/writerslogic/witnessd/archive/refs/tags/${{ steps.version.outputs.tag }}.tar.gz"
             sha256 "${{ steps.sha256.outputs.sha256 }}"
-            license "AGPL-3.0-only"
+            license "Apache-2.0"
             head "https://github.com/writerslogic/witnessd.git", branch: "main"
 
             depends_on "rust" => :build
@@ -172,7 +172,7 @@ jobs:
               "version": "${VERSION}",
               "description": "Cryptographic authorship witnessing for writers and creators",
               "homepage": "https://writerslogic.com",
-              "license": "AGPL-3.0-only",
+              "license": "Apache-2.0",
               "architecture": {
                   "64bit": {
                       "url": "https://github.com/writerslogic/witnessd/releases/download/${TAG}/witnessd_${TAG}_x86_64-pc-windows-msvc.zip",

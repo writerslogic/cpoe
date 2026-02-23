@@ -3,7 +3,7 @@ name = "witnessd-core"
 version = "0.1.0"
 edition = "2021"
 description = "Cryptographic core for high-integrity document witnessing"
-license-file = "../../LICENSE"
+license = "AGPL-3.0-only"
 
 [lib]
 crate-type = ["cdylib", "staticlib", "rlib"]

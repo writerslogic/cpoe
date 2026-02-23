@@ -41,7 +41,7 @@ Common use cases include:
 
 ### Is witnessd open source?
 
-Yes! Witnessd is released under the MIT License. The source code is available at:
+Yes! Witnessd is released under the Apache License 2.0. The source code is available at:
 https://github.com/writerslogic/witnessd
 
 ---
@@ -289,15 +289,15 @@ The evidence packet includes verification instructions. Third-party verification
 - Understanding the cryptographic primitives (Ed25519, SHA-256, VDF)
 - Implementing or using verification code
 
-We're working on a web-based verifier at https://verify.witnessd.io
+You can also verify online at https://writerslogic.com/verify
 
 ---
 
 ## More Questions?
 
-- **Documentation**: https://docs.witnessd.io
+- **Documentation**: https://docs.writerslogic.com/witnessd
 - **GitHub Issues**: https://github.com/writerslogic/witnessd/issues
-- **Community Discord**: https://discord.gg/witnessd
+- **Website**: https://writerslogic.com
 
 ---
 

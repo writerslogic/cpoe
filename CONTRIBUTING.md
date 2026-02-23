@@ -129,9 +129,8 @@ Releases are managed by maintainers:
 
 By contributing to witnessd, you agree that:
 
-1. **License Grant:** Your contributions will be licensed under the same dual
-   license as the project (Non-Commercial License for non-commercial use;
-   commercial license required for commercial use).
+1. **License Grant:** Your contributions will be licensed under the Apache
+   License 2.0, the same license as the project.
 
 2. **Patent Grant:** You grant Writerslogic Inc. a perpetual, worldwide,
    royalty-free license to use any patent claims you may have that are
@@ -143,4 +142,4 @@ By contributing to witnessd, you agree that:
 4. **Patent Notice:** This project is the subject of USPTO Patent Application
    No. 19/460,364. See the LICENSE file for complete terms.
 
-For questions about the contributor agreement, contact: legal@writerslogic.com
+For questions about the contributor agreement, contact: admin@writerslogic.com
