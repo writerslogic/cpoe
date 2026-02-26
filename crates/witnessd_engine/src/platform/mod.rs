@@ -1,43 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 //! Platform-specific keystroke capture and focus monitoring.
-//!
-//! This module provides a unified interface for:
-//! - System-wide keystroke capture
-//! - Active window/document focus tracking
-//! - Synthetic event detection
-//! - HID device enumeration
-//!
-//! # Platform Support
-//!
-//! - **macOS**: CGEventTap + IOKit HID (dual-layer)
-//! - **Windows**: WH_KEYBOARD_LL hook
-//! - **Linux**: evdev + X11/Wayland focus tracking
-//!
-//! # Usage
-//!
-//! ```rust,ignore
-//! use witnessd_engine::platform::{KeystrokeCapture, create_keystroke_capture};
-//!
-//! let mut capture = create_keystroke_capture()?;
-//! let receiver = capture.start()?;
-//!
-//! while let Ok(event) = receiver.recv() {
-//!     if event.is_hardware {
-//!         // Process verified hardware keystroke
-//!     }
-//! }
-//! ```
 
-pub mod types;
+pub mod device;
+pub mod events;
+pub mod mouse;
+pub mod stats;
+pub mod status;
 
 #[cfg(target_os = "macos")]
 pub mod macos;
 
 #[cfg(target_os = "windows")]
+#[allow(dead_code)]
 pub mod windows;
 
 #[cfg(target_os = "linux")]
+#[allow(dead_code)]
 pub mod linux;
 
 pub mod broadcaster;
@@ -51,11 +30,11 @@ pub use mouse_stego::{compute_mouse_jitter, MouseStegoEngine};
 pub use broadcaster::{EventBroadcaster, SubscriptionId, SyncEventBroadcaster};
 
 // Re-export common types
-pub use types::{
-    DualLayerValidation, EventVerificationResult, FocusInfo, HIDDeviceInfo, KeystrokeEvent,
-    MouseEvent, MouseIdleStats, MouseStegoMode, MouseStegoParams, PermissionStatus,
-    RejectionReasons, SyntheticStats,
-};
+pub use device::{HIDDeviceInfo, TransportType};
+pub use events::{KeystrokeEvent, MouseEvent};
+pub use mouse::{MouseIdleStats, MouseStegoMode, MouseStegoParams};
+pub use stats::{DualLayerValidation, EventVerificationResult, RejectionReasons, SyntheticStats};
+pub use status::{FocusInfo, PermissionStatus};
 
 use anyhow::Result;
 use std::sync::mpsc;
@@ -67,8 +46,6 @@ use std::sync::mpsc;
 /// Trait for platform-specific keystroke capture implementations.
 pub trait KeystrokeCapture: Send + Sync {
     /// Start capturing keystrokes.
-    ///
-    /// Returns a channel receiver for keystroke events.
     fn start(&mut self) -> Result<mpsc::Receiver<KeystrokeEvent>>;
 
     /// Stop capturing keystrokes.
@@ -81,9 +58,6 @@ pub trait KeystrokeCapture: Send + Sync {
     fn is_running(&self) -> bool;
 
     /// Set strict mode for synthetic event detection.
-    ///
-    /// In strict mode, suspicious events are rejected.
-    /// In permissive mode, suspicious events are accepted but flagged.
     fn set_strict_mode(&mut self, strict: bool);
 
     /// Get current strict mode setting.
@@ -96,8 +70,6 @@ pub trait FocusMonitor: Send + Sync {
     fn get_active_focus(&self) -> Result<FocusInfo>;
 
     /// Start monitoring focus changes.
-    ///
-    /// Returns a channel receiver for focus change events.
     fn start_monitoring(&mut self) -> Result<mpsc::Receiver<FocusInfo>>;
 
     /// Stop monitoring focus changes.
@@ -117,15 +89,8 @@ pub trait HIDEnumerator {
 }
 
 /// Trait for platform-specific mouse capture implementations.
-///
-/// This captures mouse movement events, particularly for:
-/// - Idle jitter detection (mouse micro-movements during typing)
-/// - Movement pattern fingerprinting
-/// - Steganographic timing injection
 pub trait MouseCapture: Send + Sync {
     /// Start capturing mouse events.
-    ///
-    /// Returns a channel receiver for mouse events.
     fn start(&mut self) -> Result<mpsc::Receiver<MouseEvent>>;
 
     /// Stop capturing mouse events.
@@ -147,9 +112,6 @@ pub trait MouseCapture: Send + Sync {
     fn get_stego_params(&self) -> MouseStegoParams;
 
     /// Enable or disable idle-only mode.
-    ///
-    /// When enabled, only captures events when keyboard is active
-    /// (mouse is presumably idle next to keyboard).
     fn set_idle_only_mode(&mut self, enabled: bool);
 
     /// Check if idle-only mode is enabled.
@@ -160,55 +122,46 @@ pub trait MouseCapture: Send + Sync {
 // Platform-Specific Factory Functions
 // =============================================================================
 
-/// Create a keystroke capture instance for the current platform.
 #[cfg(target_os = "macos")]
 pub fn create_keystroke_capture() -> Result<Box<dyn KeystrokeCapture>> {
     Ok(Box::new(macos::MacOSKeystrokeCapture::new()?))
 }
 
-/// Create a keystroke capture instance for the current platform.
 #[cfg(target_os = "windows")]
 pub fn create_keystroke_capture() -> Result<Box<dyn KeystrokeCapture>> {
     Ok(Box::new(windows::WindowsKeystrokeCapture::new()?))
 }
 
-/// Create a keystroke capture instance for the current platform.
 #[cfg(target_os = "linux")]
 pub fn create_keystroke_capture() -> Result<Box<dyn KeystrokeCapture>> {
     Ok(Box::new(linux::LinuxKeystrokeCapture::new()?))
 }
 
-/// Create a focus monitor instance for the current platform.
 #[cfg(target_os = "macos")]
 pub fn create_focus_monitor() -> Result<Box<dyn FocusMonitor>> {
     Ok(Box::new(macos::MacOSFocusMonitor::new()?))
 }
 
-/// Create a focus monitor instance for the current platform.
 #[cfg(target_os = "windows")]
 pub fn create_focus_monitor() -> Result<Box<dyn FocusMonitor>> {
     Ok(Box::new(windows::WindowsFocusMonitor::new()?))
 }
 
-/// Create a focus monitor instance for the current platform.
 #[cfg(target_os = "linux")]
 pub fn create_focus_monitor() -> Result<Box<dyn FocusMonitor>> {
     Ok(Box::new(linux::LinuxFocusMonitor::new()?))
 }
 
-/// Create a mouse capture instance for the current platform.
 #[cfg(target_os = "macos")]
 pub fn create_mouse_capture() -> Result<Box<dyn MouseCapture>> {
     Ok(Box::new(macos::MacOSMouseCapture::new()?))
 }
 
-/// Create a mouse capture instance for the current platform.
 #[cfg(target_os = "windows")]
 pub fn create_mouse_capture() -> Result<Box<dyn MouseCapture>> {
     Ok(Box::new(windows::WindowsMouseCapture::new()?))
 }
 
-/// Create a mouse capture instance for the current platform.
 #[cfg(target_os = "linux")]
 pub fn create_mouse_capture() -> Result<Box<dyn MouseCapture>> {
     Ok(Box::new(linux::LinuxMouseCapture::new()?))
@@ -218,43 +171,36 @@ pub fn create_mouse_capture() -> Result<Box<dyn MouseCapture>> {
 // Permission Checking
 // =============================================================================
 
-/// Check if all required permissions are granted for the current platform.
 #[cfg(target_os = "macos")]
 pub fn check_permissions() -> PermissionStatus {
     macos::get_permission_status()
 }
 
-/// Check if all required permissions are granted for the current platform.
 #[cfg(target_os = "windows")]
 pub fn check_permissions() -> PermissionStatus {
     windows::get_permission_status()
 }
 
-/// Check if all required permissions are granted for the current platform.
 #[cfg(target_os = "linux")]
 pub fn check_permissions() -> PermissionStatus {
     linux::get_permission_status()
 }
 
-/// Request all required permissions for the current platform.
 #[cfg(target_os = "macos")]
 pub fn request_permissions() -> PermissionStatus {
     macos::request_all_permissions()
 }
 
-/// Request all required permissions for the current platform.
 #[cfg(target_os = "windows")]
 pub fn request_permissions() -> PermissionStatus {
     windows::request_all_permissions()
 }
 
-/// Request all required permissions for the current platform.
 #[cfg(target_os = "linux")]
 pub fn request_permissions() -> PermissionStatus {
     linux::request_all_permissions()
 }
 
-/// Check if all required permissions are granted.
 pub fn has_required_permissions() -> bool {
     check_permissions().all_granted
 }
@@ -263,7 +209,6 @@ pub fn has_required_permissions() -> bool {
 // Legacy Compatibility Re-exports
 // =============================================================================
 
-// Re-export platform-specific modules for backward compatibility
 #[cfg(target_os = "macos")]
 pub use macos::{
     check_accessibility_permissions, check_input_monitoring_permissions, enumerate_hid_keyboards,
@@ -278,6 +223,6 @@ pub use macos::{
 };
 
 #[cfg(target_os = "windows")]
-pub use types::FocusInfo as WindowsFocusInfo;
+pub use status::FocusInfo as WindowsFocusInfo;
 #[cfg(target_os = "windows")]
 pub use windows::get_active_focus as windows_get_active_focus;

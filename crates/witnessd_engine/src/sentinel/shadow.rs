@@ -1,0 +1,140 @@
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+
+use super::error::{Result, SentinelError};
+use crate::crypto::ObfuscatedString;
+use std::collections::HashMap;
+use std::fs::{self, File};
+use std::path::{Path, PathBuf};
+use std::sync::RwLock;
+use std::time::{Duration, SystemTime};
+
+/// Shadow buffer for tracking unsaved document content
+#[derive(Debug, Clone)]
+struct ShadowBuffer {
+    id: String,
+    app_name: String,
+    window_title: ObfuscatedString,
+    path: PathBuf,
+    #[allow(dead_code)] // Retained for diagnostic/audit purposes
+    created_at: SystemTime,
+    updated_at: SystemTime,
+    #[allow(dead_code)] // Retained for diagnostic/audit purposes
+    size: i64,
+}
+
+/// Manages shadow buffers for unsaved documents
+pub struct ShadowManager {
+    base_dir: PathBuf,
+    shadows: RwLock<HashMap<String, ShadowBuffer>>,
+}
+
+impl ShadowManager {
+    /// Create a new shadow manager
+    pub fn new(base_dir: impl AsRef<Path>) -> Result<Self> {
+        let base_dir = base_dir.as_ref().to_path_buf();
+        fs::create_dir_all(&base_dir)?;
+
+        Ok(Self {
+            base_dir,
+            shadows: RwLock::new(HashMap::new()),
+        })
+    }
+
+    /// Create a new shadow buffer for an unsaved document
+    pub fn create(&self, app_name: &str, window_title: &str) -> Result<String> {
+        use rand::Rng;
+        let mut rng = rand::rng();
+        let id_bytes: [u8; 16] = rng.random();
+        let id = hex::encode(id_bytes);
+
+        let path = self.base_dir.join(format!("{}.shadow", id));
+        File::create(&path)?;
+
+        let shadow = ShadowBuffer {
+            id: id.clone(),
+            app_name: app_name.to_string(),
+            window_title: ObfuscatedString::new(window_title),
+            path,
+            created_at: SystemTime::now(),
+            updated_at: SystemTime::now(),
+            size: 0,
+        };
+
+        self.shadows.write().unwrap().insert(id.clone(), shadow);
+
+        Ok(id)
+    }
+
+    /// Update the content of a shadow buffer
+    pub fn update(&self, id: &str, content: &[u8]) -> Result<()> {
+        let mut shadows = self.shadows.write().unwrap();
+        let shadow = shadows
+            .get_mut(id)
+            .ok_or_else(|| SentinelError::ShadowNotFound(id.to_string()))?;
+
+        fs::write(&shadow.path, content)?;
+        shadow.updated_at = SystemTime::now();
+        shadow.size = content.len() as i64;
+
+        Ok(())
+    }
+
+    /// Get the file path for a shadow buffer
+    pub fn get_path(&self, id: &str) -> Option<PathBuf> {
+        self.shadows.read().unwrap().get(id).map(|s| s.path.clone())
+    }
+
+    /// Delete a shadow buffer
+    pub fn delete(&self, id: &str) -> Result<()> {
+        if let Some(shadow) = self.shadows.write().unwrap().remove(id) {
+            let _ = fs::remove_file(&shadow.path);
+        }
+        Ok(())
+    }
+
+    /// Migrate a shadow buffer to a real file path (when unsaved document is saved)
+    pub fn migrate(&self, id: &str, _new_path: &str) -> Result<()> {
+        if let Some(shadow) = self.shadows.write().unwrap().remove(id) {
+            let _ = fs::remove_file(&shadow.path);
+        }
+        Ok(())
+    }
+
+    /// Remove all shadow buffers
+    pub fn cleanup_all(&self) {
+        let mut shadows = self.shadows.write().unwrap();
+        for shadow in shadows.values() {
+            let _ = fs::remove_file(&shadow.path);
+        }
+        shadows.clear();
+    }
+
+    /// Remove shadow buffers older than max_age
+    pub fn cleanup_old(&self, max_age: Duration) -> u32 {
+        let cutoff = SystemTime::now() - max_age;
+        let mut shadows = self.shadows.write().unwrap();
+        let mut removed = 0u32;
+
+        shadows.retain(|_, shadow| {
+            if shadow.updated_at < cutoff {
+                let _ = fs::remove_file(&shadow.path);
+                removed += 1;
+                false
+            } else {
+                true
+            }
+        });
+
+        removed
+    }
+
+    /// List all active shadow buffers
+    pub fn list(&self) -> Vec<(String, String, String)> {
+        self.shadows
+            .read()
+            .unwrap()
+            .values()
+            .map(|s| (s.id.clone(), s.app_name.clone(), s.window_title.reveal()))
+            .collect()
+    }
+}

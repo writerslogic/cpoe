@@ -9,8 +9,10 @@ uniffi::setup_scaffolding!();
 pub mod analysis;
 pub mod anchors;
 pub mod api_types;
+pub mod baseline;
 pub mod calibration;
 pub mod checkpoint;
+pub mod checkpoint_mmr;
 pub mod codec;
 pub mod collaboration;
 pub mod compact_ref;
@@ -29,13 +31,12 @@ pub mod jitter;
 pub mod keyhierarchy;
 pub mod mmr;
 pub mod physics;
-#[cfg(feature = "witnessd_jitter")]
-pub mod witnessd_jitter_bridge;
 pub mod platform;
 pub mod presence;
 pub mod provenance;
 pub mod research;
 pub mod rfc;
+pub mod sealed_chain;
 pub mod sealed_identity;
 pub mod sentinel;
 pub mod store;
@@ -46,6 +47,25 @@ pub mod trust_policy;
 pub mod vdf;
 pub mod wal;
 pub mod war;
+#[cfg(feature = "witnessd_jitter")]
+pub mod witnessd_jitter_bridge;
+pub mod writersproof;
+
+/// Extension trait for safe nanosecond timestamps.
+///
+/// `DateTime::timestamp_nanos_opt()` returns `None` for dates past ~2262 (i64 overflow).
+/// This trait provides a safe fallback that preserves nanosecond precision when possible
+/// and falls back to millisecond-derived nanoseconds otherwise.
+pub(crate) trait DateTimeNanosExt {
+    fn timestamp_nanos_safe(&self) -> i64;
+}
+
+impl DateTimeNanosExt for chrono::DateTime<chrono::Utc> {
+    fn timestamp_nanos_safe(&self) -> i64 {
+        self.timestamp_nanos_opt()
+            .unwrap_or_else(|| self.timestamp_millis().saturating_mul(1_000_000))
+    }
+}
 
 // Re-export common types
 pub use crate::config::{FingerprintConfig, PrivacyConfig, ResearchConfig, SentinelConfig};
