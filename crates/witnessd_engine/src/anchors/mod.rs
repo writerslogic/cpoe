@@ -9,7 +9,7 @@ mod types;
 mod verification;
 
 pub use types::*;
-pub use verification::verify_proof;
+pub use verification::verify_proof_format;
 
 use async_trait::async_trait;
 use std::sync::Arc;

@@ -132,7 +132,7 @@ impl TranscriptionCollector {
             0.0
         };
         let fingerprint = self.compute_fingerprint();
-        let now_ms = chrono::Utc::now().timestamp_millis() as u64;
+        let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
 
         TranscriptionMetadata {
             engine: self.engine,

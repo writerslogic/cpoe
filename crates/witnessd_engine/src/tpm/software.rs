@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 use super::{Binding, Capabilities, Provider, Quote, TPMError};
+use crate::DateTimeNanosExt;
 use chrono::Utc;
+use ed25519_dalek::Signer;
 use sha2::{Digest, Sha256};
 use std::sync::Mutex;
 
 pub struct SoftwareProvider {
+    signing_key: ed25519_dalek::SigningKey,
     state: Mutex<SoftwareState>,
 }
 
@@ -25,7 +28,9 @@ impl SoftwareProvider {
         let seed = Utc::now().to_rfc3339();
         let hash = Sha256::digest(seed.as_bytes());
         let device_id = format!("sw-{}", hex::encode(&hash[..8]));
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&hash.into());
         Self {
+            signing_key,
             state: Mutex::new(SoftwareState {
                 device_id,
                 counter: 0,
@@ -33,8 +38,8 @@ impl SoftwareProvider {
         }
     }
 
-    fn sign_payload(data: &[u8]) -> Vec<u8> {
-        Sha256::digest(data).to_vec()
+    fn sign_payload(&self, data: &[u8]) -> Vec<u8> {
+        self.signing_key.sign(data).to_bytes().to_vec()
     }
 }
 
@@ -54,8 +59,12 @@ impl Provider for SoftwareProvider {
         self.state.lock().unwrap().device_id.clone()
     }
 
+    fn algorithm(&self) -> coset::iana::Algorithm {
+        coset::iana::Algorithm::EdDSA
+    }
+
     fn public_key(&self) -> Vec<u8> {
-        Vec::new()
+        self.signing_key.verifying_key().to_bytes().to_vec()
     }
 
     fn quote(&self, nonce: &[u8], _pcrs: &[u32]) -> Result<Quote, TPMError> {
@@ -63,10 +72,11 @@ impl Provider for SoftwareProvider {
         let timestamp = Utc::now();
         let mut payload = Vec::new();
         payload.extend_from_slice(nonce);
-        payload.extend_from_slice(&timestamp.timestamp_nanos_opt().unwrap_or(0).to_le_bytes());
+        payload.extend_from_slice(&timestamp.timestamp_nanos_safe().to_le_bytes());
         payload.extend_from_slice(device_id.as_bytes());
 
-        let signature = Self::sign_payload(&payload);
+        let signature = self.sign_payload(&payload);
+        let public_key = self.public_key();
 
         Ok(Quote {
             provider_type: "software".to_string(),
@@ -75,7 +85,7 @@ impl Provider for SoftwareProvider {
             nonce: nonce.to_vec(),
             attested_data: payload,
             signature,
-            public_key: Vec::new(),
+            public_key,
             pcr_values: Vec::new(),
             extra: Default::default(),
         })
@@ -90,10 +100,11 @@ impl Provider for SoftwareProvider {
 
         let mut payload = Vec::new();
         payload.extend_from_slice(&data_hash);
-        payload.extend_from_slice(&timestamp.timestamp_nanos_opt().unwrap_or(0).to_le_bytes());
+        payload.extend_from_slice(&timestamp.timestamp_nanos_safe().to_le_bytes());
         payload.extend_from_slice(state.device_id.as_bytes());
 
-        let signature = Self::sign_payload(&payload);
+        let signature = self.sign_payload(&payload);
+        let public_key = self.public_key();
 
         Ok(Binding {
             version: 1,
@@ -102,7 +113,7 @@ impl Provider for SoftwareProvider {
             timestamp,
             attested_hash: data_hash,
             signature,
-            public_key: Vec::new(),
+            public_key,
             monotonic_counter: Some(state.counter),
             safe_clock: Some(true),
             attestation: Some(super::Attestation {
@@ -113,7 +124,7 @@ impl Provider for SoftwareProvider {
     }
 
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>, TPMError> {
-        Ok(Self::sign_payload(data))
+        Ok(self.sign_payload(data))
     }
 
     fn verify(&self, binding: &Binding) -> Result<(), TPMError> {

@@ -332,24 +332,197 @@ impl TrustThreshold {
     }
 }
 
+/// Metrics extracted from evidence for trust evaluation.
+#[derive(Debug, Clone, Default)]
+pub struct EvidenceMetrics {
+    /// Coefficient of variation of checkpoint intervals (std / mean).
+    /// Higher values indicate more natural (human) timing.
+    pub checkpoint_interval_cov: f32,
+
+    /// Whether character counts increase monotonically across checkpoints.
+    /// Value is the fraction of checkpoints with monotonic growth (0.0-1.0).
+    pub monotonic_growth_ratio: f32,
+
+    /// Behavioral fingerprint quality score (0.0-1.0).
+    /// Based on entropy/variance of typing patterns.
+    pub behavioral_entropy: f32,
+
+    /// Attestation tier level (1=SoftwareOnly, 2=AttestedSoftware, 3=HardwareBound, 4=HardwareHardened).
+    pub attestation_tier_level: u32,
+
+    /// Whether the causality chain verified successfully.
+    pub chain_verified: bool,
+
+    /// Number of checkpoints in the evidence.
+    pub checkpoint_count: u32,
+}
+
+impl AppraisalPolicy {
+    /// Evaluate evidence metrics against this policy, populating factor scores.
+    ///
+    /// Returns a new policy with all factors scored and thresholds evaluated.
+    pub fn evaluate(&self, metrics: &EvidenceMetrics) -> Self {
+        let mut policy = self.clone();
+
+        // Score each factor based on evidence metrics
+        for factor in &mut policy.factors {
+            let (observed, normalized) = match factor.factor_type {
+                FactorType::ChainIntegrity => {
+                    let score = if metrics.chain_verified { 1.0 } else { 0.0 };
+                    (score, score)
+                }
+                FactorType::TypingRateConsistency => {
+                    // Higher CoV means more natural timing
+                    // CoV of 0.3-0.6 is typical human; score peaks around 0.4
+                    let cov = metrics.checkpoint_interval_cov;
+                    let score = if cov <= 0.0 {
+                        0.0
+                    } else if cov < 0.1 {
+                        // Very regular → suspicious
+                        cov / 0.1 * 0.3
+                    } else if cov <= 0.6 {
+                        // Natural range
+                        0.3 + (cov - 0.1) / 0.5 * 0.7
+                    } else {
+                        // Very irregular → still plausible but slightly lower
+                        (1.0 - (cov - 0.6).min(0.4) / 0.4 * 0.2).max(0.0)
+                    };
+                    (cov, score)
+                }
+                FactorType::MonotonicRatio => (
+                    metrics.monotonic_growth_ratio,
+                    metrics.monotonic_growth_ratio,
+                ),
+                FactorType::EditEntropy => (metrics.behavioral_entropy, metrics.behavioral_entropy),
+                FactorType::HardwareAttestation => {
+                    let score = match metrics.attestation_tier_level {
+                        4 => 1.0,  // HardwareHardened
+                        3 => 0.85, // HardwareBound
+                        2 => 0.5,  // AttestedSoftware
+                        1 => 0.2,  // SoftwareOnly
+                        _ => 0.0,
+                    };
+                    (metrics.attestation_tier_level as f32, score)
+                }
+                FactorType::CheckpointCount => {
+                    let count = metrics.checkpoint_count as f32;
+                    // Score: diminishing returns, peak at ~20+ checkpoints
+                    let score = (count / 20.0).min(1.0);
+                    (count, score)
+                }
+                _ => (factor.observed_value, factor.normalized_score),
+            };
+
+            factor.observed_value = observed;
+            factor.normalized_score = normalized.clamp(0.0, 1.0);
+            factor.contribution = factor.weight * factor.normalized_score;
+        }
+
+        // Compute overall score
+        let overall_score = policy.compute_score();
+
+        // Evaluate thresholds
+        for threshold in &mut policy.thresholds {
+            match threshold.threshold_type {
+                ThresholdType::MinimumScore => {
+                    threshold.met = overall_score >= threshold.required_value;
+                    if !threshold.met {
+                        threshold.failure_reason = Some(format!(
+                            "Overall score {:.2} < required {:.2}",
+                            overall_score, threshold.required_value
+                        ));
+                    }
+                }
+                ThresholdType::MinimumFactor => {
+                    // Check if any factor meets the minimum
+                    let met = policy
+                        .factors
+                        .iter()
+                        .any(|f| f.normalized_score >= threshold.required_value);
+                    threshold.met = met;
+                    if !met {
+                        threshold.failure_reason = Some(format!(
+                            "No factor meets minimum score of {:.2}",
+                            threshold.required_value
+                        ));
+                    }
+                }
+                ThresholdType::RequiredFactor => {
+                    // Check that the named factor exists and has non-zero score
+                    let met = policy.factors.iter().any(|f| {
+                        f.factor_name == threshold.threshold_name && f.normalized_score > 0.0
+                    });
+                    threshold.met = met;
+                    if !met {
+                        threshold.failure_reason = Some(format!(
+                            "Required factor '{}' not present or scored zero",
+                            threshold.threshold_name
+                        ));
+                    }
+                }
+                ThresholdType::MaximumCaveats => {
+                    // Count factors scoring below 0.5 as "caveats"
+                    let caveat_count = policy
+                        .factors
+                        .iter()
+                        .filter(|f| f.normalized_score < 0.5)
+                        .count() as f32;
+                    threshold.met = caveat_count <= threshold.required_value;
+                    if !threshold.met {
+                        threshold.failure_reason = Some(format!(
+                            "{} caveats exceed maximum of {}",
+                            caveat_count, threshold.required_value
+                        ));
+                    }
+                }
+            }
+        }
+
+        policy
+    }
+}
+
 /// Predefined policy profiles
 pub mod profiles {
     use super::*;
 
-    /// Basic verification policy - chain integrity only
+    /// Basic verification policy - chain integrity and timing regularity
     pub fn basic() -> AppraisalPolicy {
         AppraisalPolicy::new("urn:ietf:params:pop:policy:basic", "1.0")
             .with_computation(TrustComputation::WeightedAverage)
             .add_factor(TrustFactor::new(
                 "chain-integrity",
                 FactorType::ChainIntegrity,
-                1.0,
-                0.0, // Placeholder
-                0.0, // Placeholder
+                0.4,
+                0.0, // Populated by evaluate()
+                0.0,
+            ))
+            .add_factor(TrustFactor::new(
+                "timing-regularity",
+                FactorType::TypingRateConsistency,
+                0.2,
+                0.0,
+                0.0,
+            ))
+            .add_factor(TrustFactor::new(
+                "content-progression",
+                FactorType::MonotonicRatio,
+                0.2,
+                0.0,
+                0.0,
+            ))
+            .add_factor(TrustFactor::new(
+                "hardware-attestation",
+                FactorType::HardwareAttestation,
+                0.2,
+                0.0,
+                0.0,
             ))
             .with_metadata(PolicyMetadata {
                 policy_name: Some("Basic Verification".to_string()),
-                policy_description: Some("Chain integrity verification only".to_string()),
+                policy_description: Some(
+                    "Chain integrity with timing and content analysis".to_string(),
+                ),
                 policy_authority: None,
                 policy_effective_date: None,
                 applicable_domains: vec!["general".to_string()],
@@ -529,5 +702,81 @@ mod tests {
         let parsed: AppraisalPolicy = serde_json::from_str(&json).unwrap();
 
         assert_eq!(parsed.policy_uri, "urn:test:policy");
+    }
+
+    #[test]
+    fn test_evaluate_basic_policy() {
+        let policy = profiles::basic();
+        let metrics = EvidenceMetrics {
+            checkpoint_interval_cov: 0.4,
+            monotonic_growth_ratio: 0.95,
+            behavioral_entropy: 0.7,
+            attestation_tier_level: 3, // HardwareBound
+            chain_verified: true,
+            checkpoint_count: 10,
+        };
+
+        let evaluated = policy.evaluate(&metrics);
+        let score = evaluated.compute_score();
+        assert!(score > 0.5, "Expected score > 0.5, got {}", score);
+
+        // Chain integrity should be 1.0
+        let chain = evaluated
+            .factors
+            .iter()
+            .find(|f| f.factor_type == FactorType::ChainIntegrity)
+            .unwrap();
+        assert!((chain.normalized_score - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_evaluate_broken_chain() {
+        let policy = profiles::basic();
+        let metrics = EvidenceMetrics {
+            chain_verified: false,
+            ..Default::default()
+        };
+
+        let evaluated = policy.evaluate(&metrics);
+        let chain = evaluated
+            .factors
+            .iter()
+            .find(|f| f.factor_type == FactorType::ChainIntegrity)
+            .unwrap();
+        assert!((chain.normalized_score - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_evaluate_threshold_checking() {
+        let policy = AppraisalPolicy::new("test", "1.0")
+            .with_computation(TrustComputation::WeightedAverage)
+            .add_factor(TrustFactor::new(
+                "chain-integrity",
+                FactorType::ChainIntegrity,
+                1.0,
+                0.0,
+                0.0,
+            ))
+            .add_threshold(TrustThreshold::new(
+                "minimum-overall",
+                ThresholdType::MinimumScore,
+                0.5,
+                false,
+            ));
+
+        let metrics = EvidenceMetrics {
+            chain_verified: true,
+            ..Default::default()
+        };
+
+        let evaluated = policy.evaluate(&metrics);
+        assert!(evaluated.check_thresholds()); // 1.0 >= 0.5
+
+        let metrics_bad = EvidenceMetrics {
+            chain_verified: false,
+            ..Default::default()
+        };
+        let evaluated_bad = policy.evaluate(&metrics_bad);
+        assert!(!evaluated_bad.check_thresholds()); // 0.0 < 0.5
     }
 }

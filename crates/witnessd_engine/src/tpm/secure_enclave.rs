@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
-#![allow(dead_code)]
-
 use super::{Attestation, Binding, Capabilities, Provider, Quote, TPMError};
+use crate::DateTimeNanosExt;
 use anyhow::Result;
 use chrono::Utc;
 use core_foundation::base::{CFType, TCFType};
@@ -42,9 +41,11 @@ use std::time::SystemTime;
 // Key tags for different purposes
 const SE_KEY_TAG: &str = "com.witnessd.secureenclave.signing";
 const SE_ATTESTATION_KEY_TAG: &str = "com.witnessd.secureenclave.attestation";
+#[allow(dead_code)]
 const SE_ENCRYPTION_KEY_TAG: &str = "com.witnessd.secureenclave.encryption";
 
 /// Key attestation information from Secure Enclave.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeyAttestation {
     /// Version of the attestation format
@@ -64,6 +65,7 @@ pub struct KeyAttestation {
 }
 
 /// Secure Enclave key information.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecureEnclaveKeyInfo {
     /// Key tag/identifier
@@ -483,6 +485,10 @@ impl Provider for SecureEnclaveProvider {
         self.state.lock().unwrap().device_id.clone()
     }
 
+    fn algorithm(&self) -> coset::iana::Algorithm {
+        coset::iana::Algorithm::ES256
+    }
+
     fn public_key(&self) -> Vec<u8> {
         self.state.lock().unwrap().public_key.clone()
     }
@@ -492,7 +498,7 @@ impl Provider for SecureEnclaveProvider {
         let timestamp = Utc::now();
         let mut payload = Vec::new();
         payload.extend_from_slice(nonce);
-        payload.extend_from_slice(&timestamp.timestamp_nanos_opt().unwrap_or(0).to_le_bytes());
+        payload.extend_from_slice(&timestamp.timestamp_nanos_safe().to_le_bytes());
         payload.extend_from_slice(state.device_id.as_bytes());
 
         let signature = sign(&state, &payload)?;
@@ -520,7 +526,7 @@ impl Provider for SecureEnclaveProvider {
 
         let mut payload = Vec::new();
         payload.extend_from_slice(&data_hash);
-        payload.extend_from_slice(&timestamp.timestamp_nanos_opt().unwrap_or(0).to_le_bytes());
+        payload.extend_from_slice(&timestamp.timestamp_nanos_safe().to_le_bytes());
         payload.extend_from_slice(state.device_id.as_bytes());
 
         let signature = sign(&state, &payload)?;
@@ -593,11 +599,7 @@ impl Provider for SecureEnclaveProvider {
         // Secure Enclave doesn't expose reboot counters.
         // macOS trust is established via code signing + notarization instead.
         let state = self.state.lock().unwrap();
-        let elapsed = state
-            .start_time
-            .elapsed()
-            .unwrap_or_default()
-            .as_millis() as u64;
+        let elapsed = state.start_time.elapsed().unwrap_or_default().as_millis() as u64;
         Ok(super::ClockInfo {
             clock: elapsed,
             reset_count: 0,
@@ -611,6 +613,7 @@ impl Provider for SecureEnclaveProvider {
 // Extended Secure Enclave operations (key attestation, device info)
 // =============================================================================
 
+#[allow(dead_code)]
 impl SecureEnclaveProvider {
     /// Generate a key attestation for the signing key.
     ///
@@ -644,7 +647,7 @@ impl SecureEnclaveProvider {
         attestation_data.extend_from_slice(state.device_id.as_bytes());
 
         // Timestamp
-        let ts_bytes = timestamp.timestamp_nanos_opt().unwrap_or(0).to_le_bytes();
+        let ts_bytes = timestamp.timestamp_nanos_safe().to_le_bytes();
         attestation_data.extend_from_slice(&ts_bytes);
 
         // Hardware info
@@ -714,11 +717,7 @@ impl SecureEnclaveProvider {
         expected_data.extend_from_slice(&attestation.public_key);
         expected_data.extend_from_slice(attestation.device_id.as_bytes());
 
-        let ts_bytes = attestation
-            .timestamp
-            .timestamp_nanos_opt()
-            .unwrap_or(0)
-            .to_le_bytes();
+        let ts_bytes = attestation.timestamp.timestamp_nanos_safe().to_le_bytes();
         expected_data.extend_from_slice(&ts_bytes);
 
         // Include hardware info if available
@@ -814,6 +813,7 @@ impl SecureEnclaveProvider {
 }
 
 /// Sign data with a specific key reference.
+#[allow(dead_code)]
 fn sign_with_key(key_ref: SecKeyRef, data: &[u8]) -> Result<Vec<u8>, TPMError> {
     if key_ref.is_null() {
         return Err(TPMError::NotInitialized);
@@ -837,6 +837,7 @@ fn sign_with_key(key_ref: SecKeyRef, data: &[u8]) -> Result<Vec<u8>, TPMError> {
 
 /// Verify an ECDSA P-256 signature.
 /// Note: Full verification requires parsing the X9.62 public key format.
+#[allow(dead_code)]
 fn verify_ecdsa_signature(
     public_key: &[u8],
     data: &[u8],

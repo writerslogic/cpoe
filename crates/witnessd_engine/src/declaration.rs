@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 use chrono::{DateTime, Utc};
-use ed25519_dalek::{Signature, Signer as _, Verifier as _, VerifyingKey};
+use ed25519_dalek::{Signature, Verifier as _, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use witnessd_protocol::crypto::PoPSigner;
+
+use crate::error::Error;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Declaration {
@@ -211,52 +213,53 @@ impl Builder {
         self
     }
 
-    pub fn sign(mut self, signer: &dyn PoPSigner) -> Result<Declaration, String> {
+    pub fn sign(mut self, signer: &dyn PoPSigner) -> crate::error::Result<Declaration> {
         if let Some(err) = self.err.take() {
-            return Err(err);
+            return Err(Error::Validation(err));
         }
 
         self.validate()?;
-        
+
         self.decl.author_public_key = signer.public_key();
-        
+
         let payload = self.decl.signing_payload();
-        let signature = signer.sign(&payload)
-            .map_err(|e| format!("signing failed: {}", e))?;
-        
+        let signature = signer
+            .sign(&payload)
+            .map_err(|e| Error::crypto(format!("signing failed: {e}")))?;
+
         self.decl.signature = signature;
         Ok(self.decl)
     }
 
-    fn validate(&self) -> Result<(), String> {
+    fn validate(&self) -> crate::error::Result<()> {
         if self.decl.document_hash == [0u8; 32] {
-            return Err("document hash is required".to_string());
+            return Err(Error::validation("document hash is required"));
         }
         if self.decl.chain_hash == [0u8; 32] {
-            return Err("chain hash is required".to_string());
+            return Err(Error::validation("chain hash is required"));
         }
         if self.decl.title.is_empty() {
-            return Err("title is required".to_string());
+            return Err(Error::validation("title is required"));
         }
         if self.decl.input_modalities.is_empty() {
-            return Err("at least one input modality is required".to_string());
+            return Err(Error::validation("at least one input modality is required"));
         }
         if self.decl.statement.is_empty() {
-            return Err("statement is required".to_string());
+            return Err(Error::validation("statement is required"));
         }
 
         let mut total = 0.0;
         for modality in &self.decl.input_modalities {
             if modality.percentage < 0.0 || modality.percentage > 100.0 {
-                return Err("modality percentage must be 0-100".to_string());
+                return Err(Error::validation("modality percentage must be 0-100"));
             }
             total += modality.percentage;
         }
         if !(95.0..=105.0).contains(&total) {
-            return Err(format!(
+            return Err(Error::validation(format!(
                 "modality percentages sum to {:.1}%, expected ~100%",
                 total
-            ));
+            )));
         }
 
         Ok(())
@@ -302,12 +305,12 @@ impl Declaration {
         max
     }
 
-    pub fn encode(&self) -> Result<Vec<u8>, String> {
-        serde_json::to_vec_pretty(self).map_err(|e| e.to_string())
+    pub fn encode(&self) -> crate::error::Result<Vec<u8>> {
+        serde_json::to_vec_pretty(self).map_err(|e| Error::validation(format!("encode: {e}")))
     }
 
-    pub fn decode(data: &[u8]) -> Result<Declaration, String> {
-        serde_json::from_slice(data).map_err(|e| e.to_string())
+    pub fn decode(data: &[u8]) -> crate::error::Result<Declaration> {
+        serde_json::from_slice(data).map_err(|e| Error::validation(format!("decode: {e}")))
     }
 
     pub fn summary(&self) -> DeclarationSummary {
@@ -320,7 +323,7 @@ impl Declaration {
             title: self.title.clone(),
             ai_usage: self.has_ai_usage(),
             ai_tools: tools,
-            max_ai_extent: format!("{:?}", self.max_ai_extent()).to_lowercase(),
+            max_ai_extent: ai_extent_str(&self.max_ai_extent()).to_string(),
             collaborators: self.collaborators.len(),
             signature_valid: self.verify(),
         }
@@ -328,57 +331,48 @@ impl Declaration {
 
     fn signing_payload(&self) -> Vec<u8> {
         let mut hasher = Sha256::new();
-        hasher.update(b"witnessd-declaration-v2");
+        // v3: length-prefixed strings, millis timestamp, f64::to_bits, None/Some discriminants
+        hasher.update(b"witnessd-declaration-v3");
         hasher.update(self.document_hash);
         hasher.update(self.chain_hash);
-        hasher.update(self.title.as_bytes());
+        hash_str(&mut hasher, &self.title);
 
         hasher.update((self.input_modalities.len() as u64).to_be_bytes());
         for modality in &self.input_modalities {
-            hasher.update(modality_type_str(&modality.modality_type).as_bytes());
-            let fixed = (modality.percentage * 1000.0) as u64;
-            hasher.update(fixed.to_be_bytes());
-            hasher.update(modality.note.as_deref().unwrap_or("").as_bytes());
+            hash_str(&mut hasher, modality_type_str(&modality.modality_type));
+            hasher.update(modality.percentage.to_bits().to_be_bytes());
+            hash_opt_str(&mut hasher, modality.note.as_deref());
         }
 
         hasher.update((self.ai_tools.len() as u64).to_be_bytes());
         for tool in &self.ai_tools {
-            hasher.update(tool.tool.as_bytes());
-            if let Some(version) = &tool.version {
-                hasher.update(version.as_bytes());
-            }
-            hasher.update(ai_purpose_str(&tool.purpose).as_bytes());
-            if let Some(interaction) = &tool.interaction {
-                hasher.update(interaction.as_bytes());
-            }
-            hasher.update(ai_extent_str(&tool.extent).as_bytes());
+            hash_str(&mut hasher, &tool.tool);
+            hash_opt_str(&mut hasher, tool.version.as_deref());
+            hash_str(&mut hasher, ai_purpose_str(&tool.purpose));
+            hash_opt_str(&mut hasher, tool.interaction.as_deref());
+            hash_str(&mut hasher, ai_extent_str(&tool.extent));
             hasher.update((tool.sections.len() as u64).to_be_bytes());
             for section in &tool.sections {
-                hasher.update(section.as_bytes());
+                hash_str(&mut hasher, section);
             }
         }
 
         hasher.update((self.collaborators.len() as u64).to_be_bytes());
         for collaborator in &self.collaborators {
-            hasher.update(collaborator.name.as_bytes());
-            hasher.update(collaborator_role_str(&collaborator.role).as_bytes());
+            hash_str(&mut hasher, &collaborator.name);
+            hash_str(&mut hasher, collaborator_role_str(&collaborator.role));
             hasher.update((collaborator.sections.len() as u64).to_be_bytes());
             for section in &collaborator.sections {
-                hasher.update(section.as_bytes());
+                hash_str(&mut hasher, section);
             }
-            if let Some(key) = &collaborator.public_key {
-                hasher.update(key);
-            }
+            hash_opt_bytes(&mut hasher, collaborator.public_key.as_deref());
         }
 
-        hasher.update(self.statement.as_bytes());
-        hasher.update(
-            self.created_at
-                .timestamp_nanos_opt()
-                .unwrap_or(0)
-                .to_be_bytes(),
-        );
+        hash_str(&mut hasher, &self.statement);
+        // Use timestamp_millis (safe until ~year 292M) instead of nanos (overflows ~2262)
+        hasher.update(self.created_at.timestamp_millis().to_be_bytes());
         hasher.update(self.version.to_be_bytes());
+        hasher.update((self.author_public_key.len() as u64).to_be_bytes());
         hasher.update(&self.author_public_key);
 
         // Include jitter seal in signing payload (WAR/1.1)
@@ -387,11 +381,9 @@ impl Declaration {
             hasher.update(jitter.jitter_hash);
             hasher.update(jitter.keystroke_count.to_be_bytes());
             hasher.update(jitter.duration_ms.to_be_bytes());
-            // Convert floats to fixed-point with explicit rounding for deterministic hashing
-            let avg_fixed = (jitter.avg_interval_ms * 1000.0).round() as u64;
-            hasher.update(avg_fixed.to_be_bytes());
-            let entropy_fixed = (jitter.entropy_bits * 1000.0).round() as u64;
-            hasher.update(entropy_fixed.to_be_bytes());
+            // Use f64::to_bits() for exact IEEE 754 representation (NaN-safe)
+            hasher.update(jitter.avg_interval_ms.to_bits().to_be_bytes());
+            hasher.update(jitter.entropy_bits.to_bits().to_be_bytes());
             hasher.update(if jitter.hardware_sealed {
                 &[1u8]
             } else {
@@ -442,7 +434,7 @@ fn ai_purpose_str(purpose: &AIPurpose) -> &'static str {
     }
 }
 
-fn ai_extent_str(extent: &AIExtent) -> &'static str {
+pub(crate) fn ai_extent_str(extent: &AIExtent) -> &'static str {
     match extent {
         AIExtent::None => "none",
         AIExtent::Minimal => "minimal",
@@ -459,6 +451,39 @@ fn collaborator_role_str(role: &CollaboratorRole) -> &'static str {
         CollaboratorRole::Reviewer => "reviewer",
         CollaboratorRole::Transcriber => "transcriber",
         CollaboratorRole::Other => "other",
+    }
+}
+
+/// Hash a length-prefixed string to prevent concatenation ambiguity.
+fn hash_str(hasher: &mut Sha256, s: &str) {
+    hasher.update((s.len() as u64).to_be_bytes());
+    hasher.update(s.as_bytes());
+}
+
+/// Hash an optional string with a discriminant byte (0=None, 1=Some).
+fn hash_opt_str(hasher: &mut Sha256, opt: Option<&str>) {
+    match opt {
+        Some(s) => {
+            hasher.update([1u8]);
+            hash_str(hasher, s);
+        }
+        None => {
+            hasher.update([0u8]);
+        }
+    }
+}
+
+/// Hash optional bytes with a discriminant byte (0=None, 1=Some).
+fn hash_opt_bytes(hasher: &mut Sha256, opt: Option<&[u8]>) {
+    match opt {
+        Some(b) => {
+            hasher.update([1u8]);
+            hasher.update((b.len() as u64).to_be_bytes());
+            hasher.update(b);
+        }
+        None => {
+            hasher.update([0u8]);
+        }
     }
 }
 
@@ -678,7 +703,7 @@ mod tests {
             .sign(&signing_key)
             .unwrap_err();
 
-        assert!(err.contains("document hash is required"));
+        assert!(err.to_string().contains("document hash is required"));
     }
 
     #[test]
@@ -690,7 +715,7 @@ mod tests {
             .sign(&signing_key)
             .unwrap_err();
 
-        assert!(err.contains("chain hash is required"));
+        assert!(err.to_string().contains("chain hash is required"));
     }
 
     #[test]
@@ -702,7 +727,7 @@ mod tests {
             .sign(&signing_key)
             .unwrap_err();
 
-        assert!(err.contains("title is required"));
+        assert!(err.to_string().contains("title is required"));
     }
 
     #[test]
@@ -713,7 +738,9 @@ mod tests {
             .sign(&signing_key)
             .unwrap_err();
 
-        assert!(err.contains("at least one input modality is required"));
+        assert!(err
+            .to_string()
+            .contains("at least one input modality is required"));
     }
 
     #[test]
@@ -724,7 +751,7 @@ mod tests {
             .sign(&signing_key)
             .unwrap_err();
 
-        assert!(err.contains("statement is required"));
+        assert!(err.to_string().contains("statement is required"));
     }
 
     #[test]
@@ -737,7 +764,7 @@ mod tests {
             .with_statement("Statement")
             .sign(&signing_key)
             .unwrap_err();
-        assert!(err.contains("percentages sum to"));
+        assert!(err.to_string().contains("percentages sum to"));
 
         // Too high
         let err = Builder::new([1u8; 32], [2u8; 32], "Test")
@@ -745,7 +772,9 @@ mod tests {
             .with_statement("Statement")
             .sign(&signing_key)
             .unwrap_err();
-        assert!(err.contains("modality percentage must be 0-100"));
+        assert!(err
+            .to_string()
+            .contains("modality percentage must be 0-100"));
     }
 
     #[test]
@@ -758,7 +787,9 @@ mod tests {
             .with_statement("Statement")
             .sign(&signing_key)
             .unwrap_err();
-        assert!(err.contains("modality percentage must be 0-100"));
+        assert!(err
+            .to_string()
+            .contains("modality percentage must be 0-100"));
     }
 
     #[test]

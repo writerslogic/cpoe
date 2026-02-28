@@ -9,7 +9,8 @@ use rand::SeedableRng;
 use rand::TryRngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
+use subtle::ConstantTimeEq;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
@@ -88,14 +89,10 @@ pub struct Verifier {
 
 impl Verifier {
     pub fn new(config: Config) -> Self {
-        let seed = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap_or(Duration::from_secs(0))
-            .as_nanos() as u64;
         Self {
             config,
             session: None,
-            rng: StdRng::seed_from_u64(seed),
+            rng: StdRng::from_os_rng(),
         }
     }
 
@@ -246,7 +243,13 @@ impl Verifier {
             return Ok(false);
         }
 
-        if challenge.response_hash.as_deref() == Some(&challenge.expected_hash) {
+        let response_matches = challenge
+            .response_hash
+            .as_deref()
+            .zip(Some(challenge.expected_hash.as_str()))
+            .map(|(r, e)| bool::from(r.as_bytes().ct_eq(e.as_bytes())))
+            .unwrap_or(false);
+        if response_matches {
             challenge.status = ChallengeStatus::Passed;
             return Ok(true);
         }

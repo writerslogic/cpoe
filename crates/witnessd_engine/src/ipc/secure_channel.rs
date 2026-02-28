@@ -25,8 +25,10 @@ impl<T: serde::Serialize + serde::de::DeserializeOwned> SecureChannel<T> {
         let (tx, rx) = mpsc::channel();
 
         // Generate ephemeral session key (never persisted)
-        let key = ChaCha20Poly1305::generate_key(&mut OsRng);
+        let mut key = ChaCha20Poly1305::generate_key(&mut OsRng);
         let cipher = ChaCha20Poly1305::new(&key);
+        // Zeroize key material after cipher initialization
+        key.as_mut_slice().zeroize();
 
         let sender = SecureSender {
             tx,

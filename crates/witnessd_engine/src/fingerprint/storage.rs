@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use zeroize::Zeroize;
 
 // =============================================================================
 // Constants
@@ -225,9 +226,22 @@ impl FingerprintStorage {
     }
 
     /// Get the path for a profile.
+    ///
+    /// Validates the ProfileId to prevent path traversal attacks.
     fn profile_path(&self, id: &ProfileId) -> PathBuf {
+        // Sanitize ProfileId: only allow alphanumeric, dash, underscore
+        let safe_id: String = id
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
         self.storage_dir
-            .join(format!("{}{}", id, PROFILE_EXTENSION))
+            .join(format!("{}{}", safe_id, PROFILE_EXTENSION))
     }
 
     /// Encrypt data.
@@ -290,6 +304,12 @@ impl FingerprintStorage {
     }
 }
 
+impl Drop for FingerprintStorage {
+    fn drop(&mut self) {
+        self.encryption_key.zeroize();
+    }
+}
+
 /// Derive storage encryption key from device-specific data.
 fn derive_storage_key(storage_dir: &Path) -> Result<[u8; KEY_SIZE]> {
     use hkdf::Hkdf;
@@ -299,7 +319,7 @@ fn derive_storage_key(storage_dir: &Path) -> Result<[u8; KEY_SIZE]> {
     let key_file = storage_dir.join(".storage_key");
 
     // Try to load existing key material
-    let key_material = if key_file.exists() {
+    let mut key_material = if key_file.exists() {
         fs::read(&key_file)?
     } else {
         // Generate new key material
@@ -328,6 +348,9 @@ fn derive_storage_key(storage_dir: &Path) -> Result<[u8; KEY_SIZE]> {
     let mut key = [0u8; KEY_SIZE];
     hk.expand(info, &mut key)
         .map_err(|_| anyhow!("Key derivation failed"))?;
+
+    // Zeroize key material after deriving the key
+    key_material.zeroize();
 
     Ok(key)
 }

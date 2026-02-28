@@ -15,11 +15,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use zeroize::Zeroize;
 
-use crate::keyhierarchy::{
-    derive_master_identity, KeyHierarchyError, MasterIdentity, PUFProvider,
-};
+use crate::keyhierarchy::{derive_master_identity, KeyHierarchyError, MasterIdentity, PUFProvider};
 use crate::rfc::wire_types::AttestationTier;
-use crate::tpm::{ClockInfo, Provider, ProviderHandle, TPMError};
+use crate::tpm::{ClockInfo, ProviderHandle, TPMError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SealedIdentityError {
@@ -104,10 +102,7 @@ impl SealedIdentityStore {
     ///
     /// If a sealed blob already exists and can be unsealed, reuses it.
     /// Records boot_count and restart_count from TPM ClockInfo into the blob.
-    pub fn initialize(
-        &self,
-        puf: &dyn PUFProvider,
-    ) -> Result<MasterIdentity, SealedIdentityError> {
+    pub fn initialize(&self, puf: &dyn PUFProvider) -> Result<MasterIdentity, SealedIdentityError> {
         // Try to unseal existing blob first
         if self.store_path.exists() {
             match self.unseal_master_key() {
@@ -126,9 +121,7 @@ impl SealedIdentityStore {
 
         // Derive the master seed from PUF
         let identity = derive_master_identity(puf)?;
-        let challenge = Sha256::digest(
-            format!("{}-challenge", "witnessd-identity-v1").as_bytes(),
-        );
+        let challenge = Sha256::digest(format!("{}-challenge", "witnessd-identity-v1").as_bytes());
         let puf_response = puf.get_response(&challenge)?;
         let mut seed = crate::keyhierarchy::hkdf_expand(
             &puf_response,
@@ -181,7 +174,8 @@ impl SealedIdentityStore {
     /// Unseal and return the master signing key (requires TPM access).
     ///
     /// **Anti-rollback**: Reads current hardware counter and verifies it is
-    /// >= last_known_counter stored in the blob.
+    /// `>=` last_known_counter stored in the blob.
+    ///
     /// **Anti-hammering**: authValue is machine-specific, so the sealed file
     /// cannot be brute-forced on a different device.
     pub fn unseal_master_key(&self) -> Result<SigningKey, SealedIdentityError> {
@@ -284,9 +278,8 @@ impl SealedIdentityStore {
                 Ok(s) => s,
                 Err(_) => {
                     // Unseal failed (PCR change?) — re-derive from PUF
-                    let challenge = Sha256::digest(
-                        format!("{}-challenge", "witnessd-identity-v1").as_bytes(),
-                    );
+                    let challenge =
+                        Sha256::digest(format!("{}-challenge", "witnessd-identity-v1").as_bytes());
                     let puf_response = puf.get_response(&challenge)?;
                     let seed = crate::keyhierarchy::hkdf_expand(
                         &puf_response,
@@ -362,8 +355,7 @@ impl SealedIdentityStore {
 
     fn load_blob(&self) -> Result<SealedBlob, SealedIdentityError> {
         let data = fs::read(&self.store_path)?;
-        serde_json::from_slice(&data)
-            .map_err(|e| SealedIdentityError::Serialization(e.to_string()))
+        serde_json::from_slice(&data).map_err(|e| SealedIdentityError::Serialization(e.to_string()))
     }
 
     fn persist_blob(&self, blob: &SealedBlob) -> Result<(), SealedIdentityError> {
@@ -372,7 +364,15 @@ impl SealedIdentityStore {
         }
         let data = serde_json::to_vec_pretty(blob)
             .map_err(|e| SealedIdentityError::Serialization(e.to_string()))?;
-        fs::write(&self.store_path, data)?;
+        // Atomic write: write to tmp then rename for crash safety
+        let tmp_path = self.store_path.with_extension("tmp");
+        fs::write(&tmp_path, data)?;
+        fs::rename(&tmp_path, &self.store_path)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&self.store_path, fs::Permissions::from_mode(0o600));
+        }
         Ok(())
     }
 

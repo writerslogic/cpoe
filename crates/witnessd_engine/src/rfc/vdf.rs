@@ -137,9 +137,14 @@ impl VdfProofRfc {
     /// This represents the theoretical minimum time required to compute
     /// the VDF, regardless of hardware improvements.
     pub fn minimum_elapsed_ms(&self) -> u64 {
-        // Calculate based on iterations and calibration rate
+        // Calculate based on iterations and calibration rate using integer arithmetic
+        // to avoid f64 precision issues and NaN/infinity edge cases.
         if self.calibration.iterations_per_second > 0 {
-            (self.iterations as f64 / self.calibration.iterations_per_second as f64 * 1000.0) as u64
+            // iterations * 1000 / iterations_per_second, with overflow protection
+            self.iterations
+                .saturating_mul(1000)
+                .checked_div(self.calibration.iterations_per_second)
+                .unwrap_or(self.duration_ms)
         } else {
             self.duration_ms
         }

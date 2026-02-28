@@ -6,7 +6,7 @@
 //! baseline latency characteristics for different input transport types
 //! (USB, Bluetooth, internal, etc.).
 
-use crate::platform::types::TransportType;
+use crate::platform::TransportType;
 use crate::rfc::jitter_binding::TransportCalibration;
 use std::collections::HashMap;
 
@@ -89,7 +89,7 @@ impl TransportCalibrator {
             / samples.len() as f64;
         let std_dev = variance.sqrt();
 
-        let now_ms = chrono::Utc::now().timestamp_millis() as u64;
+        let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
 
         Some(TransportCalibration {
             transport: transport.as_str().to_string(),

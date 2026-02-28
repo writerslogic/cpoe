@@ -111,12 +111,20 @@ impl InclusionProof {
         if proof_type != PROOF_TYPE_INCLUSION {
             return Err(MmrError::InvalidProof);
         }
-        let leaf_index = u64::from_be_bytes(data[offset..offset + 8].try_into().unwrap());
+        let leaf_index = u64::from_be_bytes(
+            data[offset..offset + 8]
+                .try_into()
+                .map_err(|_| MmrError::InvalidNodeData)?,
+        );
         offset += 8;
         let mut leaf_hash = [0u8; HASH_SIZE];
         leaf_hash.copy_from_slice(&data[offset..offset + 32]);
         offset += 32;
-        let path_len = u16::from_be_bytes(data[offset..offset + 2].try_into().unwrap()) as usize;
+        let path_len = u16::from_be_bytes(
+            data[offset..offset + 2]
+                .try_into()
+                .map_err(|_| MmrError::InvalidNodeData)?,
+        ) as usize;
         offset += 2;
         let mut merkle_path = Vec::with_capacity(path_len);
         for _ in 0..path_len {
@@ -133,7 +141,11 @@ impl InclusionProof {
         if offset + 2 > data.len() {
             return Err(MmrError::InvalidNodeData);
         }
-        let peaks_len = u16::from_be_bytes(data[offset..offset + 2].try_into().unwrap()) as usize;
+        let peaks_len = u16::from_be_bytes(
+            data[offset..offset + 2]
+                .try_into()
+                .map_err(|_| MmrError::InvalidNodeData)?,
+        ) as usize;
         offset += 2;
         let mut peaks = Vec::with_capacity(peaks_len);
         for _ in 0..peaks_len {
@@ -148,8 +160,11 @@ impl InclusionProof {
         if offset + 2 > data.len() {
             return Err(MmrError::InvalidNodeData);
         }
-        let peak_position =
-            u16::from_be_bytes(data[offset..offset + 2].try_into().unwrap()) as usize;
+        let peak_position = u16::from_be_bytes(
+            data[offset..offset + 2]
+                .try_into()
+                .map_err(|_| MmrError::InvalidNodeData)?,
+        ) as usize;
         offset += 2;
         if peaks.is_empty() || peak_position >= peaks.len() {
             return Err(MmrError::InvalidProof);
@@ -157,7 +172,11 @@ impl InclusionProof {
         if offset + 8 + 32 > data.len() {
             return Err(MmrError::InvalidNodeData);
         }
-        let mmr_size = u64::from_be_bytes(data[offset..offset + 8].try_into().unwrap());
+        let mmr_size = u64::from_be_bytes(
+            data[offset..offset + 8]
+                .try_into()
+                .map_err(|_| MmrError::InvalidNodeData)?,
+        );
         offset += 8;
         let mut root = [0u8; HASH_SIZE];
         root.copy_from_slice(&data[offset..offset + 32]);
@@ -287,10 +306,10 @@ impl RangeProof {
             height += 1;
         }
 
-        if current.len() != 1 {
+        if current.is_empty() {
             return Err(MmrError::InvalidProof);
         }
-        let computed_peak = *current.values().next().unwrap();
+        let computed_peak = *current.values().next().ok_or(MmrError::InvalidProof)?;
         if self.peak_position >= self.peaks.len() {
             return Err(MmrError::InvalidProof);
         }
@@ -390,30 +409,60 @@ impl RangeProof {
         if proof_type != PROOF_TYPE_RANGE {
             return Err(MmrError::InvalidProof);
         }
-        let start_leaf = u64::from_be_bytes(data[offset..offset + 8].try_into().unwrap());
+        let start_leaf = u64::from_be_bytes(
+            data[offset..offset + 8]
+                .try_into()
+                .map_err(|_| MmrError::InvalidNodeData)?,
+        );
         offset += 8;
-        let end_leaf = u64::from_be_bytes(data[offset..offset + 8].try_into().unwrap());
+        let end_leaf = u64::from_be_bytes(
+            data[offset..offset + 8]
+                .try_into()
+                .map_err(|_| MmrError::InvalidNodeData)?,
+        );
         offset += 8;
-        let leaves_len = u16::from_be_bytes(data[offset..offset + 2].try_into().unwrap()) as usize;
+        let leaves_len = u16::from_be_bytes(
+            data[offset..offset + 2]
+                .try_into()
+                .map_err(|_| MmrError::InvalidNodeData)?,
+        ) as usize;
         offset += 2;
         let mut leaf_indices = Vec::with_capacity(leaves_len);
         for _ in 0..leaves_len {
+            if offset + 8 > data.len() {
+                return Err(MmrError::InvalidNodeData);
+            }
             leaf_indices.push(u64::from_be_bytes(
-                data[offset..offset + 8].try_into().unwrap(),
+                data[offset..offset + 8]
+                    .try_into()
+                    .map_err(|_| MmrError::InvalidNodeData)?,
             ));
             offset += 8;
         }
         let mut leaf_hashes = Vec::with_capacity(leaves_len);
         for _ in 0..leaves_len {
+            if offset + 32 > data.len() {
+                return Err(MmrError::InvalidNodeData);
+            }
             let mut hash = [0u8; HASH_SIZE];
             hash.copy_from_slice(&data[offset..offset + 32]);
             offset += 32;
             leaf_hashes.push(hash);
         }
-        let path_len = u16::from_be_bytes(data[offset..offset + 2].try_into().unwrap()) as usize;
+        if offset + 2 > data.len() {
+            return Err(MmrError::InvalidNodeData);
+        }
+        let path_len = u16::from_be_bytes(
+            data[offset..offset + 2]
+                .try_into()
+                .map_err(|_| MmrError::InvalidNodeData)?,
+        ) as usize;
         offset += 2;
         let mut sibling_path = Vec::with_capacity(path_len);
         for _ in 0..path_len {
+            if offset + 33 > data.len() {
+                return Err(MmrError::InvalidNodeData);
+            }
             let mut hash = [0u8; HASH_SIZE];
             hash.copy_from_slice(&data[offset..offset + 32]);
             offset += 32;
@@ -421,22 +470,45 @@ impl RangeProof {
             offset += 1;
             sibling_path.push(ProofElement { hash, is_left });
         }
-        let peaks_len = u16::from_be_bytes(data[offset..offset + 2].try_into().unwrap()) as usize;
+        if offset + 2 > data.len() {
+            return Err(MmrError::InvalidNodeData);
+        }
+        let peaks_len = u16::from_be_bytes(
+            data[offset..offset + 2]
+                .try_into()
+                .map_err(|_| MmrError::InvalidNodeData)?,
+        ) as usize;
         offset += 2;
         let mut peaks = Vec::with_capacity(peaks_len);
         for _ in 0..peaks_len {
+            if offset + 32 > data.len() {
+                return Err(MmrError::InvalidNodeData);
+            }
             let mut peak = [0u8; HASH_SIZE];
             peak.copy_from_slice(&data[offset..offset + 32]);
             offset += 32;
             peaks.push(peak);
         }
-        let peak_position =
-            u16::from_be_bytes(data[offset..offset + 2].try_into().unwrap()) as usize;
+        if offset + 2 > data.len() {
+            return Err(MmrError::InvalidNodeData);
+        }
+        let peak_position = u16::from_be_bytes(
+            data[offset..offset + 2]
+                .try_into()
+                .map_err(|_| MmrError::InvalidNodeData)?,
+        ) as usize;
         offset += 2;
         if peaks.is_empty() || peak_position >= peaks.len() {
             return Err(MmrError::InvalidProof);
         }
-        let mmr_size = u64::from_be_bytes(data[offset..offset + 8].try_into().unwrap());
+        if offset + 8 + 32 > data.len() {
+            return Err(MmrError::InvalidNodeData);
+        }
+        let mmr_size = u64::from_be_bytes(
+            data[offset..offset + 8]
+                .try_into()
+                .map_err(|_| MmrError::InvalidNodeData)?,
+        );
         offset += 8;
         let mut root = [0u8; HASH_SIZE];
         root.copy_from_slice(&data[offset..offset + 32]);

@@ -279,7 +279,7 @@ fn detect_memory_bucket() -> String {
     "unknown".to_string()
 }
 
-#[allow(dead_code)]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn memory_gb_to_bucket(gb: u64) -> String {
     match gb {
         0..=4 => "<=4GB",

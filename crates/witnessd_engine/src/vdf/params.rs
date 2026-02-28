@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -135,7 +135,7 @@ impl BatchVerifier {
             proofs.len()
         ]));
 
-        let semaphore = Arc::new(Mutex::new(self.workers));
+        let semaphore = Arc::new((Mutex::new(self.workers), Condvar::new()));
         let mut handles = Vec::new();
 
         for (index, proof) in proofs.iter().cloned().enumerate() {
@@ -143,14 +143,11 @@ impl BatchVerifier {
             let semaphore = Arc::clone(&semaphore);
 
             let handle = thread::spawn(move || {
-                loop {
-                    let mut count = semaphore.lock().unwrap();
-                    if *count > 0 {
-                        *count -= 1;
-                        break;
-                    }
-                    drop(count);
-                    thread::yield_now();
+                // Acquire a worker slot, blocking until one is available
+                {
+                    let (lock, cvar) = &*semaphore;
+                    let mut count = cvar.wait_while(lock.lock().unwrap(), |c| *c == 0).unwrap();
+                    *count -= 1;
                 }
 
                 let outcome = if let Some(p) = proof {
@@ -169,8 +166,11 @@ impl BatchVerifier {
 
                 let mut res = results.lock().unwrap();
                 res[index] = outcome;
-                let mut count = semaphore.lock().unwrap();
+                // Release the worker slot and notify a waiting thread
+                let (lock, cvar) = &*semaphore;
+                let mut count = lock.lock().unwrap();
                 *count += 1;
+                cvar.notify_one();
             });
 
             handles.push(handle);

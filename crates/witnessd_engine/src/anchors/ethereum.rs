@@ -212,7 +212,9 @@ impl EthereumProvider {
                     .as_str()
                     .ok_or_else(|| AnchorError::Network("Invalid gas estimate".into()))?;
                 let base_gas =
-                    u64::from_str_radix(gas_hex.trim_start_matches("0x"), 16).unwrap_or(90000);
+                    u64::from_str_radix(gas_hex.trim_start_matches("0x"), 16).map_err(|e| {
+                        AnchorError::Network(format!("Failed to parse gas estimate: {e}"))
+                    })?;
                 // Add 20% buffer
                 Ok(base_gas * 120 / 100)
             }
@@ -430,7 +432,7 @@ impl AnchorProvider for EthereumProvider {
                     let status = receipt
                         .get("status")
                         .and_then(|s| s.as_str())
-                        .unwrap_or("0x1");
+                        .unwrap_or("0x0"); // Default to failure if status field missing
 
                     if status == "0x1" {
                         updated.status = ProofStatus::Confirmed;

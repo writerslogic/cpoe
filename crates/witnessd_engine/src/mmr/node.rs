@@ -69,7 +69,11 @@ impl Node {
         let mut hash = [0u8; HASH_SIZE];
         hash.copy_from_slice(&data[9..41]);
         Ok(Self {
-            index: u64::from_be_bytes(data[0..8].try_into().unwrap()),
+            index: u64::from_be_bytes(
+                data[0..8]
+                    .try_into()
+                    .map_err(|_| MmrError::InvalidNodeData)?,
+            ),
             height: data[8],
             hash,
         })

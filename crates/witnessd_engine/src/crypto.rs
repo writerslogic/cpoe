@@ -2,13 +2,53 @@
 
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
+use std::fs::File;
+use std::io::{BufReader, Read};
+use std::path::Path;
 
+pub mod anti_analysis;
+pub mod mem;
 pub mod obfuscated;
 pub mod obfuscation;
+pub use anti_analysis::{harden_process, is_debugger_present};
+pub use mem::{ProtectedBuf, ProtectedKey};
 pub use obfuscated::Obfuscated;
 pub use obfuscation::ObfuscatedString;
 
 pub type HmacSha256 = Hmac<Sha256>;
+
+/// Compute the SHA-256 hash of a file using a streaming chunked reader.
+///
+/// Prevents loading the entire file into memory, allowing the engine to
+/// handle very large files efficiently.
+pub fn hash_file(path: &Path) -> std::io::Result<[u8; 32]> {
+    let (hash, _) = hash_file_with_size(path)?;
+    Ok(hash)
+}
+
+/// Compute the SHA-256 hash of a file and return both the hash and the
+/// number of bytes actually read.
+///
+/// This eliminates TOCTOU races between hashing a file and querying its
+/// size via a separate `fs::metadata` call.
+pub fn hash_file_with_size(path: &Path) -> std::io::Result<([u8; 32], u64)> {
+    let file = File::open(path)?;
+    let mut reader = BufReader::new(file);
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 8192];
+    let mut total_bytes: u64 = 0;
+
+    loop {
+        let bytes_read = reader.read(&mut buffer)?;
+        if bytes_read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..bytes_read]);
+        total_bytes += bytes_read as u64;
+    }
+
+    Ok((hasher.finalize().into(), total_bytes))
+}
 
 pub fn compute_event_hash(
     device_id: &[u8; 16],
@@ -20,10 +60,13 @@ pub fn compute_event_hash(
     previous_hash: &[u8; 32],
 ) -> [u8; 32] {
     let mut hasher = Sha256::new();
-    hasher.update(b"witnessd-event-v1");
+    hasher.update(b"witnessd-event-v2");
     hasher.update(device_id);
     hasher.update(timestamp_ns.to_be_bytes());
-    hasher.update(file_path.as_bytes());
+    // Length-prefix variable-length field to prevent concatenation ambiguity
+    let path_bytes = file_path.as_bytes();
+    hasher.update((path_bytes.len() as u32).to_be_bytes());
+    hasher.update(path_bytes);
     hasher.update(content_hash);
     hasher.update(file_size.to_be_bytes());
     hasher.update(size_delta.to_be_bytes());
@@ -47,10 +90,13 @@ pub fn compute_event_hmac(
     previous_hash: &[u8; 32],
 ) -> [u8; 32] {
     let mut mac = HmacSha256::new_from_slice(key).expect("HMAC can take key of any size");
-    mac.update(b"witnessd-event-v1");
+    mac.update(b"witnessd-event-v2");
     mac.update(device_id);
     mac.update(&timestamp_ns.to_be_bytes());
-    mac.update(file_path.as_bytes());
+    // Length-prefix variable-length field to prevent concatenation ambiguity
+    let path_bytes = file_path.as_bytes();
+    mac.update(&(path_bytes.len() as u32).to_be_bytes());
+    mac.update(path_bytes);
     mac.update(content_hash);
     mac.update(&file_size.to_be_bytes());
     mac.update(&size_delta.to_be_bytes());

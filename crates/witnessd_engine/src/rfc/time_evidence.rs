@@ -256,7 +256,7 @@ impl TimeEvidence {
             blockchain_anchors: None,
             roughtime_samples: None,
             vdf_proof_hash,
-            timestamp_ms: Utc::now().timestamp_millis() as u64,
+            timestamp_ms: Utc::now().timestamp_millis().max(0) as u64,
         }
     }
 
@@ -292,7 +292,7 @@ impl TimeEvidence {
                 Some(roughtime_samples)
             },
             vdf_proof_hash,
-            timestamp_ms: Utc::now().timestamp_millis() as u64,
+            timestamp_ms: Utc::now().timestamp_millis().max(0) as u64,
         }
     }
 

@@ -504,7 +504,8 @@ impl BiologyInvariantClaim {
 
         // Convert to millibits (0-10000 scale)
         // 1.0 score = 10 bits = 10000 millibits of discriminating information
-        self.millibits = ((score * 10000.0).round() as u16).min(10000);
+        // Clamp before cast to handle NaN/negative: NaN.clamp() returns the lower bound
+        self.millibits = (score * 10000.0).round().clamp(0.0, 10000.0) as u16;
 
         // Update validation status based on components
         self.validation_status = if self.hurst_exponent.is_some()

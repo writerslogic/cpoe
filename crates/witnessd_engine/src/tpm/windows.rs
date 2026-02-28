@@ -9,6 +9,7 @@
 //! and response parsers for TPM2 commands.
 
 use super::{Attestation, Binding, Capabilities, PcrValue, Provider, Quote, TPMError};
+use crate::DateTimeNanosExt;
 use chrono::Utc;
 use sha2::{Digest, Sha256};
 use std::ffi::c_void;
@@ -28,8 +29,7 @@ use windows::Win32::System::TpmBaseServices::{
 /// TBS operation completed successfully
 const TBS_SUCCESS: u32 = 0x0;
 
-/// TBS error codes
-#[allow(dead_code)]
+/// TBS error codes (used by tbs_result_to_error)
 mod tbs_error {
     pub const TBS_E_INTERNAL_ERROR: u32 = 0x80284001;
     pub const TBS_E_BAD_PARAMETER: u32 = 0x80284002;
@@ -45,10 +45,6 @@ mod tbs_error {
     pub const TBS_E_TPM_NOT_FOUND: u32 = 0x8028400F;
     pub const TBS_E_SERVICE_DISABLED: u32 = 0x80284010;
 }
-
-/// Context version for TPM 2.0
-#[allow(dead_code)]
-const TBS_CONTEXT_VERSION_TWO: u32 = 2;
 
 /// TPM version 2.0
 const TPM_VERSION_20: u32 = 2;
@@ -67,7 +63,6 @@ const TBS_COMMAND_PRIORITY_NORMAL: u32 = 200;
 const TPM2_ST_NO_SESSIONS: u16 = 0x8001;
 
 /// TPM2 session tag: command/response has sessions
-#[allow(dead_code)]
 const TPM2_ST_SESSIONS: u16 = 0x8002;
 
 /// TPM2 command code: Get random bytes
@@ -95,11 +90,9 @@ const TPM2_ALG_KEYEDHASH: u16 = 0x0008;
 const TPM2_ALG_NULL: u16 = 0x0010;
 
 /// TPM2 algorithm: AES
-#[allow(dead_code)]
 const TPM2_ALG_AES: u16 = 0x0006;
 
 /// TPM2 algorithm: CFB mode
-#[allow(dead_code)]
 const TPM2_ALG_CFB: u16 = 0x0043;
 
 /// TPM2 algorithm: ECC
@@ -110,8 +103,6 @@ const TPM2_ECC_NIST_P256: u16 = 0x0003;
 
 /// TPM2 hierarchy handles
 const TPM2_RH_OWNER: u32 = 0x40000001;
-#[allow(dead_code)]
-const TPM2_RH_NULL: u32 = 0x40000007;
 
 /// TPM2 algorithm identifier: SHA-256
 const TPM2_ALG_SHA256: u16 = 0x000B;
@@ -399,7 +390,6 @@ impl Drop for TbsContext {
 
 /// Information about the TPM device.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct TpmDeviceInfo {
     /// Structure version (should be TPM_VERSION_20)
     pub struct_version: u32,
@@ -469,7 +459,6 @@ pub fn build_get_random_command(num_bytes: u16) -> Vec<u8> {
 /// - TPM2B_DIGEST:
 ///   - size: u16
 ///   - buffer: [u8; size]
-#[allow(dead_code)]
 pub fn parse_get_random_response(response: &[u8]) -> Result<Vec<u8>, TPMError> {
     // Validate minimum response size
     if response.len() < TPM2_RESPONSE_HEADER_SIZE {
@@ -572,7 +561,6 @@ pub fn build_pcr_read_command(pcr_selection: &[u32]) -> Vec<u8> {
 ///
 /// # Response Code Location
 /// The response code is at bytes 6-9 (big-endian u32) in the response header.
-#[allow(dead_code)]
 pub fn parse_response_code(response: &[u8]) -> Result<u32, TPMError> {
     if response.len() < TPM2_RESPONSE_HEADER_SIZE {
         return Err(TPMError::Quote(format!(
@@ -888,7 +876,10 @@ impl WindowsTpmProvider {
         let mut offset = 10;
         // Skip parameterSize (4 bytes) for session-based response
         let _param_size = u32::from_be_bytes([
-            response[offset], response[offset + 1], response[offset + 2], response[offset + 3],
+            response[offset],
+            response[offset + 1],
+            response[offset + 2],
+            response[offset + 3],
         ]);
         offset += 4;
 
@@ -1080,6 +1071,10 @@ impl Provider for WindowsTpmProvider {
         self.context.device_id().to_string()
     }
 
+    fn algorithm(&self) -> coset::iana::Algorithm {
+        coset::iana::Algorithm::ES256
+    }
+
     fn public_key(&self) -> Vec<u8> {
         self.public_key.clone()
     }
@@ -1130,7 +1125,7 @@ impl Provider for WindowsTpmProvider {
         // Build payload for signing
         let mut payload = Vec::new();
         payload.extend_from_slice(&attested_hash);
-        payload.extend_from_slice(&timestamp.timestamp_nanos_opt().unwrap_or(0).to_le_bytes());
+        payload.extend_from_slice(&timestamp.timestamp_nanos_safe().to_le_bytes());
         payload.extend_from_slice(device_id.as_bytes());
 
         // Sign the payload using TPM
@@ -1160,19 +1155,25 @@ impl Provider for WindowsTpmProvider {
 
     fn seal(&self, data: &[u8], _policy: &[u8]) -> Result<Vec<u8>, TPMError> {
         // Create a Storage Root Key (SRK) under the Owner hierarchy
-        let srk_response = self.create_primary_srk()
+        let srk_response = self
+            .create_primary_srk()
             .map_err(|e| TPMError::Sealing(format!("SRK creation failed: {}", e)))?;
 
         let srk_handle = u32::from_be_bytes([
-            srk_response[10], srk_response[11], srk_response[12], srk_response[13],
+            srk_response[10],
+            srk_response[11],
+            srk_response[12],
+            srk_response[13],
         ]);
 
         // Create a sealed object under the SRK
-        let create_response = self.create_sealed_object(srk_handle, data)
+        let create_response = self
+            .create_sealed_object(srk_handle, data)
             .map_err(|e| TPMError::Sealing(format!("seal create failed: {}", e)))?;
 
         // Parse the Create response to extract outPublic and outPrivate
-        let sealed_blob = self.parse_create_response(&create_response)
+        let sealed_blob = self
+            .parse_create_response(&create_response)
             .map_err(|e| TPMError::Sealing(format!("parse create response: {}", e)))?;
 
         // Flush the SRK handle
@@ -1194,7 +1195,10 @@ impl Provider for WindowsTpmProvider {
         let pub_bytes = &sealed[4..4 + pub_len];
         let offset = 4 + pub_len;
         let priv_len = u32::from_be_bytes([
-            sealed[offset], sealed[offset + 1], sealed[offset + 2], sealed[offset + 3],
+            sealed[offset],
+            sealed[offset + 1],
+            sealed[offset + 2],
+            sealed[offset + 3],
         ]) as usize;
         if sealed.len() < offset + 4 + priv_len {
             return Err(TPMError::SealedCorrupted);
@@ -1202,17 +1206,25 @@ impl Provider for WindowsTpmProvider {
         let priv_bytes = &sealed[offset + 4..offset + 4 + priv_len];
 
         // Re-create the SRK
-        let srk_response = self.create_primary_srk()
+        let srk_response = self
+            .create_primary_srk()
             .map_err(|e| TPMError::Unsealing(format!("SRK creation failed: {}", e)))?;
         let srk_handle = u32::from_be_bytes([
-            srk_response[10], srk_response[11], srk_response[12], srk_response[13],
+            srk_response[10],
+            srk_response[11],
+            srk_response[12],
+            srk_response[13],
         ]);
 
         // Load the sealed object under the SRK
-        let load_response = self.load_object(srk_handle, pub_bytes, priv_bytes)
+        let load_response = self
+            .load_object(srk_handle, pub_bytes, priv_bytes)
             .map_err(|e| TPMError::Unsealing(format!("load failed: {}", e)))?;
         let obj_handle = u32::from_be_bytes([
-            load_response[10], load_response[11], load_response[12], load_response[13],
+            load_response[10],
+            load_response[11],
+            load_response[12],
+            load_response[13],
         ]);
 
         // Unseal the data
@@ -1222,8 +1234,8 @@ impl Provider for WindowsTpmProvider {
         let _ = self.flush_context(obj_handle);
         let _ = self.flush_context(srk_handle);
 
-        let unseal_response = unseal_result
-            .map_err(|e| TPMError::Unsealing(format!("unseal failed: {}", e)))?;
+        let unseal_response =
+            unseal_result.map_err(|e| TPMError::Unsealing(format!("unseal failed: {}", e)))?;
 
         // Parse unseal response: header (10) + TPM2B_SENSITIVE_DATA (2 bytes size + data)
         if unseal_response.len() < 12 {
@@ -1339,9 +1351,9 @@ fn build_srk_public_ecc() -> Vec<u8> {
 
     // parameters: TPMS_ECC_PARMS
     // symmetric: TPMT_SYM_DEF_OBJECT (AES-128-CFB for storage key)
-    public.extend_from_slice(&0x0006u16.to_be_bytes()); // TPM2_ALG_AES
-    public.extend_from_slice(&128u16.to_be_bytes());    // keyBits = 128
-    public.extend_from_slice(&0x0043u16.to_be_bytes()); // TPM2_ALG_CFB
+    public.extend_from_slice(&TPM2_ALG_AES.to_be_bytes());
+    public.extend_from_slice(&128u16.to_be_bytes()); // keyBits = 128
+    public.extend_from_slice(&TPM2_ALG_CFB.to_be_bytes());
 
     // scheme: TPMT_ECC_SCHEME (NULL for storage key)
     public.extend_from_slice(&TPM2_ALG_NULL.to_be_bytes());

@@ -9,10 +9,8 @@
 //! The dual-layer approach allows detection of CGEventPost injection attacks
 //! by comparing keystroke counts between the two layers.
 
-#![allow(dead_code)]
-
 // Re-export types from types module
-pub use super::types::{
+pub use super::{
     DualLayerValidation, EventVerificationResult, FocusInfo, HIDDeviceInfo, KeystrokeEvent,
     PermissionStatus, SyntheticStats, TransportType,
 };
@@ -24,15 +22,17 @@ use core_foundation::dictionary::CFDictionary;
 use core_foundation::number::CFNumber;
 use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop};
 use core_foundation::string::CFString;
-use core_foundation_sys::base::{kCFAllocatorDefault, CFAllocatorRef, CFIndex, CFTypeRef};
+use core_foundation_sys::base::{
+    kCFAllocatorDefault, CFAllocatorRef, CFIndex, CFTypeID, CFTypeRef,
+};
 use core_foundation_sys::dictionary::{
     kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks, CFDictionaryCreateMutable,
     CFDictionaryRef, CFDictionarySetValue,
 };
-use core_foundation_sys::number::{kCFNumberIntType, CFNumberCreate};
+use core_foundation_sys::number::{kCFNumberIntType, CFNumberCreate, CFNumberGetTypeID};
 use core_foundation_sys::string::CFStringRef;
 use core_graphics::event::{
-    CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType,
+    CGEvent, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType,
 };
 use objc::runtime::Object;
 use serde::{Deserialize, Serialize};
@@ -41,11 +41,13 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex, RwLock};
 
 use crate::jitter::SimpleJitterSession;
+use crate::DateTimeNanosExt;
 
 // =============================================================================
 // IOKit HID Framework bindings for device enumeration
 // =============================================================================
 
+#[allow(dead_code)]
 #[link(name = "IOKit", kind = "framework")]
 extern "C" {
     fn IOHIDManagerCreate(allocator: CFAllocatorRef, options: u32) -> *mut std::ffi::c_void;
@@ -80,6 +82,11 @@ extern "C" {
     fn CFSetGetValues(set: *mut std::ffi::c_void, values: *mut *const std::ffi::c_void);
     fn CFRelease(cf: *mut std::ffi::c_void);
     fn CFRetain(cf: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+    fn CFGetTypeID(cf: CFTypeRef) -> CFTypeID;
+    fn CFStringGetTypeID() -> CFTypeID;
+    fn CFURLGetTypeID() -> CFTypeID;
+    fn CFRunLoopGetCurrent() -> *mut std::ffi::c_void;
+    fn CFRunLoopStop(rl: *mut std::ffi::c_void);
 
     fn IOHIDValueGetElement(value: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
     fn IOHIDValueGetIntegerValue(value: *mut std::ffi::c_void) -> CFIndex;
@@ -89,6 +96,7 @@ extern "C" {
 
 // IOKit HID constants
 const K_HID_PAGE_GENERIC_DESKTOP: i32 = 0x01;
+#[allow(dead_code)]
 const K_HID_PAGE_KEYBOARD_OR_KEYPAD: u32 = 0x07;
 const K_HID_USAGE_GD_KEYBOARD: i32 = 0x06;
 const K_IO_HID_OPTIONS_TYPE_NONE: u32 = 0;
@@ -107,6 +115,7 @@ const K_IO_HID_TRANSPORT_KEY: &str = "Transport";
 // Accessibility API bindings for focus and document tracking
 // =============================================================================
 
+#[allow(dead_code)]
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     fn AXIsProcessTrusted() -> bool;
@@ -138,14 +147,17 @@ const K_AX_URL_ATTRIBUTE: &str = "AXURL";
 // CGEvent field constants for synthetic event detection
 // =============================================================================
 
-// CGEventField constants
+// CGEventField constants (values from Apple's CGEventTypes.h / macOS SDK)
 const K_CG_EVENT_SOURCE_STATE_ID: u32 = 45;
-const K_CG_KEYBOARD_EVENT_KEYBOARD_TYPE: u32 = 6;
+const K_CG_KEYBOARD_EVENT_KEYBOARD_TYPE: u32 = 10;
+const K_CG_KEYBOARD_EVENT_KEYCODE: u32 = 9;
 const K_CG_EVENT_SOURCE_UNIX_PROCESS_ID: u32 = 41;
-const K_CG_KEYBOARD_EVENT_AUTOREPEAT: u32 = 5;
+#[allow(dead_code)]
+const K_CG_KEYBOARD_EVENT_AUTOREPEAT: u32 = 8;
 
 // CGEventSourceStateID values
 const K_CG_EVENT_SOURCE_STATE_PRIVATE: i64 = -1;
+#[allow(dead_code)]
 const K_CG_EVENT_SOURCE_STATE_COMBINED_SESSION: i64 = 0;
 const K_CG_EVENT_SOURCE_STATE_HID_SYSTEM: i64 = 1;
 
@@ -265,19 +277,22 @@ pub fn enumerate_hid_keyboards() -> Result<Vec<HIDDeviceInfo>> {
                 &usage as *const i32 as *const std::ffi::c_void,
             );
 
-            CFDictionarySetValue(
-                match_dict,
-                usage_page_key.as_concrete_TypeRef() as *const std::ffi::c_void,
-                usage_page_num as *const std::ffi::c_void,
-            );
-            CFDictionarySetValue(
-                match_dict,
-                usage_key.as_concrete_TypeRef() as *const std::ffi::c_void,
-                usage_num as *const std::ffi::c_void,
-            );
-
-            CFRelease(usage_page_num as *mut std::ffi::c_void);
-            CFRelease(usage_num as *mut std::ffi::c_void);
+            if !usage_page_num.is_null() {
+                CFDictionarySetValue(
+                    match_dict,
+                    usage_page_key.as_concrete_TypeRef() as *const std::ffi::c_void,
+                    usage_page_num as *const std::ffi::c_void,
+                );
+                CFRelease(usage_page_num as *mut std::ffi::c_void);
+            }
+            if !usage_num.is_null() {
+                CFDictionarySetValue(
+                    match_dict,
+                    usage_key.as_concrete_TypeRef() as *const std::ffi::c_void,
+                    usage_num as *const std::ffi::c_void,
+                );
+                CFRelease(usage_num as *mut std::ffi::c_void);
+            }
         }
 
         IOHIDManagerSetDeviceMatching(manager, match_dict);
@@ -301,7 +316,7 @@ pub fn enumerate_hid_keyboards() -> Result<Vec<HIDDeviceInfo>> {
             return Ok(Vec::new());
         }
 
-        let count = CFSetGetCount(devices_set) as usize;
+        let count = CFSetGetCount(devices_set).max(0) as usize;
         let mut devices = Vec::with_capacity(count);
 
         if count > 0 {
@@ -353,7 +368,11 @@ unsafe fn get_device_int_property(device: *mut std::ffi::c_void, key: &str) -> O
         return None;
     }
 
-    // Try to extract as CFNumber
+    // Verify the value is actually a CFNumber before casting
+    if CFGetTypeID(value) != CFNumberGetTypeID() {
+        return None;
+    }
+
     let cf_number = CFNumber::wrap_under_get_rule(value as *mut _);
     cf_number.to_i64()
 }
@@ -365,7 +384,11 @@ unsafe fn get_device_string_property(device: *mut std::ffi::c_void, key: &str) -
         return None;
     }
 
-    // Try to extract as CFString
+    // Verify the value is actually a CFString before casting
+    if CFGetTypeID(value) != CFStringGetTypeID() {
+        return None;
+    }
+
     let cf_string =
         CFString::wrap_under_get_rule(value as core_foundation_sys::string::CFStringRef);
     Some(cf_string.to_string())
@@ -477,7 +500,12 @@ unsafe fn get_ax_string_attribute(
         return None;
     }
 
-    // Try to interpret as CFString
+    // Verify the value is actually a CFString before casting
+    if CFGetTypeID(value) != CFStringGetTypeID() {
+        CFRelease(value as *mut std::ffi::c_void);
+        return None;
+    }
+
     let cf_string =
         CFString::wrap_under_create_rule(value as core_foundation_sys::string::CFStringRef);
     let s = cf_string.to_string();
@@ -495,6 +523,12 @@ unsafe fn get_ax_url_as_path(element: *mut std::ffi::c_void) -> Option<String> {
         AXUIElementCopyAttributeValue(element, attr_name.as_concrete_TypeRef(), &mut value);
 
     if result != K_AX_ERROR_SUCCESS || value.is_null() {
+        return None;
+    }
+
+    // Verify the value is actually a CFURL before using it
+    if CFGetTypeID(value) != CFURLGetTypeID() {
+        CFRelease(value as *mut std::ffi::c_void);
         return None;
     }
 
@@ -557,12 +591,15 @@ pub fn get_strict_mode() -> bool {
 
 /// Get synthetic event detection statistics.
 pub fn get_synthetic_stats() -> SyntheticEventStats {
-    SYNTHETIC_STATS.read().unwrap().clone()
+    SYNTHETIC_STATS
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone()
 }
 
 /// Reset synthetic event detection statistics.
 pub fn reset_synthetic_stats() {
-    let mut stats = SYNTHETIC_STATS.write().unwrap();
+    let mut stats = SYNTHETIC_STATS.write().unwrap_or_else(|p| p.into_inner());
     *stats = SyntheticEventStats::default();
 }
 
@@ -570,34 +607,36 @@ pub fn reset_synthetic_stats() {
 /// This detects CGEventPost injection attacks.
 pub fn verify_event_source(event: &core_graphics::event::CGEvent) -> EventVerificationResult {
     let strict = STRICT_MODE.load(Ordering::SeqCst);
-    let mut stats = SYNTHETIC_STATS.write().unwrap();
-    stats.total_events += 1;
 
+    // Read all FFI fields before acquiring the write lock to minimize lock contention
+    let source_state_id = event.get_integer_value_field(K_CG_EVENT_SOURCE_STATE_ID);
+    let keyboard_type = event.get_integer_value_field(K_CG_KEYBOARD_EVENT_KEYBOARD_TYPE);
+    let source_pid = event.get_integer_value_field(K_CG_EVENT_SOURCE_UNIX_PROCESS_ID);
+
+    // Determine result without holding the lock
     let mut suspicious = false;
 
     // Check 1: Event Source State ID
     // Hardware events come from kCGEventSourceStateHIDSystemState (1)
-    let source_state_id = event.get_integer_value_field(K_CG_EVENT_SOURCE_STATE_ID);
-
     if source_state_id == K_CG_EVENT_SOURCE_STATE_PRIVATE {
-        // Private source state - definitely synthetic
+        let mut stats = SYNTHETIC_STATS.write().unwrap_or_else(|p| p.into_inner());
+        stats.total_events += 1;
         stats.rejected_synthetic += 1;
         stats.rejected_bad_source_state += 1;
         return EventVerificationResult::Synthetic;
     }
 
     if source_state_id != K_CG_EVENT_SOURCE_STATE_HID_SYSTEM {
-        // Not from HID system - suspicious
         suspicious = true;
     }
 
     // Check 2: Keyboard Type
     // Real keyboards report their type (ANSI, ISO, JIS)
     // Synthetic events often have keyboard type 0
-    let keyboard_type = event.get_integer_value_field(K_CG_KEYBOARD_EVENT_KEYBOARD_TYPE);
-
     if keyboard_type == 0 {
         if strict {
+            let mut stats = SYNTHETIC_STATS.write().unwrap_or_else(|p| p.into_inner());
+            stats.total_events += 1;
             stats.rejected_synthetic += 1;
             stats.rejected_bad_keyboard_type += 1;
             return EventVerificationResult::Synthetic;
@@ -607,6 +646,8 @@ pub fn verify_event_source(event: &core_graphics::event::CGEvent) -> EventVerifi
 
     // Sanity check: keyboard type should be reasonable
     if keyboard_type > 100 {
+        let mut stats = SYNTHETIC_STATS.write().unwrap_or_else(|p| p.into_inner());
+        stats.total_events += 1;
         stats.rejected_synthetic += 1;
         stats.rejected_bad_keyboard_type += 1;
         return EventVerificationResult::Synthetic;
@@ -615,10 +656,10 @@ pub fn verify_event_source(event: &core_graphics::event::CGEvent) -> EventVerifi
     // Check 3: Source Unix Process ID
     // Hardware events from HID system have source PID of 0 (kernel)
     // CGEventPost events have the posting process's PID
-    let source_pid = event.get_integer_value_field(K_CG_EVENT_SOURCE_UNIX_PROCESS_ID);
-
     if source_pid != 0 {
         if strict {
+            let mut stats = SYNTHETIC_STATS.write().unwrap_or_else(|p| p.into_inner());
+            stats.total_events += 1;
             stats.rejected_synthetic += 1;
             stats.rejected_non_kernel_pid += 1;
             return EventVerificationResult::Synthetic;
@@ -626,6 +667,9 @@ pub fn verify_event_source(event: &core_graphics::event::CGEvent) -> EventVerifi
         suspicious = true;
     }
 
+    // Acquire lock only for final stats update
+    let mut stats = SYNTHETIC_STATS.write().unwrap_or_else(|p| p.into_inner());
+    stats.total_events += 1;
     if suspicious {
         stats.suspicious_accepted += 1;
         EventVerificationResult::Suspicious
@@ -644,6 +688,7 @@ static HID_KEYSTROKE_COUNT: AtomicU64 = AtomicU64::new(0);
 static HID_MONITOR_RUNNING: AtomicBool = AtomicBool::new(false);
 
 /// HID input callback - called for each HID keyboard event from actual hardware.
+#[allow(dead_code)]
 extern "C" fn hid_input_callback(
     _context: *mut std::ffi::c_void,
     _result: i32,
@@ -652,6 +697,9 @@ extern "C" fn hid_input_callback(
 ) {
     unsafe {
         let element = IOHIDValueGetElement(value);
+        if element.is_null() {
+            return;
+        }
         let usage_page = IOHIDElementGetUsagePage(element);
         let usage = IOHIDElementGetUsage(element);
 
@@ -695,7 +743,9 @@ pub fn is_hid_monitoring_running() -> bool {
 /// If CGEventTap count significantly exceeds HID count, synthetic events were injected.
 pub fn validate_dual_layer(cg_count: u64) -> DualLayerValidation {
     let hid_count = get_hid_keystroke_count();
-    let discrepancy = cg_count as i64 - hid_count as i64;
+    let cg_i64 = i64::try_from(cg_count).unwrap_or(i64::MAX);
+    let hid_i64 = i64::try_from(hid_count).unwrap_or(i64::MAX);
+    let discrepancy = cg_i64.saturating_sub(hid_i64);
 
     // Allow small discrepancy due to timing differences
     // But if CG count is significantly higher, synthetic events detected
@@ -729,10 +779,11 @@ pub type KeystrokeCallback = Arc<dyn Fn(KeystrokeInfo) + Send + Sync>;
 
 /// Enhanced keystroke monitor with synthetic event detection.
 pub struct KeystrokeMonitor {
-    _thread: std::thread::JoinHandle<()>,
+    thread: Option<std::thread::JoinHandle<()>>,
     keystroke_count: Arc<AtomicU64>,
     verified_count: Arc<AtomicU64>,
     rejected_count: Arc<AtomicU64>,
+    run_loop: Arc<Mutex<Option<RunLoopHandle>>>,
 }
 
 impl KeystrokeMonitor {
@@ -747,104 +798,28 @@ impl KeystrokeMonitor {
         callback: Option<KeystrokeCallback>,
     ) -> Result<Self> {
         let session_clone = Arc::clone(&session);
-        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        Self::start_event_tap(
+            move |event: &CGEvent, verification: EventVerificationResult| {
+                let now = chrono::Utc::now().timestamp_nanos_safe();
+                let keycode = event.get_integer_value_field(K_CG_KEYBOARD_EVENT_KEYCODE);
+                let zone_i = crate::jitter::keycode_to_zone(keycode as u16);
+                let zone = if zone_i >= 0 { zone_i as u8 } else { 0xFF };
 
-        let keystroke_count = Arc::new(AtomicU64::new(0));
-        let verified_count = Arc::new(AtomicU64::new(0));
-        let rejected_count = Arc::new(AtomicU64::new(0));
-
-        let ks_count = Arc::clone(&keystroke_count);
-        let ver_count = Arc::clone(&verified_count);
-        let rej_count = Arc::clone(&rejected_count);
-
-        let thread = std::thread::spawn(move || {
-            let events = vec![CGEventType::KeyDown];
-            let tap = CGEventTap::new(
-                CGEventTapLocation::HID,
-                CGEventTapPlacement::HeadInsertEventTap,
-                CGEventTapOptions::Default,
-                events,
-                move |_proxy, event_type, event| {
-                    if matches!(event_type, CGEventType::KeyDown) {
-                        // Verify event source
-                        let verification = verify_event_source(event);
-
-                        match verification {
-                            EventVerificationResult::Synthetic => {
-                                // Reject synthetic events
-                                rej_count.fetch_add(1, Ordering::SeqCst);
-                                return Some(event.to_owned());
-                            }
-                            EventVerificationResult::Hardware => {
-                                ver_count.fetch_add(1, Ordering::SeqCst);
-                            }
-                            EventVerificationResult::Suspicious => {
-                                // In strict mode, these are already rejected in verify_event_source
-                                // In permissive mode, count but allow
-                                ver_count.fetch_add(1, Ordering::SeqCst);
-                            }
-                        }
-
-                        let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
-                        let keycode = event.get_integer_value_field(62);
-                        let zone = (keycode % 8) as u8;
-
-                        ks_count.fetch_add(1, Ordering::SeqCst);
-
-                        if let Ok(mut s) = session_clone.lock() {
-                            s.add_sample(now, zone);
-                        }
-
-                        if let Some(ref cb) = callback {
-                            let info = KeystrokeInfo {
-                                timestamp_ns: now,
-                                keycode,
-                                zone,
-                                verification,
-                                device_hint: None, // Could be enriched with HID device info
-                            };
-                            cb(info);
-                        }
-                    }
-                    Some(event.to_owned())
-                },
-            );
-
-            let tap = match tap {
-                Ok(tap) => tap,
-                Err(_) => {
-                    let _ = ready_tx.send(Err(anyhow!("Failed to create CGEventTap")));
-                    return;
+                if let Ok(mut s) = session_clone.lock() {
+                    s.add_sample(now, zone);
                 }
-            };
 
-            let loop_source = match tap.mach_port.create_runloop_source(0) {
-                Ok(source) => source,
-                Err(_) => {
-                    let _ = ready_tx.send(Err(anyhow!("Failed to create runloop source")));
-                    return;
+                if let Some(ref cb) = callback {
+                    cb(KeystrokeInfo {
+                        timestamp_ns: now,
+                        keycode,
+                        zone,
+                        verification,
+                        device_hint: None,
+                    });
                 }
-            };
-
-            let _ = ready_tx.send(Ok(()));
-            let current_loop = CFRunLoop::get_current();
-            unsafe {
-                current_loop.add_source(&loop_source, kCFRunLoopCommonModes);
-            }
-            tap.enable();
-            CFRunLoop::run_current();
-        });
-
-        match ready_rx.recv() {
-            Ok(Ok(())) => Ok(Self {
-                _thread: thread,
-                keystroke_count,
-                verified_count,
-                rejected_count,
-            }),
-            Ok(Err(err)) => Err(err),
-            Err(_) => Err(anyhow!("Failed to initialize CGEventTap thread")),
-        }
+            },
+        )
     }
 
     /// Get total keystroke count (verified events only).
@@ -885,6 +860,39 @@ impl KeystrokeMonitor {
         callback: Option<KeystrokeCallback>,
     ) -> Result<Self> {
         let session_clone = Arc::clone(&session);
+        Self::start_event_tap(
+            move |event: &CGEvent, verification: EventVerificationResult| {
+                let keycode = event.get_integer_value_field(K_CG_KEYBOARD_EVENT_KEYCODE) as u16;
+                let zone = crate::jitter::keycode_to_zone(keycode);
+
+                // Record keystroke in hybrid session
+                if let Ok(mut s) = session_clone.lock() {
+                    let _ = s.record_keystroke(keycode);
+                }
+
+                if let Some(ref cb) = callback {
+                    let now = chrono::Utc::now().timestamp_nanos_safe();
+                    cb(KeystrokeInfo {
+                        timestamp_ns: now,
+                        keycode: keycode as i64,
+                        zone: if zone >= 0 { zone as u8 } else { 0xFF },
+                        verification,
+                        device_hint: None,
+                    });
+                }
+            },
+        )
+    }
+
+    /// Shared CGEventTap setup for all keystroke monitor variants.
+    ///
+    /// Handles event tap creation, source verification, run loop lifecycle,
+    /// and counter management. The `on_keystroke` closure is called for each
+    /// verified (non-synthetic) KeyDown event.
+    fn start_event_tap<F>(on_keystroke: F) -> Result<Self>
+    where
+        F: FnMut(&CGEvent, EventVerificationResult) + Send + 'static,
+    {
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
 
         let keystroke_count = Arc::new(AtomicU64::new(0));
@@ -895,53 +903,38 @@ impl KeystrokeMonitor {
         let ver_count = Arc::clone(&verified_count);
         let rej_count = Arc::clone(&rejected_count);
 
+        let run_loop: Arc<Mutex<Option<RunLoopHandle>>> = Arc::new(Mutex::new(None));
+        let run_loop_clone = Arc::clone(&run_loop);
+
+        // Wrap in Mutex so the FnMut closure can be called from FnOnce context
+        let on_keystroke = Mutex::new(on_keystroke);
+
         let thread = std::thread::spawn(move || {
             let events = vec![CGEventType::KeyDown];
             let tap = CGEventTap::new(
                 CGEventTapLocation::HID,
                 CGEventTapPlacement::HeadInsertEventTap,
-                CGEventTapOptions::Default,
+                CGEventTapOptions::ListenOnly,
                 events,
                 move |_proxy, event_type, event| {
                     if matches!(event_type, CGEventType::KeyDown) {
-                        // Verify event source
                         let verification = verify_event_source(event);
 
                         match verification {
                             EventVerificationResult::Synthetic => {
-                                // Reject synthetic events
                                 rej_count.fetch_add(1, Ordering::SeqCst);
                                 return Some(event.to_owned());
                             }
-                            EventVerificationResult::Hardware => {
-                                ver_count.fetch_add(1, Ordering::SeqCst);
-                            }
-                            EventVerificationResult::Suspicious => {
+                            EventVerificationResult::Hardware
+                            | EventVerificationResult::Suspicious => {
                                 ver_count.fetch_add(1, Ordering::SeqCst);
                             }
                         }
-
-                        let keycode = event.get_integer_value_field(62) as u16;
-                        let zone = crate::jitter::keycode_to_zone(keycode);
 
                         ks_count.fetch_add(1, Ordering::SeqCst);
 
-                        // Record keystroke in hybrid session
-                        if let Ok(mut s) = session_clone.lock() {
-                            // Ignore errors from record_keystroke (e.g., file not found)
-                            let _ = s.record_keystroke(keycode);
-                        }
-
-                        if let Some(ref cb) = callback {
-                            let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
-                            let info = KeystrokeInfo {
-                                timestamp_ns: now,
-                                keycode: keycode as i64,
-                                zone: if zone >= 0 { zone as u8 } else { 0xFF },
-                                verification,
-                                device_hint: None,
-                            };
-                            cb(info);
+                        if let Ok(mut handler) = on_keystroke.lock() {
+                            handler(event, verification);
                         }
                     }
                     Some(event.to_owned())
@@ -967,6 +960,11 @@ impl KeystrokeMonitor {
             let _ = ready_tx.send(Ok(()));
             let current_loop = CFRunLoop::get_current();
             unsafe {
+                let rl_ref = CFRunLoopGetCurrent();
+                CFRetain(rl_ref);
+                if let Ok(mut rl) = run_loop_clone.lock() {
+                    *rl = Some(RunLoopHandle(rl_ref));
+                }
                 current_loop.add_source(&loop_source, kCFRunLoopCommonModes);
             }
             tap.enable();
@@ -975,20 +973,48 @@ impl KeystrokeMonitor {
 
         match ready_rx.recv() {
             Ok(Ok(())) => Ok(Self {
-                _thread: thread,
+                thread: Some(thread),
                 keystroke_count,
                 verified_count,
                 rejected_count,
+                run_loop,
             }),
             Ok(Err(err)) => Err(err),
             Err(_) => Err(anyhow!("Failed to initialize CGEventTap thread")),
         }
+    }
+
+    /// Stop the keystroke monitor, terminating its run loop and joining the thread.
+    pub fn stop(&mut self) {
+        if let Ok(mut rl) = self.run_loop.lock() {
+            if let Some(handle) = rl.take() {
+                unsafe {
+                    CFRunLoopStop(handle.0);
+                    CFRelease(handle.0);
+                }
+            }
+        }
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+impl Drop for KeystrokeMonitor {
+    fn drop(&mut self) {
+        self.stop();
     }
 }
 
 // =============================================================================
 // Trait implementations
 // =============================================================================
+
+/// Thread-safe handle to a CFRunLoop that can be stopped from another thread.
+/// SAFETY: CFRunLoopStop is documented as thread-safe in Apple's documentation.
+struct RunLoopHandle(*mut std::ffi::c_void);
+unsafe impl Send for RunLoopHandle {}
+unsafe impl Sync for RunLoopHandle {}
 
 /// macOS keystroke capture implementation.
 pub struct MacOSKeystrokeCapture {
@@ -997,6 +1023,7 @@ pub struct MacOSKeystrokeCapture {
     thread: Option<std::thread::JoinHandle<()>>,
     strict_mode: bool,
     stats: Arc<RwLock<SyntheticStats>>,
+    run_loop: Arc<Mutex<Option<RunLoopHandle>>>,
 }
 
 impl MacOSKeystrokeCapture {
@@ -1008,6 +1035,7 @@ impl MacOSKeystrokeCapture {
             thread: None,
             strict_mode: true,
             stats: Arc::new(RwLock::new(SyntheticStats::default())),
+            run_loop: Arc::new(Mutex::new(None)),
         })
     }
 }
@@ -1024,19 +1052,22 @@ impl KeystrokeCapture for MacOSKeystrokeCapture {
         let running = Arc::clone(&self.running);
         let stats = Arc::clone(&self.stats);
         let strict = self.strict_mode;
+        let run_loop = Arc::clone(&self.run_loop);
 
         running.store(true, Ordering::SeqCst);
+
+        let (ready_tx, ready_rx) = mpsc::channel();
 
         let thread = std::thread::spawn(move || {
             let events = vec![CGEventType::KeyDown];
             let tap = CGEventTap::new(
                 CGEventTapLocation::HID,
                 CGEventTapPlacement::HeadInsertEventTap,
-                CGEventTapOptions::Default,
+                CGEventTapOptions::ListenOnly,
                 events,
                 move |_proxy, event_type, event| {
                     if !running.load(Ordering::SeqCst) {
-                        return None;
+                        return Some(event.to_owned());
                     }
 
                     if matches!(event_type, CGEventType::KeyDown) {
@@ -1059,8 +1090,9 @@ impl KeystrokeCapture for MacOSKeystrokeCapture {
                         }
 
                         if is_hardware {
-                            let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
-                            let keycode = event.get_integer_value_field(62) as u16;
+                            let now = chrono::Utc::now().timestamp_nanos_safe();
+                            let keycode =
+                                event.get_integer_value_field(K_CG_KEYBOARD_EVENT_KEYCODE) as u16;
                             let zone = crate::jitter::keycode_to_zone(keycode);
 
                             let keystroke = KeystrokeEvent {
@@ -1080,30 +1112,75 @@ impl KeystrokeCapture for MacOSKeystrokeCapture {
                 },
             );
 
-            if let Ok(tap) = tap {
-                if let Ok(loop_source) = tap.mach_port.create_runloop_source(0) {
-                    let current_loop = CFRunLoop::get_current();
-                    unsafe {
-                        current_loop.add_source(&loop_source, kCFRunLoopCommonModes);
-                    }
-                    tap.enable();
-                    CFRunLoop::run_current();
+            let tap = match tap {
+                Ok(tap) => tap,
+                Err(_) => {
+                    let _ = ready_tx.send(Err(anyhow!("Failed to create CGEventTap")));
+                    return;
                 }
+            };
+
+            let loop_source = match tap.mach_port.create_runloop_source(0) {
+                Ok(source) => source,
+                Err(_) => {
+                    let _ = ready_tx.send(Err(anyhow!("Failed to create runloop source")));
+                    return;
+                }
+            };
+
+            let _ = ready_tx.send(Ok(()));
+            let current_loop = CFRunLoop::get_current();
+            unsafe {
+                // Store the run loop ref so stop() can terminate it from another thread
+                let rl_ref = CFRunLoopGetCurrent();
+                CFRetain(rl_ref);
+                if let Ok(mut rl) = run_loop.lock() {
+                    *rl = Some(RunLoopHandle(rl_ref));
+                }
+                current_loop.add_source(&loop_source, kCFRunLoopCommonModes);
             }
+            tap.enable();
+            CFRunLoop::run_current();
         });
 
-        self.thread = Some(thread);
-        Ok(rx)
+        match ready_rx.recv() {
+            Ok(Ok(())) => {
+                self.thread = Some(thread);
+                Ok(rx)
+            }
+            Ok(Err(err)) => {
+                self.running.store(false, Ordering::SeqCst);
+                self.sender = None;
+                Err(err)
+            }
+            Err(_) => {
+                self.running.store(false, Ordering::SeqCst);
+                self.sender = None;
+                Err(anyhow!("Failed to initialize CGEventTap thread"))
+            }
+        }
     }
 
     fn stop(&mut self) -> Result<()> {
         self.running.store(false, Ordering::SeqCst);
         self.sender = None;
+        // Stop the CFRunLoop so the thread can exit
+        if let Ok(mut rl) = self.run_loop.lock() {
+            if let Some(handle) = rl.take() {
+                unsafe {
+                    CFRunLoopStop(handle.0);
+                    CFRelease(handle.0);
+                }
+            }
+        }
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
         Ok(())
     }
 
     fn synthetic_stats(&self) -> SyntheticStats {
-        self.stats.read().unwrap().clone()
+        self.stats.read().unwrap_or_else(|p| p.into_inner()).clone()
     }
 
     fn is_running(&self) -> bool {
@@ -1157,21 +1234,25 @@ impl FocusMonitor for MacOSFocusMonitor {
             let mut last_focus: Option<FocusInfo> = None;
 
             while running.load(Ordering::SeqCst) {
-                if let Ok(focus) = get_active_focus() {
-                    let should_send = match &last_focus {
-                        Some(last) => {
-                            last.pid != focus.pid
-                                || last.doc_path != focus.doc_path
-                                || last.window_title != focus.window_title
-                        }
-                        None => true,
-                    };
+                // Wrap each iteration in an autorelease pool to prevent
+                // memory leaks from Objective-C calls in get_active_focus()
+                objc::rc::autoreleasepool(|| {
+                    if let Ok(focus) = get_active_focus() {
+                        let should_send = match &last_focus {
+                            Some(last) => {
+                                last.pid != focus.pid
+                                    || last.doc_path != focus.doc_path
+                                    || last.window_title != focus.window_title
+                            }
+                            None => true,
+                        };
 
-                    if should_send {
-                        let _ = tx.send(focus.clone());
-                        last_focus = Some(focus);
+                        if should_send {
+                            let _ = tx.send(focus.clone());
+                            last_focus = Some(focus);
+                        }
                     }
-                }
+                });
 
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
@@ -1184,6 +1265,10 @@ impl FocusMonitor for MacOSFocusMonitor {
     fn stop_monitoring(&mut self) -> Result<()> {
         self.running.store(false, Ordering::SeqCst);
         self.sender = None;
+        // Join the polling thread (exits within ~100ms when running is false)
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
         Ok(())
     }
 
@@ -1196,8 +1281,8 @@ impl FocusMonitor for MacOSFocusMonitor {
 // Mouse Capture Implementation
 // =============================================================================
 
-use super::types::{MouseEvent, MouseIdleStats, MouseStegoParams};
 use super::MouseCapture;
+use super::{MouseEvent, MouseIdleStats, MouseStegoParams};
 
 /// macOS mouse capture implementation using CGEventTap.
 pub struct MacOSMouseCapture {
@@ -1210,6 +1295,7 @@ pub struct MacOSMouseCapture {
     last_position: Arc<RwLock<(f64, f64)>>,
     keyboard_active: Arc<AtomicBool>,
     last_keystroke_time: Arc<RwLock<std::time::Instant>>,
+    run_loop: Arc<Mutex<Option<RunLoopHandle>>>,
 }
 
 impl MacOSMouseCapture {
@@ -1225,6 +1311,7 @@ impl MacOSMouseCapture {
             last_position: Arc::new(RwLock::new((0.0, 0.0))),
             keyboard_active: Arc::new(AtomicBool::new(false)),
             last_keystroke_time: Arc::new(RwLock::new(std::time::Instant::now())),
+            run_loop: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -1254,8 +1341,11 @@ impl MouseCapture for MacOSMouseCapture {
         let keyboard_active = Arc::clone(&self.keyboard_active);
         let last_keystroke_time = Arc::clone(&self.last_keystroke_time);
         let idle_only_mode = self.idle_only_mode;
+        let run_loop = Arc::clone(&self.run_loop);
 
         running.store(true, Ordering::SeqCst);
+
+        let (ready_tx, ready_rx) = mpsc::channel::<Result<()>>();
 
         let thread = std::thread::spawn(move || {
             // Capture mouse moved events
@@ -1268,7 +1358,7 @@ impl MouseCapture for MacOSMouseCapture {
                 events,
                 move |_proxy, event_type, event| {
                     if !running.load(Ordering::SeqCst) {
-                        return None;
+                        return Some(event.to_owned());
                     }
 
                     if matches!(event_type, CGEventType::MouseMoved) {
@@ -1288,7 +1378,7 @@ impl MouseCapture for MacOSMouseCapture {
                             return Some(event.to_owned());
                         }
 
-                        let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+                        let now = chrono::Utc::now().timestamp_nanos_safe();
 
                         // Get mouse position from event
                         // CGEvent location is in screen coordinates
@@ -1334,25 +1424,70 @@ impl MouseCapture for MacOSMouseCapture {
                 },
             );
 
-            if let Ok(tap) = tap {
-                if let Ok(loop_source) = tap.mach_port.create_runloop_source(0) {
-                    let current_loop = CFRunLoop::get_current();
-                    unsafe {
-                        current_loop.add_source(&loop_source, kCFRunLoopCommonModes);
-                    }
-                    tap.enable();
-                    CFRunLoop::run_current();
+            let tap = match tap {
+                Ok(tap) => tap,
+                Err(_) => {
+                    let _ = ready_tx.send(Err(anyhow!("Failed to create CGEventTap")));
+                    return;
                 }
+            };
+
+            let loop_source = match tap.mach_port.create_runloop_source(0) {
+                Ok(source) => source,
+                Err(_) => {
+                    let _ = ready_tx.send(Err(anyhow!("Failed to create runloop source")));
+                    return;
+                }
+            };
+
+            let _ = ready_tx.send(Ok(()));
+            let current_loop = CFRunLoop::get_current();
+            unsafe {
+                // Store the run loop ref so stop() can terminate it
+                let rl_ref = CFRunLoopGetCurrent();
+                CFRetain(rl_ref);
+                if let Ok(mut rl) = run_loop.lock() {
+                    *rl = Some(RunLoopHandle(rl_ref));
+                }
+                current_loop.add_source(&loop_source, kCFRunLoopCommonModes);
             }
+            tap.enable();
+            CFRunLoop::run_current();
         });
 
-        self.thread = Some(thread);
-        Ok(rx)
+        match ready_rx.recv() {
+            Ok(Ok(())) => {
+                self.thread = Some(thread);
+                Ok(rx)
+            }
+            Ok(Err(err)) => {
+                self.running.store(false, Ordering::SeqCst);
+                self.sender = None;
+                Err(err)
+            }
+            Err(_) => {
+                self.running.store(false, Ordering::SeqCst);
+                self.sender = None;
+                Err(anyhow!("Failed to initialize mouse CGEventTap thread"))
+            }
+        }
     }
 
     fn stop(&mut self) -> Result<()> {
         self.running.store(false, Ordering::SeqCst);
         self.sender = None;
+        // Stop the CFRunLoop so the thread can exit
+        if let Ok(mut rl) = self.run_loop.lock() {
+            if let Some(handle) = rl.take() {
+                unsafe {
+                    CFRunLoopStop(handle.0);
+                    CFRelease(handle.0);
+                }
+            }
+        }
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
         Ok(())
     }
 
@@ -1361,7 +1496,10 @@ impl MouseCapture for MacOSMouseCapture {
     }
 
     fn idle_stats(&self) -> MouseIdleStats {
-        self.idle_stats.read().unwrap().clone()
+        self.idle_stats
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
     }
 
     fn reset_idle_stats(&mut self) {

@@ -34,6 +34,41 @@ pub struct WitnessdConfig {
 
     #[serde(default)]
     pub privacy: PrivacyConfig,
+
+    #[serde(default)]
+    pub writersproof: WritersProofConfig,
+}
+
+/// Configuration for WritersProof external trust anchor.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WritersProofConfig {
+    /// Enable WritersProof integration.
+    #[serde(default = "default_false")]
+    pub enabled: bool,
+    /// WritersProof API base URL.
+    #[serde(default = "default_writersproof_url")]
+    pub base_url: String,
+    /// Automatically submit evidence on export.
+    #[serde(default = "default_false")]
+    pub auto_attest: bool,
+    /// Queue attestations when offline for later submission.
+    #[serde(default = "default_true")]
+    pub offline_queue: bool,
+}
+
+impl Default for WritersProofConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            base_url: default_writersproof_url(),
+            auto_attest: false,
+            offline_queue: true,
+        }
+    }
+}
+
+fn default_writersproof_url() -> String {
+    "https://api.writersproof.com".to_string()
 }
 
 /// Configuration for author fingerprinting.
@@ -312,10 +347,31 @@ fn default_witnessd_dir() -> PathBuf {
 
 fn default_allowed_apps() -> Vec<String> {
     vec![
+        // macOS editors
         "com.apple.TextEdit".to_string(),
+        "com.apple.iWork.Pages".to_string(),
+        // Microsoft Office
         "com.microsoft.Word".to_string(),
+        "com.microsoft.Excel".to_string(),
+        "com.microsoft.Powerpoint".to_string(),
+        // Code editors / IDEs
         "code".to_string(),
-        // ... (truncated for brevity, would match sentinel.rs list)
+        "com.microsoft.VSCode".to_string(),
+        "com.sublimetext.4".to_string(),
+        "com.jetbrains.intellij".to_string(),
+        "com.googlecode.iterm2".to_string(),
+        "org.vim.MacVim".to_string(),
+        // Cross-platform writing tools
+        "com.typora.Typora".to_string(),
+        "md.obsidian".to_string(),
+        "com.notion.Notion".to_string(),
+        // Google Docs (browser-based, matched by app_name)
+        "Google Docs".to_string(),
+        // LibreOffice
+        "org.libreoffice.LibreOffice".to_string(),
+        // Terminal emulators (Linux)
+        "org.gnome.Terminal".to_string(),
+        "org.kde.konsole".to_string(),
     ]
 }
 
@@ -350,7 +406,28 @@ impl SentinelConfig {
     }
 
     pub fn validate(&self) -> Result<()> {
-        Ok(()) // Placeholder
+        use anyhow::bail;
+
+        if self.checkpoint_interval_secs == 0 {
+            bail!("checkpoint_interval_secs must be > 0");
+        }
+        if self.heartbeat_interval_secs == 0 {
+            bail!("heartbeat_interval_secs must be > 0");
+        }
+        if self.idle_timeout_secs < self.checkpoint_interval_secs {
+            bail!(
+                "idle_timeout_secs ({}) must be >= checkpoint_interval_secs ({})",
+                self.idle_timeout_secs,
+                self.checkpoint_interval_secs
+            );
+        }
+        if self.poll_interval_ms == 0 {
+            bail!("poll_interval_ms must be > 0");
+        }
+        if self.debounce_duration_ms == 0 {
+            bail!("debounce_duration_ms must be > 0");
+        }
+        Ok(())
     }
 
     pub fn ensure_directories(&self) -> Result<()> {
@@ -486,6 +563,7 @@ impl WitnessdConfig {
                 ..Default::default()
             },
             privacy: PrivacyConfig::default(),
+            writersproof: WritersProofConfig::default(),
         }
     }
 
@@ -536,6 +614,34 @@ mod tests {
             loaded.vdf.iterations_per_second,
             config.vdf.iterations_per_second
         );
+    }
+
+    #[test]
+    fn test_validate_defaults_pass() {
+        let config = SentinelConfig::default();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_zero_checkpoint_interval() {
+        let mut config = SentinelConfig::default();
+        config.checkpoint_interval_secs = 0;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_idle_less_than_checkpoint() {
+        let mut config = SentinelConfig::default();
+        config.idle_timeout_secs = 10;
+        config.checkpoint_interval_secs = 60;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_zero_poll_interval() {
+        let mut config = SentinelConfig::default();
+        config.poll_interval_ms = 0;
+        assert!(config.validate().is_err());
     }
 
     #[test]

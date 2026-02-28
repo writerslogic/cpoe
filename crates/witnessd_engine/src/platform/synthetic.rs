@@ -10,7 +10,7 @@
 //! - Inter-Key Interval (IKI) analysis - superhuman speed detection
 //! - Timing pattern analysis - replay attack detection
 
-use super::types::{KeystrokeEvent, RejectionReasons, SyntheticStats};
+use super::{KeystrokeEvent, RejectionReasons, SyntheticStats};
 use std::collections::VecDeque;
 
 // =============================================================================
@@ -22,10 +22,6 @@ const MIN_HUMAN_CV: f64 = 0.15;
 
 /// Minimum inter-key interval in milliseconds (below this is superhuman)
 const MIN_HUMAN_IKI_MS: f64 = 20.0;
-
-/// Maximum inter-key interval for burst analysis (milliseconds)
-#[allow(dead_code)]
-const MAX_BURST_IKI_MS: f64 = 500.0;
 
 /// Window size for statistical analysis
 const ANALYSIS_WINDOW_SIZE: usize = 50;

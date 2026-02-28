@@ -108,17 +108,71 @@ impl BehavioralFingerprint {
             0.0
         };
 
+        // Build interval histogram with bucket edges [0, 50, 100, 150, 200, 300, 500, 1000, 2000, ∞] ms
+        let bucket_edges: &[f64] = &[0.0, 50.0, 100.0, 150.0, 200.0, 300.0, 500.0, 1000.0, 2000.0];
+        let mut interval_buckets = vec![0.0f64; bucket_edges.len()];
+        for &iv in &intervals {
+            let mut placed = false;
+            for i in (0..bucket_edges.len()).rev() {
+                if iv >= bucket_edges[i] {
+                    interval_buckets[i] += 1.0;
+                    placed = true;
+                    break;
+                }
+            }
+            if !placed {
+                interval_buckets[0] += 1.0;
+            }
+        }
+        // Normalize to proportions
+        let total = intervals.len() as f64;
+        if total > 0.0 {
+            for b in &mut interval_buckets {
+                *b /= total;
+            }
+        }
+
+        // Sentence-level pauses: mean of intervals > 500ms
+        let sentence_pauses: Vec<f64> = intervals.iter().copied().filter(|&i| i > 500.0).collect();
+        let sentence_pause_mean = if !sentence_pauses.is_empty() {
+            sentence_pauses.iter().sum::<f64>() / sentence_pauses.len() as f64
+        } else {
+            0.0
+        };
+
+        // Paragraph-level pauses: mean of intervals > 2000ms
+        let paragraph_pauses: Vec<f64> =
+            intervals.iter().copied().filter(|&i| i > 2000.0).collect();
+        let paragraph_pause_mean = if !paragraph_pauses.is_empty() {
+            paragraph_pauses.iter().sum::<f64>() / paragraph_pauses.len() as f64
+        } else {
+            0.0
+        };
+
+        // Burst speed variance: variance of intervals < 200ms (fast typing bursts)
+        let burst_intervals: Vec<f64> = intervals.iter().copied().filter(|&i| i < 200.0).collect();
+        let burst_speed_variance = if burst_intervals.len() >= 2 {
+            let burst_mean_val = burst_intervals.iter().sum::<f64>() / burst_intervals.len() as f64;
+            burst_intervals
+                .iter()
+                .map(|&x| (x - burst_mean_val).powi(2))
+                .sum::<f64>()
+                / (burst_intervals.len() - 1) as f64
+        } else {
+            0.0
+        };
+
         Self {
             keystroke_interval_mean: mean,
             keystroke_interval_std: std,
             keystroke_interval_skewness: skewness,
             keystroke_interval_kurtosis: kurtosis,
-            interval_buckets: vec![],  // Placeholder
-            sentence_pause_mean: 0.0,  // Needs key codes
-            paragraph_pause_mean: 0.0, // Needs key codes
+            interval_buckets,
+            sentence_pause_mean,
+            paragraph_pause_mean,
             thinking_pause_frequency: thinking_freq,
             burst_length_mean: burst_mean,
-            burst_speed_variance: 0.0,
+            burst_speed_variance,
         }
     }
 
@@ -266,6 +320,42 @@ mod tests {
         assert!(fp.keystroke_interval_mean > 200.0 && fp.keystroke_interval_mean < 300.0);
         assert!(fp.keystroke_interval_std > 0.0);
         assert!(fp.keystroke_interval_skewness > 0.0); // Should be positively skewed by the 400ms interval
+    }
+
+    #[test]
+    fn test_fingerprint_interval_buckets() {
+        let intervals = vec![30, 80, 120, 180, 250, 400, 700, 1500, 3000, 150];
+        let samples = mock_samples(&intervals);
+        let fp = BehavioralFingerprint::from_samples(&samples);
+
+        assert_eq!(fp.interval_buckets.len(), 9);
+        // All buckets should sum to ~1.0
+        let sum: f64 = fp.interval_buckets.iter().sum();
+        assert!((sum - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_fingerprint_pause_means() {
+        // Include some long pauses
+        let intervals = vec![100, 150, 120, 800, 100, 130, 2500, 100, 3000, 150];
+        let samples = mock_samples(&intervals);
+        let fp = BehavioralFingerprint::from_samples(&samples);
+
+        // sentence pauses > 500ms: 800, 2500, 3000 → mean ~2100
+        assert!(fp.sentence_pause_mean > 500.0);
+        // paragraph pauses > 2000ms: 2500, 3000 → mean 2750
+        assert!(fp.paragraph_pause_mean > 2000.0);
+    }
+
+    #[test]
+    fn test_fingerprint_burst_speed_variance() {
+        // Burst intervals < 200ms with variance
+        let intervals = vec![80, 120, 150, 90, 110, 130, 170, 500, 100, 140];
+        let samples = mock_samples(&intervals);
+        let fp = BehavioralFingerprint::from_samples(&samples);
+
+        // Should have non-zero variance from the sub-200ms intervals
+        assert!(fp.burst_speed_variance > 0.0);
     }
 
     #[test]

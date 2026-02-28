@@ -53,7 +53,7 @@ fn measure_io_latency() -> u64 {
     let start = std::time::Instant::now();
     // Perform a tiny, non-destructive read from a system file to measure bus latency
     let _ = std::fs::metadata("/etc/hosts").map(|m| m.len());
-    start.elapsed().as_nanos() as u64
+    start.elapsed().as_nanos().min(u64::MAX as u128) as u64
 }
 
 fn measure_thermal_proxy() -> u32 {
@@ -65,5 +65,5 @@ fn measure_thermal_proxy() -> u32 {
     while start_wall.elapsed() < std::time::Duration::from_millis(1) {}
 
     let end_tsc = ClockSkew::measure();
-    (end_tsc.wrapping_sub(start_tsc)) as u32
+    end_tsc.wrapping_sub(start_tsc).min(u32::MAX as u64) as u32
 }

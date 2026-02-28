@@ -10,6 +10,7 @@ use std::time::Duration;
 use crate::error::{Error, Result};
 use crate::rfc::{self, TimeEvidence, VdfProofRfc};
 use crate::vdf::{self, Parameters, VdfProof};
+use crate::DateTimeNanosExt;
 
 /// Entanglement mode for checkpoint chain computation.
 ///
@@ -22,6 +23,60 @@ pub enum EntanglementMode {
     Legacy,
     /// Entangled mode (WAR/1.1): each VDF depends on previous VDF output + jitter
     Entangled,
+}
+
+/// Signature policy for checkpoint chains.
+///
+/// Controls whether checkpoints must be signed with ratchet keys.
+/// Legacy chains deserialize as `Optional`; new chains should use `Required`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum SignaturePolicy {
+    /// Legacy chains: warn on unsigned checkpoints but allow verification to pass
+    #[default]
+    Optional,
+    /// New chains: reject any checkpoint without a valid signature
+    Required,
+}
+
+/// Detailed verification report for a checkpoint chain.
+///
+/// Provides granular results beyond pass/fail, including warnings
+/// for unsigned checkpoints and metadata about verification.
+#[derive(Debug, Clone)]
+pub struct VerificationReport {
+    /// Whether the chain passed all required checks.
+    pub valid: bool,
+    /// Ordinals of checkpoints that have no signature.
+    pub unsigned_checkpoints: Vec<u64>,
+    /// Ordinals of checkpoints with invalid signatures.
+    pub signature_failures: Vec<u64>,
+    /// Detected ordinal gaps (expected, actual).
+    pub ordinal_gaps: Vec<(u64, u64)>,
+    /// Whether the chain metadata (if present) is consistent.
+    pub metadata_valid: bool,
+    /// Warning messages that don't cause outright failure (e.g., unsigned under Optional policy).
+    pub warnings: Vec<String>,
+    /// Error message if verification failed.
+    pub error: Option<String>,
+}
+
+impl VerificationReport {
+    fn new() -> Self {
+        Self {
+            valid: true,
+            unsigned_checkpoints: Vec::new(),
+            signature_failures: Vec::new(),
+            ordinal_gaps: Vec::new(),
+            metadata_valid: true,
+            warnings: Vec::new(),
+            error: None,
+        }
+    }
+
+    fn fail(&mut self, msg: String) {
+        self.valid = false;
+        self.error = Some(msg);
+    }
 }
 
 /// Jitter binding for entangled checkpoints.
@@ -44,7 +99,10 @@ pub struct Checkpoint {
     pub previous_hash: [u8; 32],
     pub hash: [u8; 32],
     pub content_hash: [u8; 32],
-    pub content_size: i64,
+    pub content_size: u64,
+    /// Deprecated: redundant with `Chain::document_path`. Retained for backward-compatible
+    /// deserialization of older chains; new checkpoints leave this empty.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub file_path: String,
     pub timestamp: DateTime<Utc>,
     pub message: Option<String>,
@@ -72,6 +130,11 @@ pub struct Checkpoint {
     /// Includes roughtime samples, TSA responses, and blockchain anchors.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub time_evidence: Option<TimeEvidence>,
+
+    /// MMR inclusion proof for this checkpoint (anti-deletion).
+    /// Serialized `InclusionProof` proving membership in the chain's MMR.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mmr_inclusion_proof: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,6 +144,24 @@ pub struct TpmBinding {
     pub attestation: Vec<u8>,
     pub signature: Vec<u8>,
     pub public_key: Vec<u8>,
+}
+
+/// Signed metadata for anti-deletion verification.
+///
+/// Captures the chain state at save time and is signed with the current ratchet key.
+/// Deletion of checkpoints breaks the metadata signature.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChainMetadata {
+    /// Number of checkpoints when metadata was last signed.
+    pub checkpoint_count: u64,
+    /// MMR root hash at save time.
+    pub mmr_root: [u8; 32],
+    /// Number of leaves in the MMR (should equal checkpoint_count).
+    pub mmr_leaf_count: u64,
+    /// Signature over (checkpoint_count || mmr_root || mmr_leaf_count).
+    pub metadata_signature: Option<Vec<u8>>,
+    /// Metadata format version.
+    pub metadata_version: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,6 +174,13 @@ pub struct Chain {
     /// Entanglement mode for this chain (defaults to Legacy for backward compatibility)
     #[serde(default)]
     pub entanglement_mode: EntanglementMode,
+    /// Signature policy for checkpoint verification.
+    /// Legacy chains deserialize as Optional; new chains default to Required.
+    #[serde(default)]
+    pub signature_policy: SignaturePolicy,
+    /// Signed chain metadata for anti-deletion verification.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<ChainMetadata>,
     #[serde(skip)]
     storage_path: Option<PathBuf>,
 }
@@ -100,6 +188,12 @@ pub struct Chain {
 impl Chain {
     pub fn new(document_path: impl AsRef<Path>, vdf_params: Parameters) -> Result<Self> {
         Self::new_with_mode(document_path, vdf_params, EntanglementMode::Legacy)
+    }
+
+    /// Set the signature policy for this chain.
+    pub fn with_signature_policy(mut self, policy: SignaturePolicy) -> Self {
+        self.signature_policy = policy;
+        self
     }
 
     /// Create a new chain with specified entanglement mode.
@@ -123,13 +217,15 @@ impl Chain {
             checkpoints: Vec::new(),
             vdf_params,
             entanglement_mode,
+            signature_policy: SignaturePolicy::Required,
+            metadata: None,
             storage_path: None,
         })
     }
 
     pub fn commit(&mut self, message: Option<String>) -> Result<Checkpoint> {
-        let content = fs::read(&self.document_path)?;
-        let content_hash: [u8; 32] = Sha256::digest(&content).into();
+        let (content_hash, content_size) =
+            crate::crypto::hash_file_with_size(Path::new(&self.document_path))?;
         let ordinal = self.checkpoints.len() as u64;
 
         let mut previous_hash = [0u8; 32];
@@ -147,8 +243,8 @@ impl Chain {
             previous_hash,
             hash: [0u8; 32],
             content_hash,
-            content_size: content.len() as i64,
-            file_path: self.document_path.clone(),
+            content_size,
+            file_path: String::new(),
             timestamp: now,
             message,
             vdf: None,
@@ -158,6 +254,7 @@ impl Chain {
             rfc_vdf: None,
             rfc_jitter: None,
             time_evidence: None,
+            mmr_inclusion_proof: None,
         };
 
         if ordinal > 0 {
@@ -170,6 +267,7 @@ impl Chain {
             checkpoint.vdf = Some(proof);
         }
 
+        checkpoint.validate_timestamp()?;
         checkpoint.hash = checkpoint.compute_hash();
         self.checkpoints.push(checkpoint.clone());
         Ok(checkpoint)
@@ -180,23 +278,23 @@ impl Chain {
         message: Option<String>,
         vdf_duration: Duration,
     ) -> Result<Checkpoint> {
-        let content = fs::read(&self.document_path)?;
-        let content_hash: [u8; 32] = Sha256::digest(&content).into();
+        let (content_hash, content_size) =
+            crate::crypto::hash_file_with_size(Path::new(&self.document_path))?;
         let ordinal = self.checkpoints.len() as u64;
 
-        let previous_hash = if ordinal > 0 {
-            self.checkpoints[ordinal as usize - 1].hash
-        } else {
-            [0u8; 32]
-        };
+        let previous_hash = self
+            .checkpoints
+            .last()
+            .map(|cp| cp.hash)
+            .unwrap_or([0u8; 32]);
 
         let mut checkpoint = Checkpoint {
             ordinal,
             previous_hash,
             hash: [0u8; 32],
             content_hash,
-            content_size: content.len() as i64,
-            file_path: self.document_path.clone(),
+            content_size,
+            file_path: String::new(),
             timestamp: Utc::now(),
             message,
             vdf: None,
@@ -206,6 +304,7 @@ impl Chain {
             rfc_vdf: None,
             rfc_jitter: None,
             time_evidence: None,
+            mmr_inclusion_proof: None,
         };
 
         if ordinal > 0 {
@@ -214,6 +313,7 @@ impl Chain {
             checkpoint.vdf = Some(proof);
         }
 
+        checkpoint.validate_timestamp()?;
         checkpoint.hash = checkpoint.compute_hash();
         self.checkpoints.push(checkpoint.clone());
         Ok(checkpoint)
@@ -242,26 +342,18 @@ impl Chain {
             ));
         }
 
-        let content = fs::read(&self.document_path)?;
-        let content_hash: [u8; 32] = Sha256::digest(&content).into();
+        let (content_hash, content_size) =
+            crate::crypto::hash_file_with_size(Path::new(&self.document_path))?;
         let ordinal = self.checkpoints.len() as u64;
 
-        let previous_hash = if ordinal > 0 {
-            self.checkpoints[ordinal as usize - 1].hash
-        } else {
-            [0u8; 32]
-        };
+        let last_cp = self.checkpoints.last();
+        let previous_hash = last_cp.map(|cp| cp.hash).unwrap_or([0u8; 32]);
 
         // For entangled mode, get the previous VDF output (or zeros for first checkpoint)
-        let previous_vdf_output = if ordinal > 0 {
-            self.checkpoints[ordinal as usize - 1]
-                .vdf
-                .as_ref()
-                .map(|v| v.output)
-                .unwrap_or([0u8; 32])
-        } else {
-            [0u8; 32]
-        };
+        let previous_vdf_output = last_cp
+            .and_then(|cp| cp.vdf.as_ref())
+            .map(|v| v.output)
+            .unwrap_or([0u8; 32]);
 
         let jitter_binding = JitterBinding {
             jitter_hash,
@@ -274,8 +366,8 @@ impl Chain {
             previous_hash,
             hash: [0u8; 32],
             content_hash,
-            content_size: content.len() as i64,
-            file_path: self.document_path.clone(),
+            content_size,
+            file_path: String::new(),
             timestamp: Utc::now(),
             message,
             vdf: None,
@@ -285,6 +377,7 @@ impl Chain {
             rfc_vdf: None,
             rfc_jitter: None,
             time_evidence: None,
+            mmr_inclusion_proof: None,
         };
 
         // Compute entangled VDF input
@@ -293,6 +386,7 @@ impl Chain {
         let proof = vdf::compute(vdf_input, vdf_duration, self.vdf_params)?;
         checkpoint.vdf = Some(proof);
 
+        checkpoint.validate_timestamp()?;
         checkpoint.hash = checkpoint.compute_hash();
         self.checkpoints.push(checkpoint.clone());
         Ok(checkpoint)
@@ -315,30 +409,27 @@ impl Chain {
         time_evidence: Option<TimeEvidence>,
         calibration: rfc::CalibrationAttestation,
     ) -> Result<Checkpoint> {
-        let content = fs::read(&self.document_path)?;
-        let content_hash: [u8; 32] = Sha256::digest(&content).into();
+        // Entangled mode requires jitter data to produce verifiable checkpoints
+        if matches!(self.entanglement_mode, EntanglementMode::Entangled) && rfc_jitter.is_none() {
+            return Err(Error::checkpoint("entangled mode requires jitter data"));
+        }
+
+        let (content_hash, content_size) =
+            crate::crypto::hash_file_with_size(Path::new(&self.document_path))?;
         let ordinal = self.checkpoints.len() as u64;
 
-        let previous_hash = if ordinal > 0 {
-            self.checkpoints[ordinal as usize - 1].hash
-        } else {
-            [0u8; 32]
-        };
+        let last_cp = self.checkpoints.last();
+        let previous_hash = last_cp.map(|cp| cp.hash).unwrap_or([0u8; 32]);
 
         // Compute VDF input based on mode
         let vdf_input = match self.entanglement_mode {
             EntanglementMode::Legacy => vdf::chain_input(content_hash, previous_hash, ordinal),
             EntanglementMode::Entangled => {
                 // For entangled mode, use previous VDF output + jitter
-                let previous_vdf_output = if ordinal > 0 {
-                    self.checkpoints[ordinal as usize - 1]
-                        .vdf
-                        .as_ref()
-                        .map(|v| v.output)
-                        .unwrap_or([0u8; 32])
-                } else {
-                    [0u8; 32]
-                };
+                let previous_vdf_output = last_cp
+                    .and_then(|cp| cp.vdf.as_ref())
+                    .map(|v| v.output)
+                    .unwrap_or([0u8; 32]);
                 let jitter_hash = rfc_jitter
                     .as_ref()
                     .map(|j| j.entropy_commitment.hash)
@@ -364,7 +455,7 @@ impl Chain {
                 vdf.input,
                 output,
                 vdf.iterations,
-                vdf.duration.as_millis() as u64,
+                vdf.duration.as_millis().min(u64::MAX as u128) as u64,
                 calibration.clone(),
             )
         });
@@ -381,8 +472,8 @@ impl Chain {
             previous_hash,
             hash: [0u8; 32],
             content_hash,
-            content_size: content.len() as i64,
-            file_path: self.document_path.clone(),
+            content_size,
+            file_path: String::new(),
             timestamp: Utc::now(),
             message,
             vdf: vdf_proof,
@@ -392,78 +483,156 @@ impl Chain {
             rfc_vdf,
             rfc_jitter,
             time_evidence,
+            mmr_inclusion_proof: None,
         };
 
+        checkpoint.validate_timestamp()?;
         checkpoint.hash = checkpoint.compute_hash();
         self.checkpoints.push(checkpoint.clone());
         Ok(checkpoint)
     }
 
+    /// Verify the checkpoint chain, returning a pass/fail result.
+    ///
+    /// Delegates to `verify_detailed()` and converts to `Result`.
     pub fn verify(&self) -> Result<()> {
+        let report = self.verify_detailed();
+        if report.valid {
+            Ok(())
+        } else {
+            Err(Error::checkpoint(
+                report.error.unwrap_or_else(|| "verification failed".into()),
+            ))
+        }
+    }
+
+    /// Detailed verification returning a `VerificationReport` with granular results.
+    ///
+    /// Checks: hash integrity, chain linkage, ordinal contiguity, VDF proofs,
+    /// signature policy enforcement, and metadata consistency.
+    pub fn verify_detailed(&self) -> VerificationReport {
+        let mut report = VerificationReport::new();
+
         for (i, checkpoint) in self.checkpoints.iter().enumerate() {
+            // 1. Hash integrity
             if checkpoint.compute_hash() != checkpoint.hash {
-                return Err(Error::checkpoint(format!("checkpoint {i}: hash mismatch")));
+                report.fail(format!("checkpoint {i}: hash mismatch"));
+                return report;
             }
 
+            // 2. Ordinal contiguity
+            if checkpoint.ordinal != i as u64 {
+                report.ordinal_gaps.push((i as u64, checkpoint.ordinal));
+                report.fail(format!(
+                    "checkpoint {i}: ordinal gap (expected {i}, got {})",
+                    checkpoint.ordinal
+                ));
+                return report;
+            }
+
+            // 3. Chain linkage
             if i > 0 {
                 if checkpoint.previous_hash != self.checkpoints[i - 1].hash {
-                    return Err(Error::checkpoint(format!(
-                        "checkpoint {i}: broken chain link"
-                    )));
+                    report.fail(format!("checkpoint {i}: broken chain link"));
+                    return report;
                 }
             } else if checkpoint.previous_hash != [0u8; 32] {
-                return Err(Error::checkpoint("checkpoint 0: non-zero previous hash"));
+                report.fail("checkpoint 0: non-zero previous hash".into());
+                return report;
             }
 
-            // VDF verification depends on entanglement mode
+            // 4. Signature policy enforcement
+            match checkpoint.signature.as_ref() {
+                None => {
+                    report.unsigned_checkpoints.push(checkpoint.ordinal);
+                    match self.signature_policy {
+                        SignaturePolicy::Required => {
+                            report.fail(format!(
+                                "checkpoint {i}: unsigned (signature required by policy)"
+                            ));
+                            return report;
+                        }
+                        SignaturePolicy::Optional => {
+                            report
+                                .warnings
+                                .push(format!("checkpoint {i}: unsigned (optional policy)"));
+                        }
+                    }
+                }
+                Some(sig) => {
+                    // Validate signature format (Ed25519 = 64 bytes).
+                    // Full cryptographic verification against ratchet keys
+                    // is done at the evidence/key_hierarchy level.
+                    if sig.is_empty() || sig.len() != 64 {
+                        report.signature_failures.push(checkpoint.ordinal);
+                        report.fail(format!(
+                            "checkpoint {i}: invalid signature length {} (expected 64)",
+                            sig.len()
+                        ));
+                        return report;
+                    }
+                }
+            }
+
+            // 5. VDF verification depends on entanglement mode
             match self.entanglement_mode {
                 EntanglementMode::Legacy => {
-                    // Legacy mode: VDF required for checkpoints after first
                     if i > 0 {
-                        let vdf = checkpoint.vdf.as_ref().ok_or_else(|| {
-                            Error::checkpoint(format!(
-                                "checkpoint {i}: missing VDF proof (required for time verification)"
-                            ))
-                        })?;
+                        let vdf = match checkpoint.vdf.as_ref() {
+                            Some(v) => v,
+                            None => {
+                                report.fail(format!(
+                                    "checkpoint {i}: missing VDF proof (required for time verification)"
+                                ));
+                                return report;
+                            }
+                        };
                         let expected_input = vdf::chain_input(
                             checkpoint.content_hash,
                             checkpoint.previous_hash,
                             checkpoint.ordinal,
                         );
                         if vdf.input != expected_input {
-                            return Err(Error::checkpoint(format!(
-                                "checkpoint {i}: VDF input mismatch"
-                            )));
+                            report.fail(format!("checkpoint {i}: VDF input mismatch"));
+                            return report;
                         }
                         if !vdf::verify(vdf) {
-                            return Err(Error::checkpoint(format!(
-                                "checkpoint {i}: VDF verification failed"
-                            )));
+                            report.fail(format!("checkpoint {i}: VDF verification failed"));
+                            return report;
                         }
                     }
                 }
                 EntanglementMode::Entangled => {
-                    // Entangled mode: VDF required for ALL checkpoints, including first
-                    let vdf = checkpoint.vdf.as_ref().ok_or_else(|| {
-                        Error::checkpoint(format!(
-                            "checkpoint {i}: missing VDF proof (required for entangled verification)"
-                        ))
-                    })?;
+                    let vdf = match checkpoint.vdf.as_ref() {
+                        Some(v) => v,
+                        None => {
+                            report.fail(format!(
+                                "checkpoint {i}: missing VDF proof (required for entangled verification)"
+                            ));
+                            return report;
+                        }
+                    };
 
-                    // Get jitter binding (required for entangled mode)
-                    let jitter_binding = checkpoint.jitter_binding.as_ref().ok_or_else(|| {
-                        Error::checkpoint(format!(
-                            "checkpoint {i}: missing jitter binding (required for entangled mode)"
-                        ))
-                    })?;
+                    let jitter_binding = match checkpoint.jitter_binding.as_ref() {
+                        Some(j) => j,
+                        None => {
+                            report.fail(format!(
+                                "checkpoint {i}: missing jitter binding (required for entangled mode)"
+                            ));
+                            return report;
+                        }
+                    };
 
-                    // Get previous VDF output (zeros for first checkpoint)
                     let previous_vdf_output = if i > 0 {
-                        self.checkpoints[i - 1]
-                            .vdf
-                            .as_ref()
-                            .map(|v| v.output)
-                            .unwrap_or([0u8; 32])
+                        match self.checkpoints[i - 1].vdf.as_ref() {
+                            Some(v) => v.output,
+                            None => {
+                                report.fail(format!(
+                                    "checkpoint {i}: previous checkpoint missing VDF (required for entangled chain)"
+                                ));
+                                return report;
+                            }
+                        }
                     } else {
                         [0u8; 32]
                     };
@@ -475,20 +644,61 @@ impl Chain {
                         checkpoint.ordinal,
                     );
                     if vdf.input != expected_input {
-                        return Err(Error::checkpoint(format!(
-                            "checkpoint {i}: VDF input mismatch (entangled)"
-                        )));
+                        report.fail(format!("checkpoint {i}: VDF input mismatch (entangled)"));
+                        return report;
                     }
                     if !vdf::verify(vdf) {
-                        return Err(Error::checkpoint(format!(
-                            "checkpoint {i}: VDF verification failed"
-                        )));
+                        report.fail(format!("checkpoint {i}: VDF verification failed"));
+                        return report;
                     }
                 }
             }
         }
 
-        Ok(())
+        // 6. Metadata consistency check
+        if let Some(metadata) = &self.metadata {
+            let actual_count = self.checkpoints.len() as u64;
+            if metadata.checkpoint_count != actual_count {
+                report.metadata_valid = false;
+                report.fail(format!(
+                    "metadata checkpoint count mismatch: metadata says {}, actual {}",
+                    metadata.checkpoint_count, actual_count
+                ));
+                return report;
+            }
+            if metadata.mmr_leaf_count != actual_count {
+                report.metadata_valid = false;
+                report.fail(format!(
+                    "metadata MMR leaf count mismatch: metadata says {}, actual {}",
+                    metadata.mmr_leaf_count, actual_count
+                ));
+                return report;
+            }
+
+            // Verify metadata signature format (Ed25519 = 64 bytes).
+            // Full cryptographic verification against ratchet keys
+            // is done at the key_hierarchy level.
+            match &metadata.metadata_signature {
+                None => {
+                    report.metadata_valid = false;
+                    report.warnings.push(
+                        "metadata signature missing: anti-deletion protection is not active"
+                            .to_string(),
+                    );
+                }
+                Some(sig) if sig.len() != 64 => {
+                    report.metadata_valid = false;
+                    report.fail(format!(
+                        "metadata signature invalid length {} (expected 64)",
+                        sig.len()
+                    ));
+                    return report;
+                }
+                Some(_) => {} // Format valid; crypto check deferred to key_hierarchy
+            }
+        }
+
+        report
     }
 
     pub fn total_elapsed_time(&self) -> Duration {
@@ -529,7 +739,11 @@ impl Chain {
         }
         let data = serde_json::to_vec_pretty(self)
             .map_err(|e| Error::checkpoint(format!("failed to marshal chain: {e}")))?;
-        fs::write(path, data)?;
+        // Write to a temporary file then atomically rename to avoid
+        // leaving a corrupted chain file on crash.
+        let tmp_path = path.with_extension("tmp");
+        fs::write(&tmp_path, data)?;
+        fs::rename(&tmp_path, path)?;
         Ok(())
     }
 
@@ -588,17 +802,45 @@ impl Chain {
     }
 
     pub fn at(&self, ordinal: u64) -> Result<&Checkpoint> {
+        let index = usize::try_from(ordinal)
+            .map_err(|_| Error::checkpoint("ordinal too large for this platform"))?;
         self.checkpoints
-            .get(ordinal as usize)
+            .get(index)
             .ok_or_else(|| Error::not_found(format!("checkpoint ordinal {ordinal} out of range")))
     }
 
     pub fn storage_path(&self) -> Option<&Path> {
         self.storage_path.as_deref()
     }
+
+    pub fn set_storage_path(&mut self, path: PathBuf) {
+        self.storage_path = Some(path);
+    }
 }
 
 impl Checkpoint {
+    /// Validate that the checkpoint timestamp can be represented as nanoseconds.
+    /// Timestamps past ~2262 overflow i64 nanoseconds and would silently degrade
+    /// hash uniqueness in compute_hash.
+    fn validate_timestamp(&self) -> Result<()> {
+        let nanos = self.timestamp.timestamp_nanos_opt();
+        if nanos.is_none() {
+            return Err(Error::checkpoint(format!(
+                "checkpoint timestamp {} overflows nanosecond representation",
+                self.timestamp
+            )));
+        }
+        // Reject pre-epoch timestamps: `as u64` in compute_hash would wrap
+        // negative values to huge numbers, producing misleading hashes.
+        if nanos.unwrap() < 0 {
+            return Err(Error::checkpoint(format!(
+                "checkpoint timestamp {} is before the Unix epoch",
+                self.timestamp
+            )));
+        }
+        Ok(())
+    }
+
     fn compute_hash(&self) -> [u8; 32] {
         let mut hasher = Sha256::new();
         // Use v3 domain separator if RFC fields present, v2 for jitter, v1 for legacy
@@ -612,9 +854,9 @@ impl Checkpoint {
         hasher.update(self.ordinal.to_be_bytes());
         hasher.update(self.previous_hash);
         hasher.update(self.content_hash);
-        hasher.update((self.content_size as u64).to_be_bytes());
+        hasher.update(self.content_size.to_be_bytes());
 
-        let timestamp_nanos = self.timestamp.timestamp_nanos_opt().unwrap_or(0) as u64;
+        let timestamp_nanos = self.timestamp.timestamp_nanos_safe() as u64;
         hasher.update(timestamp_nanos.to_be_bytes());
 
         if let Some(vdf) = &self.vdf {
@@ -688,7 +930,7 @@ impl Checkpoint {
                 vdf.input,
                 output,
                 vdf.iterations,
-                vdf.duration.as_millis() as u64,
+                vdf.duration.as_millis().min(u64::MAX as u128) as u64,
                 calibration,
             )
         })
@@ -729,6 +971,19 @@ mod tests {
         (dir, path)
     }
 
+    /// Create chain with Optional signature policy for legacy tests
+    fn test_chain(path: &Path) -> Chain {
+        Chain::new(path, test_vdf_params())
+            .expect("create chain")
+            .with_signature_policy(SignaturePolicy::Optional)
+    }
+
+    fn test_chain_entangled(path: &Path) -> Chain {
+        Chain::new_with_mode(path, test_vdf_params(), EntanglementMode::Entangled)
+            .expect("create chain")
+            .with_signature_policy(SignaturePolicy::Optional)
+    }
+
     fn test_vdf_params() -> Parameters {
         Parameters {
             iterations_per_second: 1000,
@@ -740,7 +995,7 @@ mod tests {
     #[test]
     fn test_chain_creation() {
         let (_dir, path) = temp_document();
-        let chain = Chain::new(&path, test_vdf_params()).expect("create chain");
+        let chain = test_chain(&path);
         assert!(!chain.document_id.is_empty());
         assert!(chain.checkpoints.is_empty());
         assert_eq!(chain.document_path, path.to_string_lossy());
@@ -761,7 +1016,7 @@ mod tests {
     #[test]
     fn test_single_commit() {
         let (_dir, path) = temp_document();
-        let mut chain = Chain::new(&path, test_vdf_params()).expect("create chain");
+        let mut chain = test_chain(&path);
         let checkpoint = chain
             .commit(Some("first commit".to_string()))
             .expect("commit");
@@ -777,7 +1032,7 @@ mod tests {
     #[test]
     fn test_multiple_commits_with_vdf() {
         let (dir, path) = temp_document();
-        let mut chain = Chain::new(&path, test_vdf_params()).expect("create chain");
+        let mut chain = test_chain(&path);
 
         // First commit
         let cp0 = chain
@@ -817,7 +1072,7 @@ mod tests {
     #[test]
     fn test_chain_verification_valid() {
         let (dir, path) = temp_document();
-        let mut chain = Chain::new(&path, test_vdf_params()).expect("create chain");
+        let mut chain = test_chain(&path);
         chain
             .commit_with_vdf_duration(None, Duration::from_millis(10))
             .expect("commit 0");
@@ -834,7 +1089,7 @@ mod tests {
     #[test]
     fn test_chain_verification_hash_mismatch() {
         let (dir, path) = temp_document();
-        let mut chain = Chain::new(&path, test_vdf_params()).expect("create chain");
+        let mut chain = test_chain(&path);
         chain
             .commit_with_vdf_duration(None, Duration::from_millis(10))
             .expect("commit");
@@ -850,7 +1105,7 @@ mod tests {
     #[test]
     fn test_chain_verification_broken_chain_link() {
         let (dir, path) = temp_document();
-        let mut chain = Chain::new(&path, test_vdf_params()).expect("create chain");
+        let mut chain = test_chain(&path);
         chain
             .commit_with_vdf_duration(None, Duration::from_millis(10))
             .expect("commit 0");
@@ -877,7 +1132,7 @@ mod tests {
     #[test]
     fn test_chain_verification_nonzero_first_previous_hash() {
         let (dir, path) = temp_document();
-        let mut chain = Chain::new(&path, test_vdf_params()).expect("create chain");
+        let mut chain = test_chain(&path);
         chain
             .commit_with_vdf_duration(None, Duration::from_millis(10))
             .expect("commit");
@@ -895,7 +1150,7 @@ mod tests {
     #[test]
     fn test_save_and_load_chain() {
         let (dir, path) = temp_document();
-        let mut chain = Chain::new(&path, test_vdf_params()).expect("create chain");
+        let mut chain = test_chain(&path);
         chain
             .commit_with_vdf_duration(Some("test".to_string()), Duration::from_millis(10))
             .expect("commit");
@@ -916,7 +1171,7 @@ mod tests {
     #[test]
     fn test_chain_summary() {
         let (dir, path) = temp_document();
-        let mut chain = Chain::new(&path, test_vdf_params()).expect("create chain");
+        let mut chain = test_chain(&path);
         chain
             .commit_with_vdf_duration(None, Duration::from_millis(10))
             .expect("commit 0");
@@ -939,7 +1194,7 @@ mod tests {
     #[test]
     fn test_chain_latest_and_at() {
         let (dir, path) = temp_document();
-        let mut chain = Chain::new(&path, test_vdf_params()).expect("create chain");
+        let mut chain = test_chain(&path);
         assert!(chain.latest().is_none());
 
         chain
@@ -964,7 +1219,7 @@ mod tests {
     #[test]
     fn test_total_elapsed_time() {
         let (dir, path) = temp_document();
-        let mut chain = Chain::new(&path, test_vdf_params()).expect("create chain");
+        let mut chain = test_chain(&path);
 
         // First commit has no VDF, so no elapsed time
         chain
@@ -1018,7 +1273,7 @@ mod tests {
     #[test]
     fn test_commit_detects_content_changes() {
         let (dir, path) = temp_document();
-        let mut chain = Chain::new(&path, test_vdf_params()).expect("create chain");
+        let mut chain = test_chain(&path);
 
         chain
             .commit_with_vdf_duration(None, Duration::from_millis(10))
@@ -1039,7 +1294,7 @@ mod tests {
     #[test]
     fn test_vdf_verification_in_chain() {
         let (dir, path) = temp_document();
-        let mut chain = Chain::new(&path, test_vdf_params()).expect("create chain");
+        let mut chain = test_chain(&path);
 
         chain
             .commit_with_vdf_duration(None, Duration::from_millis(10))
@@ -1069,7 +1324,7 @@ mod tests {
     #[test]
     fn test_vdf_input_mismatch_detection() {
         let (dir, path) = temp_document();
-        let mut chain = Chain::new(&path, test_vdf_params()).expect("create chain");
+        let mut chain = test_chain(&path);
 
         chain
             .commit_with_vdf_duration(None, Duration::from_millis(10))
@@ -1103,8 +1358,7 @@ mod tests {
     #[test]
     fn test_entangled_chain_creation() {
         let (dir, path) = temp_document();
-        let chain = Chain::new_with_mode(&path, test_vdf_params(), EntanglementMode::Entangled)
-            .expect("create entangled chain");
+        let chain = test_chain_entangled(&path);
         assert_eq!(chain.entanglement_mode, EntanglementMode::Entangled);
         assert!(chain.checkpoints.is_empty());
         drop(dir);
@@ -1131,8 +1385,7 @@ mod tests {
     #[test]
     fn test_entangled_single_commit() {
         let (dir, path) = temp_document();
-        let mut chain = Chain::new_with_mode(&path, test_vdf_params(), EntanglementMode::Entangled)
-            .expect("create chain");
+        let mut chain = test_chain_entangled(&path);
 
         let jitter_hash = [0xABu8; 32];
         let checkpoint = chain
@@ -1160,8 +1413,7 @@ mod tests {
     #[test]
     fn test_entangled_multiple_commits() {
         let (dir, path) = temp_document();
-        let mut chain = Chain::new_with_mode(&path, test_vdf_params(), EntanglementMode::Entangled)
-            .expect("create chain");
+        let mut chain = test_chain_entangled(&path);
 
         // First commit
         let cp0 = chain
@@ -1218,8 +1470,7 @@ mod tests {
     #[test]
     fn test_entangled_verify_detects_vdf_tampering() {
         let (dir, path) = temp_document();
-        let mut chain = Chain::new_with_mode(&path, test_vdf_params(), EntanglementMode::Entangled)
-            .expect("create chain");
+        let mut chain = test_chain_entangled(&path);
 
         chain
             .commit_entangled(
@@ -1261,8 +1512,7 @@ mod tests {
     #[test]
     fn test_entangled_verify_detects_jitter_tampering() {
         let (dir, path) = temp_document();
-        let mut chain = Chain::new_with_mode(&path, test_vdf_params(), EntanglementMode::Entangled)
-            .expect("create chain");
+        let mut chain = test_chain_entangled(&path);
 
         chain
             .commit_entangled(
@@ -1294,8 +1544,7 @@ mod tests {
     #[test]
     fn test_entangled_verify_requires_jitter_binding() {
         let (dir, path) = temp_document();
-        let mut chain = Chain::new_with_mode(&path, test_vdf_params(), EntanglementMode::Entangled)
-            .expect("create chain");
+        let mut chain = test_chain_entangled(&path);
 
         chain
             .commit_entangled(
@@ -1327,8 +1576,7 @@ mod tests {
         let path = canonical_dir.join("test_doc.txt");
         fs::write(&path, b"test content").expect("write");
 
-        let mut chain = Chain::new_with_mode(&path, test_vdf_params(), EntanglementMode::Entangled)
-            .expect("create chain");
+        let mut chain = test_chain_entangled(&path);
 
         chain
             .commit_entangled(
@@ -1359,7 +1607,7 @@ mod tests {
     #[test]
     fn test_legacy_mode_default() {
         let (dir, path) = temp_document();
-        let chain = Chain::new(&path, test_vdf_params()).expect("create chain");
+        let chain = test_chain(&path);
         assert_eq!(chain.entanglement_mode, EntanglementMode::Legacy);
         drop(dir);
     }
@@ -1371,7 +1619,7 @@ mod tests {
     #[test]
     fn test_commit_rfc_basic() {
         let (dir, path) = temp_document();
-        let mut chain = Chain::new(&path, test_vdf_params()).expect("create chain");
+        let mut chain = test_chain(&path);
 
         let calibration = rfc::CalibrationAttestation::new(
             1_000_000, // 1M iterations per second
@@ -1404,7 +1652,7 @@ mod tests {
     #[test]
     fn test_commit_rfc_with_jitter_binding() {
         let (dir, path) = temp_document();
-        let mut chain = Chain::new(&path, test_vdf_params()).expect("create chain");
+        let mut chain = test_chain(&path);
 
         // Create RFC-compliant jitter binding
         let entropy_commitment = rfc::jitter_binding::EntropyCommitment {
@@ -1494,7 +1742,7 @@ mod tests {
     #[test]
     fn test_commit_rfc_v3_domain_separator() {
         let (dir, path) = temp_document();
-        let mut chain = Chain::new(&path, test_vdf_params()).expect("create chain");
+        let mut chain = test_chain(&path);
 
         let calibration =
             rfc::CalibrationAttestation::new(1_000_000, "test".to_string(), vec![], 1700000000);
@@ -1561,7 +1809,7 @@ mod tests {
     #[test]
     fn test_checkpoint_to_rfc_vdf_conversion() {
         let (dir, path) = temp_document();
-        let mut chain = Chain::new(&path, test_vdf_params()).expect("create chain");
+        let mut chain = test_chain(&path);
 
         // Create checkpoint with internal VDF
         chain
@@ -1594,6 +1842,153 @@ mod tests {
             internal_vdf.duration.as_millis() as u64
         );
 
+        drop(dir);
+    }
+
+    // =========================================================================
+    // Phase 1: Ordinal gap detection & signature policy tests
+    // =========================================================================
+
+    #[test]
+    fn test_ordinal_gap_detected() {
+        let (dir, path) = temp_document();
+        let mut chain = test_chain(&path);
+
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit 0");
+        fs::write(&path, b"updated").expect("update");
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit 1");
+
+        // Tamper with ordinal to create a gap
+        chain.checkpoints[1].ordinal = 5;
+        chain.checkpoints[1].hash = chain.checkpoints[1].compute_hash();
+
+        let report = chain.verify_detailed();
+        assert!(!report.valid);
+        assert!(!report.ordinal_gaps.is_empty());
+        assert_eq!(report.ordinal_gaps[0], (1, 5));
+        assert!(report.error.as_ref().unwrap().contains("ordinal gap"));
+        drop(dir);
+    }
+
+    #[test]
+    fn test_unsigned_checkpoint_rejected_required_policy() {
+        let (_dir, path) = temp_document();
+        let mut chain = Chain::new(&path, test_vdf_params()).expect("create chain");
+        // New chains default to Required policy
+        assert_eq!(chain.signature_policy, SignaturePolicy::Required);
+
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit 0");
+
+        // Verify should fail because checkpoint is unsigned
+        let err = chain.verify().unwrap_err();
+        assert!(err.to_string().contains("unsigned"));
+    }
+
+    #[test]
+    fn test_unsigned_checkpoint_accepted_optional_policy() {
+        let (_dir, path) = temp_document();
+        let mut chain = test_chain(&path); // Optional policy
+
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit 0");
+
+        // Should pass with warning
+        let report = chain.verify_detailed();
+        assert!(report.valid);
+        assert!(!report.unsigned_checkpoints.is_empty());
+        assert_eq!(report.unsigned_checkpoints[0], 0);
+        assert!(!report.warnings.is_empty());
+    }
+
+    #[test]
+    fn test_signature_policy_serialization() {
+        let (dir, path) = temp_document();
+        let mut chain = test_chain(&path);
+        chain.signature_policy = SignaturePolicy::Required;
+
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit 0");
+
+        let chain_path = dir.path().join("policy_chain.json");
+        chain.save(&chain_path).expect("save");
+
+        let loaded = Chain::load(&chain_path).expect("load");
+        assert_eq!(loaded.signature_policy, SignaturePolicy::Required);
+        drop(dir);
+    }
+
+    #[test]
+    fn test_legacy_chain_deserializes_optional_policy() {
+        // Legacy chains without signature_policy field should deserialize as Optional
+        let json = r#"{
+            "document_id": "test",
+            "document_path": "/tmp/test.txt",
+            "created_at": "2024-01-01T00:00:00Z",
+            "checkpoints": [],
+            "vdf_params": {"iterations_per_second": 1000, "min_iterations": 10, "max_iterations": 100000},
+            "entanglement_mode": "Legacy"
+        }"#;
+
+        let chain: Chain = serde_json::from_str(json).expect("deserialize");
+        assert_eq!(chain.signature_policy, SignaturePolicy::Optional);
+    }
+
+    #[test]
+    fn test_verify_detailed_report() {
+        let (dir, path) = temp_document();
+        let mut chain = test_chain(&path);
+
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit 0");
+        fs::write(&path, b"updated").expect("update");
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit 1");
+
+        let report = chain.verify_detailed();
+        assert!(report.valid);
+        assert_eq!(report.unsigned_checkpoints.len(), 2);
+        assert!(report.signature_failures.is_empty());
+        assert!(report.ordinal_gaps.is_empty());
+        assert!(report.metadata_valid);
+        drop(dir);
+    }
+
+    #[test]
+    fn test_metadata_count_mismatch_detected() {
+        let (dir, path) = temp_document();
+        let mut chain = test_chain(&path);
+
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .expect("commit 0");
+
+        // Set metadata claiming 5 checkpoints when there's only 1
+        chain.metadata = Some(ChainMetadata {
+            checkpoint_count: 5,
+            mmr_root: [0u8; 32],
+            mmr_leaf_count: 5,
+            metadata_signature: None,
+            metadata_version: 1,
+        });
+
+        let report = chain.verify_detailed();
+        assert!(!report.valid);
+        assert!(!report.metadata_valid);
+        assert!(report
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("metadata checkpoint count mismatch"));
         drop(dir);
     }
 }

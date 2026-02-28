@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
+pub mod signer;
 mod software;
 mod types;
 mod verification;
-pub mod signer;
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -12,10 +12,10 @@ mod secure_enclave;
 #[cfg(target_os = "windows")]
 mod windows;
 
+pub use signer::TpmSigner;
 pub use software::SoftwareProvider;
 pub use types::*;
 pub use verification::{verify_binding_chain, verify_quote};
-pub use signer::TpmSigner;
 
 use std::sync::Arc;
 
@@ -23,6 +23,8 @@ pub trait Provider: Send + Sync {
     fn capabilities(&self) -> Capabilities;
     fn device_id(&self) -> String;
     fn public_key(&self) -> Vec<u8>;
+    /// The COSE signing algorithm this provider uses.
+    fn algorithm(&self) -> coset::iana::Algorithm;
     fn quote(&self, nonce: &[u8], pcrs: &[u32]) -> Result<Quote, TPMError>;
     fn bind(&self, data: &[u8]) -> Result<Binding, TPMError>;
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>, TPMError>;

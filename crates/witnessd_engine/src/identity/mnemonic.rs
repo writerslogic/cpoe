@@ -63,7 +63,8 @@ impl MnemonicHandler {
     }
 
     pub fn phrase_to_entropy(phrase: &str) -> Result<Vec<u8>> {
-        let mnemonic = Mnemonic::parse_in(Language::English, phrase).map_err(|_| anyhow!("Invalid mnemonic"))?;
+        let mnemonic = Mnemonic::parse_in(Language::English, phrase)
+            .map_err(|_| anyhow!("Invalid mnemonic"))?;
         Ok(mnemonic.to_entropy())
     }
 

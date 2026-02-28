@@ -7,6 +7,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use subtle::ConstantTimeEq;
 use thiserror::Error;
 
 const VERSION: u32 = 2;
@@ -269,7 +270,7 @@ impl Wal {
                 });
             }
 
-            if entry.prev_hash != prev_hash {
+            if entry.prev_hash.ct_eq(&prev_hash).unwrap_u8() == 0 {
                 return Ok(WalVerification {
                     valid: false,
                     entries: count,
@@ -282,7 +283,12 @@ impl Wal {
             cumulative_hasher.update(&entry_hash);
             let expected_cumulative = *cumulative_hasher.finalize().as_bytes();
 
-            if entry.cumulative_hash != expected_cumulative {
+            if entry
+                .cumulative_hash
+                .ct_eq(&expected_cumulative)
+                .unwrap_u8()
+                == 0
+            {
                 return Ok(WalVerification {
                     valid: false,
                     entries: count,
@@ -515,11 +521,23 @@ fn deserialize_header(data: &[u8]) -> Result<Header, WalError> {
     }
     let mut magic = [0u8; 4];
     magic.copy_from_slice(&data[0..4]);
-    let version = u32::from_be_bytes(data[4..8].try_into().unwrap());
+    let version = u32::from_be_bytes(
+        data[4..8]
+            .try_into()
+            .map_err(|e: std::array::TryFromSliceError| WalError::Serialization(e.to_string()))?,
+    );
     let mut session_id = [0u8; 32];
     session_id.copy_from_slice(&data[8..40]);
-    let created_at = u64::from_be_bytes(data[40..48].try_into().unwrap()) as i64;
-    let last_checkpoint_seq = u64::from_be_bytes(data[48..56].try_into().unwrap());
+    let created_at = u64::from_be_bytes(
+        data[40..48]
+            .try_into()
+            .map_err(|e: std::array::TryFromSliceError| WalError::Serialization(e.to_string()))?,
+    ) as i64;
+    let last_checkpoint_seq = u64::from_be_bytes(
+        data[48..56]
+            .try_into()
+            .map_err(|e: std::array::TryFromSliceError| WalError::Serialization(e.to_string()))?,
+    );
     let mut reserved = [0u8; 8];
     reserved.copy_from_slice(&data[56..64]);
 
@@ -564,13 +582,25 @@ fn deserialize_entry(data: &[u8]) -> Result<Entry, WalError> {
         return Err(WalError::Serialization("entry too short".to_string()));
     }
     let mut offset = 0usize;
-    let sequence = u64::from_be_bytes(data[offset..offset + 8].try_into().unwrap());
+    let sequence = u64::from_be_bytes(
+        data[offset..offset + 8]
+            .try_into()
+            .map_err(|e: std::array::TryFromSliceError| WalError::Serialization(e.to_string()))?,
+    );
     offset += 8;
-    let timestamp = u64::from_be_bytes(data[offset..offset + 8].try_into().unwrap()) as i64;
+    let timestamp = u64::from_be_bytes(
+        data[offset..offset + 8]
+            .try_into()
+            .map_err(|e: std::array::TryFromSliceError| WalError::Serialization(e.to_string()))?,
+    ) as i64;
     offset += 8;
     let entry_type = EntryType::try_from(data[offset])?;
     offset += 1;
-    let payload_len = u32::from_be_bytes(data[offset..offset + 4].try_into().unwrap()) as usize;
+    let payload_len = u32::from_be_bytes(
+        data[offset..offset + 4]
+            .try_into()
+            .map_err(|e: std::array::TryFromSliceError| WalError::Serialization(e.to_string()))?,
+    ) as usize;
     offset += 4;
 
     if data.len() < offset + payload_len + 32 + 32 + 64 {

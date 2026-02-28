@@ -4,6 +4,7 @@ use super::{
     default_pcr_selection, Attestation, Binding, Capabilities, PCRSelection, PcrValue, Provider,
     Quote, TPMError,
 };
+use crate::DateTimeNanosExt;
 use chrono::Utc;
 use sha2::{Digest as Sha2Digest, Sha256};
 use std::sync::Mutex;
@@ -93,6 +94,10 @@ impl Provider for LinuxTpmProvider {
         }
     }
 
+    fn algorithm(&self) -> coset::iana::Algorithm {
+        coset::iana::Algorithm::PS256
+    }
+
     fn public_key(&self) -> Vec<u8> {
         self.inner.lock().unwrap().ak_public.clone()
     }
@@ -156,7 +161,7 @@ impl Provider for LinuxTpmProvider {
 
         let mut payload = Vec::new();
         payload.extend_from_slice(&data_hash);
-        payload.extend_from_slice(&timestamp.timestamp_nanos_opt().unwrap_or(0).to_le_bytes());
+        payload.extend_from_slice(&timestamp.timestamp_nanos_safe().to_le_bytes());
         payload.extend_from_slice(self.device_id().as_bytes());
 
         let digest = Sha256::digest(&payload);

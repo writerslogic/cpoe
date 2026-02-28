@@ -47,26 +47,26 @@ impl FileStore {
 
 impl Store for FileStore {
     fn append(&self, node: &Node) -> Result<(), MmrError> {
-        let mut size = self.size.write().unwrap();
+        let mut size = self.size.write().unwrap_or_else(|p| p.into_inner());
         if node.index != *size {
             return Err(MmrError::CorruptedStore);
         }
-        let mut writer = self.writer.write().unwrap();
+        let mut writer = self.writer.write().unwrap_or_else(|p| p.into_inner());
         writer.write_all(&node.serialize())?;
         *size += 1;
         Ok(())
     }
 
     fn get(&self, index: u64) -> Result<Node, MmrError> {
-        let size = *self.size.read().unwrap();
+        let size = *self.size.read().unwrap_or_else(|p| p.into_inner());
         if index >= size {
             return Err(MmrError::IndexOutOfRange);
         }
         {
-            let mut writer = self.writer.write().unwrap();
+            let mut writer = self.writer.write().unwrap_or_else(|p| p.into_inner());
             writer.flush()?;
         }
-        let mut file = self.file.write().unwrap();
+        let mut file = self.file.write().unwrap_or_else(|p| p.into_inner());
         let offset = index * NODE_SIZE as u64;
         file.seek(SeekFrom::Start(offset))?;
         let mut buf = vec![0u8; NODE_SIZE];
@@ -75,15 +75,15 @@ impl Store for FileStore {
     }
 
     fn size(&self) -> Result<u64, MmrError> {
-        Ok(*self.size.read().unwrap())
+        Ok(*self.size.read().unwrap_or_else(|p| p.into_inner()))
     }
 
     fn sync(&self) -> Result<(), MmrError> {
         {
-            let mut writer = self.writer.write().unwrap();
+            let mut writer = self.writer.write().unwrap_or_else(|p| p.into_inner());
             writer.flush()?;
         }
-        let file = self.file.read().unwrap();
+        let file = self.file.read().unwrap_or_else(|p| p.into_inner());
         file.sync_all()?;
         Ok(())
     }
@@ -113,7 +113,7 @@ impl MemoryStore {
 
 impl Store for MemoryStore {
     fn append(&self, node: &Node) -> Result<(), MmrError> {
-        let mut nodes = self.nodes.write().unwrap();
+        let mut nodes = self.nodes.write().unwrap_or_else(|p| p.into_inner());
         if node.index != nodes.len() as u64 {
             return Err(MmrError::CorruptedStore);
         }
@@ -122,7 +122,7 @@ impl Store for MemoryStore {
     }
 
     fn get(&self, index: u64) -> Result<Node, MmrError> {
-        let nodes = self.nodes.read().unwrap();
+        let nodes = self.nodes.read().unwrap_or_else(|p| p.into_inner());
         if index >= nodes.len() as u64 {
             return Err(MmrError::IndexOutOfRange);
         }
@@ -130,7 +130,7 @@ impl Store for MemoryStore {
     }
 
     fn size(&self) -> Result<u64, MmrError> {
-        Ok(self.nodes.read().unwrap().len() as u64)
+        Ok(self.nodes.read().unwrap_or_else(|p| p.into_inner()).len() as u64)
     }
 
     fn sync(&self) -> Result<(), MmrError> {

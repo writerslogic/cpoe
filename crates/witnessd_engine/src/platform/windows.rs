@@ -5,13 +5,12 @@
 //! This module provides keystroke capture via the low-level keyboard hook
 //! and focus tracking via GetForegroundWindow.
 
-#![allow(dead_code)]
-
 use super::types::{
     FocusInfo, KeystrokeEvent, MouseEvent, MouseIdleStats, MouseStegoParams, PermissionStatus,
     SyntheticStats,
 };
 use super::{FocusMonitor, KeystrokeCapture, MouseCapture};
+use crate::DateTimeNanosExt;
 use anyhow::{anyhow, Result};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex, RwLock};
@@ -179,12 +178,12 @@ pub struct KeystrokeMonitor {
     _hook: isize,
 }
 
-static mut GLOBAL_SESSION: Option<Arc<Mutex<SimpleJitterSession>>> = None;
+static GLOBAL_SESSION: Mutex<Option<Arc<Mutex<SimpleJitterSession>>>> = Mutex::new(None);
 
 impl KeystrokeMonitor {
     pub fn start(session: Arc<Mutex<SimpleJitterSession>>) -> Result<Self> {
+        *GLOBAL_SESSION.lock().unwrap_or_else(|p| p.into_inner()) = Some(Arc::clone(&session));
         unsafe {
-            GLOBAL_SESSION = Some(Arc::clone(&session));
             let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(low_level_keyboard_proc), None, 0)?;
             std::thread::spawn(|| {
                 let mut msg = MSG::default();
@@ -205,8 +204,9 @@ unsafe extern "system" fn low_level_keyboard_proc(
 ) -> LRESULT {
     if code >= 0 && (wparam.0 as u32 == WM_KEYDOWN || wparam.0 as u32 == WM_SYSKEYDOWN) {
         let kbd = *(lparam.0 as *const KBDLLHOOKSTRUCT);
-        let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
-        if let Some(ref session_arc) = GLOBAL_SESSION {
+        let now = chrono::Utc::now().timestamp_nanos_safe();
+        let session = GLOBAL_SESSION.lock().ok().and_then(|g| g.clone());
+        if let Some(session_arc) = session {
             if let Ok(mut s) = session_arc.lock() {
                 s.add_sample(now, (kbd.vkCode % 8) as u8);
             }
@@ -228,10 +228,10 @@ pub struct WindowsKeystrokeCapture {
     stats: Arc<RwLock<SyntheticStats>>,
 }
 
-// Global sender for the hook callback
-static mut GLOBAL_SENDER: Option<mpsc::Sender<KeystrokeEvent>> = None;
-static mut GLOBAL_STATS: Option<Arc<RwLock<SyntheticStats>>> = None;
-static mut GLOBAL_STRICT_MODE: bool = true;
+// Thread-safe global state for hook callbacks
+static GLOBAL_SENDER: Mutex<Option<mpsc::Sender<KeystrokeEvent>>> = Mutex::new(None);
+static GLOBAL_STATS: Mutex<Option<Arc<RwLock<SyntheticStats>>>> = Mutex::new(None);
+static GLOBAL_STRICT_MODE: AtomicBool = AtomicBool::new(true);
 
 impl WindowsKeystrokeCapture {
     /// Create a new Windows keystroke capture instance.
@@ -256,11 +256,9 @@ impl KeystrokeCapture for WindowsKeystrokeCapture {
         self.sender = Some(tx.clone());
 
         // Set global state for the hook callback
-        unsafe {
-            GLOBAL_SENDER = Some(tx);
-            GLOBAL_STATS = Some(Arc::clone(&self.stats));
-            GLOBAL_STRICT_MODE = self.strict_mode;
-        }
+        *GLOBAL_SENDER.lock().unwrap_or_else(|p| p.into_inner()) = Some(tx);
+        *GLOBAL_STATS.lock().unwrap_or_else(|p| p.into_inner()) = Some(Arc::clone(&self.stats));
+        GLOBAL_STRICT_MODE.store(self.strict_mode, Ordering::SeqCst);
 
         self.running.store(true, Ordering::SeqCst);
 
@@ -297,17 +295,15 @@ impl KeystrokeCapture for WindowsKeystrokeCapture {
             }
         }
 
-        unsafe {
-            GLOBAL_SENDER = None;
-            GLOBAL_STATS = None;
-        }
+        *GLOBAL_SENDER.lock().unwrap_or_else(|p| p.into_inner()) = None;
+        *GLOBAL_STATS.lock().unwrap_or_else(|p| p.into_inner()) = None;
 
         self.sender = None;
         Ok(())
     }
 
     fn synthetic_stats(&self) -> SyntheticStats {
-        self.stats.read().unwrap().clone()
+        self.stats.read().unwrap_or_else(|p| p.into_inner()).clone()
     }
 
     fn is_running(&self) -> bool {
@@ -316,9 +312,7 @@ impl KeystrokeCapture for WindowsKeystrokeCapture {
 
     fn set_strict_mode(&mut self, strict: bool) {
         self.strict_mode = strict;
-        unsafe {
-            GLOBAL_STRICT_MODE = strict;
-        }
+        GLOBAL_STRICT_MODE.store(strict, Ordering::SeqCst);
     }
 
     fn get_strict_mode(&self) -> bool {
@@ -345,7 +339,8 @@ unsafe extern "system" fn keystroke_capture_hook(
         let is_injected = (kbd.flags.0 & LLKHF_INJECTED.0) != 0;
 
         // Update stats
-        if let Some(ref stats) = GLOBAL_STATS {
+        let stats_arc = GLOBAL_STATS.lock().ok().and_then(|g| g.clone());
+        if let Some(stats) = stats_arc {
             if let Ok(mut s) = stats.write() {
                 s.total_events += 1;
                 if is_injected {
@@ -358,13 +353,14 @@ unsafe extern "system" fn keystroke_capture_hook(
         }
 
         // In strict mode, reject injected events
-        if is_injected && GLOBAL_STRICT_MODE {
+        if is_injected && GLOBAL_STRICT_MODE.load(Ordering::SeqCst) {
             return CallNextHookEx(None, code, wparam, lparam);
         }
 
         // Send keystroke event
-        if let Some(ref sender) = GLOBAL_SENDER {
-            let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        let sender = GLOBAL_SENDER.lock().ok().and_then(|g| g.clone());
+        if let Some(sender) = sender {
+            let now = chrono::Utc::now().timestamp_nanos_safe();
             let keycode = kbd.vkCode as u16;
             let zone = crate::jitter::keycode_to_zone(keycode);
 
@@ -462,12 +458,12 @@ impl FocusMonitor for WindowsFocusMonitor {
 // Mouse Capture Implementation
 // =============================================================================
 
-// Global sender for the mouse hook callback
-static mut MOUSE_GLOBAL_SENDER: Option<mpsc::Sender<MouseEvent>> = None;
-static mut MOUSE_GLOBAL_IDLE_STATS: Option<Arc<RwLock<MouseIdleStats>>> = None;
-static mut MOUSE_LAST_POSITION: (f64, f64) = (0.0, 0.0);
-static mut MOUSE_KEYBOARD_ACTIVE: bool = false;
-static mut MOUSE_IDLE_ONLY_MODE: bool = true;
+// Thread-safe global state for the mouse hook callback
+static MOUSE_GLOBAL_SENDER: Mutex<Option<mpsc::Sender<MouseEvent>>> = Mutex::new(None);
+static MOUSE_GLOBAL_IDLE_STATS: Mutex<Option<Arc<RwLock<MouseIdleStats>>>> = Mutex::new(None);
+static MOUSE_LAST_POSITION: Mutex<(f64, f64)> = Mutex::new((0.0, 0.0));
+static MOUSE_KEYBOARD_ACTIVE: AtomicBool = AtomicBool::new(false);
+static MOUSE_IDLE_ONLY_MODE: AtomicBool = AtomicBool::new(true);
 
 /// Windows mouse capture implementation using WH_MOUSE_LL hook.
 pub struct WindowsMouseCapture {
@@ -502,9 +498,7 @@ impl WindowsMouseCapture {
         if let Ok(mut time) = self.last_keystroke_time.write() {
             *time = std::time::Instant::now();
         }
-        unsafe {
-            MOUSE_KEYBOARD_ACTIVE = true;
-        }
+        MOUSE_KEYBOARD_ACTIVE.store(true, Ordering::SeqCst);
     }
 }
 
@@ -518,11 +512,13 @@ impl MouseCapture for WindowsMouseCapture {
         self.sender = Some(tx.clone());
 
         // Set global state for the hook callback
-        unsafe {
-            MOUSE_GLOBAL_SENDER = Some(tx);
-            MOUSE_GLOBAL_IDLE_STATS = Some(Arc::clone(&self.idle_stats));
-            MOUSE_IDLE_ONLY_MODE = self.idle_only_mode;
-        }
+        *MOUSE_GLOBAL_SENDER
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = Some(tx);
+        *MOUSE_GLOBAL_IDLE_STATS
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = Some(Arc::clone(&self.idle_stats));
+        MOUSE_IDLE_ONLY_MODE.store(self.idle_only_mode, Ordering::SeqCst);
 
         self.running.store(true, Ordering::SeqCst);
 
@@ -559,10 +555,12 @@ impl MouseCapture for WindowsMouseCapture {
             }
         }
 
-        unsafe {
-            MOUSE_GLOBAL_SENDER = None;
-            MOUSE_GLOBAL_IDLE_STATS = None;
-        }
+        *MOUSE_GLOBAL_SENDER
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = None;
+        *MOUSE_GLOBAL_IDLE_STATS
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = None;
 
         self.sender = None;
         Ok(())
@@ -573,11 +571,14 @@ impl MouseCapture for WindowsMouseCapture {
     }
 
     fn idle_stats(&self) -> MouseIdleStats {
-        self.idle_stats.read().unwrap().clone()
+        self.idle_stats
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
     }
 
     fn reset_idle_stats(&mut self) {
-        *self.idle_stats.write().unwrap() = MouseIdleStats::new();
+        *self.idle_stats.write().unwrap_or_else(|p| p.into_inner()) = MouseIdleStats::new();
     }
 
     fn set_stego_params(&mut self, params: MouseStegoParams) {
@@ -590,9 +591,7 @@ impl MouseCapture for WindowsMouseCapture {
 
     fn set_idle_only_mode(&mut self, enabled: bool) {
         self.idle_only_mode = enabled;
-        unsafe {
-            MOUSE_IDLE_ONLY_MODE = enabled;
-        }
+        MOUSE_IDLE_ONLY_MODE.store(enabled, Ordering::SeqCst);
     }
 
     fn is_idle_only_mode(&self) -> bool {
@@ -609,22 +608,28 @@ impl Drop for WindowsMouseCapture {
 /// Hook callback for mouse capture.
 unsafe extern "system" fn mouse_capture_hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if code >= 0 && wparam.0 as u32 == WM_MOUSEMOVE {
+        let kb_active = MOUSE_KEYBOARD_ACTIVE.load(Ordering::SeqCst);
+
         // Only capture if keyboard is active (idle mode) or idle_only_mode is disabled
-        if MOUSE_IDLE_ONLY_MODE && !MOUSE_KEYBOARD_ACTIVE {
+        if MOUSE_IDLE_ONLY_MODE.load(Ordering::SeqCst) && !kb_active {
             return CallNextHookEx(None, code, wparam, lparam);
         }
 
         let mouse = *(lparam.0 as *const MSLLHOOKSTRUCT);
-        let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        let now = chrono::Utc::now().timestamp_nanos_safe();
 
         let x = mouse.pt.x as f64;
         let y = mouse.pt.y as f64;
 
         // Calculate delta
-        let (last_x, last_y) = MOUSE_LAST_POSITION;
-        let dx = x - last_x;
-        let dy = y - last_y;
-        MOUSE_LAST_POSITION = (x, y);
+        let (dx, dy) = if let Ok(mut pos) = MOUSE_LAST_POSITION.lock() {
+            let dx = x - pos.0;
+            let dy = y - pos.1;
+            *pos = (x, y);
+            (dx, dy)
+        } else {
+            (0.0, 0.0)
+        };
 
         let event = MouseEvent {
             timestamp_ns: now,
@@ -632,14 +637,15 @@ unsafe extern "system" fn mouse_capture_hook(code: i32, wparam: WPARAM, lparam: 
             y,
             dx,
             dy,
-            is_idle: MOUSE_KEYBOARD_ACTIVE,
+            is_idle: kb_active,
             is_hardware: true, // WH_MOUSE_LL can detect injected events via flags if needed
             device_id: None,
         };
 
         // Record idle stats for micro-movements
-        if event.is_micro_movement() && MOUSE_KEYBOARD_ACTIVE {
-            if let Some(ref stats) = MOUSE_GLOBAL_IDLE_STATS {
+        if event.is_micro_movement() && kb_active {
+            let idle_stats = MOUSE_GLOBAL_IDLE_STATS.lock().ok().and_then(|g| g.clone());
+            if let Some(stats) = idle_stats {
                 if let Ok(mut s) = stats.write() {
                     s.record(&event);
                 }
@@ -647,12 +653,13 @@ unsafe extern "system" fn mouse_capture_hook(code: i32, wparam: WPARAM, lparam: 
         }
 
         // Send mouse event
-        if let Some(ref sender) = MOUSE_GLOBAL_SENDER {
+        let sender = MOUSE_GLOBAL_SENDER.lock().ok().and_then(|g| g.clone());
+        if let Some(sender) = sender {
             let _ = sender.send(event);
         }
 
         // Reset keyboard active after processing (will be set again by next keystroke)
-        MOUSE_KEYBOARD_ACTIVE = false;
+        MOUSE_KEYBOARD_ACTIVE.store(false, Ordering::SeqCst);
     }
 
     CallNextHookEx(None, code, wparam, lparam)

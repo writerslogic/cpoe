@@ -10,7 +10,6 @@ use anyhow::{anyhow, Context, Result};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use rand::RngCore;
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -56,6 +55,9 @@ struct EngineInner {
 
 impl Engine {
     pub fn start(config: WitnessdConfig) -> Result<Self> {
+        // Apply anti-analysis and anti-debugging hardening first
+        crate::crypto::harden_process();
+
         fs::create_dir_all(&config.data_dir)
             .with_context(|| format!("Failed to create data dir: {:?}", config.data_dir))?;
 
@@ -240,17 +242,41 @@ fn process_file_event(inner: &Arc<EngineInner>, path: &Path) -> Result<()> {
     let metadata = fs::metadata(path)?;
     let file_size = metadata.len() as i64;
 
-    let content = fs::read(path)?;
-    let mut hasher = Sha256::new();
-    hasher.update(&content);
-    let content_hash: [u8; 32] = hasher.finalize().into();
+    let content_hash = crate::crypto::hash_file(path)?;
 
     let size_delta = {
         let mut map = inner.file_sizes.lock().unwrap();
         let previous = map
             .insert(path.to_path_buf(), file_size)
             .unwrap_or(file_size);
-        (file_size - previous) as i32
+        i32::try_from((file_size - previous).clamp(i32::MIN as i64, i32::MAX as i64)).unwrap_or(
+            if file_size > previous {
+                i32::MAX
+            } else {
+                i32::MIN
+            },
+        )
+    };
+
+    let (forensic_score, is_paste) = {
+        let mut session = inner.jitter_session.lock().unwrap();
+        if session.samples.is_empty() {
+            // Default score for automatic saves or background modifications
+            (1.0, false)
+        } else {
+            let cadence = crate::forensics::analyze_cadence(&session.samples);
+            let score = crate::forensics::calculate_cadence_score(&cadence);
+
+            // Basic paste detection: if size delta is significantly larger
+            // than keystroke count (assuming ~1 byte per keystroke)
+            let keystroke_count = session.samples.len() as i64;
+            let is_paste = i64::from(size_delta) > (keystroke_count * 5) && size_delta > 50;
+
+            // Clear samples for next event
+            session.samples.clear();
+
+            (score, is_paste)
+        }
     };
 
     let mut event = SecureEvent {
@@ -269,8 +295,8 @@ fn process_file_event(inner: &Arc<EngineInner>, path: &Path) -> Result<()> {
         vdf_input: None,
         vdf_output: None,
         vdf_iterations: 0,
-        forensic_score: 1.0,
-        is_paste: false,
+        forensic_score,
+        is_paste,
         hardware_counter: None,
     };
 
@@ -288,34 +314,61 @@ fn process_file_event(inner: &Arc<EngineInner>, path: &Path) -> Result<()> {
 
 fn load_or_create_device_identity(data_dir: &Path) -> Result<([u8; 16], String)> {
     let path = data_dir.join("device.json");
+
+    // 1. Try loading from secure storage
+    if let Ok(Some(identity)) = SecureStorage::load_device_identity() {
+        return Ok(identity);
+    }
+
+    // 2. Check for file (fallback or legacy)
     if path.exists() {
         let content = fs::read_to_string(&path)?;
         let value: serde_json::Value = serde_json::from_str(&content)?;
         let device_hex = value["device_id"].as_str().unwrap_or_default();
         let machine_id = value["machine_id"].as_str().unwrap_or_default().to_string();
-        let mut device_id = [0u8; 16];
         let decoded = hex::decode(device_hex)?;
-        device_id.copy_from_slice(&decoded[..16]);
+        let device_id: [u8; 16] = decoded
+            .try_into()
+            .map_err(|_| crate::error::Error::validation("device_id must be exactly 16 bytes"))?;
+
+        // Try to migrate to secure storage
+        if let Err(e) = SecureStorage::save_device_identity(&device_id, &machine_id) {
+            eprintln!(
+                "Warning: Failed to migrate device identity to secure storage: {}",
+                e
+            );
+        } else {
+            // Delete file after successful migration
+            let _ = fs::remove_file(&path);
+        }
+
         return Ok((device_id, machine_id));
     }
 
+    // 3. Generate new identity
     let mut device_id = [0u8; 16];
     rand::rng().fill_bytes(&mut device_id);
     let machine_id = sysinfo::System::host_name().unwrap_or_else(|| "unknown".to_string());
 
-    let payload = serde_json::json!({
-        "device_id": hex::encode(device_id),
-        "machine_id": machine_id,
-    });
-    fs::write(&path, payload.to_string())?;
+    // Try to save to secure storage, fall back to file if unavailable
+    if let Err(e) = SecureStorage::save_device_identity(&device_id, &machine_id) {
+        eprintln!(
+            "Warning: Secure storage unavailable ({}), using file-based storage",
+            e
+        );
+        let payload = serde_json::json!({
+            "device_id": hex::encode(device_id),
+            "machine_id": machine_id,
+        });
+        fs::write(&path, payload.to_string())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
+        }
+    }
 
-    Ok((
-        device_id,
-        payload["machine_id"]
-            .as_str()
-            .unwrap_or("unknown")
-            .to_string(),
-    ))
+    Ok((device_id, machine_id))
 }
 
 fn load_or_create_hmac_key(data_dir: &Path) -> Result<Vec<u8>> {
@@ -355,6 +408,11 @@ fn load_or_create_hmac_key(data_dir: &Path) -> Result<Vec<u8>> {
             e
         );
         fs::write(&path, &key)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
+        }
     }
 
     Ok(key)
@@ -363,6 +421,14 @@ fn load_or_create_hmac_key(data_dir: &Path) -> Result<Vec<u8>> {
 fn now_ns() -> i64 {
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as i64)
+        .map(|d| {
+            let nanos = d.as_nanos();
+            if nanos > i64::MAX as u128 {
+                // Fallback: millis * 1_000_000 (same pattern as DateTimeNanosExt)
+                (d.as_millis() as i64).saturating_mul(1_000_000)
+            } else {
+                nanos as i64
+            }
+        })
         .unwrap_or(0)
 }

@@ -268,16 +268,21 @@ impl IkiDistribution {
         let skewness = calculate_skewness(intervals, mean, std_dev);
         let kurtosis = calculate_kurtosis(intervals, mean, std_dev);
 
-        // Calculate percentiles
-        let mut sorted = intervals.to_vec();
-        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let percentiles = [
-            percentile(&sorted, 0.05),
-            percentile(&sorted, 0.25),
-            percentile(&sorted, 0.50),
-            percentile(&sorted, 0.75),
-            percentile(&sorted, 0.95),
-        ];
+        // Calculate percentiles using O(n) selection instead of O(n log n) sort
+        let percentiles = {
+            let mut buf = intervals.to_vec();
+            let n = buf.len();
+            let cmp = |a: &f64, b: &f64| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal);
+            let pcts = [0.05, 0.25, 0.50, 0.75, 0.95];
+            let mut vals = [0.0f64; 5];
+            for (i, &p) in pcts.iter().enumerate() {
+                let idx = (p * (n.saturating_sub(1)) as f64).round() as usize;
+                let idx = idx.min(n.saturating_sub(1));
+                buf.select_nth_unstable_by(idx, cmp);
+                vals[i] = buf[idx];
+            }
+            vals
+        };
 
         // Build histogram
         let mut histogram = vec![0.0; IKI_HISTOGRAM_BUCKETS];
@@ -741,10 +746,66 @@ pub struct ActivityFingerprintAccumulator {
     dirty: bool,
 }
 
+use witnessd_protocol::baseline::SessionBehavioralSummary;
+
+// ... (keep existing imports)
+
 impl ActivityFingerprintAccumulator {
     /// Create a new accumulator.
     pub fn new() -> Self {
         Self::with_capacity(10000)
+    }
+
+    /// Convert the current accumulated samples into a behavioral summary.
+    pub fn to_session_summary(&self) -> SessionBehavioralSummary {
+        let fp = self.current_fingerprint();
+
+        // Downsample 50-bin histogram to 9-bin
+        // edges: 0, 50, 100, 150, 200, 300, 500, 1000, 2000ms
+        // bucket indices:
+        // 0: [0, 50)   -> idx 0
+        // 1: [50, 100)  -> idx 1
+        // 2: [100, 150) -> idx 2
+        // 3: [150, 200) -> idx 3
+        // 4: [200, 300) -> idx 4, 5
+        // 5: [300, 500) -> idx 6, 7, 8, 9
+        // 6: [500, 1000) -> idx 10-19
+        // 7: [1000, 2000) -> idx 20-39
+        // 8: [2000, inf) -> idx 40-49
+
+        let mut sum_hist = [0.0; 9];
+        let h = &fp.iki_distribution.histogram;
+        sum_hist[0] = h[0];
+        sum_hist[1] = h[1];
+        sum_hist[2] = h[2];
+        sum_hist[3] = h[3];
+        sum_hist[4] = h[4] + h[5];
+        sum_hist[5] = h[6] + h[7] + h[8] + h[9];
+        sum_hist[6] = h[10..20].iter().sum();
+        sum_hist[7] = h[20..40].iter().sum();
+        sum_hist[8] = h[40..50].iter().sum();
+
+        let duration_secs =
+            if let (Some(first), Some(last)) = (self.samples.front(), self.samples.back()) {
+                (last.timestamp_ns - first.timestamp_ns).max(0) as u64 / 1_000_000_000
+            } else {
+                0
+            };
+
+        SessionBehavioralSummary {
+            iki_histogram: sum_hist,
+            iki_cv: if fp.iki_distribution.mean > 0.0 {
+                fp.iki_distribution.std_dev / fp.iki_distribution.mean
+            } else {
+                0.0
+            },
+            hurst: 0.5, // Placeholder for actual Hurst computation
+            pause_frequency: fp.pause_signature.sentence_pause_frequency
+                + fp.pause_signature.paragraph_pause_frequency
+                + fp.pause_signature.thinking_pause_frequency,
+            duration_secs,
+            keystroke_count: self.samples.len() as u64,
+        }
     }
 
     /// Create with specific capacity.
@@ -815,14 +876,6 @@ fn calculate_kurtosis(data: &[f64], mean: f64, std: f64) -> f64 {
     let n = data.len() as f64;
     let sum_fourth: f64 = data.iter().map(|&x| ((x - mean) / std).powi(4)).sum();
     sum_fourth / n - 3.0 // Excess kurtosis
-}
-
-fn percentile(sorted: &[f64], p: f64) -> f64 {
-    if sorted.is_empty() {
-        return 0.0;
-    }
-    let index = (p * (sorted.len() - 1) as f64).round() as usize;
-    sorted[index.min(sorted.len() - 1)]
 }
 
 fn normalize_histogram(hist: &mut [f64]) {

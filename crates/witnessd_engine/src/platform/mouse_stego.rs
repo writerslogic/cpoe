@@ -16,7 +16,7 @@
 //! The timing jitter stays within 500-2000 microseconds, well below human perception
 //! threshold (~10ms for timing differences).
 
-use crate::platform::types::{MouseStegoMode, MouseStegoParams};
+use crate::platform::{MouseStegoMode, MouseStegoParams};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 

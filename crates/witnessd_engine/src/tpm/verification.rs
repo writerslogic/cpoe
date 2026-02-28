@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 use super::{Binding, Quote, TPMError};
+use crate::DateTimeNanosExt;
+use ed25519_dalek::Verifier as _;
 use rsa::pkcs1::DecodeRsaPublicKey;
 use rsa::pkcs8::DecodePublicKey;
-use rsa::signature::Verifier as RsaVerifier;
-use sha2::{Digest, Sha256};
 
 pub fn verify_binding_chain(
     bindings: &[Binding],
@@ -52,28 +52,11 @@ fn verify_binding_with_trusted(
     let payload = binding_payload(binding);
 
     if binding.provider_type == "software" {
-        let expected = Sha256::digest(&payload).to_vec();
-        if expected != binding.signature {
-            return Err(TPMError::InvalidSignature);
-        }
-        return Ok(());
+        return verify_signature(&binding.public_key, &payload, &binding.signature);
     }
 
     if !binding.public_key.is_empty() {
-        if verify_signature(&binding.public_key, &payload, &binding.signature).is_ok() {
-            return Ok(());
-        }
-        if binding.provider_type.starts_with("tpm2-") || binding.provider_type == "secure-enclave" {
-            // Public key encoding may not be standard DER; accept pending proper conversion.
-            return Ok(());
-        }
-        return Err(TPMError::InvalidSignature);
-    }
-
-    if (binding.provider_type.starts_with("tpm2-") || binding.provider_type == "secure-enclave")
-        && !binding.signature.is_empty()
-    {
-        return Ok(());
+        return verify_signature(&binding.public_key, &payload, &binding.signature);
     }
 
     if !trusted_keys.is_empty() {
@@ -93,13 +76,7 @@ fn verify_binding_with_trusted(
 fn binding_payload(binding: &Binding) -> Vec<u8> {
     let mut payload = Vec::new();
     payload.extend_from_slice(&binding.attested_hash);
-    payload.extend_from_slice(
-        &binding
-            .timestamp
-            .timestamp_nanos_opt()
-            .unwrap_or(0)
-            .to_le_bytes(),
-    );
+    payload.extend_from_slice(&binding.timestamp.timestamp_nanos_safe().to_le_bytes());
     payload.extend_from_slice(binding.device_id.as_bytes());
     payload
 }
@@ -113,30 +90,32 @@ pub fn verify_quote(quote: &Quote) -> Result<(), TPMError> {
     }
 
     if quote.provider_type == "software" {
-        let expected = Sha256::digest(&quote.attested_data).to_vec();
-        if expected != quote.signature {
-            return Err(TPMError::InvalidSignature);
-        }
-        return Ok(());
+        return verify_signature(&quote.public_key, &quote.attested_data, &quote.signature);
     }
 
     if quote.public_key.is_empty() {
-        if quote.provider_type.starts_with("tpm2-") || quote.provider_type == "secure-enclave" {
-            return Ok(());
-        }
         return Err(TPMError::InvalidSignature);
     }
 
-    if verify_signature(&quote.public_key, &quote.attested_data, &quote.signature).is_ok() {
-        return Ok(());
-    }
-    if quote.provider_type.starts_with("tpm2-") || quote.provider_type == "secure-enclave" {
-        return Ok(());
-    }
-    Err(TPMError::InvalidSignature)
+    verify_signature(&quote.public_key, &quote.attested_data, &quote.signature)
 }
 
 fn verify_signature(public_key: &[u8], payload: &[u8], signature: &[u8]) -> Result<(), TPMError> {
+    // Try Ed25519 (32-byte raw public key)
+    if public_key.len() == 32 && signature.len() == 64 {
+        if let Ok(key_bytes) = <[u8; 32]>::try_from(public_key) {
+            if let Ok(vk) = ed25519_dalek::VerifyingKey::from_bytes(&key_bytes) {
+                if let Ok(sig_bytes) = <[u8; 64]>::try_from(signature) {
+                    let sig = ed25519_dalek::Signature::from_bytes(&sig_bytes);
+                    return vk
+                        .verify(payload, &sig)
+                        .map_err(|_| TPMError::InvalidSignature);
+                }
+            }
+        }
+    }
+
+    // Try RSA (DER-encoded public key)
     if let Ok(key) = rsa::RsaPublicKey::from_pkcs1_der(public_key)
         .or_else(|_| rsa::RsaPublicKey::from_public_key_der(public_key))
     {
