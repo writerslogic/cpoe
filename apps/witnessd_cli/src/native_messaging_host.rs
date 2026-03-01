@@ -12,7 +12,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::io::{self, Read, Write};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
 // ── Protocol Types ──────────────────────────────────────────────────────────
 
@@ -36,9 +36,7 @@ enum Request {
     /// Query current witnessing status.
     GetStatus,
     /// Forward keystroke timing intervals from the browser.
-    InjectJitter {
-        intervals: Vec<u64>,
-    },
+    InjectJitter { intervals: Vec<u64> },
     /// Ping for connection testing.
     Ping,
 }
@@ -93,8 +91,12 @@ struct Session {
 }
 
 /// Global session state protected by a mutex.
-static SESSION: std::sync::LazyLock<Mutex<Option<Session>>> =
-    std::sync::LazyLock::new(|| Mutex::new(None));
+static SESSION: OnceLock<Mutex<Option<Session>>> = OnceLock::new();
+
+/// Returns the global session mutex, initializing on first access.
+fn session() -> &'static Mutex<Option<Session>> {
+    SESSION.get_or_init(|| Mutex::new(None))
+}
 
 // ── Native Messaging I/O ────────────────────────────────────────────────────
 
@@ -146,7 +148,7 @@ fn handle_start_session(document_url: String, document_title: String) -> Respons
         "www.overleaf.com",
         "medium.com",
         "notion.so",
-        "www.notion.so"
+        "www.notion.so",
     ];
 
     let is_allowed = if let Ok(url) = url::Url::parse(&document_url) {
@@ -195,7 +197,7 @@ fn handle_start_session(document_url: String, document_title: String) -> Respons
     let mut hasher = Sha256::new();
     hasher.update(document_url.as_bytes());
     hasher.update(
-        &std::time::SystemTime::now()
+        std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0)
@@ -207,7 +209,13 @@ fn handle_start_session(document_url: String, document_title: String) -> Respons
     // Sanitize title for filename
     let safe_title: String = document_title
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .take(64)
         .collect();
     let evidence_path = session_dir.join(format!("{safe_title}_{session_id}.wsd"));
@@ -221,8 +229,10 @@ fn handle_start_session(document_url: String, document_title: String) -> Respons
     }
 
     // Create initial checkpoint
-    let checkpoint_result =
-        witnessd_engine::ffi::ffi_create_checkpoint(evidence_path.display().to_string(), format!("Browser session started: {document_title}"));
+    let checkpoint_result = witnessd_engine::ffi::ffi_create_checkpoint(
+        evidence_path.display().to_string(),
+        format!("Browser session started: {document_title}"),
+    );
 
     if !checkpoint_result.success {
         return Response::Error {
@@ -234,7 +244,7 @@ fn handle_start_session(document_url: String, document_title: String) -> Respons
     }
 
     // Store session state
-    let mut session_lock = SESSION.lock().unwrap();
+    let mut session_lock = session().lock().unwrap();
     *session_lock = Some(Session {
         id: session_id.clone(),
         document_url: document_url.clone(),
@@ -250,7 +260,7 @@ fn handle_start_session(document_url: String, document_title: String) -> Respons
 }
 
 fn handle_checkpoint(content_hash: String, char_count: u64, delta: i64) -> Response {
-    let mut session_lock = SESSION.lock().unwrap();
+    let mut session_lock = session().lock().unwrap();
     let session = match session_lock.as_mut() {
         Some(s) => s,
         None => {
@@ -276,7 +286,12 @@ fn handle_checkpoint(content_hash: String, char_count: u64, delta: i64) -> Respo
     // Create checkpoint via FFI
     let result = witnessd_engine::ffi::ffi_create_checkpoint(
         session.evidence_path.display().to_string(),
-        format!("Browser checkpoint #{}: {} chars, delta {}", session.checkpoint_count + 1, char_count, delta),
+        format!(
+            "Browser checkpoint #{}: {} chars, delta {}",
+            session.checkpoint_count + 1,
+            char_count,
+            delta
+        ),
     );
 
     if !result.success {
@@ -293,12 +308,14 @@ fn handle_checkpoint(content_hash: String, char_count: u64, delta: i64) -> Respo
     Response::CheckpointCreated {
         hash: content_hash,
         checkpoint_count: session.checkpoint_count,
-        message: result.message.unwrap_or_else(|| "Checkpoint created".into()),
+        message: result
+            .message
+            .unwrap_or_else(|| "Checkpoint created".into()),
     }
 }
 
 fn handle_stop_session() -> Response {
-    let mut session_lock = SESSION.lock().unwrap();
+    let mut session_lock = session().lock().unwrap();
     let session = match session_lock.take() {
         Some(s) => s,
         None => {
@@ -312,7 +329,10 @@ fn handle_stop_session() -> Response {
     // Create a final checkpoint
     let final_result = witnessd_engine::ffi::ffi_create_checkpoint(
         session.evidence_path.display().to_string(),
-        format!("Browser session ended: {} ({} checkpoints)", session.document_title, session.checkpoint_count),
+        format!(
+            "Browser session ended: {} ({} checkpoints)",
+            session.document_title, session.checkpoint_count
+        ),
     );
     if !final_result.success {
         eprintln!(
@@ -332,14 +352,17 @@ fn handle_stop_session() -> Response {
 
 fn handle_get_status() -> Response {
     let status = witnessd_engine::ffi::ffi_get_status();
-    let session_lock = SESSION.lock().unwrap();
+    let session_lock = session().lock().unwrap();
 
     Response::Status {
         initialized: status.initialized,
         active_session: session_lock.is_some(),
         document_url: session_lock.as_ref().map(|s| s.document_url.clone()),
         document_title: session_lock.as_ref().map(|s| s.document_title.clone()),
-        checkpoint_count: session_lock.as_ref().map(|s| s.checkpoint_count).unwrap_or(0),
+        checkpoint_count: session_lock
+            .as_ref()
+            .map(|s| s.checkpoint_count)
+            .unwrap_or(0),
         tracked_files: status.tracked_file_count,
         total_checkpoints: status.total_checkpoints,
     }
@@ -353,7 +376,7 @@ fn handle_inject_jitter(intervals: Vec<u64>) -> Response {
     //
     // For now, we log the jitter data. Full integration with the SWF
     // proof system will use these intervals to compute behavioral entropy.
-    if let Ok(mut session_lock) = SESSION.lock() {
+    if let Ok(mut session_lock) = session().lock() {
         if let Some(_session) = session_lock.as_mut() {
             // Jitter data is available for the session
             // It will be consumed on the next checkpoint creation
@@ -367,7 +390,10 @@ fn handle_inject_jitter(intervals: Vec<u64>) -> Response {
 
 fn main() {
     // Log to stderr (invisible to native messaging protocol, visible for debugging)
-    eprintln!("witnessd-native-messaging-host v{}", env!("CARGO_PKG_VERSION"));
+    eprintln!(
+        "witnessd-native-messaging-host v{}",
+        env!("CARGO_PKG_VERSION")
+    );
 
     // Initialize witnessd_engine
     let init_result = witnessd_engine::ffi::ffi_init();

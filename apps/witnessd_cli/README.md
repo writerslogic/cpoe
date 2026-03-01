@@ -10,9 +10,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/writerslogic/witnessd_cli/actions"><img src="https://github.com/writerslogic/witnessd_cli/workflows/CI/badge.svg" alt="Build Status"></a>
+  <a href="https://github.com/writerslogic/witnessd/actions"><img src="https://github.com/writerslogic/witnessd/workflows/CI/badge.svg" alt="Build Status"></a>
   <img src="https://img.shields.io/badge/rust-1.75%2B-orange" alt="Rust">
-  <a href="https://github.com/writerslogic/witnessd_cli/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue" alt="License"></a>
+  <a href="https://github.com/writerslogic/witnessd/blob/main/apps/witnessd_cli/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue" alt="License"></a>
   <img src="https://img.shields.io/badge/Patent-US%2019%2F460%2C364%20Pending-blue" alt="Patent Pending">
 </p>
 
@@ -29,11 +29,12 @@
 
 This repository contains the CLI tool and Linux packaging. For the full witnessd ecosystem:
 
-| Repository | Description |
-|:-----------|:------------|
-| **[witnessd](https://github.com/writerslogic/witnessd)** | Core cryptographic library (Apache-2.0) |
-| **[witnessd_cli](https://github.com/writerslogic/witnessd_cli)** | Command-line interface + Linux packaging (this repo, GPL-3.0) |
-| **[witnessd-docs](https://github.com/writerslogic/witnessd-docs)** | Documentation, schemas, and specifications |
+| Component | Path | Description |
+|:----------|:-----|:------------|
+| **witnessd_engine** | [`crates/witnessd_engine`](../../crates/witnessd_engine) | Core cryptographic engine (AGPL-3.0-only) |
+| **witnessd_protocol** | [`crates/witnessd_protocol`](../../crates/witnessd_protocol) | PoP wire format (AGPL-3.0-only) |
+| **witnessd_jitter** | [`crates/witnessd_jitter`](../../crates/witnessd_jitter) | Hardware timing entropy (AGPL-3.0-only) |
+| **witnessd_cli** | [`apps/witnessd_cli`](.) | CLI & Linux packaging (this directory, AGPL-3.0-only) |
 
 ## Installation
 

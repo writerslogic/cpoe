@@ -4,6 +4,6 @@
   "path": "/usr/local/bin/witnessd-native-messaging-host",
   "type": "stdio",
   "allowed_extensions": [
-    "witnessd@writerslogic.com"
+    "witnessd@writersproof.com"
   ]
 }

@@ -5,7 +5,7 @@ use tempfile::tempdir;
 #[test]
 fn test_cli_full_workflow() {
     let dir = tempdir().unwrap();
-    let bin = env!("CARGO_BIN_EXE_witnessd_cli");
+    let bin = env!("CARGO_BIN_EXE_witnessd");
 
     // Helper to run command
     let run = |args: &[&str], input: Option<&str>| {
@@ -124,7 +124,7 @@ impl CliTestEnv {
     fn new() -> Self {
         Self {
             dir: tempdir().unwrap(),
-            bin: env!("CARGO_BIN_EXE_witnessd_cli"),
+            bin: env!("CARGO_BIN_EXE_witnessd"),
         }
     }
 

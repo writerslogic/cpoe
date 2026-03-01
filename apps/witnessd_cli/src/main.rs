@@ -601,8 +601,20 @@ fn open_secure_store() -> Result<SecureStore> {
     let config = ensure_dirs()?;
     let dir = config.data_dir;
     let db_path = dir.join("events.db");
-    let key_path = dir.join("signing_key");
 
+    // 1. Try loading HMAC key from secure storage (keychain/keyring)
+    if let Ok(Some(hmac_key)) = witnessd_engine::identity::SecureStorage::load_hmac_key() {
+        return SecureStore::open(&db_path, hmac_key).map_err(|e| {
+            anyhow!(
+                "Database error: {}\n\n\
+                 If this persists, check if another process is using the database.",
+                e
+            )
+        });
+    }
+
+    // 2. Fallback to file-based key
+    let key_path = dir.join("signing_key");
     let key_data = fs::read(&key_path).map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             anyhow!(
@@ -627,6 +639,11 @@ fn open_secure_store() -> Result<SecureStore> {
         return Err(anyhow!("Invalid signing key: expected at least 32 bytes"));
     };
     let hmac_key = derive_hmac_key(seed_data);
+
+    // Try to migrate to secure storage
+    if let Err(e) = witnessd_engine::identity::SecureStorage::save_hmac_key(&hmac_key) {
+        eprintln!("Warning: Failed to migrate signing key to secure storage: {}", e);
+    }
 
     SecureStore::open(&db_path, hmac_key).map_err(|e| {
         anyhow!(
@@ -764,7 +781,11 @@ fn cmd_init() -> Result<()> {
     if !db_path.exists() {
         println!("Creating secure event database...");
 
-        let hmac_key = derive_hmac_key(&priv_key.to_bytes());
+        let hmac_key = if let Ok(Some(key)) = witnessd_engine::identity::SecureStorage::load_hmac_key() {
+            key
+        } else {
+            derive_hmac_key(&priv_key.to_bytes())
+        };
         let _db = SecureStore::open(&db_path, hmac_key).context("Failed to create database")?;
         println!("  Database: events.db (tamper-evident)");
     }
@@ -796,7 +817,7 @@ fn cmd_init() -> Result<()> {
 // =============================================================================
 
 fn cmd_identity(
-    fingerprint: bool,
+    _fingerprint: bool,
     did: bool,
     mnemonic: bool,
     recover: bool,
@@ -818,7 +839,7 @@ fn cmd_identity(
                 eprint!("> ");
                 io::stderr().flush()?;
             }
-            
+
             let mut input = String::new();
             io::stdin().read_line(&mut input)?;
             input.trim().to_string()
@@ -829,7 +850,7 @@ fn cmd_identity(
         }
 
         println!("Recovering identity...");
-        
+
         // Re-derive keys from mnemonic
         let puf_seed_path = dir.join("puf_seed");
         let puf = SoftwarePUF::recover_from_mnemonic(&puf_seed_path, &recovery_phrase)
@@ -863,10 +884,13 @@ fn cmd_identity(
         fs::write(key_path.with_extension("pub"), pub_key.to_bytes())?;
 
         if json {
-            println!("{}", serde_json::json!({
-                "success": true,
-                "fingerprint": identity.fingerprint
-            }));
+            println!(
+                "{}",
+                serde_json::json!({
+                    "success": true,
+                    "fingerprint": identity.fingerprint
+                })
+            );
         } else {
             println!("Identity recovered successfully!");
             println!("Fingerprint: {}", identity.fingerprint);
@@ -877,13 +901,21 @@ fn cmd_identity(
     // Load identity
     let identity_path = dir.join("identity.json");
     if !identity_path.exists() {
-        return Err(anyhow!("Identity not initialized. Run 'witnessd init' first."));
+        return Err(anyhow!(
+            "Identity not initialized. Run 'witnessd init' first."
+        ));
     }
 
     let data = fs::read_to_string(&identity_path)?;
     let identity: serde_json::Value = serde_json::from_str(&data)?;
-    let fp = identity.get("fingerprint").and_then(|v| v.as_str()).unwrap_or("unknown");
-    let dev_id = identity.get("device_id").and_then(|v| v.as_str()).unwrap_or("unknown");
+    let fp = identity
+        .get("fingerprint")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let dev_id = identity
+        .get("device_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
 
     if json {
         let mut output = serde_json::json!({
@@ -902,14 +934,17 @@ fn cmd_identity(
                 // WARNING: This exposes the secret. Ensure stdout is secure.
                 if let Ok(puf) = SoftwarePUF::new_with_path(&puf_seed_path) {
                     if let Ok(words) = puf.get_mnemonic() {
-                         output["mnemonic"] = serde_json::Value::Array(
-                             words.split_whitespace().map(|s| serde_json::Value::String(s.to_string())).collect()
-                         );
+                        output["mnemonic"] = serde_json::Value::Array(
+                            words
+                                .split_whitespace()
+                                .map(|s| serde_json::Value::String(s.to_string()))
+                                .collect(),
+                        );
                     }
                 }
             }
         }
-        
+
         println!("{}", serde_json::to_string_pretty(&output)?);
         return Ok(());
     }
@@ -923,7 +958,7 @@ fn cmd_identity(
         println!("=== RECOVERY PHRASE ===");
         println!("WARNING: Keep this secret! Anyone with these words can take your identity.");
         println!();
-        
+
         let puf_seed_path = dir.join("puf_seed");
         if let Ok(puf) = SoftwarePUF::new_with_path(&puf_seed_path) {
             if let Ok(words) = puf.get_mnemonic() {
@@ -1180,36 +1215,40 @@ fn cmd_export(
     // Load signing key or use hardware provider
     let tpm_provider = tpm::detect_provider();
     let caps = tpm_provider.capabilities();
-    
-    let signer: Box<dyn witnessd_engine::witnessd_protocol::crypto::PoPSigner> = if caps.hardware_backed {
-        println!("Using hardware provider for evidence signing: {}", tpm_provider.device_id());
-        Box::new(tpm::TpmSigner::new(tpm_provider))
-    } else {
-        let key_path = dir.join("signing_key");
-        let priv_key_data = fs::read(&key_path).map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                anyhow!(
-                    "WitnessD has not been initialized yet.\n\n\
-                     Run 'witnessd init' to set up WitnessD for the first time."
-                )
-            } else {
-                anyhow!("Failed to load signing key: {}", e)
-            }
-        })?;
-        // Handle both 32-byte (seed only) and 64-byte (full keypair) formats
-        let seed: [u8; 32] = if priv_key_data.len() == 32 {
-            priv_key_data
-                .try_into()
-                .map_err(|_| anyhow!("Invalid signing key"))?
-        } else if priv_key_data.len() >= 64 {
-            priv_key_data[..32]
-                .try_into()
-                .map_err(|_| anyhow!("Invalid signing key"))?
+
+    let signer: Box<dyn witnessd_engine::witnessd_protocol::crypto::PoPSigner> =
+        if caps.hardware_backed {
+            println!(
+                "Using hardware provider for evidence signing: {}",
+                tpm_provider.device_id()
+            );
+            Box::new(tpm::TpmSigner::new(tpm_provider))
         } else {
-            return Err(anyhow!("Invalid signing key: expected 32 or 64 bytes"));
+            let key_path = dir.join("signing_key");
+            let priv_key_data = fs::read(&key_path).map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    anyhow!(
+                        "WitnessD has not been initialized yet.\n\n\
+                     Run 'witnessd init' to set up WitnessD for the first time."
+                    )
+                } else {
+                    anyhow!("Failed to load signing key: {}", e)
+                }
+            })?;
+            // Handle both 32-byte (seed only) and 64-byte (full keypair) formats
+            let seed: [u8; 32] = if priv_key_data.len() == 32 {
+                priv_key_data
+                    .try_into()
+                    .map_err(|_| anyhow!("Invalid signing key"))?
+            } else if priv_key_data.len() >= 64 {
+                priv_key_data[..32]
+                    .try_into()
+                    .map_err(|_| anyhow!("Invalid signing key"))?
+            } else {
+                return Err(anyhow!("Invalid signing key: expected 32 or 64 bytes"));
+            };
+            Box::new(SigningKey::from_bytes(&seed))
         };
-        Box::new(SigningKey::from_bytes(&seed))
-    };
 
     // Get latest event
     let latest = events.last().unwrap();
@@ -2014,8 +2053,9 @@ fn cmd_track_start(
     if use_witnessd_jitter {
         // Create a new hybrid jitter session with witnessd_jitter
         let jitter_params = default_jitter_params();
-        let session = witnessd_engine::HybridJitterSession::new(&abs_path, Some(jitter_params), None)
-            .map_err(|e| anyhow!("Error creating hybrid session: {}", e))?;
+        let session =
+            witnessd_engine::HybridJitterSession::new(&abs_path, Some(jitter_params), None)
+                .map_err(|e| anyhow!("Error creating hybrid session: {}", e))?;
 
         // Save session info with hybrid marker
         let session_info = serde_json::json!({
@@ -2086,7 +2126,10 @@ fn cmd_track(action: TrackAction) -> Result<()> {
 
     match action {
         #[cfg(feature = "witnessd_jitter")]
-        TrackAction::Start { file, witnessd_jitter } => {
+        TrackAction::Start {
+            file,
+            witnessd_jitter,
+        } => {
             cmd_track_start(&file, &tracking_dir, &current_file, witnessd_jitter)?;
         }
         #[cfg(not(feature = "witnessd_jitter"))]
@@ -2278,7 +2321,7 @@ fn cmd_track(action: TrackAction) -> Result<()> {
 
                 #[cfg(feature = "witnessd_jitter")]
                 if filename.ends_with(".hybrid.json") {
-                    if let Ok(session) = witnessd_engine::HybridJitterSession::load(&path) {
+                    if let Ok(session) = witnessd_engine::HybridJitterSession::load(&path, None) {
                         hybrid_sessions.push(session);
                     }
                 }
@@ -2328,7 +2371,7 @@ fn cmd_track(action: TrackAction) -> Result<()> {
             {
                 let hybrid_path = tracking_dir.join(format!("{}.hybrid.json", session_id));
                 if hybrid_path.exists() {
-                    let session = witnessd_engine::HybridJitterSession::load(&hybrid_path)
+                    let session = witnessd_engine::HybridJitterSession::load(&hybrid_path, None)
                         .map_err(|e| anyhow!("Error loading hybrid session: {}", e))?;
 
                     let ev = session.export();
@@ -2413,7 +2456,7 @@ fn cmd_track(action: TrackAction) -> Result<()> {
 // Daemon Start/Stop Command Implementation
 // =============================================================================
 
-fn cmd_start(foreground: bool) -> Result<()> {
+async fn cmd_start(foreground: bool) -> Result<()> {
     let config = ensure_dirs()?;
 
     // Check if daemon is already running
@@ -2432,26 +2475,46 @@ fn cmd_start(foreground: bool) -> Result<()> {
     }
 
     if foreground {
-        println!("Starting witnessd daemon in foreground...");
-        println!("Press Ctrl+C to stop.");
-        println!();
+        eprintln!("Starting witnessd daemon in foreground...");
+        eprintln!("Press Ctrl+C to stop.");
+        eprintln!();
 
-        // TODO: Run daemon in foreground using Sentinel::start()
-        // This requires setting up the async runtime and Sentinel properly
-        println!("Foreground mode not yet implemented.");
-        println!("The sentinel daemon functionality is available but needs");
-        println!("integration with the CLI runtime.");
+        witnessd_engine::sentinel::daemon::cmd_start_foreground(&config.data_dir)
+            .await
+            .map_err(|e| anyhow!("Daemon error: {}", e))?;
     } else {
-        println!("Starting witnessd daemon...");
-        println!();
+        eprintln!("Starting witnessd daemon...");
 
-        // TODO: Spawn daemon as background process
-        // This requires daemonization logic (fork on Unix, service on Windows)
-        println!("Background daemon mode not yet implemented.");
-        println!();
-        println!("For now, you can use:");
-        println!("  - 'witnessd watch start' for file monitoring");
-        println!("  - 'witnessd track start <file>' for keystroke tracking");
+        // Re-spawn the current binary with --foreground flag as a detached background process
+        let exe = std::env::current_exe().context("Failed to determine current executable path")?;
+
+        let log_dir = config.data_dir.join("logs");
+        fs::create_dir_all(&log_dir)?;
+        let log_path = log_dir.join("daemon.log");
+        let log_file = fs::File::create(&log_path).context("Failed to create daemon log file")?;
+        let stderr_file = log_file
+            .try_clone()
+            .context("Failed to clone log file handle")?;
+
+        let child = std::process::Command::new(&exe)
+            .arg("start")
+            .arg("--foreground")
+            .stdout(log_file)
+            .stderr(stderr_file)
+            .stdin(std::process::Stdio::null())
+            .spawn()
+            .context("Failed to spawn daemon process")?;
+
+        let pid = child.id();
+
+        // Write PID file so DaemonManager can track it
+        let daemon_mgr = DaemonManager::new(&config.data_dir);
+        let _ = daemon_mgr.write_pid();
+
+        eprintln!("Daemon started (PID: {})", pid);
+        eprintln!("Log file: {}", log_path.display());
+        eprintln!();
+        eprintln!("Use 'witnessd status' for details or 'witnessd stop' to stop.");
     }
 
     Ok(())
@@ -3176,47 +3239,57 @@ fn cmd_status() -> Result<()> {
 
     // Check SQLite database
     let db_path = dir.join("events.db");
-    let signing_key_path = dir.join("signing_key");
 
-    if db_path.exists() && signing_key_path.exists() {
-        match fs::read(&signing_key_path) {
-            Ok(key_data) => {
-                // Use first 32 bytes for consistency with both 32-byte and 64-byte key formats
-                let seed_data = if key_data.len() >= 32 {
-                    &key_data[..32]
+    if db_path.exists() {
+        // Try loading from SecureStorage first
+        let hmac_key = if let Ok(Some(key)) = witnessd_engine::identity::SecureStorage::load_hmac_key() {
+            Some(key)
+        } else {
+            let signing_key_path = dir.join("signing_key");
+            if signing_key_path.exists() {
+                if let Ok(key_data) = fs::read(&signing_key_path) {
+                    let seed_data = if key_data.len() >= 32 {
+                        &key_data[..32]
+                    } else {
+                        &key_data
+                    };
+                    Some(derive_hmac_key(seed_data))
                 } else {
-                    &key_data
-                };
-                let hmac_key = derive_hmac_key(seed_data);
-                match SecureStore::open(&db_path, hmac_key) {
-                    Ok(store) => {
-                        println!("Database: VERIFIED (tamper-evident)");
-                        // List tracked files
-                        if let Ok(files) = store.list_files() {
-                            println!();
-                            println!("Tracked documents: {}", files.len());
-                            for (path, last_ts, count) in files.iter().take(10) {
-                                let ts = Utc.timestamp_nanos(*last_ts);
-                                println!(
-                                    "  {} ({} checkpoints, last: {})",
-                                    path,
-                                    count,
-                                    ts.format("%Y-%m-%d %H:%M")
-                                );
-                            }
-                            if files.len() > 10 {
-                                println!("  ... and {} more", files.len() - 10);
-                            }
+                    None
+                }
+            } else {
+                None
+            }
+        };
+
+        if let Some(hmac_key) = hmac_key {
+            match SecureStore::open(&db_path, hmac_key) {
+                Ok(store) => {
+                    println!("Database: VERIFIED (tamper-evident)");
+                    // List tracked files
+                    if let Ok(files) = store.list_files() {
+                        println!();
+                        println!("Tracked documents: {}", files.len());
+                        for (path, last_ts, count) in files.iter().take(10) {
+                            let ts = Utc.timestamp_nanos(*last_ts);
+                            println!(
+                                "  {} ({} checkpoints, last: {})",
+                                path,
+                                count,
+                                ts.format("%Y-%m-%d %H:%M")
+                            );
+                        }
+                        if files.len() > 10 {
+                            println!("  ... and {} more", files.len() - 10);
                         }
                     }
-                    Err(e) => {
-                        println!("Database: ERROR ({})", e);
-                    }
+                }
+                Err(e) => {
+                    println!("Database: ERROR ({})", e);
                 }
             }
-            Err(e) => {
-                println!("Database: ERROR reading key ({})", e);
-            }
+        } else {
+            println!("Database: ERROR reading key (identity not found)");
         }
     } else {
         println!("Database: not found");
@@ -3385,7 +3458,7 @@ async fn run() -> Result<()> {
             cmd_watch_smart(action, folder).await?;
         }
         Some(Commands::Start { foreground }) => {
-            cmd_start(foreground)?;
+            cmd_start(foreground).await?;
         }
         Some(Commands::Stop) => {
             cmd_stop()?;
