@@ -25,6 +25,21 @@ use crate::vdf;
 
 use super::types::*;
 
+/// Minimum hardware entropy ratio (phys_ratio) to qualify as genuine human input.
+/// Above this threshold, keystroke evidence is boosted to `Enhanced` strength.
+#[cfg(feature = "witnessd_jitter")]
+const HARDWARE_ENTROPY_RATIO_THRESHOLD: f64 = 0.8;
+
+/// Minimum number of jitter samples required to compute a jitter binding.
+const MIN_JITTER_SAMPLES_FOR_BINDING: usize = 10;
+
+/// Maximum inter-keystroke interval in microseconds (5 seconds).
+/// Intervals beyond this are treated as outliers and filtered out.
+const MAX_INTERVAL_US: f64 = 5_000_000.0;
+
+/// Minimum number of interval samples for R/S Hurst exponent analysis.
+const MIN_SAMPLES_FOR_HURST: usize = 20;
+
 pub struct Builder {
     packet: Packet,
     errors: Vec<String>,
@@ -140,12 +155,7 @@ impl Builder {
         self
     }
 
-    /// Add hardware attestation evidence with TPM bindings.
-    ///
-    /// # Arguments
-    /// * `bindings` - TPM binding chain for checkpoint attestation
-    /// * `device_id` - Unique device identifier from TPM
-    /// * `attestation_nonce` - Optional 32-byte nonce used for TPM quote freshness
+    /// Attach TPM hardware attestation evidence. Boosts strength to `Enhanced`.
     pub fn with_hardware(
         mut self,
         bindings: Vec<tpm::Binding>,
@@ -197,11 +207,10 @@ impl Builder {
         self
     }
 
-    /// Add hybrid keystroke evidence with hardware entropy metrics.
+    /// Attach hybrid keystroke evidence with hardware entropy metrics.
     ///
-    /// If phys_ratio > 0.8 (80% hardware entropy), boosts evidence strength
-    /// to Enhanced level, providing stronger assurance that keystrokes
-    /// originated from real hardware rather than software injection.
+    /// Boosts to `Enhanced` when `phys_ratio > 0.8`, indicating genuine
+    /// hardware input rather than software injection.
     #[cfg(feature = "witnessd_jitter")]
     pub fn with_hybrid_keystroke(
         mut self,
@@ -216,7 +225,6 @@ impl Builder {
             return self;
         }
 
-        // Convert HybridSample to jitter::Sample for backward compatibility
         let samples: Vec<jitter::Sample> = evidence
             .samples
             .iter()
@@ -247,14 +255,11 @@ impl Builder {
 
         self.packet.keystroke = Some(keystroke);
 
-        // Boost to Standard for any keystroke evidence
         if self.packet.strength < Strength::Standard {
             self.packet.strength = Strength::Standard;
         }
 
-        // Boost to Enhanced if >80% hardware entropy
-        // High hardware entropy strongly indicates genuine human input
-        if evidence.entropy_quality.phys_ratio > 0.8 {
+        if evidence.entropy_quality.phys_ratio > HARDWARE_ENTROPY_RATIO_THRESHOLD {
             if self.packet.strength < Strength::Enhanced {
                 self.packet.strength = Strength::Enhanced;
             }
@@ -291,7 +296,7 @@ impl Builder {
         self
     }
 
-    /// Add behavioral evidence with full analysis including forgery detection.
+    /// Attach behavioral evidence with forgery detection analysis.
     pub fn with_behavioral_full(
         mut self,
         regions: Vec<EditRegion>,
@@ -336,18 +341,13 @@ impl Builder {
         self
     }
 
-    /// Populate input_devices in provenance from HID device enumeration.
+    /// Populate `input_devices` in provenance from HID enumeration.
     ///
-    /// This converts a list of HIDDeviceInfo (from platform enumeration) into
-    /// InputDeviceInfo records with transport type and fingerprint.
-    ///
-    /// # Arguments
-    /// * `devices` - HID device information from keyboard enumeration
+    /// Requires `with_provenance` to have been called first.
     pub fn with_input_devices(mut self, devices: &[HIDDeviceInfo]) -> Self {
         if let Some(ref mut prov) = self.packet.provenance {
             prov.input_devices = devices.iter().map(InputDeviceInfo::from).collect();
         } else {
-            // Create minimal provenance with just input devices
             self.errors
                 .push("with_input_devices requires with_provenance to be called first".to_string());
         }
@@ -430,7 +430,7 @@ impl Builder {
         self
     }
 
-    /// Add provenance links for cross-document relationships
+    /// Attach provenance links for cross-document relationships.
     pub fn with_provenance_links(mut self, section: provenance::ProvenanceSection) -> Self {
         if section.parent_links.is_empty() {
             return self;
@@ -439,13 +439,13 @@ impl Builder {
         self
     }
 
-    /// Add continuation section for multi-packet series
+    /// Attach continuation section for multi-packet series.
     pub fn with_continuation(mut self, section: continuation::ContinuationSection) -> Self {
         self.packet.continuation = Some(section);
         self
     }
 
-    /// Add collaboration section for multi-author attestations
+    /// Attach collaboration section for multi-author attestations.
     pub fn with_collaboration(mut self, section: collaboration::CollaborationSection) -> Self {
         if section.participants.is_empty() {
             return self;
@@ -454,16 +454,16 @@ impl Builder {
         self
     }
 
-    /// Add VDF aggregate proof for efficient verification
+    /// Attach VDF aggregate proof for efficient batch verification.
     pub fn with_vdf_aggregate(mut self, proof: vdf::VdfAggregateProof) -> Self {
         self.packet.vdf_aggregate = Some(proof);
         self
     }
 
-    /// Add RFC-compliant jitter binding for behavioral entropy evidence.
+    /// Attach RFC-compliant jitter binding for behavioral entropy evidence.
     ///
-    /// Includes entropy commitment, statistical summary, active probes (Galton Invariant,
-    /// Reflex Gate), and labyrinth structure (phase space topology).
+    /// Covers entropy commitment, statistical summary, active probes, and
+    /// labyrinth structure (phase space topology).
     pub fn with_jitter_binding(mut self, binding: JitterBinding) -> Self {
         self.packet.jitter_binding = Some(binding);
         if self.packet.strength < Strength::Enhanced {
@@ -472,9 +472,7 @@ impl Builder {
         self
     }
 
-    /// Add RFC-compliant time evidence for temporal binding.
-    ///
-    /// Includes TSA responses, blockchain anchors, and Roughtime samples.
+    /// Attach RFC-compliant time evidence (TSA, blockchain, Roughtime).
     pub fn with_time_evidence(mut self, evidence: TimeEvidence) -> Self {
         self.packet.time_evidence = Some(evidence);
         if self.packet.strength < Strength::Enhanced {
@@ -483,10 +481,9 @@ impl Builder {
         self
     }
 
-    /// Add RFC-compliant biology invariant claim.
+    /// Attach RFC-compliant biology invariant claim.
     ///
-    /// Contains behavioral biometric evidence with millibits scoring for
-    /// Hurst exponent, pink noise (1/f), and error topology analysis.
+    /// Millibits scoring from Hurst exponent, pink noise (1/f), and error topology.
     pub fn with_biology_claim(mut self, claim: BiologyInvariantClaim) -> Self {
         self.packet.biology_claim = Some(claim);
         if self.packet.strength < Strength::Enhanced {
@@ -497,30 +494,26 @@ impl Builder {
 
     /// Build jitter binding from keystroke evidence.
     ///
-    /// Automatically computes entropy commitment, statistical summary,
-    /// Hurst exponent, and forgery analysis from raw samples.
-    ///
-    /// `previous_commitment_hash` should be the entropy commitment hash from
-    /// the previous jitter binding in the chain. Pass `None` (or `[0u8; 32]`)
-    /// for the first binding in a chain.
+    /// Computes entropy commitment, statistical summary, Hurst exponent,
+    /// and forgery analysis. Pass `None` for `previous_commitment_hash`
+    /// on the first binding in a chain.
     pub fn with_jitter_from_keystroke(
         mut self,
         keystroke: &KeystrokeEvidence,
         document_hash: &[u8; 32],
         previous_commitment_hash: Option<[u8; 32]>,
     ) -> Self {
-        if keystroke.samples.len() < 10 {
+        if keystroke.samples.len() < MIN_JITTER_SAMPLES_FOR_BINDING {
             self.errors
                 .push("insufficient jitter samples for binding".to_string());
             return self;
         }
 
-        // Compute statistics from jitter_micros (already in microseconds)
         let intervals_us: Vec<f64> = keystroke
             .samples
             .iter()
             .map(|s| s.jitter_micros as f64)
-            .filter(|&i| i > 0.0 && i < 5_000_000.0) // Filter outliers > 5s
+            .filter(|&i| i > 0.0 && i < MAX_INTERVAL_US)
             .collect();
 
         if intervals_us.is_empty() {
@@ -535,7 +528,7 @@ impl Builder {
         let std_dev = variance.sqrt();
         let cv = if mean > 0.0 { std_dev / mean } else { 0.0 };
 
-        // Compute percentiles using O(n) selection instead of O(n log n) sort
+        // O(n) percentile selection via `select_nth_unstable_by`
         let cmp = |a: &f64, b: &f64| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal);
         let percentiles = if intervals_us.len() >= 10 {
             let mut buf = intervals_us.clone();
@@ -548,17 +541,16 @@ impl Builder {
             }
             vals
         } else {
-            [mean; 5] // Fallback to mean for small samples
+            [mean; 5] // too few samples for meaningful percentiles
         };
 
-        // Compute Hurst exponent (requires at least 20 samples)
-        let hurst_exponent = if intervals_us.len() >= 20 {
+        let hurst_exponent = if intervals_us.len() >= MIN_SAMPLES_FOR_HURST {
             calculate_hurst_rs(&intervals_us).ok().map(|h| h.exponent)
         } else {
             None
         };
 
-        // Compute entropy commitment using sample timestamps
+        // Entropy commitment: domain-separated SHA-256 over timestamps
         let mut hasher = sha2::Sha256::new();
         hasher.update(b"witnessd-jitter-entropy-v1");
         for s in &keystroke.samples {
@@ -566,19 +558,7 @@ impl Builder {
         }
         let entropy_hash: [u8; 32] = hasher.finalize().into();
 
-        // Create binding MAC using HMAC-SHA256 (must match verify_binding in jitter_binding.rs)
         let timestamp_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
-        let mac: [u8; 32] = {
-            use hmac::{Hmac, Mac};
-            type HmacSha256 = Hmac<sha2::Sha256>;
-            let mut mac_hmac =
-                HmacSha256::new_from_slice(&entropy_hash).expect("HMAC accepts any key size");
-            mac_hmac.update(document_hash);
-            mac_hmac.update(&keystroke.total_keystrokes.to_be_bytes());
-            mac_hmac.update(&timestamp_ms.to_be_bytes());
-            mac_hmac.update(&entropy_hash);
-            mac_hmac.finalize().into_bytes().into()
-        };
 
         let binding = JitterBinding {
             entropy_commitment: rfc::EntropyCommitment {
@@ -604,12 +584,13 @@ impl Builder {
                 entropy_bits: (keystroke.samples.len() as f64).log2(),
                 hurst_exponent,
             },
-            binding_mac: rfc::BindingMac {
-                mac,
-                document_hash: *document_hash,
-                keystroke_count: keystroke.total_keystrokes,
+            binding_mac: rfc::BindingMac::compute(
+                &entropy_hash,
+                *document_hash,
+                keystroke.total_keystrokes,
                 timestamp_ms,
-            },
+                &entropy_hash,
+            ),
             raw_intervals: None,
             active_probes: None,
             labyrinth_structure: None,
@@ -622,10 +603,9 @@ impl Builder {
         self
     }
 
-    /// Attach active probes (Galton invariant and reflex gate) to jitter binding.
+    /// Attach active probes (Galton invariant, reflex gate) to jitter binding.
     ///
-    /// Must be called after `with_jitter_from_keystroke` or `with_jitter_binding`.
-    /// Active probes provide adversarial stimulus-response measurements.
+    /// Requires a prior call to `with_jitter_from_keystroke` or `with_jitter_binding`.
     pub fn with_active_probes(
         mut self,
         probes: &crate::analysis::active_probes::ActiveProbeResults,
@@ -641,8 +621,7 @@ impl Builder {
 
     /// Attach labyrinth structure (Takens embedding) to jitter binding.
     ///
-    /// Must be called after `with_jitter_from_keystroke` or `with_jitter_binding`.
-    /// Labyrinth structure captures topological properties of timing dynamics.
+    /// Requires a prior call to `with_jitter_from_keystroke` or `with_jitter_binding`.
     pub fn with_labyrinth_structure(
         mut self,
         analysis: &crate::analysis::labyrinth::LabyrinthAnalysis,
@@ -656,10 +635,7 @@ impl Builder {
         self
     }
 
-    /// Build biology invariant claim from analysis results.
-    ///
-    /// Creates an RFC-compliant biology claim with millibits scoring
-    /// from Hurst exponent, pink noise, and error topology analyses.
+    /// Build biology invariant claim from Hurst, pink noise, and error topology analyses.
     pub fn with_biology_from_analysis(
         mut self,
         measurements: BiologyMeasurements,
@@ -676,22 +652,14 @@ impl Builder {
         self
     }
 
-    /// Add MMR proof for anti-deletion verification.
-    ///
-    /// Includes the MMR root hash and serialized range proof covering
-    /// all checkpoints. A verifier can independently confirm no checkpoints
-    /// were deleted from the chain.
+    /// Attach MMR root and range proof for anti-deletion verification.
     pub fn with_mmr_proof(mut self, mmr_root: [u8; 32], range_proof: &[u8]) -> Self {
         self.packet.mmr_root = Some(hex::encode(mmr_root));
         self.packet.mmr_proof = Some(hex::encode(range_proof));
         self
     }
 
-    /// Set a WritersProof verifier nonce for freshness binding.
-    ///
-    /// When the WritersProof service is online and auto_attest is enabled,
-    /// a nonce is requested before signing the evidence packet. This proves
-    /// the evidence was generated in response to a specific verification request.
+    /// Attach baseline verification data.
     pub fn with_baseline_verification(
         mut self,
         bv: witnessd_protocol::baseline::BaselineVerification,
@@ -705,7 +673,7 @@ impl Builder {
         self
     }
 
-    /// Set the WritersProof attestation certificate ID.
+    /// Set WritersProof attestation certificate ID.
     pub fn with_writersproof_certificate(mut self, certificate_id: String) -> Self {
         self.packet.writersproof_certificate_id = Some(certificate_id);
         self
@@ -807,6 +775,9 @@ impl Builder {
         }
 
         if !self.packet.contexts.is_empty() {
+            // TODO(M-005): Replace period_type String with a PeriodType enum
+            // (e.g. Focused, Assisted, External, ...) in evidence/types.rs.
+            // Blocked on deciding serde wire-compat strategy for existing packets.
             let mut assisted = 0;
             let mut external = 0;
             for ctx in &self.packet.contexts {
@@ -958,10 +929,9 @@ pub fn convert_anchor_proof(proof: &anchors::Proof) -> AnchorProof {
     anchor
 }
 
-/// Compute a binding hash for a set of secure events.
+/// Compute binding hash over secure events.
 ///
-/// Includes the event count to prevent truncation attacks where an attacker
-/// removes events and recomputes a valid hash from a subset.
+/// Includes event count to prevent truncation attacks.
 pub fn compute_events_binding_hash(events: &[crate::store::SecureEvent]) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(b"witnessd-events-binding-v1");

@@ -3,7 +3,6 @@
 //! Content-based verification and zone analysis for jitter chains.
 
 use chrono::{DateTime, Utc};
-use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
@@ -12,16 +11,11 @@ use zeroize::Zeroize;
 use crate::error::Error;
 
 use super::engine::{JitterSample, TypingProfile};
-use super::session::{JITTER_RANGE, MIN_JITTER};
 use super::timestamp_nanos_u64;
 use super::zones::{
     decode_zone_transition, encode_zone_transition, is_valid_zone_transition,
     text_to_zone_sequence, ZoneTransition,
 };
-
-// =============================================================================
-// Zone-committed verification
-// =============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContentVerificationResult {
@@ -182,16 +176,15 @@ impl VerificationEngine {
         interval_bucket: u8,
         timestamp: DateTime<Utc>,
     ) -> u32 {
-        let mut mac = Hmac::<Sha256>::new_from_slice(&self.secret).expect("hmac key");
-        mac.update(&self.ordinal.to_be_bytes());
-        mac.update(&doc_hash);
-        mac.update(&timestamp_nanos_u64(timestamp).to_be_bytes());
-        mac.update(&[zone_transition]);
-        mac.update(&[interval_bucket]);
-        mac.update(&self.prev_jitter.to_be_bytes());
-        let hash = mac.finalize().into_bytes();
-        let raw = u32::from_be_bytes(hash[0..4].try_into().unwrap());
-        MIN_JITTER + (raw % JITTER_RANGE)
+        super::compute_zone_jitter(
+            &self.secret,
+            self.ordinal,
+            &doc_hash,
+            zone_transition,
+            interval_bucket,
+            timestamp,
+            self.prev_jitter,
+        )
     }
 }
 

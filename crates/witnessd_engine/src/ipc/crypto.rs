@@ -13,7 +13,8 @@ use zeroize::Zeroize;
 /// Protocol encoding mode negotiated per connection.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum WireProtocol {
-    /// Legacy bincode format (Rust-to-Rust only)
+    /// Legacy bincode format (Rust-to-Rust only, used in tests)
+    #[allow(dead_code)]
     Bincode,
     /// JSON format for Swift/C# clients (magic: 0x57 0x4A = "WJ")
     Json,
@@ -129,6 +130,10 @@ impl SecureSession {
 
     /// Decrypt a wire message. Verifies sequence number for replay protection.
     /// Input format: [8-byte seq][12-byte nonce][ciphertext+tag].
+    ///
+    /// Decrypt failure MUST be treated as connection-fatal by the caller.
+    /// A failed decrypt or sequence mismatch indicates tampering, replay, or
+    /// key desynchronization — none of which are recoverable on the same channel.
     pub(crate) fn decrypt(&self, data: &[u8]) -> Result<Vec<u8>> {
         // Minimum: 8 (seq) + 12 (nonce) + 16 (GCM tag) = 36 bytes
         if data.len() < 36 {
@@ -140,18 +145,9 @@ impl SecureSession {
                 .try_into()
                 .map_err(|_| anyhow!("Invalid sequence number bytes"))?,
         );
-        let expected_seq = self.rx_sequence.fetch_add(2, Ordering::SeqCst);
 
-        let nonce = AesNonce::from_slice(&data[8..20]);
-        let ciphertext = &data[20..];
-
-        // Decrypt before checking sequence number to prevent timing oracle.
-        // AES-GCM is constant-time; checking seq after eliminates the timing
-        // difference between match (proceed to decrypt) and mismatch (early return).
-        let plaintext = self
-            .cipher
-            .decrypt(nonce, ciphertext)
-            .map_err(|_| anyhow!("AES-GCM decrypt failed (tampered or wrong key)"))?;
+        // Peek at expected sequence without advancing — only advance on full success.
+        let expected_seq = self.rx_sequence.load(Ordering::SeqCst);
 
         if seq != expected_seq {
             return Err(anyhow!(
@@ -160,6 +156,26 @@ impl SecureSession {
                 seq
             ));
         }
+
+        let nonce = AesNonce::from_slice(&data[8..20]);
+        let ciphertext = &data[20..];
+
+        let plaintext = self
+            .cipher
+            .decrypt(nonce, ciphertext)
+            .map_err(|_| anyhow!("AES-GCM decrypt failed (tampered or wrong key)"))?;
+
+        // Atomically advance only after decrypt + sequence check both succeed.
+        // CAS guards against concurrent callers (shouldn't happen in practice,
+        // but defends the invariant that a slot is never consumed on failure).
+        self.rx_sequence
+            .compare_exchange(
+                expected_seq,
+                expected_seq + 2,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            )
+            .map_err(|_| anyhow!("rx_sequence CAS failed — concurrent decrypt detected"))?;
 
         Ok(plaintext)
     }
@@ -209,21 +225,21 @@ impl RateLimiter {
         let now = Instant::now();
         let max_ops = RateLimitConfig::max_ops(operation);
 
-        let entry = self
-            .operations
-            .entry(operation.to_string())
-            .or_insert((0, now));
-
-        if now.duration_since(entry.1).as_secs() >= self.window_secs {
-            // Reset window
-            *entry = (1, now);
-            true
-        } else if entry.0 < max_ops {
-            entry.0 += 1;
-            true
-        } else {
-            false
+        // Fast path: avoid String allocation when the key already exists.
+        if let Some(entry) = self.operations.get_mut(operation) {
+            if now.duration_since(entry.1).as_secs() >= self.window_secs {
+                *entry = (1, now);
+                return true;
+            } else if entry.0 < max_ops {
+                entry.0 += 1;
+                return true;
+            }
+            return false;
         }
+
+        // Slow path: first time seeing this operation — allocate once.
+        self.operations.insert(operation.to_string(), (1, now));
+        true
     }
 }
 

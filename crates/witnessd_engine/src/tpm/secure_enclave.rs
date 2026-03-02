@@ -3,6 +3,10 @@
 use super::{Attestation, Binding, Capabilities, Provider, Quote, TPMError};
 use crate::DateTimeNanosExt;
 use anyhow::Result;
+use chacha20poly1305::{
+    aead::{Aead, KeyInit},
+    ChaCha20Poly1305, Nonce as AeadNonce,
+};
 use chrono::Utc;
 use core_foundation::base::{CFType, TCFType};
 use core_foundation::boolean::CFBoolean;
@@ -34,11 +38,11 @@ use std::path::PathBuf;
 use std::ptr::null_mut;
 use std::sync::Mutex;
 use std::time::SystemTime;
+use zeroize::Zeroize;
 
 // Note: We use command-line tools (sysctl, ioreg) instead of direct IOKit FFI
 // for safer hardware detection that won't crash on edge cases.
 
-// Key tags for different purposes
 const SE_KEY_TAG: &str = "com.witnessd.secureenclave.signing";
 const SE_ATTESTATION_KEY_TAG: &str = "com.witnessd.secureenclave.attestation";
 #[allow(dead_code)]
@@ -151,14 +155,11 @@ pub fn try_init() -> Option<SecureEnclaveProvider> {
 }
 
 fn init_state(state: &mut SecureEnclaveState) -> Result<(), TPMError> {
-    // Collect hardware info first
     state.hardware_info = collect_hardware_info();
     state.hardware_info.se_available = true;
 
-    // Load or derive device ID from hardware
     state.device_id = load_device_id()?;
 
-    // Load or create the primary signing key
     load_or_create_key(state)?;
 
     // Optionally create an attestation key (separate from signing for key attestation)
@@ -167,7 +168,6 @@ fn init_state(state: &mut SecureEnclaveState) -> Result<(), TPMError> {
         // Non-fatal - attestation will use signing key
     }
 
-    // Load persisted counter
     load_counter(state);
     state.start_time = SystemTime::now();
     Ok(())
@@ -178,13 +178,8 @@ fn init_state(state: &mut SecureEnclaveState) -> Result<(), TPMError> {
 fn collect_hardware_info() -> HardwareInfo {
     let mut info = HardwareInfo::default();
 
-    // Get hardware UUID
     info.uuid = hardware_uuid();
-
-    // Get model identifier
     info.model = get_model_identifier();
-
-    // Get macOS version
     info.os_version = get_os_version();
 
     info
@@ -194,7 +189,6 @@ fn collect_hardware_info() -> HardwareInfo {
 fn get_model_identifier() -> Option<String> {
     use std::process::Command;
 
-    // Use sysctl which is more reliable and doesn't require unsafe FFI
     let output = Command::new("sysctl")
         .arg("-n")
         .arg("hw.model")
@@ -261,7 +255,6 @@ fn load_or_create_attestation_key(state: &mut SecureEnclaveState) -> Result<(), 
         return Ok(());
     }
 
-    // Create new attestation key
     let access = unsafe {
         SecAccessControlCreateWithFlags(
             kCFAllocatorDefault,
@@ -453,9 +446,32 @@ fn sign(state: &SecureEnclaveState, data: &[u8]) -> Result<Vec<u8>, TPMError> {
 }
 
 fn load_counter(state: &mut SecureEnclaveState) {
-    if let Ok(data) = fs::read(&state.counter_file) {
-        if data.len() >= 8 {
+    match fs::read(&state.counter_file) {
+        Ok(data) if data.len() >= 8 => {
             state.counter = u64::from_be_bytes(data[0..8].try_into().unwrap_or([0u8; 8]));
+        }
+        Ok(data) => {
+            // File exists but is too short — corrupt. Log error and refuse
+            // to silently reset to 0 (which could allow counter rollback).
+            log::error!(
+                "Counter file corrupt ({} bytes, expected >= 8): {:?}",
+                data.len(),
+                state.counter_file
+            );
+            // Leave counter at 0; caller (init_state) should treat this as
+            // an error or prompt for recovery. A future improvement would
+            // propagate Result here.
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // First run — counter starts at 0.
+            state.counter = 0;
+        }
+        Err(e) => {
+            log::error!(
+                "Failed to read counter file {:?}: {}",
+                state.counter_file,
+                e
+            );
         }
     }
 }
@@ -467,6 +483,60 @@ fn save_counter(state: &SecureEnclaveState) {
     let mut buf = [0u8; 8];
     buf.copy_from_slice(&state.counter.to_be_bytes());
     let _ = fs::write(&state.counter_file, buf);
+}
+
+impl SecureEnclaveProvider {
+    /// Legacy v4 unseal: XOR cipher (backward compat only).
+    fn unseal_v4_legacy(
+        &self,
+        state: &SecureEnclaveState,
+        sealed: &[u8],
+    ) -> Result<Vec<u8>, TPMError> {
+        // v4 format: version(1) || nonce(32) || xor_ciphertext
+        if sealed.len() < 34 {
+            return Err(TPMError::SealedDataTooShort);
+        }
+        let nonce = &sealed[1..33];
+        let signature = sign(state, nonce)?;
+        let key_material = Sha256::digest(&signature);
+
+        let mut data = vec![0u8; sealed.len() - 33];
+        for i in 0..data.len() {
+            data[i] = sealed[33 + i] ^ key_material[i % 32];
+        }
+        Ok(data)
+    }
+
+    /// v5 unseal: ChaCha20-Poly1305 AEAD.
+    fn unseal_v5_aead(
+        &self,
+        state: &SecureEnclaveState,
+        sealed: &[u8],
+    ) -> Result<Vec<u8>, TPMError> {
+        // v5 format: version(1) || seal_nonce(32) || aead_nonce(12) || ciphertext+tag
+        const HEADER_LEN: usize = 1 + 32 + 12; // 45
+        if sealed.len() < HEADER_LEN + 16 {
+            // At minimum: header + 16-byte auth tag
+            return Err(TPMError::SealedDataTooShort);
+        }
+        let seal_nonce = &sealed[1..33];
+        let aead_nonce_bytes = &sealed[33..45];
+        let ciphertext = &sealed[45..];
+
+        let signature = sign(state, seal_nonce)?;
+        let mut key_material = Sha256::digest(&signature);
+
+        let cipher = ChaCha20Poly1305::new_from_slice(&key_material)
+            .map_err(|e| TPMError::Unsealing(format!("AEAD key init: {e}")))?;
+
+        let aead_nonce = AeadNonce::from_slice(aead_nonce_bytes);
+        let plaintext = cipher
+            .decrypt(aead_nonce, ciphertext)
+            .map_err(|_| TPMError::SealedCorrupted)?;
+
+        key_material.zeroize();
+        Ok(plaintext)
+    }
 }
 
 impl Provider for SecureEnclaveProvider {
@@ -559,40 +629,50 @@ impl Provider for SecureEnclaveProvider {
 
     fn seal(&self, data: &[u8], _policy: &[u8]) -> Result<Vec<u8>, TPMError> {
         let state = self.state.lock().unwrap();
+
+        // Deterministic nonce: SE signs this to derive the encryption key
         let mut hasher = Sha256::new();
-        hasher.update(b"witnessd-seal-nonce-v1");
+        hasher.update(b"witnessd-seal-nonce-v2");
         hasher.update(data);
-        let nonce = hasher.finalize().to_vec();
+        let seal_nonce = hasher.finalize().to_vec();
 
-        let signature = sign(&state, &nonce)?;
-        let key_material = Sha256::digest(&signature);
+        let signature = sign(&state, &seal_nonce)?;
+        let mut key_material = Sha256::digest(&signature);
 
-        let mut sealed = vec![0u8; 1 + 32 + data.len()];
-        sealed[0] = 4;
-        sealed[1..33].copy_from_slice(&nonce);
-        for (i, b) in data.iter().enumerate() {
-            sealed[33 + i] = b ^ key_material[i % 32];
-        }
+        let cipher = ChaCha20Poly1305::new_from_slice(&key_material)
+            .map_err(|e| TPMError::Sealing(format!("AEAD key init: {e}")))?;
+
+        let mut nonce_bytes = [0u8; 12];
+        getrandom::getrandom(&mut nonce_bytes)
+            .map_err(|e| TPMError::Sealing(format!("nonce generation: {e}")))?;
+        let aead_nonce = AeadNonce::from_slice(&nonce_bytes);
+
+        let ciphertext = cipher
+            .encrypt(aead_nonce, data)
+            .map_err(|e| TPMError::Sealing(format!("AEAD encrypt: {e}")))?;
+
+        key_material.zeroize();
+
+        // Format: version(1) || seal_nonce(32) || aead_nonce(12) || ciphertext+tag
+        let mut sealed = Vec::with_capacity(1 + 32 + 12 + ciphertext.len());
+        sealed.push(5); // version 5 = AEAD
+        sealed.extend_from_slice(&seal_nonce);
+        sealed.extend_from_slice(&nonce_bytes);
+        sealed.extend_from_slice(&ciphertext);
         Ok(sealed)
     }
 
     fn unseal(&self, sealed: &[u8]) -> Result<Vec<u8>, TPMError> {
         let state = self.state.lock().unwrap();
-        if sealed.len() < 34 {
+        if sealed.is_empty() {
             return Err(TPMError::SealedDataTooShort);
         }
-        if sealed[0] != 4 {
-            return Err(TPMError::SealedVersionUnsupported);
-        }
-        let nonce = &sealed[1..33];
-        let signature = sign(&state, nonce)?;
-        let key_material = Sha256::digest(&signature);
 
-        let mut data = vec![0u8; sealed.len() - 33];
-        for i in 0..data.len() {
-            data[i] = sealed[33 + i] ^ key_material[i % 32];
+        match sealed[0] {
+            4 => self.unseal_v4_legacy(&state, sealed),
+            5 => self.unseal_v5_aead(&state, sealed),
+            _ => Err(TPMError::SealedVersionUnsupported),
         }
-        Ok(data)
     }
 
     fn clock_info(&self) -> Result<super::ClockInfo, TPMError> {
@@ -630,27 +710,17 @@ impl SecureEnclaveProvider {
         let state = self.state.lock().unwrap();
         let timestamp = Utc::now();
 
-        // Build attestation payload
         let mut attestation_data = Vec::new();
-
-        // Version and magic
         attestation_data.extend_from_slice(b"WITSE-ATTEST-V1\n");
 
-        // Challenge/nonce
         let challenge_hash = Sha256::digest(challenge);
         attestation_data.extend_from_slice(&challenge_hash);
-
-        // Public key being attested
         attestation_data.extend_from_slice(&state.public_key);
-
-        // Device ID
         attestation_data.extend_from_slice(state.device_id.as_bytes());
 
-        // Timestamp
         let ts_bytes = timestamp.timestamp_nanos_safe().to_le_bytes();
         attestation_data.extend_from_slice(&ts_bytes);
 
-        // Hardware info
         if let Some(ref uuid) = state.hardware_info.uuid {
             let uuid_hash = Sha256::digest(uuid.as_bytes());
             attestation_data.extend_from_slice(&uuid_hash);
@@ -660,17 +730,18 @@ impl SecureEnclaveProvider {
             attestation_data.extend_from_slice(model.as_bytes());
         }
 
-        // Create attestation proof
+        // Attestation proof = H(attestation_data). Technically redundant with
+        // the ECDSA signature (if the signature verifies, the data is authentic).
+        // Retained as a fast-path integrity check in verify_key_attestation()
+        // before the more expensive ECDSA verification.
         let attestation_proof = Sha256::digest(&attestation_data).to_vec();
 
-        // Sign with attestation key if available, otherwise with signing key
         let signature = if let Some(attest_key) = state.attestation_key_ref {
             sign_with_key(attest_key, &attestation_data)?
         } else {
             sign(&state, &attestation_data)?
         };
 
-        // Collect metadata
         let mut metadata = HashMap::new();
         if let Some(ref model) = state.hardware_info.model {
             metadata.insert("model".to_string(), model.clone());
@@ -707,7 +778,6 @@ impl SecureEnclaveProvider {
     ) -> Result<bool, TPMError> {
         let state = self.state.lock().unwrap();
 
-        // Rebuild expected attestation data
         let mut expected_data = Vec::new();
         expected_data.extend_from_slice(b"WITSE-ATTEST-V1\n");
 
@@ -720,7 +790,6 @@ impl SecureEnclaveProvider {
         let ts_bytes = attestation.timestamp.timestamp_nanos_safe().to_le_bytes();
         expected_data.extend_from_slice(&ts_bytes);
 
-        // Include hardware info if available
         if let Some(ref uuid) = state.hardware_info.uuid {
             let uuid_hash = Sha256::digest(uuid.as_bytes());
             expected_data.extend_from_slice(&uuid_hash);
@@ -730,19 +799,16 @@ impl SecureEnclaveProvider {
             expected_data.extend_from_slice(model.as_bytes());
         }
 
-        // Verify attestation proof
         let expected_proof = Sha256::digest(&expected_data).to_vec();
         if attestation.attestation_proof != expected_proof {
             return Ok(false);
         }
 
-        // Verify signature using attestation public key or regular public key
         let verify_key = state
             .attestation_public_key
             .as_ref()
             .unwrap_or(&state.public_key);
 
-        // ECDSA P-256 signature verification
         verify_ecdsa_signature(verify_key, &expected_data, &attestation.signature)
     }
 
@@ -843,7 +909,6 @@ fn verify_ecdsa_signature(
     data: &[u8],
     signature: &[u8],
 ) -> Result<bool, TPMError> {
-    // Import additional security framework functions
     #[link(name = "Security", kind = "framework")]
     extern "C" {
         fn SecKeyCreateWithData(
@@ -867,7 +932,6 @@ fn verify_ecdsa_signature(
     }
 
     unsafe {
-        // Create key attributes dictionary
         let key_type_key = CFString::wrap_under_get_rule(kSecAttrKeyType);
         let key_type_value =
             CFType::wrap_under_get_rule(kSecAttrKeyTypeECSECPrimeRandom as CFTypeRef);
@@ -879,7 +943,6 @@ fn verify_ecdsa_signature(
             (key_class_key, key_class_value),
         ]);
 
-        // Create public key from data
         let key_data = CFData::from_buffer(public_key);
         let mut error: CFErrorRef = null_mut();
         let sec_key = SecKeyCreateWithData(
@@ -892,7 +955,6 @@ fn verify_ecdsa_signature(
             return Err(TPMError::UnsupportedPublicKey);
         }
 
-        // Verify signature
         let data_cf = CFData::from_buffer(data);
         let sig_cf = CFData::from_buffer(signature);
 
@@ -904,7 +966,6 @@ fn verify_ecdsa_signature(
             &mut error,
         );
 
-        // Release the key
         core_foundation_sys::base::CFRelease(sec_key as *mut std::ffi::c_void);
 
         Ok(result)
@@ -912,14 +973,12 @@ fn verify_ecdsa_signature(
 }
 
 fn is_secure_enclave_available() -> bool {
-    // Check if Secure Enclave is explicitly disabled
     if std::env::var("WITNESSD_DISABLE_SECURE_ENCLAVE").is_ok() {
         log::info!("Secure Enclave disabled via environment variable");
         return false;
     }
 
-    // Check if we're on Apple Silicon (M1/M2/etc) or T2 Mac (both have Secure Enclave)
-    // Use sysctl to safely check the CPU brand - all Apple Silicon Macs have SE
+    // Apple Silicon and T2 Macs both have Secure Enclave
     use std::process::Command;
 
     let output = match Command::new("sysctl")
@@ -938,7 +997,6 @@ fn is_secure_enclave_available() -> bool {
     let cpu_brand = String::from_utf8_lossy(&output.stdout);
     let has_apple_silicon = cpu_brand.contains("Apple");
 
-    // If not Apple Silicon, check for T2 chip (Intel Macs with SE)
     if !has_apple_silicon {
         // In CI environments, skip T2 detection entirely - CI runners typically
         // don't have T2 chips and even if they did, we lack the entitlements
@@ -947,9 +1005,7 @@ fn is_secure_enclave_available() -> bool {
             return false;
         }
 
-        // Check for T2 by looking for AppleT2Controller in ioreg
-        // Use targeted query (-c class, -d1 depth) instead of full registry dump
-        // to avoid hanging on large IOKit registries
+        // Targeted query (-c class, -d1 depth) avoids hanging on large IOKit registries
         let t2_check = Command::new("ioreg")
             .args(["-l", "-d1", "-c", "AppleT2Controller"])
             .output();
@@ -968,8 +1024,7 @@ fn is_secure_enclave_available() -> bool {
         }
     }
 
-    // We have hardware that supports SE, now check if the Security framework works
-    // Use a minimal, safer check via security command
+    // Verify Security framework is functional before attempting SE operations
     let security_check = Command::new("security").args(["list-keychains"]).output();
 
     match security_check {
@@ -995,7 +1050,6 @@ fn extract_public_key(key_ref: SecKeyRef) -> Result<Vec<u8>, TPMError> {
 fn hardware_uuid() -> Option<String> {
     use std::process::Command;
 
-    // Use ioreg command which is safer than direct IOKit FFI calls
     let output = Command::new("ioreg")
         .args(["-rd1", "-c", "IOPlatformExpertDevice"])
         .output()
@@ -1003,7 +1057,6 @@ fn hardware_uuid() -> Option<String> {
 
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
-        // Parse the output to find IOPlatformUUID
         for line in stdout.lines() {
             if line.contains("IOPlatformUUID") {
                 // Format: "IOPlatformUUID" = "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"

@@ -1,82 +1,47 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
-//! Activity Fingerprint - Typing dynamics analysis
+//! Typing dynamics fingerprint (IKI distribution, zone usage, pause
+//! signatures, circadian patterns, session characteristics).
 //!
-//! This module captures *how* you type, not *what* you type:
-//! - Inter-key intervals (IKI) distribution
-//! - Keyboard zone usage patterns
-//! - Pause signatures
-//! - Circadian typing patterns
-//! - Session characteristics
-//!
-//! This is enabled by DEFAULT as it doesn't capture content.
+//! Captures *how* you type, not *what* you type. Enabled by default.
 
+use crate::analysis::stats;
 use crate::jitter::SimpleJitterSample;
 use serde::{Deserialize, Serialize};
 use statrs::statistics::Statistics;
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-// =============================================================================
-// Constants
-// =============================================================================
-
-/// Number of IKI histogram buckets (50ms each, 0-2500ms)
+/// 50ms buckets covering 0-2500ms
 const IKI_HISTOGRAM_BUCKETS: usize = 50;
-/// Bucket width in milliseconds
 const IKI_BUCKET_WIDTH_MS: f64 = 50.0;
-/// Number of zone transition pairs (8 zones * 8 zones)
+/// 8x8 zone transition matrix
 const ZONE_TRANSITIONS: usize = 64;
-/// Pause threshold for sentence pauses (ms)
 const SENTENCE_PAUSE_MS: f64 = 400.0;
-/// Pause threshold for paragraph pauses (ms)
 const PARAGRAPH_PAUSE_MS: f64 = 1000.0;
-/// Pause threshold for thinking pauses (ms)
 const THINKING_PAUSE_MS: f64 = 2000.0;
 
-// =============================================================================
-// ActivityFingerprint
-// =============================================================================
-
-/// Activity-based fingerprint capturing typing dynamics.
+/// Typing dynamics fingerprint built from behavioral samples.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActivityFingerprint {
-    /// Unique identifier
     pub id: String,
-    /// Number of samples used to build this fingerprint
     pub sample_count: u64,
-    /// Confidence level (0.0-1.0)
+    /// 0.0-1.0, asymptotic based on sample count
     pub confidence: f64,
 
-    // --- Inter-Key Interval Distribution ---
-    /// IKI distribution statistics
     pub iki_distribution: IkiDistribution,
-
-    // --- Zone Patterns ---
-    /// Keyboard zone usage profile
     pub zone_profile: ZoneProfile,
-
-    // --- Pause Signature ---
-    /// Characteristic pause patterns
     pub pause_signature: PauseSignature,
-
-    // --- Temporal Patterns ---
-    /// When user typically types (by hour)
+    /// Hourly activity distribution
     pub circadian_pattern: CircadianPattern,
-
-    // --- Session Characteristics ---
-    /// Session-level typing patterns
     pub session_signature: SessionSignature,
 
-    // --- Hardware Entropy ---
-    /// Ratio of samples using hardware entropy (0.0-1.0).
-    /// Only set when witnessd_jitter feature is enabled and hardware entropy is available.
-    /// Higher values indicate more samples came from verified hardware input.
+    /// Fraction of samples backed by hardware entropy (0.0-1.0).
+    /// Only present when `witnessd_jitter` feature is active.
     #[serde(default)]
     pub phys_ratio: Option<f64>,
 
-    // --- Mouse Idle Jitter ---
-    /// Mouse idle jitter statistics for fingerprinting.
-    /// Captures micro-movements while user is typing (mouse stationary next to keyboard).
+    /// Mouse micro-movements while typing (additional biometric signal)
     #[serde(default)]
     pub mouse_idle_stats: Option<crate::platform::MouseIdleStats>,
 }
@@ -99,7 +64,7 @@ impl Default for ActivityFingerprint {
 }
 
 impl ActivityFingerprint {
-    /// Create a fingerprint from a collection of samples.
+    /// Build from raw jitter samples, computing all sub-distributions.
     pub fn from_samples(samples: &[SimpleJitterSample]) -> Self {
         if samples.len() < 2 {
             return Self {
@@ -113,35 +78,26 @@ impl ActivityFingerprint {
             ..Self::default()
         };
 
-        // Calculate IKIs
         let ikis: Vec<f64> = samples
             .windows(2)
             .map(|w| (w[1].timestamp_ns - w[0].timestamp_ns) as f64 / 1_000_000.0)
-            .filter(|&i| i > 0.0 && i < 10000.0) // Filter extreme values
+            .filter(|&i| i > 0.0 && i < 10000.0)
             .collect();
 
         if ikis.is_empty() {
             return fp;
         }
 
-        // IKI distribution
         fp.iki_distribution = IkiDistribution::from_intervals(&ikis);
-
-        // Zone profile
         fp.zone_profile = ZoneProfile::from_samples(samples);
-
-        // Pause signature
         fp.pause_signature = PauseSignature::from_intervals(&ikis);
-
-        // Update confidence
         fp.update_confidence();
 
         fp
     }
 
-    /// Merge another fingerprint into this one.
+    /// Weighted merge of `other` into `self` by sample count.
     pub fn merge(&mut self, other: &ActivityFingerprint) {
-        // Weighted merge based on sample counts
         let total = self.sample_count + other.sample_count;
         if total == 0 {
             return;
@@ -159,7 +115,6 @@ impl ActivityFingerprint {
         self.circadian_pattern.merge(&other.circadian_pattern);
         self.session_signature.merge(&other.session_signature);
 
-        // Merge phys_ratio with weighted average
         self.phys_ratio = match (self.phys_ratio, other.phys_ratio) {
             (Some(a), Some(b)) => Some(a * self_weight + b * other_weight),
             (Some(a), None) => Some(a),
@@ -167,7 +122,6 @@ impl ActivityFingerprint {
             (None, None) => None,
         };
 
-        // Merge mouse idle stats
         match (&mut self.mouse_idle_stats, &other.mouse_idle_stats) {
             (Some(ref mut self_stats), Some(other_stats)) => {
                 self_stats.merge(other_stats);
@@ -182,62 +136,47 @@ impl ActivityFingerprint {
         self.update_confidence();
     }
 
-    /// Set the hardware entropy ratio.
-    ///
-    /// This should be called when using HybridJitterSession to track
-    /// what fraction of samples used hardware entropy.
+    /// Set hardware entropy ratio (clamped to 0.0-1.0).
     pub fn set_phys_ratio(&mut self, ratio: f64) {
         self.phys_ratio = Some(ratio.clamp(0.0, 1.0));
     }
 
-    /// Set mouse idle jitter statistics.
-    ///
-    /// This captures micro-movements while the user is typing,
-    /// providing an additional biometric signal for author verification.
+    /// Attach mouse idle jitter stats as an additional biometric signal.
     pub fn set_mouse_idle_stats(&mut self, stats: crate::platform::MouseIdleStats) {
         self.mouse_idle_stats = Some(stats);
     }
 
-    /// Get mouse idle jitter statistics if available.
     pub fn mouse_idle_stats(&self) -> Option<&crate::platform::MouseIdleStats> {
         self.mouse_idle_stats.as_ref()
     }
 
-    /// Calculate similarity with another fingerprint (0.0-1.0).
+    /// Weighted similarity score (0.0-1.0) against another fingerprint.
     pub fn similarity(&self, other: &ActivityFingerprint) -> f64 {
         let iki_sim = self.iki_distribution.similarity(&other.iki_distribution);
         let zone_sim = self.zone_profile.similarity(&other.zone_profile);
         let pause_sim = self.pause_signature.similarity(&other.pause_signature);
 
-        // Weighted combination
         (iki_sim * 0.4 + zone_sim * 0.35 + pause_sim * 0.25).clamp(0.0, 1.0)
     }
 
-    /// Update confidence based on sample count.
+    /// Asymptotic confidence: approaches 1.0 around ~500 samples.
     fn update_confidence(&mut self) {
-        // Confidence increases with samples, asymptotic to 1.0
         self.confidence = 1.0 - 1.0 / (1.0 + self.sample_count as f64 / 500.0);
     }
 }
 
-// =============================================================================
-// IKI Distribution
-// =============================================================================
-
-/// Inter-Key Interval distribution statistics.
+/// Inter-Key Interval distribution (milliseconds).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IkiDistribution {
-    /// Mean IKI in milliseconds
     pub mean: f64,
-    /// Standard deviation
     pub std_dev: f64,
-    /// Skewness (human typing is typically right-skewed)
+    /// Human typing is typically right-skewed
     pub skewness: f64,
-    /// Kurtosis (excess kurtosis, 0 = normal)
+    /// Excess kurtosis (0 = normal)
     pub kurtosis: f64,
-    /// Percentiles (5th, 25th, 50th, 75th, 95th)
+    /// [5th, 25th, 50th, 75th, 95th]
     pub percentiles: [f64; 5],
-    /// Histogram buckets (50ms each)
+    /// Normalized 50ms-wide histogram buckets
     pub histogram: Vec<f64>,
 }
 
@@ -255,7 +194,7 @@ impl Default for IkiDistribution {
 }
 
 impl IkiDistribution {
-    /// Create distribution from interval data.
+    /// Build from raw IKI values (ms).
     pub fn from_intervals(intervals: &[f64]) -> Self {
         if intervals.is_empty() {
             return Self::default();
@@ -264,11 +203,10 @@ impl IkiDistribution {
         let mean = intervals.to_vec().mean();
         let std_dev = intervals.to_vec().std_dev();
 
-        // Calculate skewness and kurtosis
-        let skewness = calculate_skewness(intervals, mean, std_dev);
-        let kurtosis = calculate_kurtosis(intervals, mean, std_dev);
+        let skewness = stats::skewness(intervals, mean, std_dev);
+        let kurtosis = stats::kurtosis(intervals, mean, std_dev);
 
-        // Calculate percentiles using O(n) selection instead of O(n log n) sort
+        // O(n) percentile selection via select_nth_unstable
         let percentiles = {
             let mut buf = intervals.to_vec();
             let n = buf.len();
@@ -284,13 +222,11 @@ impl IkiDistribution {
             vals
         };
 
-        // Build histogram
         let mut histogram = vec![0.0; IKI_HISTOGRAM_BUCKETS];
         for &iki in intervals {
             let bucket = ((iki / IKI_BUCKET_WIDTH_MS) as usize).min(IKI_HISTOGRAM_BUCKETS - 1);
             histogram[bucket] += 1.0;
         }
-        // Normalize
         let total: f64 = histogram.iter().sum();
         if total > 0.0 {
             for h in &mut histogram {
@@ -308,7 +244,7 @@ impl IkiDistribution {
         }
     }
 
-    /// Merge with another distribution.
+    /// Weighted merge with another distribution.
     pub fn merge(&mut self, other: &IkiDistribution, self_weight: f64, other_weight: f64) {
         self.mean = self.mean * self_weight + other.mean * other_weight;
         self.std_dev = self.std_dev * self_weight + other.std_dev * other_weight;
@@ -325,9 +261,8 @@ impl IkiDistribution {
         }
     }
 
-    /// Calculate similarity with another distribution.
+    /// Similarity (0.0-1.0) via Bhattacharyya coefficient on histograms.
     pub fn similarity(&self, other: &IkiDistribution) -> f64 {
-        // Use histogram intersection (Bhattacharyya coefficient approximation)
         let hist_sim: f64 = self
             .histogram
             .iter()
@@ -335,7 +270,6 @@ impl IkiDistribution {
             .map(|(a, b)| (a * b).sqrt())
             .sum();
 
-        // Combine with statistical moments similarity
         let mean_sim = 1.0 - (self.mean - other.mean).abs() / (self.mean + other.mean + 1.0);
         let std_sim =
             1.0 - (self.std_dev - other.std_dev).abs() / (self.std_dev + other.std_dev + 1.0);
@@ -344,33 +278,22 @@ impl IkiDistribution {
     }
 }
 
-// =============================================================================
-// Zone Profile
-// =============================================================================
-
 /// Keyboard zone usage profile.
 ///
-/// Zones represent keyboard regions typed by different fingers:
-/// - Zone 0-3: Left hand (pinky to index)
-/// - Zone 4-7: Right hand (index to pinky)
+/// Zones 0-3: left hand (pinky to index), 4-7: right hand (index to pinky).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZoneProfile {
-    /// Zone frequency distribution (normalized)
     pub zone_frequencies: [f64; 8],
-    /// Zone transition matrix (normalized)
     pub zone_transitions: Vec<f64>,
-    /// Same-finger digraph histogram
     pub same_finger_histogram: Vec<f64>,
-    /// Same-hand digraph histogram
     pub same_hand_histogram: Vec<f64>,
-    /// Alternating-hand digraph histogram
     pub alternating_histogram: Vec<f64>,
 }
 
 impl Default for ZoneProfile {
     fn default() -> Self {
         Self {
-            zone_frequencies: [0.125; 8], // Uniform default
+            zone_frequencies: [0.125; 8],
             zone_transitions: vec![0.0; ZONE_TRANSITIONS],
             same_finger_histogram: vec![0.0; 20],
             same_hand_histogram: vec![0.0; 20],
@@ -380,7 +303,7 @@ impl Default for ZoneProfile {
 }
 
 impl ZoneProfile {
-    /// Create profile from samples.
+    /// Build zone profile from jitter samples.
     pub fn from_samples(samples: &[SimpleJitterSample]) -> Self {
         let mut profile = Self::default();
 
@@ -388,7 +311,6 @@ impl ZoneProfile {
             return profile;
         }
 
-        // Zone frequencies
         let mut zone_counts = [0usize; 8];
         for sample in samples {
             let zone = (sample.zone as usize).min(7);
@@ -401,7 +323,6 @@ impl ZoneProfile {
             }
         }
 
-        // Zone transitions
         let mut transitions = vec![0usize; ZONE_TRANSITIONS];
         for w in samples.windows(2) {
             let from = (w[0].zone as usize).min(7);
@@ -415,7 +336,6 @@ impl ZoneProfile {
             }
         }
 
-        // Hand analysis histograms
         for w in samples.windows(2) {
             let z1 = w[0].zone as usize;
             let z2 = w[1].zone as usize;
@@ -423,18 +343,14 @@ impl ZoneProfile {
             let bucket = ((iki_ms / 50.0) as usize).min(19);
 
             if z1 == z2 {
-                // Same finger
                 profile.same_finger_histogram[bucket] += 1.0;
             } else if (z1 < 4) == (z2 < 4) {
-                // Same hand
                 profile.same_hand_histogram[bucket] += 1.0;
             } else {
-                // Alternating hands
                 profile.alternating_histogram[bucket] += 1.0;
             }
         }
 
-        // Normalize histograms
         normalize_histogram(&mut profile.same_finger_histogram);
         normalize_histogram(&mut profile.same_hand_histogram);
         normalize_histogram(&mut profile.alternating_histogram);
@@ -442,7 +358,7 @@ impl ZoneProfile {
         profile
     }
 
-    /// Merge with another profile.
+    /// Weighted merge with another profile.
     pub fn merge(&mut self, other: &ZoneProfile, self_weight: f64, other_weight: f64) {
         for i in 0..8 {
             self.zone_frequencies[i] =
@@ -478,7 +394,7 @@ impl ZoneProfile {
         );
     }
 
-    /// Get the dominant zone (most frequently used).
+    /// Return the most frequently used zone as a human-readable string.
     pub fn dominant_zone(&self) -> String {
         let (zone_idx, freq) = self
             .zone_frequencies
@@ -500,9 +416,8 @@ impl ZoneProfile {
         format!("{} ({:.0}%)", zone_names[zone_idx], freq * 100.0)
     }
 
-    /// Calculate similarity with another profile.
+    /// Similarity (0.0-1.0) based on zone frequencies and transitions.
     pub fn similarity(&self, other: &ZoneProfile) -> f64 {
-        // Zone frequency similarity
         let freq_sim: f64 = self
             .zone_frequencies
             .iter()
@@ -511,7 +426,6 @@ impl ZoneProfile {
             .sum::<f64>()
             / 8.0;
 
-        // Transition matrix similarity (histogram intersection)
         let trans_sim: f64 = self
             .zone_transitions
             .iter()
@@ -523,24 +437,16 @@ impl ZoneProfile {
     }
 }
 
-// =============================================================================
-// Pause Signature
-// =============================================================================
-
-/// Characteristic pause patterns.
+/// Characteristic pause patterns (sentence / paragraph / thinking).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PauseSignature {
-    /// Mean sentence pause duration (400-1000ms)
+    /// Mean duration in ms for each pause tier
     pub sentence_pause_mean: f64,
-    /// Mean paragraph pause duration (1000-2000ms)
     pub paragraph_pause_mean: f64,
-    /// Mean thinking pause duration (>2000ms)
     pub thinking_pause_mean: f64,
-    /// Frequency of sentence pauses (per 100 keystrokes)
+    /// Occurrences per 100 keystrokes
     pub sentence_pause_frequency: f64,
-    /// Frequency of paragraph pauses
     pub paragraph_pause_frequency: f64,
-    /// Frequency of thinking pauses
     pub thinking_pause_frequency: f64,
 }
 
@@ -558,7 +464,7 @@ impl Default for PauseSignature {
 }
 
 impl PauseSignature {
-    /// Create signature from interval data.
+    /// Build from IKI values, classifying pauses by duration tier.
     pub fn from_intervals(intervals: &[f64]) -> Self {
         if intervals.is_empty() {
             return Self::default();
@@ -582,16 +488,16 @@ impl PauseSignature {
         let per_100 = 100.0 / n;
 
         Self {
-            sentence_pause_mean: mean_or_zero(&sentence_pauses),
-            paragraph_pause_mean: mean_or_zero(&paragraph_pauses),
-            thinking_pause_mean: mean_or_zero(&thinking_pauses),
+            sentence_pause_mean: stats::mean_or_zero(&sentence_pauses),
+            paragraph_pause_mean: stats::mean_or_zero(&paragraph_pauses),
+            thinking_pause_mean: stats::mean_or_zero(&thinking_pauses),
             sentence_pause_frequency: sentence_pauses.len() as f64 * per_100,
             paragraph_pause_frequency: paragraph_pauses.len() as f64 * per_100,
             thinking_pause_frequency: thinking_pauses.len() as f64 * per_100,
         }
     }
 
-    /// Merge with another signature.
+    /// Weighted merge with another signature.
     pub fn merge(&mut self, other: &PauseSignature, self_weight: f64, other_weight: f64) {
         self.sentence_pause_mean =
             self.sentence_pause_mean * self_weight + other.sentence_pause_mean * other_weight;
@@ -607,7 +513,7 @@ impl PauseSignature {
             + other.thinking_pause_frequency * other_weight;
     }
 
-    /// Calculate similarity with another signature.
+    /// Similarity (0.0-1.0) comparing mean durations and frequencies.
     pub fn similarity(&self, other: &PauseSignature) -> f64 {
         let mean_sims = [
             relative_similarity(self.sentence_pause_mean, other.sentence_pause_mean),
@@ -636,16 +542,10 @@ impl PauseSignature {
     }
 }
 
-// =============================================================================
-// Circadian Pattern
-// =============================================================================
-
-/// Typing activity pattern by time of day.
+/// Typing activity distribution by hour of day (0-23).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CircadianPattern {
-    /// Activity level by hour (0-23)
     pub hourly_activity: [f64; 24],
-    /// Total samples for this pattern
     pub total_samples: u64,
 }
 
@@ -659,7 +559,6 @@ impl Default for CircadianPattern {
 }
 
 impl CircadianPattern {
-    /// Record activity for a given hour.
     pub fn record(&mut self, hour: u8) {
         if hour < 24 {
             self.hourly_activity[hour as usize] += 1.0;
@@ -667,7 +566,7 @@ impl CircadianPattern {
         }
     }
 
-    /// Normalize the pattern.
+    /// Normalize to sum to 1.0.
     pub fn normalize(&mut self) {
         let total: f64 = self.hourly_activity.iter().sum();
         if total > 0.0 {
@@ -677,7 +576,7 @@ impl CircadianPattern {
         }
     }
 
-    /// Merge with another pattern.
+    /// Additive merge (re-normalize after merging).
     pub fn merge(&mut self, other: &CircadianPattern) {
         for i in 0..24 {
             self.hourly_activity[i] += other.hourly_activity[i];
@@ -686,20 +585,14 @@ impl CircadianPattern {
     }
 }
 
-// =============================================================================
-// Session Signature
-// =============================================================================
-
 /// Session-level typing characteristics.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionSignature {
-    /// Mean session duration in seconds
     pub mean_session_duration: f64,
-    /// Mean typing speed (keystrokes per minute)
+    /// Keystrokes per minute
     pub mean_typing_speed: f64,
-    /// Fatigue indicator (speed change over session)
+    /// Speed decay over session duration
     pub fatigue_coefficient: f64,
-    /// Number of sessions analyzed
     pub session_count: u32,
 }
 
@@ -715,7 +608,7 @@ impl Default for SessionSignature {
 }
 
 impl SessionSignature {
-    /// Merge with another signature.
+    /// Weighted merge by session count.
     pub fn merge(&mut self, other: &SessionSignature) {
         let total = self.session_count + other.session_count;
         if total == 0 {
@@ -734,45 +627,28 @@ impl SessionSignature {
     }
 }
 
-// =============================================================================
-// Activity Fingerprint Accumulator
-// =============================================================================
-
-/// Accumulator for building activity fingerprints from streaming samples.
+/// Ring-buffer accumulator for building fingerprints from streaming samples.
 pub struct ActivityFingerprintAccumulator {
     samples: VecDeque<SimpleJitterSample>,
     max_samples: usize,
-    current_fingerprint: ActivityFingerprint,
-    dirty: bool,
+    cached_fingerprint: ActivityFingerprint,
+    /// Thread-safe dirty flag so `current_fingerprint(&self)` can update the cache.
+    dirty: AtomicBool,
 }
 
 use witnessd_protocol::baseline::SessionBehavioralSummary;
 
-// ... (keep existing imports)
-
 impl ActivityFingerprintAccumulator {
-    /// Create a new accumulator.
+    /// Default capacity: 10,000 samples.
     pub fn new() -> Self {
         Self::with_capacity(10000)
     }
 
-    /// Convert the current accumulated samples into a behavioral summary.
+    /// Downsample into a 9-bin `SessionBehavioralSummary` for wire protocol.
     pub fn to_session_summary(&self) -> SessionBehavioralSummary {
         let fp = self.current_fingerprint();
 
-        // Downsample 50-bin histogram to 9-bin
-        // edges: 0, 50, 100, 150, 200, 300, 500, 1000, 2000ms
-        // bucket indices:
-        // 0: [0, 50)   -> idx 0
-        // 1: [50, 100)  -> idx 1
-        // 2: [100, 150) -> idx 2
-        // 3: [150, 200) -> idx 3
-        // 4: [200, 300) -> idx 4, 5
-        // 5: [300, 500) -> idx 6, 7, 8, 9
-        // 6: [500, 1000) -> idx 10-19
-        // 7: [1000, 2000) -> idx 20-39
-        // 8: [2000, inf) -> idx 40-49
-
+        // 50-bin (50ms each) -> 9-bin edges: 0,50,100,150,200,300,500,1000,2000ms
         let mut sum_hist = [0.0; 9];
         let h = &fp.iki_distribution.histogram;
         sum_hist[0] = h[0];
@@ -799,7 +675,22 @@ impl ActivityFingerprintAccumulator {
             } else {
                 0.0
             },
-            hurst: 0.5, // Placeholder for actual Hurst computation
+            hurst: {
+                let intervals: Vec<f64> = self
+                    .samples
+                    .iter()
+                    .zip(self.samples.iter().skip(1))
+                    .map(|(a, b)| (b.timestamp_ns - a.timestamp_ns) as f64 / 1_000_000.0)
+                    .filter(|&i| i > 0.0 && i < 5000.0)
+                    .collect();
+                if intervals.len() >= 20 {
+                    crate::analysis::hurst::calculate_hurst_rs(&intervals)
+                        .map(|h| h.exponent)
+                        .unwrap_or(0.5)
+                } else {
+                    0.5
+                }
+            },
             pause_frequency: fp.pause_signature.sentence_pause_frequency
                 + fp.pause_signature.paragraph_pause_frequency
                 + fp.pause_signature.thinking_pause_frequency,
@@ -808,45 +699,44 @@ impl ActivityFingerprintAccumulator {
         }
     }
 
-    /// Create with specific capacity.
     pub fn with_capacity(max_samples: usize) -> Self {
         Self {
             samples: VecDeque::with_capacity(max_samples),
             max_samples,
-            current_fingerprint: ActivityFingerprint::default(),
-            dirty: false,
+            cached_fingerprint: ActivityFingerprint::default(),
+            dirty: AtomicBool::new(false),
         }
     }
 
-    /// Add a sample to the accumulator.
+    /// Push a sample, evicting the oldest if at capacity.
     pub fn add_sample(&mut self, sample: &SimpleJitterSample) {
         if self.samples.len() >= self.max_samples {
             self.samples.pop_front();
         }
         self.samples.push_back(sample.clone());
-        self.dirty = true;
+        self.dirty.store(true, Ordering::Relaxed);
     }
 
-    /// Get the current fingerprint.
+    /// Recompute fingerprint from buffered samples if dirty, caching the result.
     pub fn current_fingerprint(&self) -> ActivityFingerprint {
-        if self.dirty || self.current_fingerprint.sample_count == 0 {
+        if self.dirty.load(Ordering::Relaxed) || self.cached_fingerprint.sample_count == 0 {
             let samples: Vec<_> = self.samples.iter().cloned().collect();
-            ActivityFingerprint::from_samples(&samples)
+            let fp = ActivityFingerprint::from_samples(&samples);
+            self.dirty.store(false, Ordering::Relaxed);
+            fp
         } else {
-            self.current_fingerprint.clone()
+            self.cached_fingerprint.clone()
         }
     }
 
-    /// Get the number of samples in the accumulator.
     pub fn sample_count(&self) -> usize {
         self.samples.len()
     }
 
-    /// Reset the accumulator.
     pub fn reset(&mut self) {
         self.samples.clear();
-        self.current_fingerprint = ActivityFingerprint::default();
-        self.dirty = false;
+        self.cached_fingerprint = ActivityFingerprint::default();
+        self.dirty.store(false, Ordering::Relaxed);
     }
 }
 
@@ -854,28 +744,6 @@ impl Default for ActivityFingerprintAccumulator {
     fn default() -> Self {
         Self::new()
     }
-}
-
-// =============================================================================
-// Helper Functions
-// =============================================================================
-
-fn calculate_skewness(data: &[f64], mean: f64, std: f64) -> f64 {
-    if std == 0.0 || data.is_empty() {
-        return 0.0;
-    }
-    let n = data.len() as f64;
-    let sum_cubed: f64 = data.iter().map(|&x| ((x - mean) / std).powi(3)).sum();
-    sum_cubed / n
-}
-
-fn calculate_kurtosis(data: &[f64], mean: f64, std: f64) -> f64 {
-    if std == 0.0 || data.is_empty() {
-        return 0.0;
-    }
-    let n = data.len() as f64;
-    let sum_fourth: f64 = data.iter().map(|&x| ((x - mean) / std).powi(4)).sum();
-    sum_fourth / n - 3.0 // Excess kurtosis
 }
 
 fn normalize_histogram(hist: &mut [f64]) {
@@ -893,14 +761,6 @@ fn merge_histogram(a: &mut [f64], b: &[f64], a_weight: f64, b_weight: f64) {
     }
 }
 
-fn mean_or_zero(data: &[f64]) -> f64 {
-    if data.is_empty() {
-        0.0
-    } else {
-        data.iter().sum::<f64>() / data.len() as f64
-    }
-}
-
 fn relative_similarity(a: f64, b: f64) -> f64 {
     if a == 0.0 && b == 0.0 {
         1.0
@@ -908,10 +768,6 @@ fn relative_similarity(a: f64, b: f64) -> f64 {
         1.0 - (a - b).abs() / (a + b + 0.001)
     }
 }
-
-// =============================================================================
-// Tests
-// =============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -950,15 +806,13 @@ mod tests {
     fn test_fingerprint_similarity() {
         let samples1 = make_samples(&[0, 150, 200, 180, 220, 190, 210, 175, 195, 185]);
         let samples2 = make_samples(&[0, 155, 195, 185, 215, 195, 205, 180, 190, 190]);
-        let samples3 = make_samples(&[0, 50, 50, 50, 50, 50, 50, 50, 50, 50]); // Very different
+        let samples3 = make_samples(&[0, 50, 50, 50, 50, 50, 50, 50, 50, 50]);
 
         let fp1 = ActivityFingerprint::from_samples(&samples1);
         let fp2 = ActivityFingerprint::from_samples(&samples2);
         let fp3 = ActivityFingerprint::from_samples(&samples3);
 
-        // Similar patterns should have high similarity
         let sim12 = fp1.similarity(&fp2);
-        // Different patterns should have lower similarity
         let sim13 = fp1.similarity(&fp3);
 
         assert!(sim12 > sim13, "Similar patterns should be more similar");

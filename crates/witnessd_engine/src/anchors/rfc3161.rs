@@ -112,20 +112,14 @@ impl Rfc3161Provider {
         Ok(final_request)
     }
 
-    /// Parse a TimeStampResp (RFC 3161 section 2.4.2) to extract the
-    /// embedded timestamp, serial number, and TSA name from the TSTInfo.
+    /// Extract timestamp, serial, and TSA name from a TimeStampResp (RFC 3161 s2.4.2).
     fn parse_timestamp_response(&self, response: &[u8]) -> Result<TimestampInfo, AnchorError> {
         if response.len() < 10 {
             return Err(AnchorError::InvalidFormat("Response too short".into()));
         }
 
-        // Extract TSTInfo from the CMS envelope
         let tst_info = extract_tst_info(response)?;
-
-        // Parse genTime from TSTInfo
         let gen_time = extract_generalized_time(&tst_info).unwrap_or_else(chrono::Utc::now);
-
-        // Parse serialNumber from TSTInfo
         let serial = extract_serial_number(&tst_info)
             .unwrap_or_else(|| hex::encode(&response[..std::cmp::min(8, response.len())]));
 
@@ -136,8 +130,7 @@ impl Rfc3161Provider {
         })
     }
 
-    /// Verify an RFC 3161 timestamp token by checking that the embedded
-    /// MessageImprint hash matches the expected hash.
+    /// Verify that the embedded MessageImprint hash matches `hash`.
     fn verify_timestamp_token(&self, token: &[u8], hash: &[u8; 32]) -> Result<bool, AnchorError> {
         if token.len() < 100 {
             return Err(AnchorError::InvalidFormat("Token too short".into()));
@@ -146,10 +139,7 @@ impl Rfc3161Provider {
             return Err(AnchorError::InvalidFormat("Invalid ASN.1 structure".into()));
         }
 
-        // Extract TSTInfo and verify the MessageImprint hash
         let tst_info = extract_tst_info(token)?;
-
-        // Extract the hashedMessage from the MessageImprint in TSTInfo
         let imprint_hash = extract_message_imprint_hash(&tst_info).ok_or_else(|| {
             AnchorError::InvalidFormat("Cannot extract MessageImprint hash from TSTInfo".into())
         })?;
@@ -161,19 +151,14 @@ impl Rfc3161Provider {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Minimal DER parsing helpers for RFC 3161 / CMS structures.
-//
-// Uses offset-based iteration to avoid lifetime issues with closures.
-// ---------------------------------------------------------------------------
+// Minimal DER/CMS parsing helpers. Uses byte-range offsets to sidestep
+// lifetime issues with closure-based iteration.
 
-/// A parsed DER TLV element as byte-range offsets into the source buffer.
+/// DER TLV as byte-range offsets into the source buffer.
 #[derive(Clone, Copy)]
 struct Tlv {
     tag: u8,
-    /// Start of the content (after tag+length header).
     content_start: usize,
-    /// End of the content (exclusive).
     content_end: usize,
 }
 
@@ -183,7 +168,7 @@ impl Tlv {
     }
 }
 
-/// Read a DER tag-length-value at `offset`.
+/// Read a single DER TLV at `offset`.
 fn read_tlv(data: &[u8], offset: usize) -> Option<Tlv> {
     if offset >= data.len() {
         return None;
@@ -202,8 +187,7 @@ fn read_tlv(data: &[u8], offset: usize) -> Option<Tlv> {
     })
 }
 
-/// Read a DER definite-length encoding starting at `offset`.
-/// Returns (length_value, number_of_length_bytes).
+/// Parse DER definite-length at `offset`. Returns `(value, header_bytes)`.
 fn read_der_length(data: &[u8], offset: usize) -> Option<(usize, usize)> {
     if offset >= data.len() {
         return None;
@@ -212,7 +196,7 @@ fn read_der_length(data: &[u8], offset: usize) -> Option<(usize, usize)> {
     if first < 0x80 {
         Some((first as usize, 1))
     } else if first == 0x80 {
-        None // indefinite length not supported
+        None // indefinite-length not supported
     } else {
         let num_bytes = (first & 0x7F) as usize;
         if num_bytes > 4 || offset + 1 + num_bytes > data.len() {
@@ -226,7 +210,7 @@ fn read_der_length(data: &[u8], offset: usize) -> Option<(usize, usize)> {
     }
 }
 
-/// Collect all child TLVs within a SEQUENCE/SET content region.
+/// Iterate child TLVs within a constructed content region.
 fn children(data: &[u8], start: usize, end: usize) -> Vec<Tlv> {
     let mut result = Vec::new();
     let mut pos = start;
@@ -241,22 +225,20 @@ fn children(data: &[u8], start: usize, end: usize) -> Vec<Tlv> {
     result
 }
 
-/// Shorthand: children of a content slice (offsets relative to `data`).
+/// Children of a TLV (offsets relative to `data`).
 fn children_of(data: &[u8], tlv: &Tlv) -> Vec<Tlv> {
     children(data, tlv.content_start, tlv.content_end)
 }
 
-/// Find the first child with a given tag.
+/// First child matching `tag`, if any.
 fn find_child_by_tag(data: &[u8], parent: &Tlv, tag: u8) -> Option<Tlv> {
     children_of(data, parent).into_iter().find(|c| c.tag == tag)
 }
 
-/// Extract TSTInfo bytes from a TimeStampResp or ContentInfo (CMS SignedData).
+/// Extract TSTInfo from a TimeStampResp or bare ContentInfo.
 ///
-/// Navigates: TimeStampResp → TimeStampToken (ContentInfo) → SignedData →
-/// EncapsulatedContentInfo → eContent (OCTET STRING) which contains TSTInfo.
+/// Path: TimeStampResp -> ContentInfo -> SignedData -> EncapContentInfo -> eContent.
 fn extract_tst_info(data: &[u8]) -> Result<Vec<u8>, AnchorError> {
-    // Outer SEQUENCE
     let outer = read_tlv(data, 0)
         .ok_or_else(|| AnchorError::InvalidFormat("Cannot parse outer SEQUENCE".into()))?;
     if outer.tag != 0x30 {
@@ -268,39 +250,32 @@ fn extract_tst_info(data: &[u8]) -> Result<Vec<u8>, AnchorError> {
         return Err(AnchorError::InvalidFormat("Empty outer SEQUENCE".into()));
     }
 
-    // Determine if this is a TimeStampResp (first child is SEQUENCE = PKIStatusInfo)
-    // or directly a ContentInfo (first child is OID).
+    // First child SEQUENCE => TimeStampResp wrapper; otherwise bare ContentInfo
     let content_info_tlv = if outer_kids[0].tag == 0x30 && outer_kids.len() > 1 {
-        // TimeStampResp: [PKIStatusInfo, ContentInfo(SEQUENCE)]
         &outer_kids[1]
     } else {
-        // ContentInfo directly
         &outer
     };
 
-    // ContentInfo = SEQUENCE { OID, [0] EXPLICIT content }
-    // Find [0] EXPLICIT (tag 0xA0)
+    // ContentInfo: SEQUENCE { OID, [0] EXPLICIT content }
     let explicit0 = find_child_by_tag(data, content_info_tlv, 0xA0).ok_or_else(|| {
         AnchorError::InvalidFormat("Cannot find [0] content in ContentInfo".into())
     })?;
 
-    // Inside [0]: SignedData SEQUENCE
+    // SignedData SEQUENCE inside [0]
     let signed_data = children_of(data, &explicit0)
         .into_iter()
         .find(|c| c.tag == 0x30)
         .ok_or_else(|| AnchorError::InvalidFormat("Cannot find SignedData SEQUENCE".into()))?;
 
-    // SignedData children: version, digestAlgorithms, encapContentInfo, [certs], [crls], signerInfos
-    // encapContentInfo is a SEQUENCE; look for one containing [0] EXPLICIT with OCTET STRING
+    // Walk SignedData children to find encapContentInfo -> [0] -> OCTET STRING
     for child in children_of(data, &signed_data) {
         if child.tag == 0x30 {
-            // Check if this SEQUENCE contains a [0] EXPLICIT tag
             if let Some(econtent_explicit) = find_child_by_tag(data, &child, 0xA0) {
-                // Inside [0]: OCTET STRING containing TSTInfo
                 if let Some(octet) = find_child_by_tag(data, &econtent_explicit, 0x04) {
                     return Ok(octet.content(data).to_vec());
                 }
-                // Might be the raw bytes
+                // Fallback: raw content bytes
                 return Ok(econtent_explicit.content(data).to_vec());
             }
         }
@@ -311,12 +286,8 @@ fn extract_tst_info(data: &[u8]) -> Result<Vec<u8>, AnchorError> {
     ))
 }
 
-/// Extract the GeneralizedTime from TSTInfo.
-///
-/// TSTInfo fields: version, policy, messageImprint, serialNumber, genTime, ...
-/// genTime is tagged 0x18 (GeneralizedTime).
+/// Extract `genTime` (tag 0x18) from TSTInfo.
 fn extract_generalized_time(tst_info: &[u8]) -> Option<chrono::DateTime<chrono::Utc>> {
-    // Parse TSTInfo as SEQUENCE
     let outer = read_tlv(tst_info, 0)?;
     let inner_start = if outer.tag == 0x30 {
         outer.content_start
@@ -339,12 +310,11 @@ fn extract_generalized_time(tst_info: &[u8]) -> Option<chrono::DateTime<chrono::
     None
 }
 
-/// Parse ASN.1 GeneralizedTime string to chrono DateTime.
+/// Parse ASN.1 GeneralizedTime (`YYYYMMDDHHMMSS[.frac]Z`) to `DateTime<Utc>`.
 fn parse_generalized_time(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
     use chrono::{NaiveDateTime, TimeZone};
     let s = s.trim_end_matches('Z');
 
-    // Try with fractional seconds
     if let Some((base, _frac)) = s.split_once('.') {
         if base.len() == 14 {
             let naive = NaiveDateTime::parse_from_str(base, "%Y%m%d%H%M%S").ok()?;
@@ -352,7 +322,6 @@ fn parse_generalized_time(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
         }
     }
 
-    // Without fractional seconds: YYYYMMDDHHMMSS
     if s.len() >= 14 {
         let naive = NaiveDateTime::parse_from_str(&s[..14], "%Y%m%d%H%M%S").ok()?;
         return Some(chrono::Utc.from_utc_datetime(&naive));
@@ -361,9 +330,7 @@ fn parse_generalized_time(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
     None
 }
 
-/// Extract serialNumber (INTEGER) from TSTInfo.
-///
-/// serialNumber is the 4th field (index 3) in TSTInfo.
+/// Extract `serialNumber` (4th field, INTEGER) from TSTInfo.
 fn extract_serial_number(tst_info: &[u8]) -> Option<String> {
     let outer = read_tlv(tst_info, 0)?;
     let inner_start = if outer.tag == 0x30 {
@@ -378,17 +345,13 @@ fn extract_serial_number(tst_info: &[u8]) -> Option<String> {
     };
 
     let kids = children(tst_info, inner_start, inner_end);
-    // 4th child (index 3) should be serialNumber INTEGER
     if kids.len() > 3 && kids[3].tag == 0x02 {
         return Some(hex::encode(kids[3].content(tst_info)));
     }
     None
 }
 
-/// Extract the hashedMessage from MessageImprint inside TSTInfo.
-///
-/// messageImprint is the 3rd child (index 2) of TSTInfo.
-/// MessageImprint = SEQUENCE { hashAlgorithm, hashedMessage OCTET STRING }
+/// Extract `hashedMessage` from the MessageImprint (3rd child) of TSTInfo.
 fn extract_message_imprint_hash(tst_info: &[u8]) -> Option<[u8; 32]> {
     let outer = read_tlv(tst_info, 0)?;
     let inner_start = if outer.tag == 0x30 {
@@ -403,13 +366,11 @@ fn extract_message_imprint_hash(tst_info: &[u8]) -> Option<[u8; 32]> {
     };
 
     let kids = children(tst_info, inner_start, inner_end);
-    // 3rd child (index 2) is messageImprint SEQUENCE
     if kids.len() <= 2 || kids[2].tag != 0x30 {
         return None;
     }
 
     let imprint_kids = children_of(tst_info, &kids[2]);
-    // 2nd child (index 1) is hashedMessage OCTET STRING
     if imprint_kids.len() > 1 && imprint_kids[1].tag == 0x04 {
         let content = imprint_kids[1].content(tst_info);
         if content.len() == 32 {
@@ -514,7 +475,7 @@ mod tests {
     fn test_verify_token_too_short() {
         let provider = Rfc3161Provider::with_defaults().unwrap();
         let hash = [0u8; 32];
-        let token = vec![0u8; 50]; // < 100 bytes
+        let token = vec![0u8; 50];
         let result = provider.verify_timestamp_token(&token, &hash);
         assert!(result.is_err());
         match result {
@@ -528,7 +489,7 @@ mod tests {
         let provider = Rfc3161Provider::with_defaults().unwrap();
         let hash = [0u8; 32];
         let mut token = vec![0u8; 150];
-        token[0] = 0xFF; // Not 0x30
+        token[0] = 0xFF;
         let result = provider.verify_timestamp_token(&token, &hash);
         assert!(result.is_err());
         match result {
@@ -542,9 +503,8 @@ mod tests {
         let provider = Rfc3161Provider::with_defaults().unwrap();
         let hash = [0u8; 32];
         let mut token = vec![0u8; 150];
-        token[0] = 0x30; // ASN.1 SEQUENCE but invalid TSTInfo
+        token[0] = 0x30;
         let result = provider.verify_timestamp_token(&token, &hash);
-        // Must return Err when TSTInfo cannot be extracted, not Ok(true)
         assert!(result.is_err());
     }
 

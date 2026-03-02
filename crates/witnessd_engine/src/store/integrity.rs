@@ -64,7 +64,7 @@ impl SecureStore {
             CREATE INDEX IF NOT EXISTS idx_secure_events_file ON secure_events(file_path, timestamp_ns);"
         )?;
 
-        // Migration: add hardware_counter column to existing databases
+        // Migration: add `hardware_counter` to pre-existing schemas
         let has_column: bool = self
             .conn
             .prepare("SELECT hardware_counter FROM secure_events LIMIT 0")

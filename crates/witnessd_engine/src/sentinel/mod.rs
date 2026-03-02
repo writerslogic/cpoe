@@ -1,17 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
-//! Active Document Sentinel - Background document tracking daemon
+//! Background document tracking daemon.
 //!
-//! The Active Document Sentinel monitors which documents have user focus and
-//! manages tracking sessions automatically. It operates invisibly during
-//! normal writing, only surfacing when the user explicitly requests status.
+//! Monitors focused documents and manages tracking sessions automatically.
+//! Operates invisibly during writing, surfacing only on explicit status requests.
 //!
-//! Key features:
-//!   - Automatic detection of focused documents across applications
-//!   - Debounced focus change handling (500ms default)
-//!   - Multi-document session management
-//!   - Shadow buffers for unsaved documents
-//!   - Platform-specific focus detection (macOS, Linux, Windows)
+//! - Debounced focus change handling (500ms default)
+//! - Multi-document session management with shadow buffers
+//! - Platform-specific focus detection (macOS, Linux, Windows)
 
 pub mod core;
 pub mod daemon;
@@ -34,14 +30,13 @@ pub mod windows_focus;
 #[cfg(test)]
 mod tests;
 
-// Re-export everything that was previously public from the monolithic sentinel.rs
 pub use self::core::Sentinel;
 pub use self::daemon::{
-    cmd_start, cmd_start_foreground, cmd_status, cmd_stop, cmd_track, cmd_untrack, DaemonManager,
-    DaemonState, DaemonStatus,
+    cmd_start, cmd_start_foreground, cmd_status, cmd_stop, cmd_track, cmd_untrack, DaemonHandle,
+    DaemonManager, DaemonState, DaemonStatus,
 };
 pub use self::error::{Result, SentinelError};
-pub use self::focus::{FocusMonitor, PollingFocusMonitor, WindowProvider};
+pub use self::focus::{PollingSentinelFocusTracker, SentinelFocusTracker, WindowProvider};
 pub use self::helpers::{
     check_idle_sessions_sync, compute_file_hash, create_document_hash_payload,
     create_session_start_payload, end_all_sessions_sync, end_session_sync, focus_document_sync,

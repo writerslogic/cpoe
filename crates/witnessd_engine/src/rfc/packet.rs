@@ -29,52 +29,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use super::fixed_point::{Centibits, Decibits, Millibits, RhoMillibits, SlopeDecibits};
-
-/// Serde helper for variable-length hex-encoded bytes.
-mod hex_bytes_vec {
-    use serde::{de, Deserialize, Deserializer, Serializer};
-
-    pub fn serialize<S>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&hex::encode(bytes))
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        hex::decode(&s).map_err(de::Error::custom)
-    }
-}
-
-/// Serde helper for optional hex-encoded byte vectors.
-mod hex_bytes_vec_opt {
-    use serde::{de, Deserialize, Deserializer, Serializer};
-
-    pub fn serialize<S>(value: &Option<Vec<u8>>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match value {
-            Some(bytes) => serializer.serialize_str(&hex::encode(bytes)),
-            None => serializer.serialize_none(),
-        }
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let opt: Option<String> = Option::deserialize(deserializer)?;
-        match opt {
-            Some(s) => Ok(Some(hex::decode(&s).map_err(de::Error::custom)?)),
-            None => Ok(None),
-        }
-    }
-}
+use super::serde_helpers::{hex_bytes_vec, hex_bytes_vec_opt};
 
 /// CBOR semantic tag for evidence packets.
 /// Per draft-condrey-rats-pop CDDL: pop-evidence = #6.1129336656(evidence-packet)

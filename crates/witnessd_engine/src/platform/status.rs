@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Information about the currently focused application and document.
+/// Focused application and document metadata.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FocusInfo {
     pub app_name: String,
@@ -13,7 +13,7 @@ pub struct FocusInfo {
     pub window_title: Option<String>,
 }
 
-/// Permission status for platform-specific security features.
+/// Platform security permission status (accessibility, input monitoring, etc.).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PermissionStatus {
     pub accessibility: bool,

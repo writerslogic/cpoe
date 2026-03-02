@@ -9,38 +9,23 @@ use std::time::{Duration, SystemTime};
 use tokio::sync::mpsc;
 use tokio::time::interval;
 
-// ============================================================================
-// Focus Monitor Trait
-// ============================================================================
-
-/// Platform-specific focus monitoring
-pub trait FocusMonitor: Send + Sync {
-    /// Start monitoring for focus changes
+/// Platform-specific focus monitoring trait.
+pub trait SentinelFocusTracker: Send + Sync {
     fn start(&self) -> Result<()>;
-
-    /// Stop monitoring
     fn stop(&self) -> Result<()>;
-
-    /// Get the current window info
     fn active_window(&self) -> Option<WindowInfo>;
-
-    /// Check if monitoring is available on this platform
     fn available(&self) -> (bool, String);
-
-    /// Get focus events receiver
     fn focus_events(&self) -> mpsc::Receiver<FocusEvent>;
-
-    /// Get change events receiver
     fn change_events(&self) -> mpsc::Receiver<ChangeEvent>;
 }
 
-/// Provider for active window information (platform-specific)
+/// Provider for active window information. Implemented per-platform.
 pub trait WindowProvider: Send + Sync + 'static {
     fn get_active_window(&self) -> Option<WindowInfo>;
 }
 
-/// Generic polling focus monitor that uses a WindowProvider
-pub struct PollingFocusMonitor<P: WindowProvider + ?Sized> {
+/// Polling-based focus monitor backed by a `WindowProvider`.
+pub struct PollingSentinelFocusTracker<P: WindowProvider + ?Sized> {
     provider: Arc<P>,
     config: Arc<SentinelConfig>,
     running: Arc<RwLock<bool>>,
@@ -52,7 +37,7 @@ pub struct PollingFocusMonitor<P: WindowProvider + ?Sized> {
     poll_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
-impl<P: WindowProvider + ?Sized> PollingFocusMonitor<P> {
+impl<P: WindowProvider + ?Sized> PollingSentinelFocusTracker<P> {
     pub fn new(provider: Arc<P>, config: Arc<SentinelConfig>) -> Self {
         let (focus_tx, focus_rx) = mpsc::channel(100);
         let (change_tx, change_rx) = mpsc::channel(100);
@@ -70,7 +55,7 @@ impl<P: WindowProvider + ?Sized> PollingFocusMonitor<P> {
     }
 }
 
-impl<P: WindowProvider + ?Sized> FocusMonitor for PollingFocusMonitor<P> {
+impl<P: WindowProvider + ?Sized> SentinelFocusTracker for PollingSentinelFocusTracker<P> {
     fn start(&self) -> Result<()> {
         let mut running = self.running.write().unwrap();
         if *running {
@@ -85,7 +70,6 @@ impl<P: WindowProvider + ?Sized> FocusMonitor for PollingFocusMonitor<P> {
         let provider = Arc::clone(&self.provider);
         let poll_interval = Duration::from_millis(self.config.poll_interval_ms);
 
-        // Start polling loop
         let handle = tokio::spawn(async move {
             let mut last_app = String::new();
             let mut interval_timer = interval(poll_interval);
@@ -104,9 +88,7 @@ impl<P: WindowProvider + ?Sized> FocusMonitor for PollingFocusMonitor<P> {
                         "unknown".to_string()
                     };
 
-                    // Check if focus changed
                     if current_app != last_app {
-                        // Send focus lost for previous app
                         if !last_app.is_empty() {
                             let _ = focus_tx
                                 .send(FocusEvent {
@@ -121,7 +103,6 @@ impl<P: WindowProvider + ?Sized> FocusMonitor for PollingFocusMonitor<P> {
                                 .await;
                         }
 
-                        // Check if new app should be tracked
                         let app_name = info.application.clone();
                         if config.is_app_allowed(&info.application, &app_name) {
                             let _ = focus_tx

@@ -13,9 +13,6 @@
 
 use serde::{Deserialize, Serialize};
 
-/// RFC-compliant jitter-binding structure.
-///
-/// CDDL Definition:
 /// ```cddl
 /// jitter-binding = {
 ///   1: entropy-commitment,      ; Hash commitment
@@ -29,41 +26,33 @@ use serde::{Deserialize, Serialize};
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JitterBinding {
-    /// Hash commitment to entropy sources (key 1).
     #[serde(rename = "1")]
     pub entropy_commitment: EntropyCommitment,
 
-    /// Entropy source descriptors (key 2).
     #[serde(rename = "2")]
     pub sources: Vec<SourceDescriptor>,
 
-    /// Statistical summary of jitter data (key 3).
     #[serde(rename = "3")]
     pub summary: JitterSummary,
 
-    /// HMAC binding to document state (key 4).
     #[serde(rename = "4")]
     pub binding_mac: BindingMac,
 
-    /// Raw interval data, optional (key 5).
-    /// Only included for Enhanced/Maximum tiers.
+    /// Enhanced/Maximum tiers only.
     #[serde(rename = "5", skip_serializing_if = "Option::is_none")]
     pub raw_intervals: Option<RawIntervals>,
 
-    /// Active behavioral probes, optional (key 6).
-    /// Galton Invariant and Reflex Gate tests.
+    /// Galton Invariant + Reflex Gate.
     #[serde(rename = "6", skip_serializing_if = "Option::is_none")]
     pub active_probes: Option<ActiveProbes>,
 
-    /// Topological phase space analysis, optional (key 7).
-    /// Takens' theorem delay-coordinate embedding.
+    /// Takens' delay-coordinate embedding.
     #[serde(rename = "7", skip_serializing_if = "Option::is_none")]
     pub labyrinth_structure: Option<LabyrinthStructure>,
 }
 
-/// Entropy commitment - hash of concatenated entropy sources.
+/// Hash commitment over concatenated entropy sources.
 ///
-/// CDDL Definition:
 /// ```cddl
 /// entropy-commitment = {
 ///   1: bstr .size 32,           ; SHA-256 hash of sources
@@ -73,22 +62,17 @@ pub struct JitterBinding {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntropyCommitment {
-    /// SHA-256 hash of concatenated entropy sources.
-    #[serde(rename = "1", with = "hex_bytes")]
+    #[serde(rename = "1", with = "super::serde_helpers::hex_bytes")]
     pub hash: [u8; 32],
 
-    /// Timestamp in Unix epoch milliseconds.
     #[serde(rename = "2")]
     pub timestamp_ms: u64,
 
-    /// Previous commitment hash (chain linkage).
-    #[serde(rename = "3", with = "hex_bytes")]
+    /// Chain linkage.
+    #[serde(rename = "3", with = "super::serde_helpers::hex_bytes")]
     pub previous_hash: [u8; 32],
 }
 
-/// Entropy source descriptor.
-///
-/// CDDL Definition:
 /// ```cddl
 /// source-descriptor = {
 ///   1: tstr,                    ; Source type identifier
@@ -99,26 +83,23 @@ pub struct EntropyCommitment {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceDescriptor {
-    /// Source type identifier (e.g., "keyboard.usb", "keyboard.bluetooth", "witnessd_jitter").
+    /// e.g., "keyboard.usb", "witnessd_jitter".
     #[serde(rename = "1")]
     pub source_type: String,
 
-    /// Contribution weight (0-1000, where 1000 = 100%).
+    /// 0-1000 (1000 = 100%).
     #[serde(rename = "2")]
     pub weight: u16,
 
-    /// Device fingerprint (optional).
     #[serde(rename = "3", skip_serializing_if = "Option::is_none")]
     pub device_fingerprint: Option<String>,
 
-    /// Transport calibration data (optional).
     #[serde(rename = "4", skip_serializing_if = "Option::is_none")]
     pub transport_calibration: Option<TransportCalibration>,
 }
 
-/// Transport calibration data for per-transport baseline measurements.
+/// Per-transport baseline latency calibration.
 ///
-/// CDDL Definition:
 /// ```cddl
 /// transport-calibration = {
 ///   1: tstr,                    ; Transport type (usb, bluetooth, internal, etc.)
@@ -129,26 +110,19 @@ pub struct SourceDescriptor {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransportCalibration {
-    /// Transport type identifier.
     #[serde(rename = "1")]
     pub transport: String,
 
-    /// Baseline latency in microseconds (minimum observed interval).
     #[serde(rename = "2")]
     pub baseline_latency_us: u64,
 
-    /// Latency variance in microseconds.
     #[serde(rename = "3")]
     pub latency_variance_us: u64,
 
-    /// Calibration timestamp in Unix epoch milliseconds.
     #[serde(rename = "4")]
     pub calibrated_at_ms: u64,
 }
 
-/// Jitter summary statistics.
-///
-/// CDDL Definition:
 /// ```cddl
 /// jitter-summary = {
 ///   1: uint,                    ; Sample count
@@ -162,39 +136,33 @@ pub struct TransportCalibration {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JitterSummary {
-    /// Total number of samples.
     #[serde(rename = "1")]
     pub sample_count: u64,
 
-    /// Mean interval in microseconds.
     #[serde(rename = "2")]
     pub mean_interval_us: f64,
 
-    /// Standard deviation of intervals.
     #[serde(rename = "3")]
     pub std_dev: f64,
 
-    /// Coefficient of variation (std_dev / mean).
+    /// std_dev / mean.
     #[serde(rename = "4")]
     pub coefficient_of_variation: f64,
 
-    /// Percentile distribution [10th, 25th, 50th, 75th, 90th].
     #[serde(rename = "5")]
     pub percentiles: [f64; 5],
 
-    /// Shannon entropy in bits.
+    /// Shannon entropy.
     #[serde(rename = "6")]
     pub entropy_bits: f64,
 
-    /// Hurst exponent for long-range dependence (optional).
-    /// H_e ≈ 0.7 for human input; reject 0.5 (white noise) or 1.0 (predictable).
+    /// H_e ~ 0.7 for human; reject 0.5 or 1.0.
     #[serde(rename = "7", skip_serializing_if = "Option::is_none")]
     pub hurst_exponent: Option<f64>,
 }
 
-/// Binding MAC for document state attestation.
+/// HMAC binding to document state at a point in time.
 ///
-/// CDDL Definition:
 /// ```cddl
 /// binding-mac = {
 ///   1: bstr .size 32,           ; HMAC-SHA256 value
@@ -205,28 +173,45 @@ pub struct JitterSummary {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BindingMac {
-    /// HMAC-SHA256 binding the jitter data to document state.
-    #[serde(rename = "1", with = "hex_bytes")]
+    #[serde(rename = "1", with = "super::serde_helpers::hex_bytes")]
     pub mac: [u8; 32],
 
-    /// Document content hash at time of binding.
-    #[serde(rename = "2", with = "hex_bytes")]
+    #[serde(rename = "2", with = "super::serde_helpers::hex_bytes")]
     pub document_hash: [u8; 32],
 
-    /// Cumulative keystroke count at binding.
+    /// Cumulative.
     #[serde(rename = "3")]
     pub keystroke_count: u64,
 
-    /// Timestamp in Unix epoch milliseconds.
     #[serde(rename = "4")]
     pub timestamp_ms: u64,
 }
 
-/// Raw interval data for forensic analysis.
-///
-/// Only included for Enhanced/Maximum evidence tiers.
-///
-/// CDDL Definition:
+impl BindingMac {
+    /// Compute the HMAC-SHA256 binding over document state.
+    pub fn compute(
+        key: &[u8],
+        document_hash: [u8; 32],
+        keystroke_count: u64,
+        timestamp_ms: u64,
+        entropy_hash: &[u8; 32],
+    ) -> Self {
+        use hmac::{Hmac, Mac};
+        use sha2::Sha256;
+        let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC accepts any key size");
+        mac.update(&document_hash);
+        mac.update(&keystroke_count.to_be_bytes());
+        mac.update(&timestamp_ms.to_be_bytes());
+        mac.update(entropy_hash);
+        Self {
+            mac: mac.finalize().into_bytes().into(),
+            document_hash,
+            keystroke_count,
+            timestamp_ms,
+        }
+    }
+}
+
 /// ```cddl
 /// raw-intervals = {
 ///   1: [* uint],                ; Interval values (microseconds)
@@ -236,22 +221,16 @@ pub struct BindingMac {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawIntervals {
-    /// Raw interval values in microseconds.
     #[serde(rename = "1")]
     pub intervals: Vec<u32>,
 
-    /// Compression method: 0=none, 1=delta encoding, 2=zstd.
     #[serde(rename = "2")]
     pub compression_method: u8,
 
-    /// Compressed data blob (if compression_method != 0).
     #[serde(rename = "3", skip_serializing_if = "Option::is_none")]
     pub compressed_data: Option<Vec<u8>>,
 }
 
-/// Active behavioral probes.
-///
-/// CDDL Definition:
 /// ```cddl
 /// active-probes = {
 ///   ? 1: galton-invariant,
@@ -260,22 +239,16 @@ pub struct RawIntervals {
 /// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ActiveProbes {
-    /// Galton Invariant (binomial absorption test).
     #[serde(rename = "1", skip_serializing_if = "Option::is_none")]
     pub galton_invariant: Option<GaltonInvariant>,
 
-    /// Reflex Gate (reflexive return latency test).
     #[serde(rename = "2", skip_serializing_if = "Option::is_none")]
     pub reflex_gate: Option<ReflexGate>,
 }
 
-/// Galton Invariant - absorption coefficient from binomial stimulus.
+/// Binomial absorption test — human responses show characteristic
+/// coefficients distinct from automated input.
 ///
-/// Based on the Galton Board: measures natural variation in reaction
-/// to pseudo-random stimuli. Human responses show characteristic
-/// absorption coefficients distinct from automated input.
-///
-/// CDDL Definition:
 /// ```cddl
 /// galton-invariant = {
 ///   1: float64,                 ; Absorption coefficient (0.0-1.0)
@@ -287,34 +260,25 @@ pub struct ActiveProbes {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GaltonInvariant {
-    /// Measured absorption coefficient (0.0-1.0).
     #[serde(rename = "1")]
     pub absorption_coefficient: f64,
 
-    /// Number of stimuli presented.
     #[serde(rename = "2")]
     pub stimulus_count: u32,
 
-    /// Expected absorption coefficient (calibrated baseline).
     #[serde(rename = "3")]
     pub expected_absorption: f64,
 
-    /// Z-score deviation from expected.
     #[serde(rename = "4")]
     pub z_score: f64,
 
-    /// Whether the test passed (within 2σ of expected).
     #[serde(rename = "5")]
     pub passed: bool,
 }
 
-/// Reflex Gate - reflexive return latency measurement.
+/// Backspace-after-typo latency follows a characteristic distribution
+/// that is difficult to simulate.
 ///
-/// Measures the latency of reflexive corrections (e.g., backspace
-/// after typo). Human reflexive responses have characteristic
-/// latency distributions that are difficult to simulate.
-///
-/// CDDL Definition:
 /// ```cddl
 /// reflex-gate = {
 ///   1: float64,                 ; Mean reflex latency (ms)
@@ -326,33 +290,25 @@ pub struct GaltonInvariant {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReflexGate {
-    /// Mean reflexive correction latency in milliseconds.
     #[serde(rename = "1")]
     pub mean_latency_ms: f64,
 
-    /// Standard deviation of latency.
     #[serde(rename = "2")]
     pub std_dev_ms: f64,
 
-    /// Number of reflexive events measured.
     #[serde(rename = "3")]
     pub event_count: u32,
 
-    /// Percentile distribution [10th, 25th, 50th, 75th, 90th].
     #[serde(rename = "4")]
     pub percentiles: [f64; 5],
 
-    /// Whether the test passed (within human range: 150-400ms typical).
+    /// Typically 150-400ms for humans.
     #[serde(rename = "5")]
     pub passed: bool,
 }
 
-/// Labyrinth Structure - topological phase space analysis.
+/// Detects characteristic attractors in human typing via Takens' embedding.
 ///
-/// Uses Takens' theorem for delay-coordinate embedding to detect
-/// characteristic attractors in human typing patterns.
-///
-/// CDDL Definition:
 /// ```cddl
 /// labyrinth-structure = {
 ///   1: uint,                    ; Embedding dimension (typically 3-5)
@@ -365,37 +321,31 @@ pub struct ReflexGate {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LabyrinthStructure {
-    /// Embedding dimension (typically 3-5 for typing patterns).
     #[serde(rename = "1")]
     pub embedding_dimension: u8,
 
-    /// Time delay in samples for embedding.
     #[serde(rename = "2")]
     pub time_delay: u16,
 
-    /// Sampled attractor points in phase space.
-    /// Each inner vector has length = embedding_dimension.
+    /// Each inner vec has length `embedding_dimension`.
     #[serde(rename = "3")]
     pub attractor_points: Vec<Vec<f64>>,
 
-    /// Betti numbers describing topology [β₀, β₁, β₂, ...].
-    /// β₀ = connected components, β₁ = loops, β₂ = voids.
+    /// β₀=components, β₁=loops, β₂=voids.
     #[serde(rename = "4")]
     pub betti_numbers: Vec<u32>,
 
-    /// Estimated Lyapunov exponent (chaos measure).
-    /// Positive = chaotic (human-like), zero/negative = periodic.
+    /// Positive = chaotic (human-like), non-positive = periodic.
+    /// `None` when not computed from source data.
     #[serde(rename = "5")]
-    pub lyapunov_exponent: f64,
+    pub lyapunov_exponent: Option<f64>,
 
-    /// Correlation dimension estimate.
-    /// Non-integer values suggest fractal attractor (human-like).
+    /// Non-integer values suggest fractal attractor.
     #[serde(rename = "6")]
     pub correlation_dimension: f64,
 }
 
 impl JitterBinding {
-    /// Create a new JitterBinding with required fields.
     pub fn new(
         entropy_commitment: EntropyCommitment,
         sources: Vec<SourceDescriptor>,
@@ -413,57 +363,44 @@ impl JitterBinding {
         }
     }
 
-    /// Add raw intervals (for Enhanced/Maximum tiers).
     pub fn with_raw_intervals(mut self, intervals: RawIntervals) -> Self {
         self.raw_intervals = Some(intervals);
         self
     }
 
-    /// Add active probes.
     pub fn with_active_probes(mut self, probes: ActiveProbes) -> Self {
         self.active_probes = Some(probes);
         self
     }
 
-    /// Add labyrinth structure.
     pub fn with_labyrinth(mut self, labyrinth: LabyrinthStructure) -> Self {
         self.labyrinth_structure = Some(labyrinth);
         self
     }
 
-    /// Verify the binding MAC against provided seed.
+    /// Verify the binding MAC against the provided HMAC seed.
     pub fn verify_binding(&self, seed: &[u8]) -> bool {
-        use hmac::{Hmac, Mac};
-        use sha2::Sha256;
-
-        type HmacSha256 = Hmac<Sha256>;
-
-        let mut mac = match HmacSha256::new_from_slice(seed) {
-            Ok(m) => m,
-            Err(_) => return false,
-        };
-
-        mac.update(&self.binding_mac.document_hash);
-        mac.update(&self.binding_mac.keystroke_count.to_be_bytes());
-        mac.update(&self.binding_mac.timestamp_ms.to_be_bytes());
-        mac.update(&self.entropy_commitment.hash);
-
-        mac.verify_slice(&self.binding_mac.mac).is_ok()
+        let expected = BindingMac::compute(
+            seed,
+            self.binding_mac.document_hash,
+            self.binding_mac.keystroke_count,
+            self.binding_mac.timestamp_ms,
+            &self.entropy_commitment.hash,
+        );
+        subtle::ConstantTimeEq::ct_eq(&self.binding_mac.mac[..], &expected.mac[..]).unwrap_u8() == 1
     }
 
-    /// Check if Hurst exponent is within human range.
-    /// Human typing typically has H_e ≈ 0.7 (long-range dependence).
+    /// Returns `true` if Hurst exponent is within human range (0.55-0.85).
     pub fn is_hurst_valid(&self) -> bool {
         if let Some(h) = self.summary.hurst_exponent {
-            // Reject white noise (0.5) and perfectly predictable (1.0)
-            // Accept range: 0.55 to 0.85 as human-like
+            // Reject white noise (H=0.5) and perfectly predictable (H=1.0)
             h > 0.55 && h < 0.85
         } else {
-            true // No Hurst exponent = not evaluated
+            true
         }
     }
 
-    /// Check if all active probes passed.
+    /// Returns `true` if all active probes passed (or none present).
     pub fn probes_passed(&self) -> bool {
         if let Some(probes) = &self.active_probes {
             let galton_ok = probes
@@ -478,17 +415,14 @@ impl JitterBinding {
                 .unwrap_or(true);
             galton_ok && reflex_ok
         } else {
-            true // No probes = not evaluated
+            true
         }
     }
 
-    /// Comprehensive validation of the JitterBinding structure.
-    ///
-    /// Returns a list of validation errors, or empty if valid.
+    /// Validate all fields. Returns a list of errors (empty if valid).
     pub fn validate(&self) -> Vec<String> {
         let mut errors = Vec::new();
 
-        // Validate entropy commitment
         if self.entropy_commitment.hash == [0u8; 32] {
             errors.push("entropy commitment hash is zero".into());
         }
@@ -496,7 +430,6 @@ impl JitterBinding {
             errors.push("entropy commitment timestamp is zero".into());
         }
 
-        // Validate sources
         if self.sources.is_empty() {
             errors.push("no entropy sources declared".into());
         }
@@ -513,7 +446,6 @@ impl JitterBinding {
             }
         }
 
-        // Validate summary statistics
         if self.summary.sample_count == 0 {
             errors.push("sample count is zero".into());
         }
@@ -530,8 +462,7 @@ impl JitterBinding {
             errors.push("entropy bits is negative".into());
         }
 
-        // Validate percentiles are monotonically increasing
-        // Percentiles are at indices [0,1,2,3,4] = [10th, 25th, 50th, 75th, 90th]
+        // Percentiles must be monotonically non-decreasing
         for i in 1..5 {
             if self.summary.percentiles[i] < self.summary.percentiles[i - 1] {
                 errors.push(format!(
@@ -545,14 +476,12 @@ impl JitterBinding {
             }
         }
 
-        // Validate Hurst exponent range if present
         if let Some(h) = self.summary.hurst_exponent {
             if !(0.0..=1.0).contains(&h) {
                 errors.push(format!("Hurst exponent {} out of range [0, 1]", h));
             }
         }
 
-        // Validate binding MAC
         if self.binding_mac.mac == [0u8; 32] {
             errors.push("binding MAC is zero".into());
         }
@@ -563,7 +492,6 @@ impl JitterBinding {
             errors.push("binding MAC timestamp is zero".into());
         }
 
-        // Validate active probes if present
         if let Some(probes) = &self.active_probes {
             if let Some(galton) = &probes.galton_invariant {
                 if galton.absorption_coefficient < 0.0 || galton.absorption_coefficient > 1.0 {
@@ -586,7 +514,6 @@ impl JitterBinding {
             }
         }
 
-        // Validate labyrinth structure if present
         if let Some(labyrinth) = &self.labyrinth_structure {
             if labyrinth.embedding_dimension < 2 {
                 errors.push("labyrinth embedding dimension < 2".into());
@@ -605,45 +532,10 @@ impl JitterBinding {
         errors
     }
 
-    /// Check if the binding is valid (no validation errors).
     pub fn is_valid(&self) -> bool {
         self.validate().is_empty()
     }
 }
-
-/// Serde helper for hex-encoded fixed-size byte arrays.
-mod hex_bytes {
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    pub fn serialize<S, const N: usize>(bytes: &[u8; N], serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&hex::encode(bytes))
-    }
-
-    pub fn deserialize<'de, D, const N: usize>(deserializer: D) -> Result<[u8; N], D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s: String = Deserialize::deserialize(deserializer)?;
-        let bytes = hex::decode(&s).map_err(serde::de::Error::custom)?;
-        if bytes.len() != N {
-            return Err(serde::de::Error::custom(format!(
-                "expected {} bytes, got {}",
-                N,
-                bytes.len()
-            )));
-        }
-        let mut arr = [0u8; N];
-        arr.copy_from_slice(&bytes);
-        Ok(arr)
-    }
-}
-
-// ============================================
-// Conversion from analysis module types
-// ============================================
 
 impl From<&crate::analysis::active_probes::GaltonInvariantResult> for GaltonInvariant {
     fn from(result: &crate::analysis::active_probes::GaltonInvariantResult) -> Self {
@@ -663,7 +555,6 @@ impl From<&crate::analysis::active_probes::ReflexGateResult> for ReflexGate {
             mean_latency_ms: result.mean_latency_ms,
             std_dev_ms: result.std_latency_ms,
             event_count: result.response_count as u32,
-            // Estimate percentiles from mean and std (assuming normal distribution)
             percentiles: estimate_percentiles(result.mean_latency_ms, result.std_latency_ms),
             passed: result.is_valid,
         }
@@ -681,7 +572,7 @@ impl From<&crate::analysis::active_probes::ActiveProbeResults> for ActiveProbes 
 
 impl From<&crate::analysis::labyrinth::LabyrinthAnalysis> for LabyrinthStructure {
     fn from(analysis: &crate::analysis::labyrinth::LabyrinthAnalysis) -> Self {
-        // Sample attractor points (simplified - in production would capture actual points)
+        // TODO: capture actual attractor points in production
         let attractor_points: Vec<Vec<f64>> = Vec::new();
 
         Self {
@@ -693,13 +584,13 @@ impl From<&crate::analysis::labyrinth::LabyrinthAnalysis> for LabyrinthStructure
                 analysis.betti_numbers[1] as u32,
                 analysis.betti_numbers[2] as u32,
             ],
-            lyapunov_exponent: 0.0, // Would need separate calculation
+            lyapunov_exponent: None,
             correlation_dimension: analysis.correlation_dimension,
         }
     }
 }
 
-/// Estimate percentiles from mean and std assuming approximate normality.
+/// Estimate percentiles from mean and std assuming normal distribution.
 fn estimate_percentiles(mean: f64, std: f64) -> [f64; 5] {
     // z-scores for 10th, 25th, 50th, 75th, 90th percentiles
     let z_scores = [-1.28, -0.67, 0.0, 0.67, 1.28];
@@ -762,7 +653,6 @@ mod tests {
     fn test_jitter_binding_serialization() {
         let binding = create_test_binding();
 
-        // Test JSON roundtrip
         let json = serde_json::to_string_pretty(&binding).unwrap();
         let decoded: JitterBinding = serde_json::from_str(&json).unwrap();
 
@@ -774,19 +664,15 @@ mod tests {
     fn test_hurst_validation() {
         let mut binding = create_test_binding();
 
-        // Valid Hurst exponent
         binding.summary.hurst_exponent = Some(0.72);
         assert!(binding.is_hurst_valid());
 
-        // White noise (invalid)
         binding.summary.hurst_exponent = Some(0.5);
         assert!(!binding.is_hurst_valid());
 
-        // Perfectly predictable (invalid)
         binding.summary.hurst_exponent = Some(1.0);
         assert!(!binding.is_hurst_valid());
 
-        // No Hurst (not evaluated)
         binding.summary.hurst_exponent = None;
         assert!(binding.is_hurst_valid());
     }
@@ -815,7 +701,6 @@ mod tests {
         binding.active_probes = Some(probes);
         assert!(binding.probes_passed());
 
-        // Test failing probe
         binding
             .active_probes
             .as_mut()
@@ -874,7 +759,7 @@ mod tests {
     #[test]
     fn test_jitter_binding_validation_non_monotonic_percentiles() {
         let mut binding = create_test_binding();
-        binding.summary.percentiles = [100.0, 50.0, 75.0, 80.0, 90.0]; // Non-monotonic
+        binding.summary.percentiles = [100.0, 50.0, 75.0, 80.0, 90.0];
         let errors = binding.validate();
         assert!(errors.iter().any(|e| e.contains("not monotonic")));
     }

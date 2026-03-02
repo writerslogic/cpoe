@@ -1,34 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
-//! Transport-specific calibration for per-transport baseline latency.
-//!
-//! This module provides calibration functionality to measure and store
-//! baseline latency characteristics for different input transport types
-//! (USB, Bluetooth, internal, etc.).
+//! Per-transport baseline latency calibration (USB, Bluetooth, internal, etc.).
 
 use crate::platform::TransportType;
 use crate::rfc::jitter_binding::TransportCalibration;
 use std::collections::HashMap;
 
-/// Calibrator for measuring per-transport baseline latency.
-///
-/// Collects interval samples and computes baseline metrics for each
-/// transport type encountered during keystroke capture.
 pub struct TransportCalibrator {
-    /// Samples per transport type (intervals in microseconds).
+    /// Intervals in microseconds, keyed by transport type.
     samples: HashMap<TransportType, Vec<u64>>,
-    /// Minimum samples required for valid calibration.
     min_samples: usize,
-    /// Maximum samples to retain per transport.
     max_samples: usize,
 }
 
 impl TransportCalibrator {
-    /// Create a new transport calibrator.
-    ///
-    /// # Arguments
-    /// * `min_samples` - Minimum samples required before calibration is valid
-    /// * `max_samples` - Maximum samples to retain per transport (rolling window)
     pub fn new(min_samples: usize, max_samples: usize) -> Self {
         Self {
             samples: HashMap::new(),
@@ -37,47 +22,35 @@ impl TransportCalibrator {
         }
     }
 
-    /// Create a calibrator with default settings.
     pub fn with_defaults() -> Self {
         Self::new(50, 1000)
     }
 
-    /// Record an interval sample for a transport type.
-    ///
-    /// # Arguments
-    /// * `transport` - The transport type for this sample
-    /// * `interval_us` - The keystroke interval in microseconds
     pub fn record_sample(&mut self, transport: TransportType, interval_us: u64) {
         let samples = self.samples.entry(transport).or_default();
         samples.push(interval_us);
 
-        // Trim to max_samples (keep most recent)
         if samples.len() > self.max_samples {
             let excess = samples.len() - self.max_samples;
             samples.drain(0..excess);
         }
     }
 
-    /// Check if calibration is available for a transport type.
     pub fn is_calibrated(&self, transport: TransportType) -> bool {
         self.samples
             .get(&transport)
             .is_some_and(|s| s.len() >= self.min_samples)
     }
 
-    /// Get calibration data for a transport type.
-    ///
-    /// Returns None if insufficient samples are available.
+    /// Returns `None` if fewer than `min_samples` are available.
     pub fn get_calibration(&self, transport: TransportType) -> Option<TransportCalibration> {
         let samples = self.samples.get(&transport)?;
         if samples.len() < self.min_samples {
             return None;
         }
 
-        // Baseline = minimum observed interval
         let baseline = *samples.iter().min()?;
 
-        // Calculate variance
         let mean: f64 = samples.iter().map(|&x| x as f64).sum::<f64>() / samples.len() as f64;
         let variance: f64 = samples
             .iter()
@@ -99,7 +72,6 @@ impl TransportCalibrator {
         })
     }
 
-    /// Get all available calibrations.
     pub fn all_calibrations(&self) -> HashMap<TransportType, TransportCalibration> {
         self.samples
             .keys()
@@ -107,17 +79,14 @@ impl TransportCalibrator {
             .collect()
     }
 
-    /// Get the number of samples for a transport type.
     pub fn sample_count(&self, transport: TransportType) -> usize {
         self.samples.get(&transport).map_or(0, |s| s.len())
     }
 
-    /// Clear all samples for a transport type.
     pub fn clear(&mut self, transport: TransportType) {
         self.samples.remove(&transport);
     }
 
-    /// Clear all samples.
     pub fn clear_all(&mut self) {
         self.samples.clear();
     }

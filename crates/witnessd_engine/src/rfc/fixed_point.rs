@@ -2,17 +2,15 @@
 
 //! Fixed-point integer types for RFC-compliant CBOR encoding.
 //!
-//! This module implements fixed-point integer representations as specified
-//! in draft-condrey-rats-pop-schema-01 Section 3 (Numeric Representation).
+//! Implements fixed-point integer representations per
+//! draft-condrey-rats-pop-schema-01 Section 3 (Numeric Representation).
 //!
-//! Fixed-point integers replace IEEE 754 floating-point for security-critical
-//! values because:
-//! 1. Cross-platform reproducibility: Integer arithmetic is fully specified
+//! Fixed-point replaces IEEE 754 for security-critical values because:
+//! 1. Cross-platform reproducibility -- integer arithmetic is fully specified
 //!    by CBOR (RFC 8949) with no implementation latitude.
-//! 2. Constant-time operations: Integer comparison executes in constant time,
-//!    eliminating timing side-channels.
-//! 3. Deterministic encoding: Integers have a single canonical CBOR encoding,
-//!    ensuring identical hash inputs across implementations.
+//! 2. Constant-time comparison -- eliminates timing side-channels.
+//! 3. Deterministic encoding -- single canonical CBOR form ensures
+//!    identical hash inputs across implementations.
 //!
 //! # Scaling Conventions (Bitcoin-style)
 //!
@@ -48,26 +46,26 @@ impl Millibits {
     /// Minimum value (0.0 = 0 millibits)
     pub const MIN: Millibits = Millibits(0);
 
-    /// Creates a new Millibits value from raw integer.
+    /// Create from raw integer.
     #[inline]
     pub const fn new(value: u16) -> Self {
         Millibits(value)
     }
 
-    /// Creates from a floating-point value using banker's rounding.
+    /// Create from `f64` (banker's rounding, clamped).
     pub fn from_float(value: f64) -> Self {
         let scaled = (value * 1000.0).round() as i32;
         let clamped = scaled.clamp(0, 1000) as u16;
         Millibits(clamped)
     }
 
-    /// Returns the raw integer value.
+    /// Raw integer value.
     #[inline]
     pub const fn raw(&self) -> u16 {
         self.0
     }
 
-    /// Converts to floating-point for display (not for verification).
+    /// Convert to `f64` for display (not for verification).
     #[inline]
     pub fn to_float(&self) -> f64 {
         self.0 as f64 / 1000.0
@@ -119,26 +117,26 @@ impl RhoMillibits {
     /// Minimum value (-1.0 = -1000)
     pub const MIN: RhoMillibits = RhoMillibits(-1000);
 
-    /// Creates a new RhoMillibits value from raw integer.
+    /// Create from raw integer.
     #[inline]
     pub const fn new(value: i16) -> Self {
         RhoMillibits(value)
     }
 
-    /// Creates from a floating-point value using banker's rounding.
+    /// Create from `f64` (banker's rounding, clamped).
     pub fn from_float(value: f64) -> Self {
         let scaled = (value * 1000.0).round() as i32;
         let clamped = scaled.clamp(-1000, 1000) as i16;
         RhoMillibits(clamped)
     }
 
-    /// Returns the raw integer value.
+    /// Raw integer value.
     #[inline]
     pub const fn raw(&self) -> i16 {
         self.0
     }
 
-    /// Converts to floating-point for display.
+    /// Convert to `f64` for display.
     #[inline]
     pub fn to_float(&self) -> f64 {
         self.0 as f64 / 1000.0
@@ -190,26 +188,26 @@ impl Centibits {
     /// Minimum value (0.0 = 0 centibits)
     pub const MIN: Centibits = Centibits(0);
 
-    /// Creates a new Centibits value from raw integer.
+    /// Create from raw integer.
     #[inline]
     pub const fn new(value: u16) -> Self {
         Centibits(value)
     }
 
-    /// Creates from a floating-point value using banker's rounding.
+    /// Create from `f64` (banker's rounding, clamped).
     pub fn from_float(value: f64) -> Self {
         let scaled = (value * 10000.0).round() as i32;
         let clamped = scaled.clamp(0, 10000) as u16;
         Centibits(clamped)
     }
 
-    /// Returns the raw integer value.
+    /// Raw integer value.
     #[inline]
     pub const fn raw(&self) -> u16 {
         self.0
     }
 
-    /// Converts to floating-point for display.
+    /// Convert to `f64` for display.
     #[inline]
     pub fn to_float(&self) -> f64 {
         self.0 as f64 / 10000.0
@@ -261,26 +259,26 @@ impl Decibits {
     /// Minimum value (0.0 bits = 0 decibits)
     pub const MIN: Decibits = Decibits(0);
 
-    /// Creates a new Decibits value from raw integer.
+    /// Create from raw integer.
     #[inline]
     pub const fn new(value: u16) -> Self {
         Decibits(value)
     }
 
-    /// Creates from a floating-point value using banker's rounding.
+    /// Create from `f64` (banker's rounding, clamped).
     pub fn from_float(value: f64) -> Self {
         let scaled = (value * 10.0).round() as i32;
         let clamped = scaled.clamp(0, 640) as u16;
         Decibits(clamped)
     }
 
-    /// Returns the raw integer value.
+    /// Raw integer value.
     #[inline]
     pub const fn raw(&self) -> u16 {
         self.0
     }
 
-    /// Converts to floating-point for display.
+    /// Convert to `f64` for display.
     #[inline]
     pub fn to_float(&self) -> f64 {
         self.0 as f64 / 10.0
@@ -332,26 +330,26 @@ impl SlopeDecibits {
     /// Minimum value (-10.0 = -100)
     pub const MIN: SlopeDecibits = SlopeDecibits(-100);
 
-    /// Creates a new SlopeDecibits value from raw integer.
+    /// Create from raw integer.
     #[inline]
     pub const fn new(value: i8) -> Self {
         SlopeDecibits(value)
     }
 
-    /// Creates from a floating-point value using banker's rounding.
+    /// Create from `f64` (banker's rounding, clamped).
     pub fn from_float(value: f64) -> Self {
         let scaled = (value * 10.0).round() as i32;
         let clamped = scaled.clamp(-100, 100) as i8;
         SlopeDecibits(clamped)
     }
 
-    /// Returns the raw integer value.
+    /// Raw integer value.
     #[inline]
     pub const fn raw(&self) -> i8 {
         self.0
     }
 
-    /// Converts to floating-point for display.
+    /// Convert to `f64` for display.
     #[inline]
     pub fn to_float(&self) -> f64 {
         self.0 as f64 / 10.0
@@ -403,26 +401,26 @@ impl DeciWpm {
     /// Minimum value (0.0 WPM = 0 deci-WPM)
     pub const MIN: DeciWpm = DeciWpm(0);
 
-    /// Creates a new DeciWpm value from raw integer.
+    /// Create from raw integer.
     #[inline]
     pub const fn new(value: u16) -> Self {
         DeciWpm(value)
     }
 
-    /// Creates from a floating-point value using banker's rounding.
+    /// Create from `f64` (banker's rounding, clamped).
     pub fn from_float(value: f64) -> Self {
         let scaled = (value * 10.0).round() as i32;
         let clamped = scaled.clamp(0, 5000) as u16;
         DeciWpm(clamped)
     }
 
-    /// Returns the raw integer value.
+    /// Raw integer value.
     #[inline]
     pub const fn raw(&self) -> u16 {
         self.0
     }
 
-    /// Converts to floating-point for display.
+    /// Convert to `f64` for display.
     #[inline]
     pub fn to_float(&self) -> f64 {
         self.0 as f64 / 10.0
@@ -468,26 +466,26 @@ impl<'de> Deserialize<'de> for DeciWpm {
 pub struct Microdollars(pub u64);
 
 impl Microdollars {
-    /// Creates a new Microdollars value from raw integer.
+    /// Create from raw integer.
     #[inline]
     pub const fn new(value: u64) -> Self {
         Microdollars(value)
     }
 
-    /// Creates from a floating-point dollar value.
+    /// Create from `f64` dollar value (clamped >= 0).
     pub fn from_dollars(value: f64) -> Self {
         let scaled = (value * 1_000_000.0).round() as i64;
         let clamped = scaled.max(0) as u64;
         Microdollars(clamped)
     }
 
-    /// Returns the raw integer value.
+    /// Raw integer value.
     #[inline]
     pub const fn raw(&self) -> u64 {
         self.0
     }
 
-    /// Converts to floating-point dollars for display.
+    /// Convert to `f64` dollars for display.
     #[inline]
     pub fn to_dollars(&self) -> f64 {
         self.0 as f64 / 1_000_000.0

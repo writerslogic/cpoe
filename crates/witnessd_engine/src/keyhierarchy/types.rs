@@ -27,28 +27,24 @@ pub struct SessionCertificate {
     #[serde(with = "serde_array_64")]
     pub signature: [u8; 64],
     pub version: u32,
-    /// TPM quote at session start (chain-entangled nonce)
+    /// TPM quote at session start, bound via chain-entangled nonce
     #[serde(default)]
     pub start_quote: Option<Vec<u8>>,
     /// TPM quote at session end
     #[serde(default)]
     pub end_quote: Option<Vec<u8>>,
-    /// Hardware monotonic counter at session start
     #[serde(default)]
     pub start_counter: Option<u64>,
-    /// Hardware monotonic counter at session end
     #[serde(default)]
     pub end_counter: Option<u64>,
-    /// TPM ResetCount at session start (reboot detection)
+    /// TPM `ResetCount` at session start (reboot detection)
     #[serde(default)]
     pub start_reset_count: Option<u32>,
-    /// TPM RestartCount at session start
     #[serde(default)]
     pub start_restart_count: Option<u32>,
-    /// TPM ResetCount at session end
+    /// TPM `ResetCount` at session end
     #[serde(default)]
     pub end_reset_count: Option<u32>,
-    /// TPM RestartCount at session end
     #[serde(default)]
     pub end_restart_count: Option<u32>,
 }
@@ -60,10 +56,10 @@ pub struct CheckpointSignature {
     #[serde(with = "serde_array_64")]
     pub signature: [u8; 64],
     pub checkpoint_hash: [u8; 32],
-    /// Hardware monotonic counter value at this checkpoint (None for software-only)
+    /// Hardware monotonic counter at this checkpoint; `None` for software-only
     #[serde(default)]
     pub counter_value: Option<u64>,
-    /// Delta from previous checkpoint's counter value
+    /// Delta from previous checkpoint's counter
     #[serde(default)]
     pub counter_delta: Option<u64>,
 }
@@ -87,7 +83,7 @@ pub trait PUFProvider: Send + Sync {
     fn device_id(&self) -> String;
 }
 
-/// Report from verifying session TPM binding.
+/// Result of session TPM binding verification.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionBindingReport {
     pub has_start_quote: bool,
@@ -98,18 +94,17 @@ pub struct SessionBindingReport {
     pub warnings: Vec<String>,
 }
 
-/// Evidence of hardware TPM binding for a session.
+/// Hardware TPM binding evidence for a session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HardwareEvidence {
-    /// Provider type (e.g., "secure-enclave", "tpm2-windows", "software")
+    /// e.g. "secure-enclave", "tpm2-windows", "software"
     pub provider_type: String,
-    /// Attestation tier (T1-T4)
+    /// Attestation tier (T1--T4)
     pub attestation_tier: u8,
-    /// Whether key is hardware-bound
     pub hardware_bound: bool,
-    /// Device binding (TPM quote at session start, if available)
+    /// TPM quote at session start, if available
     pub device_binding: Option<Vec<u8>>,
-    /// Monotonic counter range (start→end of session)
+    /// Monotonic counter range over session lifetime
     pub counter_start: Option<u64>,
     pub counter_end: Option<u64>,
 }
@@ -129,7 +124,7 @@ pub struct KeyHierarchyEvidence {
     pub session_certificate_raw: Vec<u8>,
     pub ratchet_count: i32,
     pub ratchet_public_keys: Vec<Vec<u8>>,
-    /// Hardware attestation evidence (None for pure software sessions)
+    /// Hardware attestation evidence; `None` for software-only sessions
     #[serde(default)]
     pub hardware_attestation: Option<HardwareEvidence>,
 }

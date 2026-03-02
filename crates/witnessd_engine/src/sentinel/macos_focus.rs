@@ -8,7 +8,7 @@ use objc::runtime::Object;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-/// macOS-specific focus monitor using NSWorkspace and Accessibility APIs
+/// macOS focus monitor using NSWorkspace and Accessibility APIs.
 pub struct MacOSFocusMonitor {
     #[allow(dead_code)]
     config: Arc<SentinelConfig>,
@@ -19,12 +19,11 @@ impl MacOSFocusMonitor {
         Self { config }
     }
 
-    pub fn new_monitor(config: Arc<SentinelConfig>) -> Box<dyn FocusMonitor> {
+    pub fn new_monitor(config: Arc<SentinelConfig>) -> Box<dyn SentinelFocusTracker> {
         let provider = Arc::new(Self::new(Arc::clone(&config)));
-        Box::new(PollingFocusMonitor::new(provider, config))
+        Box::new(PollingSentinelFocusTracker::new(provider, config))
     }
 
-    /// Get the active window info using NSWorkspace
     fn get_active_window_info(&self) -> Option<WindowInfo> {
         unsafe {
             let workspace: *mut Object = msg_send![class!(NSWorkspace), sharedWorkspace];
@@ -41,12 +40,10 @@ impl MacOSFocusMonitor {
             let app_name = nsstring_to_string(name);
             let bundle_id_str = nsstring_to_string(bundle_id);
 
-            // Try to get document path via Accessibility API
             let doc_path = self.get_document_path_via_ax(pid);
             let window_title = self.get_window_title_via_ax(pid);
             let title_str = window_title.unwrap_or_default();
 
-            // Fall back to title parsing if AX didn't return a document path
             let doc_path =
                 doc_path.or_else(|| super::types::infer_document_path_from_title(&title_str));
 
@@ -67,10 +64,7 @@ impl MacOSFocusMonitor {
         }
     }
 
-    /// Get document path using Accessibility API.
-    ///
-    /// Queries the focused window's `AXDocument` attribute, which many macOS
-    /// apps set to a `file://` URL of the current document.
+    /// Query the focused window's `AXDocument` attribute for its `file://` URL.
     fn get_document_path_via_ax(&self, pid: i32) -> Option<String> {
         unsafe {
             use core_foundation::base::{CFType, TCFType};
@@ -92,7 +86,6 @@ impl MacOSFocusMonitor {
                 return None;
             }
 
-            // Get the focused window
             let attr_focused = CFString::new("AXFocusedWindow");
             let mut focused_window: *const std::ffi::c_void = std::ptr::null();
             let err = AXUIElementCopyAttributeValue(
@@ -106,7 +99,6 @@ impl MacOSFocusMonitor {
                 return None;
             }
 
-            // Try AXDocument attribute (returns file:// URL)
             let attr_doc = CFString::new("AXDocument");
             let mut doc_value: *const std::ffi::c_void = std::ptr::null();
             let err = AXUIElementCopyAttributeValue(
@@ -122,7 +114,6 @@ impl MacOSFocusMonitor {
                 } else {
                     format!("{:?}", cf_type)
                 };
-                // Parse file:// URL to path
                 if url_str.starts_with("file://") {
                     let path = url_str.trim_start_matches("file://");
                     let decoded = urlencoding::decode(path).unwrap_or_default().into_owned();
@@ -144,9 +135,7 @@ impl MacOSFocusMonitor {
         }
     }
 
-    /// Get window title using Accessibility API.
-    ///
-    /// Queries the focused window's `AXTitle` attribute.
+    /// Query the focused window's `AXTitle` attribute.
     fn get_window_title_via_ax(&self, pid: i32) -> Option<String> {
         unsafe {
             use core_foundation::base::{CFType, TCFType};
@@ -168,7 +157,6 @@ impl MacOSFocusMonitor {
                 return None;
             }
 
-            // Get the focused window
             let attr_focused = CFString::new("AXFocusedWindow");
             let mut focused_window: *const std::ffi::c_void = std::ptr::null();
             let err = AXUIElementCopyAttributeValue(
@@ -182,7 +170,6 @@ impl MacOSFocusMonitor {
                 return None;
             }
 
-            // Get AXTitle
             let attr_title = CFString::new("AXTitle");
             let mut title_value: *const std::ffi::c_void = std::ptr::null();
             let err = AXUIElementCopyAttributeValue(
@@ -233,7 +220,7 @@ unsafe fn nsstring_to_string(ns_str: *mut Object) -> String {
         .into_owned()
 }
 
-/// Check if accessibility permissions are granted
+/// Check if accessibility permissions are granted (does not prompt).
 pub fn check_accessibility_permissions() -> bool {
     use core_foundation::base::TCFType;
     use core_foundation::boolean::CFBoolean;
@@ -254,7 +241,7 @@ pub fn check_accessibility_permissions() -> bool {
     unsafe { AXIsProcessTrustedWithOptions(dict.as_concrete_TypeRef()) }
 }
 
-/// Request accessibility permissions (shows system dialog)
+/// Request accessibility permissions (shows system prompt dialog).
 pub fn request_accessibility_permissions() -> bool {
     use core_foundation::base::TCFType;
     use core_foundation::boolean::CFBoolean;

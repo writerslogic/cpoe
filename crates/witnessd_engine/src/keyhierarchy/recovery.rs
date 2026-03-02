@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
+use chacha20poly1305::{
+    aead::{Aead, KeyInit},
+    ChaCha20Poly1305, Nonce as AeadNonce,
+};
 use sha2::{Digest, Sha256};
 use zeroize::Zeroize;
 
@@ -40,6 +44,22 @@ fn recover_session_with_ratchet(
     puf: &dyn PUFProvider,
     recovery: &SessionRecoveryState,
 ) -> Result<Session, KeyHierarchyError> {
+    let data = &recovery.last_ratchet_state;
+    if data.is_empty() {
+        return Err(KeyHierarchyError::SessionRecoveryFailed);
+    }
+
+    match data[0] {
+        0x02 => recover_ratchet_v2_aead(puf, recovery),
+        _ => recover_ratchet_v1_legacy(puf, recovery),
+    }
+}
+
+/// Legacy v1 ratchet recovery: XOR cipher (no version byte, backward compat).
+fn recover_ratchet_v1_legacy(
+    puf: &dyn PUFProvider,
+    recovery: &SessionRecoveryState,
+) -> Result<Session, KeyHierarchyError> {
     let challenge = Sha256::digest(b"witnessd-ratchet-recovery-v1");
     let response = puf.get_response(&challenge)?;
     let mut key = hkdf_expand(&response, b"ratchet-recovery-key", &[])?;
@@ -58,6 +78,60 @@ fn recover_session_with_ratchet(
             .map_err(|_| KeyHierarchyError::SessionRecoveryFailed)?,
     );
     key.zeroize();
+
+    Ok(Session {
+        certificate: recovery.certificate.clone(),
+        ratchet: RatchetState {
+            current: crate::crypto::ProtectedKey::new(ratchet_state),
+            ordinal,
+            wiped: false,
+        },
+        signatures: recovery.signatures.clone(),
+    })
+}
+
+/// v2 ratchet recovery: ChaCha20-Poly1305 AEAD.
+fn recover_ratchet_v2_aead(
+    puf: &dyn PUFProvider,
+    recovery: &SessionRecoveryState,
+) -> Result<Session, KeyHierarchyError> {
+    // Format: version(1) || aead_nonce(12) || ciphertext+tag
+    const HEADER_LEN: usize = 1 + 12; // 13
+    let data = &recovery.last_ratchet_state;
+    if data.len() < HEADER_LEN + 16 {
+        return Err(KeyHierarchyError::SessionRecoveryFailed);
+    }
+
+    let nonce_bytes = &data[1..13];
+    let ciphertext = &data[13..];
+
+    let challenge = Sha256::digest(b"witnessd-ratchet-recovery-v2");
+    let response = puf.get_response(&challenge)?;
+    let mut key = hkdf_expand(&response, b"ratchet-recovery-key-v2", &[])?;
+
+    let cipher = ChaCha20Poly1305::new_from_slice(&key)
+        .map_err(|_| KeyHierarchyError::SessionRecoveryFailed)?;
+    let aead_nonce = AeadNonce::from_slice(nonce_bytes);
+
+    let mut plaintext = cipher
+        .decrypt(aead_nonce, ciphertext)
+        .map_err(|_| KeyHierarchyError::SessionRecoveryFailed)?;
+
+    key.zeroize();
+
+    if plaintext.len() < 40 {
+        plaintext.zeroize();
+        return Err(KeyHierarchyError::SessionRecoveryFailed);
+    }
+
+    let mut ratchet_state = [0u8; 32];
+    ratchet_state.copy_from_slice(&plaintext[..32]);
+    let ordinal = u64::from_be_bytes(
+        plaintext[32..40]
+            .try_into()
+            .map_err(|_| KeyHierarchyError::SessionRecoveryFailed)?,
+    );
+    plaintext.zeroize();
 
     Ok(Session {
         certificate: recovery.certificate.clone(),

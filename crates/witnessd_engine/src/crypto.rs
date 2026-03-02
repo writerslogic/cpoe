@@ -72,10 +72,7 @@ pub fn compute_event_hash(
     hasher.update(size_delta.to_be_bytes());
     hasher.update(previous_hash);
 
-    let result = hasher.finalize();
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&result);
-    out
+    hasher.finalize().into()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -102,10 +99,7 @@ pub fn compute_event_hmac(
     mac.update(&size_delta.to_be_bytes());
     mac.update(previous_hash);
 
-    let result = mac.finalize();
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&result.into_bytes());
-    out
+    mac.finalize().into_bytes().into()
 }
 
 pub fn compute_integrity_hmac(key: &[u8], chain_hash: &[u8; 32], event_count: i64) -> [u8; 32] {
@@ -114,10 +108,7 @@ pub fn compute_integrity_hmac(key: &[u8], chain_hash: &[u8; 32], event_count: i6
     mac.update(chain_hash);
     mac.update(&event_count.to_be_bytes());
 
-    let result = mac.finalize();
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&result.into_bytes());
-    out
+    mac.finalize().into_bytes().into()
 }
 
 pub fn derive_hmac_key(priv_key_seed: &[u8]) -> Vec<u8> {

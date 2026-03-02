@@ -5,10 +5,9 @@ use crate::fingerprint::voice::VoiceFingerprint;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-/// Unique identifier for a fingerprint profile.
 pub type ProfileId = String;
 
-/// Combined author fingerprint with both activity and optional voice data.
+/// Combined activity + optional voice fingerprint for one author.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthorFingerprint {
     pub id: ProfileId,

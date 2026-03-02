@@ -32,7 +32,6 @@ pub fn update_digest(
     digest.session_count += 1;
     digest.total_keystrokes += summary.keystroke_count;
 
-    // Estimate mean IKI from histogram bin centers (weighted average)
     let bin_centers: [f64; 9] = [
         25.0, 75.0, 125.0, 175.0, 250.0, 400.0, 750.0, 1500.0, 2500.0,
     ];
@@ -47,7 +46,6 @@ pub fn update_digest(
     digest.hurst_stats.update(summary.hurst);
     digest.pause_stats.update(summary.pause_frequency);
 
-    // Update aggregate histogram (running average)
     let n = digest.session_count as f64;
     for i in 0..9 {
         digest.aggregate_iki_histogram[i] =

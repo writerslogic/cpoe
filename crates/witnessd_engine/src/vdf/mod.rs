@@ -16,8 +16,7 @@ pub use params::{
 };
 pub use proof::VdfProof;
 
-// Spec-conformant aliases: the CDDL spec calls this "Sequential Work Function (SWF)"
-// based on Argon2id. Internal module name stays as `vdf` for backwards compatibility.
+// CDDL spec calls this "Sequential Work Function (SWF)"; module stays `vdf` for compat
 pub type SwfParameters = Parameters;
 pub type SwfProof = VdfProof;
 pub use roughtime_client::RoughtimeClient;

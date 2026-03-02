@@ -2,7 +2,7 @@
 
 //! Forensics error types.
 
-/// Forensics analysis error.
+/// Forensic analysis error.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum ForensicsError {
     #[error("Insufficient data for analysis")]

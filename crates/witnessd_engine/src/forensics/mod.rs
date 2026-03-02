@@ -1,10 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
-//! Forensic authorship analysis module.
-//!
-//! Provides comprehensive analysis capabilities for detecting AI-generated content
-//! and verifying human authorship through edit topology analysis, keystroke cadence
-//! analysis, and profile correlation.
+//! Forensic authorship analysis: edit topology, keystroke cadence, and profile correlation.
 
 mod analysis;
 mod assessment;
@@ -18,7 +14,7 @@ mod topology;
 pub mod types;
 mod velocity;
 
-// Re-export all public items to maintain API compatibility
+// Re-export public items
 pub use analysis::*;
 pub use assessment::*;
 pub use cadence::*;

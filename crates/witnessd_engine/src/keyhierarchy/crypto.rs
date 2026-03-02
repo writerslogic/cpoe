@@ -40,10 +40,8 @@ pub fn fingerprint_for_public_key(public_key: &[u8]) -> String {
     hex::encode(&digest[0..8])
 }
 
-/// Compute a chain-entangled nonce for TPM quote binding.
-/// The nonce is SHA256(session_id || data_hash || mmr_root), which cryptographically
-/// binds the TPM's proof of platform integrity to the exact state of the authorship chain.
-/// This prevents replaying quotes from clean boots against dirty sessions.
+/// SHA-256(session_id || data_hash || mmr_root) nonce that binds a TPM quote
+/// to the exact authorship chain state, preventing cross-session quote replay.
 pub fn compute_entangled_nonce(
     session_id: &[u8; 32],
     data_hash: &[u8; 32],

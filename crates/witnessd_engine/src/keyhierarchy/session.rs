@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
+use chacha20poly1305::{
+    aead::{Aead, KeyInit},
+    ChaCha20Poly1305, Nonce as AeadNonce,
+};
 use chrono::Utc;
 use ed25519_dalek::{Signer, SigningKey};
 use rand::RngCore;
@@ -18,12 +22,12 @@ use super::types::{
 
 use super::identity::derive_master_private_key;
 
-/// Start a session using a pre-derived master signing key (for sealed store path).
-pub fn start_session_with_key(
-    master_key: &SigningKey,
+/// Shared session-creation logic used by all `start_session*` variants.
+pub(crate) fn start_session_inner(
+    signing_key: &SigningKey,
     document_hash: [u8; 32],
 ) -> Result<Session, KeyHierarchyError> {
-    let master_pub_key = master_key.verifying_key().to_bytes().to_vec();
+    let master_pub_key = signing_key.verifying_key().to_bytes().to_vec();
 
     let mut session_id = [0u8; 32];
     rand::rng().fill_bytes(&mut session_id);
@@ -35,17 +39,19 @@ pub fn start_session_with_key(
         bytes
     };
 
+    let mut key_bytes = signing_key.to_bytes();
     let mut session_seed = hkdf_expand(
-        master_key.to_bytes().as_slice(),
+        key_bytes.as_slice(),
         SESSION_DOMAIN.as_bytes(),
         &session_input,
     )?;
+    key_bytes.zeroize();
     let session_key = SigningKey::from_bytes(&session_seed);
     let session_pub = session_key.verifying_key().to_bytes().to_vec();
 
     let created_at = Utc::now();
     let cert_data = build_cert_data(session_id, &session_pub, created_at, document_hash);
-    let signature = master_key.sign(&cert_data).to_bytes();
+    let signature = signing_key.sign(&cert_data).to_bytes();
 
     let certificate = SessionCertificate {
         session_id,
@@ -79,65 +85,20 @@ pub fn start_session_with_key(
     })
 }
 
+/// Start a session using a pre-derived master signing key (for sealed store path).
+pub fn start_session_with_key(
+    master_key: &SigningKey,
+    document_hash: [u8; 32],
+) -> Result<Session, KeyHierarchyError> {
+    start_session_inner(master_key, document_hash)
+}
+
 pub fn start_session(
     puf: &dyn PUFProvider,
     document_hash: [u8; 32],
 ) -> Result<Session, KeyHierarchyError> {
     let master_key = derive_master_private_key(puf)?;
-    let master_pub_key = master_key.verifying_key().to_bytes().to_vec();
-
-    let mut session_id = [0u8; 32];
-    rand::rng().fill_bytes(&mut session_id);
-
-    let session_input = {
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(&session_id);
-        bytes.extend_from_slice(Utc::now().to_rfc3339().as_bytes());
-        bytes
-    };
-
-    let mut session_seed = hkdf_expand(
-        master_key.to_bytes().as_slice(),
-        SESSION_DOMAIN.as_bytes(),
-        &session_input,
-    )?;
-    let session_key = SigningKey::from_bytes(&session_seed);
-    let session_pub = session_key.verifying_key().to_bytes().to_vec();
-
-    let created_at = Utc::now();
-    let cert_data = build_cert_data(session_id, &session_pub, created_at, document_hash);
-    let signature = master_key.sign(&cert_data).to_bytes();
-
-    let certificate = SessionCertificate {
-        session_id,
-        session_pubkey: session_pub,
-        created_at,
-        document_hash,
-        master_pubkey: master_pub_key,
-        signature,
-        version: VERSION,
-        start_quote: None,
-        end_quote: None,
-        start_counter: None,
-        end_counter: None,
-        start_reset_count: None,
-        start_restart_count: None,
-        end_reset_count: None,
-        end_restart_count: None,
-    };
-
-    let ratchet_init = hkdf_expand(&session_seed, RATCHET_INIT_DOMAIN.as_bytes(), &[])?;
-    session_seed.zeroize();
-
-    Ok(Session {
-        certificate,
-        ratchet: RatchetState {
-            current: ratchet_init.into(),
-            ordinal: 0,
-            wiped: false,
-        },
-        signatures: Vec::new(),
-    })
+    start_session_inner(&master_key, document_hash)
 }
 
 impl Session {
@@ -277,7 +238,12 @@ impl Session {
 
         // Generate closing TPM quote with entangled nonce
         if let Ok(quote) = provider.quote(&closing_nonce, &[0, 4, 7]) {
-            self.certificate.end_quote = Some(serde_json::to_vec(&quote).unwrap_or_default());
+            self.certificate.end_quote = serde_json::to_vec(&quote)
+                .map_err(|e| {
+                    log::warn!("TPM quote serialization failed: {e}");
+                    e
+                })
+                .ok();
         }
 
         // Record end counter and reboot state
@@ -306,7 +272,12 @@ impl Session {
 
         // Generate TPM quote over PCRs [0, 4, 7] with entangled nonce
         if let Ok(quote) = provider.quote(&start_nonce, &[0, 4, 7]) {
-            self.certificate.start_quote = Some(serde_json::to_vec(&quote).unwrap_or_default());
+            self.certificate.start_quote = serde_json::to_vec(&quote)
+                .map_err(|e| {
+                    log::warn!("TPM quote serialization failed: {e}");
+                    e
+                })
+                .ok();
         }
 
         // Record start counter
@@ -389,16 +360,36 @@ impl Session {
             return Err(KeyHierarchyError::RatchetWiped);
         }
 
-        let challenge = sha2::Sha256::digest(b"witnessd-ratchet-recovery-v1");
+        let challenge = sha2::Sha256::digest(b"witnessd-ratchet-recovery-v2");
         let response = puf.get_response(&challenge)?;
-        let mut key = hkdf_expand(&response, b"ratchet-recovery-key", &[])?;
+        let mut key = hkdf_expand(&response, b"ratchet-recovery-key-v2", &[])?;
 
-        let mut encrypted = vec![0u8; 40];
-        for i in 0..32 {
-            encrypted[i] = self.ratchet.current.as_bytes()[i] ^ key[i % 32];
-        }
-        encrypted[32..40].copy_from_slice(&self.ratchet.ordinal.to_be_bytes());
+        // Plaintext: ratchet_state(32) || ordinal(8)
+        let mut plaintext = vec![0u8; 40];
+        plaintext[..32].copy_from_slice(self.ratchet.current.as_bytes());
+        plaintext[32..40].copy_from_slice(&self.ratchet.ordinal.to_be_bytes());
+
+        let cipher = ChaCha20Poly1305::new_from_slice(&key)
+            .map_err(|e| KeyHierarchyError::Crypto(format!("AEAD init: {e}")))?;
+
+        // Generate random 12-byte nonce
+        let mut nonce_bytes = [0u8; 12];
+        getrandom::getrandom(&mut nonce_bytes)
+            .map_err(|e| KeyHierarchyError::Crypto(format!("rng: {e}")))?;
+        let aead_nonce = AeadNonce::from_slice(&nonce_bytes);
+
+        let ciphertext = cipher
+            .encrypt(aead_nonce, plaintext.as_ref())
+            .map_err(|e| KeyHierarchyError::Crypto(format!("AEAD encrypt: {e}")))?;
+
         key.zeroize();
+        plaintext.zeroize();
+
+        // Format: version(1) || aead_nonce(12) || ciphertext+tag
+        let mut encrypted = Vec::with_capacity(1 + 12 + ciphertext.len());
+        encrypted.push(0x02); // version 2 = AEAD
+        encrypted.extend_from_slice(&nonce_bytes);
+        encrypted.extend_from_slice(&ciphertext);
 
         Ok(SessionRecoveryState {
             certificate: self.certificate.clone(),

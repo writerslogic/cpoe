@@ -7,8 +7,13 @@
 //! identity seed is sealed to the device's TPM, preventing extraction or
 //! migration to another machine.
 
+use chacha20poly1305::{
+    aead::{Aead, KeyInit},
+    ChaCha20Poly1305, Nonce as AeadNonce,
+};
 use chrono::{DateTime, Utc};
 use ed25519_dalek::SigningKey;
+use hkdf::Hkdf;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -46,27 +51,16 @@ pub enum SealedIdentityError {
 /// Persistent sealed identity blob stored on disk.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SealedBlob {
-    /// Format version
     version: u32,
-    /// Provider type at seal time ("secure_enclave", "tpm2-windows", "tpm2-linux", "software")
     provider_type: String,
-    /// Provider device ID at seal time
     device_id: String,
-    /// TPM-sealed 32-byte master seed
     sealed_seed: Vec<u8>,
-    /// Ed25519 public key (for verification without unseal)
     public_key: Vec<u8>,
-    /// Key fingerprint
     fingerprint: String,
-    /// When this blob was created
     sealed_at: DateTime<Utc>,
-    /// Monotonic counter value when sealed
     counter_at_seal: Option<u64>,
-    /// Last counter seen (ratchets forward on each checkpoint)
     last_known_counter: Option<u64>,
-    /// TPM ResetCount at seal time (reboot detection)
     boot_count_at_seal: Option<u32>,
-    /// TPM RestartCount at seal time
     restart_count_at_seal: Option<u32>,
 }
 
@@ -74,16 +68,12 @@ const SEALED_BLOB_VERSION: u32 = 1;
 const SEALED_BLOB_FILENAME: &str = "identity.sealed";
 
 /// Persistent TPM-sealed key storage.
-///
-/// Seals the master identity seed to the platform's TPM hardware,
-/// preventing key extraction or migration to another device.
 pub struct SealedIdentityStore {
     provider: ProviderHandle,
     store_path: PathBuf,
 }
 
 impl SealedIdentityStore {
-    /// Create a store with the given TPM provider and data directory.
     pub fn new(provider: ProviderHandle, data_dir: &Path) -> Self {
         let store_path = data_dir.join(SEALED_BLOB_FILENAME);
         Self {
@@ -92,22 +82,17 @@ impl SealedIdentityStore {
         }
     }
 
-    /// Create a store with auto-detected TPM provider.
     pub fn auto_detect(data_dir: &Path) -> Self {
         let provider = crate::tpm::detect_provider();
         Self::new(provider, data_dir)
     }
 
-    /// Initialize: derive master key from PUF, seal with TPM, persist blob.
-    ///
     /// If a sealed blob already exists and can be unsealed, reuses it.
     /// Records boot_count and restart_count from TPM ClockInfo into the blob.
     pub fn initialize(&self, puf: &dyn PUFProvider) -> Result<MasterIdentity, SealedIdentityError> {
-        // Try to unseal existing blob first
         if self.store_path.exists() {
             match self.unseal_master_key() {
                 Ok(_signing_key) => {
-                    // Blob is valid — return the public identity
                     return self.public_identity();
                 }
                 Err(e) => {
@@ -136,14 +121,11 @@ impl SealedIdentityStore {
                 .seal(&seed, &[])
                 .map_err(|e| SealedIdentityError::SealFailed(e.to_string()))?
         } else {
-            // Fallback: PBKDF2-wrapped to disk with machine-specific salt
             self.software_wrap(&seed)?
         };
 
-        // Get clock info for reboot detection
         let clock = self.provider.clock_info().ok();
 
-        // Get current counter from binding
         let counter = self
             .provider
             .bind(b"identity-seal-counter")
@@ -152,7 +134,15 @@ impl SealedIdentityStore {
 
         let blob = SealedBlob {
             version: SEALED_BLOB_VERSION,
-            provider_type: format!("{:?}", caps),
+            provider_type: if caps.hardware_backed {
+                if cfg!(target_os = "macos") {
+                    "secure_enclave".to_string()
+                } else {
+                    "tpm2".to_string()
+                }
+            } else {
+                "software".to_string()
+            },
             device_id: self.provider.device_id(),
             sealed_seed,
             public_key: identity.public_key.clone(),
@@ -171,8 +161,6 @@ impl SealedIdentityStore {
         Ok(identity)
     }
 
-    /// Unseal and return the master signing key (requires TPM access).
-    ///
     /// **Anti-rollback**: Reads current hardware counter and verifies it is
     /// `>=` last_known_counter stored in the blob.
     ///
@@ -195,7 +183,6 @@ impl SealedIdentityStore {
             }
         }
 
-        // Unseal the seed
         let caps = self.provider.capabilities();
         let mut seed = if caps.supports_sealing {
             self.provider
@@ -220,8 +207,6 @@ impl SealedIdentityStore {
         Ok(signing_key)
     }
 
-    /// Advance last_known_counter in the blob (called after each checkpoint).
-    ///
     /// Re-persists the blob with updated counter. This ensures the counter
     /// ratchets forward and prevents "forking" at the same counter value.
     pub fn advance_counter(&self, new_counter: u64) -> Result<(), SealedIdentityError> {
@@ -241,7 +226,6 @@ impl SealedIdentityStore {
         Ok(())
     }
 
-    /// Check if identity exists and can potentially be unsealed on this device.
     pub fn is_bound(&self) -> bool {
         if !self.store_path.exists() {
             return false;
@@ -252,7 +236,6 @@ impl SealedIdentityStore {
         }
     }
 
-    /// Get public identity without unsealing (reads blob metadata).
     pub fn public_identity(&self) -> Result<MasterIdentity, SealedIdentityError> {
         let blob = self.load_blob()?;
         Ok(MasterIdentity {
@@ -264,20 +247,16 @@ impl SealedIdentityStore {
         })
     }
 
-    /// Re-seal after PCR state change (OS update, firmware update).
-    ///
     /// Unseals the current seed, then re-seals with the new platform state.
     /// Records new boot_count/restart_count to detect reboot-based attacks.
     pub fn reseal(&self, puf: &dyn PUFProvider) -> Result<(), SealedIdentityError> {
         let old_blob = self.load_blob()?;
 
-        // Unseal the current seed
         let caps = self.provider.capabilities();
         let mut seed = if caps.supports_sealing {
             match self.provider.unseal(&old_blob.sealed_seed) {
                 Ok(s) => s,
                 Err(_) => {
-                    // Unseal failed (PCR change?) — re-derive from PUF
                     let challenge =
                         Sha256::digest(format!("{}-challenge", "witnessd-identity-v1").as_bytes());
                     let puf_response = puf.get_response(&challenge)?;
@@ -293,7 +272,6 @@ impl SealedIdentityStore {
             self.software_unwrap(&old_blob.sealed_seed)?
         };
 
-        // Re-seal with updated platform state
         let sealed_seed = if caps.supports_sealing {
             self.provider
                 .seal(&seed, &[])
@@ -324,8 +302,6 @@ impl SealedIdentityStore {
         Ok(())
     }
 
-    /// Get attestation tier based on provider capabilities.
-    ///
     /// T4 (HardwareHardened): Reserved for SGX/TrustZone (future)
     /// T3 (HardwareBound):    hardware_backed && supports_sealing
     /// T2 (AttestedSoftware): hardware_backed && supports_attestation (but no sealing)
@@ -341,17 +317,13 @@ impl SealedIdentityStore {
         }
     }
 
-    /// Get the current ClockInfo from the provider.
     pub fn clock_info(&self) -> Result<ClockInfo, SealedIdentityError> {
         self.provider.clock_info().map_err(SealedIdentityError::Tpm)
     }
 
-    /// Get the provider handle (for session TPM binding).
     pub fn provider(&self) -> &ProviderHandle {
         &self.provider
     }
-
-    // ---- Internal helpers ----
 
     fn load_blob(&self) -> Result<SealedBlob, SealedIdentityError> {
         let data = fs::read(&self.store_path)?;
@@ -364,7 +336,6 @@ impl SealedIdentityStore {
         }
         let data = serde_json::to_vec_pretty(blob)
             .map_err(|e| SealedIdentityError::Serialization(e.to_string()))?;
-        // Atomic write: write to tmp then rename for crash safety
         let tmp_path = self.store_path.with_extension("tmp");
         fs::write(&tmp_path, data)?;
         fs::rename(&tmp_path, &self.store_path)?;
@@ -376,29 +347,58 @@ impl SealedIdentityStore {
         Ok(())
     }
 
-    /// Software-only key wrapping for platforms without hardware TPM.
-    /// Uses PBKDF2 with machine-specific salt.
     fn software_wrap(&self, seed: &[u8]) -> Result<Vec<u8>, SealedIdentityError> {
-        let salt = self.machine_salt();
-        let mut hasher = Sha256::new();
-        hasher.update(&salt);
-        hasher.update(b"witnessd-software-wrap-v1");
-        let key_material = hasher.finalize();
+        let machine_salt = self.machine_salt();
 
-        // XOR-based wrapping (sufficient for at-rest protection when
-        // the threat model trusts the OS — hardware sealing is preferred)
-        let mut wrapped = vec![0u8; 1 + seed.len()];
-        wrapped[0] = 0x01; // version marker for software wrapping
-        for (i, b) in seed.iter().enumerate() {
-            wrapped[1 + i] = b ^ key_material[i % 32];
-        }
+        // Generate random salt for HKDF
+        let mut random_salt = [0u8; 32];
+        getrandom::getrandom(&mut random_salt)
+            .map_err(|e| SealedIdentityError::SealFailed(format!("rng: {e}")))?;
+
+        // Derive key via HKDF(ikm=machine_salt, salt=random_salt, info=domain)
+        let hk = Hkdf::<Sha256>::new(Some(&random_salt), &machine_salt);
+        let mut key = [0u8; 32];
+        hk.expand(b"witnessd-software-wrap-v2", &mut key)
+            .map_err(|e| SealedIdentityError::SealFailed(format!("HKDF: {e}")))?;
+
+        let cipher = ChaCha20Poly1305::new_from_slice(&key)
+            .map_err(|e| SealedIdentityError::SealFailed(format!("AEAD init: {e}")))?;
+
+        // Generate random 12-byte nonce for AEAD
+        let mut nonce_bytes = [0u8; 12];
+        getrandom::getrandom(&mut nonce_bytes)
+            .map_err(|e| SealedIdentityError::SealFailed(format!("rng: {e}")))?;
+        let aead_nonce = AeadNonce::from_slice(&nonce_bytes);
+
+        let ciphertext = cipher
+            .encrypt(aead_nonce, seed)
+            .map_err(|e| SealedIdentityError::SealFailed(format!("AEAD encrypt: {e}")))?;
+
+        key.zeroize();
+
+        // Format: version(1) || random_salt(32) || aead_nonce(12) || ciphertext+tag
+        let mut wrapped = Vec::with_capacity(1 + 32 + 12 + ciphertext.len());
+        wrapped.push(0x02); // version 2 = AEAD
+        wrapped.extend_from_slice(&random_salt);
+        wrapped.extend_from_slice(&nonce_bytes);
+        wrapped.extend_from_slice(&ciphertext);
         Ok(wrapped)
     }
 
     fn software_unwrap(&self, wrapped: &[u8]) -> Result<Vec<u8>, SealedIdentityError> {
-        if wrapped.is_empty() || wrapped[0] != 0x01 {
+        if wrapped.is_empty() {
             return Err(SealedIdentityError::BlobCorrupted);
         }
+
+        match wrapped[0] {
+            0x01 => self.software_unwrap_v1(wrapped),
+            0x02 => self.software_unwrap_v2(wrapped),
+            _ => Err(SealedIdentityError::BlobCorrupted),
+        }
+    }
+
+    /// Legacy v1 unwrap: XOR cipher (backward compat only).
+    fn software_unwrap_v1(&self, wrapped: &[u8]) -> Result<Vec<u8>, SealedIdentityError> {
         let salt = self.machine_salt();
         let mut hasher = Sha256::new();
         hasher.update(&salt);
@@ -412,7 +412,35 @@ impl SealedIdentityStore {
         Ok(seed)
     }
 
-    /// Derive a machine-specific salt from the device ID.
+    /// v2 unwrap: ChaCha20-Poly1305 AEAD.
+    fn software_unwrap_v2(&self, wrapped: &[u8]) -> Result<Vec<u8>, SealedIdentityError> {
+        // Format: version(1) || random_salt(32) || aead_nonce(12) || ciphertext+tag
+        const HEADER_LEN: usize = 1 + 32 + 12; // 45
+        if wrapped.len() < HEADER_LEN + 16 {
+            return Err(SealedIdentityError::BlobCorrupted);
+        }
+        let random_salt = &wrapped[1..33];
+        let nonce_bytes = &wrapped[33..45];
+        let ciphertext = &wrapped[45..];
+
+        let machine_salt = self.machine_salt();
+        let hk = Hkdf::<Sha256>::new(Some(random_salt), &machine_salt);
+        let mut key = [0u8; 32];
+        hk.expand(b"witnessd-software-wrap-v2", &mut key)
+            .map_err(|_| SealedIdentityError::BlobCorrupted)?;
+
+        let cipher = ChaCha20Poly1305::new_from_slice(&key)
+            .map_err(|_| SealedIdentityError::BlobCorrupted)?;
+
+        let aead_nonce = AeadNonce::from_slice(nonce_bytes);
+        let plaintext = cipher
+            .decrypt(aead_nonce, ciphertext)
+            .map_err(|_| SealedIdentityError::BlobCorrupted)?;
+
+        key.zeroize();
+        Ok(plaintext)
+    }
+
     fn machine_salt(&self) -> Vec<u8> {
         let mut hasher = Sha256::new();
         hasher.update(b"witnessd-machine-salt-v1");
@@ -451,20 +479,14 @@ mod tests {
         let store = SealedIdentityStore::new(provider, tmp.path());
         let puf = TestPUF;
 
-        // Initialize should succeed with software wrapping
         let identity = store.initialize(&puf).unwrap();
         assert!(!identity.public_key.is_empty());
         assert!(!identity.fingerprint.is_empty());
-
-        // Should be "bound" (same device ID)
         assert!(store.is_bound());
 
-        // Public identity should match
         let pub_id = store.public_identity().unwrap();
         assert_eq!(pub_id.public_key, identity.public_key);
         assert_eq!(pub_id.fingerprint, identity.fingerprint);
-
-        // Attestation tier should be software-only
         assert_eq!(store.attestation_tier(), AttestationTier::SoftwareOnly);
     }
 
@@ -476,12 +498,9 @@ mod tests {
         let puf = TestPUF;
 
         store.initialize(&puf).unwrap();
-
-        // Advance counter
         store.advance_counter(5).unwrap();
         store.advance_counter(10).unwrap();
 
-        // Rollback should fail
         let result = store.advance_counter(8);
         assert!(result.is_err());
         assert!(matches!(
@@ -499,10 +518,8 @@ mod tests {
 
         let identity = store.initialize(&puf).unwrap();
 
-        // Reseal should succeed
         store.reseal(&puf).unwrap();
 
-        // Public identity should be preserved
         let pub_id = store.public_identity().unwrap();
         assert_eq!(pub_id.public_key, identity.public_key);
     }
@@ -513,11 +530,7 @@ mod tests {
         let provider: ProviderHandle = Arc::new(SoftwareProvider::new());
         let store = SealedIdentityStore::new(provider, tmp.path());
         let puf = TestPUF;
-
-        // First init
         let id1 = store.initialize(&puf).unwrap();
-
-        // Second init should reuse the existing blob
         let id2 = store.initialize(&puf).unwrap();
         assert_eq!(id1.public_key, id2.public_key);
     }

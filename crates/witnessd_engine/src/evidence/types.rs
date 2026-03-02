@@ -216,20 +216,6 @@ pub struct InputDeviceInfo {
     pub fingerprint: String,
 }
 
-impl From<HIDDeviceInfo> for InputDeviceInfo {
-    fn from(hid: HIDDeviceInfo) -> Self {
-        let transport = hid.transport_type();
-        Self {
-            vendor_id: hid.vendor_id as u16,
-            product_id: hid.product_id as u16,
-            product_name: hid.product_name.clone(),
-            serial_number: hid.serial_number.clone(),
-            connection_type: transport.as_str().to_string(),
-            fingerprint: hid.fingerprint(),
-        }
-    }
-}
-
 impl From<&HIDDeviceInfo> for InputDeviceInfo {
     fn from(hid: &HIDDeviceInfo) -> Self {
         let transport = hid.transport_type();

@@ -19,10 +19,7 @@ mod tests {
     fn test_config_app_allowed() {
         let config = SentinelConfig::default();
 
-        // Allowed app should be tracked
         assert!(config.is_app_allowed("com.microsoft.VSCode", "Visual Studio Code"));
-
-        // Blocked app should not be tracked
         assert!(!config.is_app_allowed("com.apple.finder", "Finder"));
     }
 
@@ -49,7 +46,6 @@ mod tests {
 
     #[test]
     fn test_infer_document_path_standard_title() {
-        // "Document.txt - Notepad" → "Document.txt"
         let result = infer_document_path_from_title("Document.txt - Notepad");
         assert_eq!(result, Some("Document.txt".to_string()));
     }
@@ -68,7 +64,6 @@ mod tests {
 
     #[test]
     fn test_infer_document_path_no_extension() {
-        // "Settings" → None (no recognizable document)
         let result = infer_document_path_from_title("Settings");
         assert_eq!(result, None);
     }
@@ -97,18 +92,14 @@ mod tests {
 
         let shadow_mgr = ShadowManager::new(&temp_dir).unwrap();
 
-        // Create shadow
         let id = shadow_mgr.create("Test App", "Untitled").unwrap();
         assert!(!id.is_empty());
 
-        // Update shadow
         shadow_mgr.update(&id, b"test content").unwrap();
 
-        // Get path
         let path = shadow_mgr.get_path(&id);
         assert!(path.is_some());
 
-        // Delete shadow
         shadow_mgr.delete(&id).unwrap();
         assert!(shadow_mgr.get_path(&id).is_none());
 

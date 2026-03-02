@@ -2,10 +2,9 @@
 
 use super::{AnchorError, Proof};
 
-/// Validate the structural format of a proof (non-empty data, non-zero hash).
+/// Check structural validity (non-empty data, non-zero hash).
 ///
-/// NOTE: This does NOT perform cryptographic verification of the proof against
-/// its anchor provider. It only checks basic format validity.
+/// Does NOT verify cryptographic proof against the anchor provider.
 pub fn verify_proof_format(proof: &Proof) -> Result<bool, AnchorError> {
     if proof.proof_data.is_empty() {
         return Err(AnchorError::InvalidFormat("empty proof data".into()));

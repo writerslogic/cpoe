@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
-//! Ethereum anchor provider for external timestamping.
-//!
-//! Submits content hashes to an Ethereum smart contract for blockchain anchoring.
-//! Supports full EIP-155 transaction signing with automatic nonce and gas management.
+//! Ethereum anchor provider -- submits content hashes to a smart contract
+//! via EIP-155 signed transactions with automatic nonce/gas management.
 
 use super::{AnchorError, AnchorProvider, Proof, ProofStatus, ProviderType};
 use async_trait::async_trait;
@@ -11,21 +9,21 @@ use k256::ecdsa::{signature::hazmat::PrehashSigner, SigningKey, VerifyingKey};
 use rlp::RlpStream;
 use tiny_keccak::{Hasher, Keccak};
 
-/// Maximum retry attempts for nonce conflicts.
+/// Max retries on nonce conflicts
 const MAX_NONCE_RETRIES: u32 = 3;
 
-/// secp256k1 curve order for EIP-2 signature normalization.
+/// secp256k1 curve order `n`, used for EIP-2 `s`-value normalization
 const SECP256K1_ORDER: [u8; 32] = [
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE,
     0xBA, 0xAE, 0xDC, 0xE6, 0xAF, 0x48, 0xA0, 0x3B, 0xBF, 0xD2, 0x5E, 0x8C, 0xD0, 0x36, 0x41, 0x41,
 ];
 
-/// Function selector for `anchor(bytes32)` - first 4 bytes of keccak256("anchor(bytes32)").
+/// Solidity selector: `keccak256("anchor(bytes32)")[:4]`
 const ANCHOR_FUNCTION_SELECTOR: [u8; 4] = [0xee, 0xcd, 0xf9, 0x27];
 
-/// Ethereum anchor provider with full transaction signing.
+/// Ethereum anchor provider with EIP-155 transaction signing.
 ///
-/// The signing key is stored securely and zeroized on drop via k256's internal handling.
+/// Signing key is zeroized on drop via `k256` internals.
 pub struct EthereumProvider {
     rpc_url: String,
     contract_address: String,
@@ -35,7 +33,7 @@ pub struct EthereumProvider {
 }
 
 impl EthereumProvider {
-    /// Create a new Ethereum provider with explicit configuration.
+    /// Create a provider with explicit configuration.
     pub fn new(
         rpc_url: String,
         contract_address: String,
@@ -63,21 +61,15 @@ impl EthereumProvider {
         })
     }
 
-    /// Create a provider from environment variables.
+    /// Create from environment variables.
     ///
-    /// Required environment variables:
-    /// - `ETHEREUM_RPC_URL`: JSON-RPC endpoint URL
-    /// - `ETHEREUM_CONTRACT_ADDRESS`: Anchor contract address
-    /// - `ETHEREUM_PRIVATE_KEY`: Hex-encoded private key (with or without 0x prefix)
-    /// - `ETHEREUM_CHAIN_ID`: Chain ID (default: 1 for mainnet)
-    ///
-    /// For backward compatibility, also supports:
-    /// - `ETHEREUM_RAW_TX_TEMPLATE`: Legacy mode (deprecated)
+    /// Requires `ETHEREUM_RPC_URL`, `ETHEREUM_CONTRACT_ADDRESS`,
+    /// `ETHEREUM_PRIVATE_KEY` (hex, optional `0x`), and optionally
+    /// `ETHEREUM_CHAIN_ID` (default: 1).
     pub fn from_env() -> Result<Self, AnchorError> {
         let rpc_url = std::env::var("ETHEREUM_RPC_URL")
             .map_err(|_| AnchorError::Unavailable("ETHEREUM_RPC_URL not set".into()))?;
 
-        // Check for new-style configuration first
         if let (Ok(contract), Ok(private_key)) = (
             std::env::var("ETHEREUM_CONTRACT_ADDRESS"),
             std::env::var("ETHEREUM_PRIVATE_KEY"),
@@ -90,7 +82,7 @@ impl EthereumProvider {
             return Self::new(rpc_url, contract, &private_key, chain_id);
         }
 
-        // Legacy mode: raw transaction template (deprecated)
+        // Deprecated legacy path
         if std::env::var("ETHEREUM_RAW_TX_TEMPLATE").is_ok() {
             log::warn!(
                 "ETHEREUM_RAW_TX_TEMPLATE is deprecated. \
@@ -108,22 +100,21 @@ impl EthereumProvider {
         ))
     }
 
-    /// Get the Ethereum address derived from the signing key.
+    /// Derive the checksumless Ethereum address from the signing key.
     fn address(&self) -> String {
         let verifying_key = VerifyingKey::from(&self.signing_key);
         let public_key_bytes = verifying_key.to_encoded_point(false);
-        let public_key_slice = &public_key_bytes.as_bytes()[1..]; // Skip 0x04 prefix
+        let public_key_slice = &public_key_bytes.as_bytes()[1..]; // skip 0x04 uncompressed prefix
 
         let mut hasher = Keccak::v256();
         let mut hash = [0u8; 32];
         hasher.update(public_key_slice);
         hasher.finalize(&mut hash);
 
-        // Take last 20 bytes
         format!("0x{}", hex::encode(&hash[12..]))
     }
 
-    /// Make a JSON-RPC call to the Ethereum node.
+    /// Send a JSON-RPC request to the Ethereum node.
     async fn rpc_call(
         &self,
         method: &str,
@@ -162,7 +153,7 @@ impl EthereumProvider {
         Ok(result["result"].clone())
     }
 
-    /// Get the current nonce for the signing address.
+    /// Fetch pending nonce for the signing address.
     async fn get_nonce(&self) -> Result<u64, AnchorError> {
         let address = self.address();
         let result = self
@@ -180,7 +171,7 @@ impl EthereumProvider {
             .map_err(|e| AnchorError::Network(format!("Failed to parse nonce: {e}")))
     }
 
-    /// Get the current gas price.
+    /// Fetch current gas price via `eth_gasPrice`.
     async fn get_gas_price(&self) -> Result<u128, AnchorError> {
         let result = self.rpc_call("eth_gasPrice", serde_json::json!([])).await?;
 
@@ -192,7 +183,7 @@ impl EthereumProvider {
             .map_err(|e| AnchorError::Network(format!("Failed to parse gas price: {e}")))
     }
 
-    /// Estimate gas for the anchor transaction.
+    /// Estimate gas with a 20% safety buffer; falls back to 90k on error.
     async fn estimate_gas(&self, data: &[u8]) -> Result<u64, AnchorError> {
         let address = self.address();
         let result = self
@@ -215,14 +206,13 @@ impl EthereumProvider {
                     u64::from_str_radix(gas_hex.trim_start_matches("0x"), 16).map_err(|e| {
                         AnchorError::Network(format!("Failed to parse gas estimate: {e}"))
                     })?;
-                // Add 20% buffer
                 Ok(base_gas * 120 / 100)
             }
-            Err(_) => Ok(90000), // Default fallback
+            Err(_) => Ok(90000),
         }
     }
 
-    /// Encode the anchor(bytes32) function call.
+    /// ABI-encode `anchor(bytes32)` calldata.
     fn encode_anchor_call(&self, content_hash: &[u8; 32]) -> Vec<u8> {
         let mut data = Vec::with_capacity(36);
         data.extend_from_slice(&ANCHOR_FUNCTION_SELECTOR);
@@ -230,7 +220,7 @@ impl EthereumProvider {
         data
     }
 
-    /// Build and sign an EIP-155 transaction.
+    /// RLP-encode and sign an EIP-155 legacy transaction.
     fn sign_transaction(
         &self,
         nonce: u64,
@@ -241,8 +231,7 @@ impl EthereumProvider {
         let to_bytes = hex_to_bytes(&self.contract_address)
             .map_err(|e| AnchorError::Configuration(format!("Invalid contract address: {e}")))?;
 
-        // Build unsigned transaction for EIP-155 signing
-        // Format: [nonce, gasPrice, gasLimit, to, value, data, chainId, 0, 0]
+        // EIP-155 signing tuple: [nonce, gasPrice, gasLimit, to, value, data, chainId, 0, 0]
         let mut unsigned = RlpStream::new_list(9);
         unsigned.append(&nonce);
         unsigned.append(&gas_price);
@@ -256,13 +245,11 @@ impl EthereumProvider {
 
         let unsigned_bytes = unsigned.out();
 
-        // Hash the unsigned transaction
         let mut hasher = Keccak::v256();
         let mut tx_hash = [0u8; 32];
         hasher.update(&unsigned_bytes);
         hasher.finalize(&mut tx_hash);
 
-        // Sign the hash
         let (signature, recovery_id) = self
             .signing_key
             .sign_prehash(&tx_hash)
@@ -274,18 +261,15 @@ impl EthereumProvider {
         r.copy_from_slice(&sig_bytes[0..32]);
         s.copy_from_slice(&sig_bytes[32..64]);
 
-        // EIP-2: Normalize s to lower half of curve
+        // EIP-2: force `s` into the lower half of the curve order
         let mut recovery = recovery_id.to_byte();
         if is_high_s(&s) {
             s = negate_s(&s);
             recovery = if recovery == 0 { 1 } else { 0 };
         }
 
-        // Calculate v for EIP-155: v = chainId * 2 + 35 + recovery
+        // EIP-155: v = chainId * 2 + 35 + recovery
         let v = self.chain_id * 2 + 35 + u64::from(recovery);
-
-        // Build signed transaction
-        // Format: [nonce, gasPrice, gasLimit, to, value, data, v, r, s]
         let mut signed = RlpStream::new_list(9);
         signed.append(&nonce);
         signed.append(&gas_price);
@@ -300,18 +284,17 @@ impl EthereumProvider {
         Ok(signed.out().to_vec())
     }
 
-    /// Submit a transaction with nonce conflict retry logic.
+    /// Submit with automatic nonce-conflict retry (up to `MAX_NONCE_RETRIES`).
     async fn submit_transaction(&self, content_hash: &[u8; 32]) -> Result<String, AnchorError> {
         let data = self.encode_anchor_call(content_hash);
         let mut last_error = None;
 
         for attempt in 0..MAX_NONCE_RETRIES {
-            // Get fresh nonce and gas price for each attempt
             let nonce = self.get_nonce().await?;
             let base_gas_price = self.get_gas_price().await?;
             let gas_limit = self.estimate_gas(&data).await?;
 
-            // Increase gas price on retries (15% per attempt after first)
+            // Bump gas price +15% per retry to outbid stuck txns
             let gas_multiplier = 110u128 + u128::from(attempt * 15);
             let gas_price = base_gas_price * gas_multiplier / 100;
 
@@ -348,7 +331,6 @@ impl EthereumProvider {
                     if is_nonce_error && attempt < MAX_NONCE_RETRIES - 1 {
                         log::warn!("Nonce conflict on attempt {}, retrying: {}", attempt + 1, e);
                         last_error = Some(e);
-                        // Brief delay before retry
                         tokio::time::sleep(tokio::time::Duration::from_millis(
                             1000 * u64::from(attempt + 1),
                         ))
@@ -365,7 +347,7 @@ impl EthereumProvider {
         }))
     }
 
-    /// Get a transaction receipt.
+    /// Fetch transaction receipt via `eth_getTransactionReceipt`.
     async fn get_receipt(&self, txid: &str) -> Result<serde_json::Value, AnchorError> {
         self.rpc_call("eth_getTransactionReceipt", serde_json::json!([txid]))
             .await
@@ -428,17 +410,15 @@ impl AnchorProvider for EthereumProvider {
         if !receipt.is_null() {
             if let Some(block_number) = receipt.get("blockNumber") {
                 if !block_number.is_null() {
-                    // Check transaction status (0x1 = success)
                     let status = receipt
                         .get("status")
                         .and_then(|s| s.as_str())
-                        .unwrap_or("0x0"); // Default to failure if status field missing
+                        .unwrap_or("0x0");
 
                     if status == "0x1" {
                         updated.status = ProofStatus::Confirmed;
                         updated.confirmed_at = Some(chrono::Utc::now());
 
-                        // Store block number in extra
                         if let Some(bn) = block_number.as_str() {
                             updated
                                 .extra
@@ -466,7 +446,6 @@ impl AnchorProvider for EthereumProvider {
             return Ok(false);
         }
 
-        // Check that transaction was successful
         let status = receipt
             .get("status")
             .and_then(|s| s.as_str())
@@ -476,31 +455,24 @@ impl AnchorProvider for EthereumProvider {
             return Ok(false);
         }
 
-        // Verify contract address matches
         if let Some(to) = receipt.get("to").and_then(|t| t.as_str()) {
             if to.to_lowercase() != self.contract_address.to_lowercase() {
                 return Ok(false);
             }
         }
 
-        // Check block number exists (confirmed)
         Ok(receipt.get("blockNumber").is_some_and(|bn| !bn.is_null()))
     }
 }
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-/// Parse a hex string (with or without 0x prefix) into bytes.
+/// Parse hex (with or without `0x` prefix) into bytes.
 fn hex_to_bytes(hex: &str) -> Result<Vec<u8>, String> {
     let clean = hex.trim_start_matches("0x");
     hex::decode(clean).map_err(|e| e.to_string())
 }
 
-/// Check if s value is in the high half of the curve (for EIP-2 normalization).
+/// True if `s > secp256k1_order / 2` (needs EIP-2 normalization).
 fn is_high_s(s: &[u8; 32]) -> bool {
-    // Half of secp256k1 order
     let half_order: [u8; 32] = [
         0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
         0xFF, 0x5D, 0x57, 0x6E, 0x73, 0x57, 0xA4, 0x50, 0x1D, 0xDF, 0xE9, 0x2F, 0x46, 0x68, 0x1B,
@@ -517,7 +489,7 @@ fn is_high_s(s: &[u8; 32]) -> bool {
     false
 }
 
-/// Negate s value (compute curve_order - s) for EIP-2 normalization.
+/// Compute `curve_order - s` (EIP-2 low-s normalization).
 fn negate_s(s: &[u8; 32]) -> [u8; 32] {
     let mut result = [0u8; 32];
     let mut borrow = 0u16;
@@ -544,7 +516,6 @@ mod tests {
 
     #[test]
     fn test_anchor_function_selector() {
-        // Verify the function selector is correct: keccak256("anchor(bytes32)")[:4]
         let mut hasher = Keccak::v256();
         let mut hash = [0u8; 32];
         hasher.update(b"anchor(bytes32)");

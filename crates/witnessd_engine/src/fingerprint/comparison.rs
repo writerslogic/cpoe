@@ -1,55 +1,40 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
-//! Fingerprint Comparison and Profile Matching
-//!
-//! This module provides algorithms for comparing fingerprints
-//! and determining authorship probability.
+//! Fingerprint comparison, authorship probability, and profile clustering.
 
 use super::{AuthorFingerprint, ProfileId};
 use serde::{Deserialize, Serialize};
 
-// =============================================================================
-// Comparison Result
-// =============================================================================
-
-/// Result of comparing two fingerprints.
+/// Pairwise fingerprint comparison result.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FingerprintComparison {
-    /// First profile ID
     pub profile_a: ProfileId,
-    /// Second profile ID
     pub profile_b: ProfileId,
-    /// Overall similarity score (0.0 - 1.0)
+    /// 0.0 - 1.0
     pub similarity: f64,
-    /// Activity similarity score
     pub activity_similarity: f64,
-    /// Voice similarity score (if both have voice data)
     pub voice_similarity: Option<f64>,
-    /// Confidence in the comparison
     pub confidence: f64,
-    /// Verdict based on similarity
     pub verdict: ComparisonVerdict,
-    /// Detailed component scores
     pub components: ComparisonComponents,
 }
 
-/// Verdict from fingerprint comparison.
+/// Similarity-based authorship verdict.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ComparisonVerdict {
-    /// Very likely same author (similarity > 0.85)
+    /// > 0.85
     SameAuthor,
-    /// Probably same author (similarity 0.7-0.85)
+    /// 0.70 - 0.85
     LikelySameAuthor,
-    /// Inconclusive (similarity 0.4-0.7)
+    /// 0.40 - 0.70
     Inconclusive,
-    /// Probably different authors (similarity 0.2-0.4)
+    /// 0.20 - 0.40
     LikelyDifferentAuthors,
-    /// Very likely different authors (similarity < 0.2)
+    /// < 0.20
     DifferentAuthors,
 }
 
 impl ComparisonVerdict {
-    /// Determine verdict from similarity score.
     pub fn from_similarity(similarity: f64) -> Self {
         if similarity > 0.85 {
             Self::SameAuthor
@@ -64,7 +49,6 @@ impl ComparisonVerdict {
         }
     }
 
-    /// Get human-readable description.
     pub fn description(&self) -> &'static str {
         match self {
             Self::SameAuthor => "Very likely the same author",
@@ -76,33 +60,21 @@ impl ComparisonVerdict {
     }
 }
 
-/// Detailed component scores from comparison.
+/// Per-dimension similarity breakdown.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ComparisonComponents {
-    /// IKI distribution similarity
     pub iki_similarity: f64,
-    /// Zone profile similarity
     pub zone_similarity: f64,
-    /// Pause signature similarity
     pub pause_similarity: f64,
-    /// Word length similarity (voice)
     pub word_length_similarity: Option<f64>,
-    /// Punctuation similarity (voice)
     pub punctuation_similarity: Option<f64>,
-    /// N-gram similarity (voice)
     pub ngram_similarity: Option<f64>,
 }
 
-// =============================================================================
-// Comparison Functions
-// =============================================================================
-
-/// Compare two author fingerprints.
+/// Full pairwise comparison of two author fingerprints.
 pub fn compare_fingerprints(a: &AuthorFingerprint, b: &AuthorFingerprint) -> FingerprintComparison {
-    // Activity similarity
     let activity_similarity = a.activity.similarity(&b.activity);
 
-    // Component scores
     let iki_sim = a
         .activity
         .iki_distribution
@@ -113,7 +85,6 @@ pub fn compare_fingerprints(a: &AuthorFingerprint, b: &AuthorFingerprint) -> Fin
         .pause_signature
         .similarity(&b.activity.pause_signature);
 
-    // Voice similarity (if both have voice data)
     let (voice_similarity, word_len_sim, punct_sim, ngram_sim) =
         if let (Some(va), Some(vb)) = (&a.voice, &b.voice) {
             let sim = va.similarity(vb);
@@ -130,15 +101,12 @@ pub fn compare_fingerprints(a: &AuthorFingerprint, b: &AuthorFingerprint) -> Fin
             (None, None, None, None)
         };
 
-    // Overall similarity
     let similarity = if let Some(voice_sim) = voice_similarity {
-        // Weight activity more heavily (60/40)
         activity_similarity * 0.6 + voice_sim * 0.4
     } else {
         activity_similarity
     };
 
-    // Confidence based on sample counts
     let min_samples = a.sample_count.min(b.sample_count);
     let confidence = confidence_from_samples(min_samples);
 
@@ -161,27 +129,19 @@ pub fn compare_fingerprints(a: &AuthorFingerprint, b: &AuthorFingerprint) -> Fin
     }
 }
 
-/// Calculate confidence based on sample count.
+/// Asymptotic confidence: ~0.5 at 100 samples, ~0.9 at 1000.
 fn confidence_from_samples(samples: u64) -> f64 {
-    // Confidence increases with samples, asymptotic to 1.0
-    // 100 samples ≈ 0.5, 1000 samples ≈ 0.9
     1.0 - 1.0 / (1.0 + samples as f64 / 100.0)
 }
 
-// =============================================================================
-// Profile Matcher
-// =============================================================================
-
-/// Matcher for finding similar profiles in a collection.
+/// Threshold-based matcher for finding similar profiles.
 pub struct ProfileMatcher {
-    /// Minimum similarity threshold
     threshold: f64,
-    /// Maximum results to return
     max_results: usize,
 }
 
 impl ProfileMatcher {
-    /// Create a new profile matcher.
+    /// Default threshold: 0.5, max results: 10.
     pub fn new() -> Self {
         Self {
             threshold: 0.5,
@@ -189,19 +149,17 @@ impl ProfileMatcher {
         }
     }
 
-    /// Set the similarity threshold.
     pub fn with_threshold(mut self, threshold: f64) -> Self {
         self.threshold = threshold.clamp(0.0, 1.0);
         self
     }
 
-    /// Set the maximum number of results.
     pub fn with_max_results(mut self, max: usize) -> Self {
         self.max_results = max;
         self
     }
 
-    /// Find matching profiles for a given fingerprint.
+    /// Return candidates above threshold, sorted by descending similarity.
     pub fn find_matches(
         &self,
         target: &AuthorFingerprint,
@@ -209,7 +167,7 @@ impl ProfileMatcher {
     ) -> Vec<MatchResult> {
         let mut results: Vec<_> = candidates
             .iter()
-            .filter(|c| c.id != target.id) // Don't match self
+            .filter(|c| c.id != target.id)
             .map(|candidate| {
                 let comparison = compare_fingerprints(target, candidate);
                 MatchResult {
@@ -222,20 +180,17 @@ impl ProfileMatcher {
             .filter(|r| r.similarity >= self.threshold)
             .collect();
 
-        // Sort by similarity (descending)
         results.sort_by(|a, b| {
             b.similarity
                 .partial_cmp(&a.similarity)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-
-        // Limit results
         results.truncate(self.max_results);
 
         results
     }
 
-    /// Find the best match for a fingerprint.
+    /// Return the single highest-similarity match, if any.
     pub fn find_best_match(
         &self,
         target: &AuthorFingerprint,
@@ -244,7 +199,7 @@ impl ProfileMatcher {
         self.find_matches(target, candidates).into_iter().next()
     }
 
-    /// Verify if a fingerprint matches a specific profile.
+    /// 1:1 verification against a specific profile.
     pub fn verify_match(
         &self,
         target: &AuthorFingerprint,
@@ -267,64 +222,59 @@ impl Default for ProfileMatcher {
     }
 }
 
-/// Result of finding a matching profile.
+/// Single match from a profile search.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchResult {
-    /// Matched profile ID
     pub profile_id: ProfileId,
-    /// Similarity score
     pub similarity: f64,
-    /// Confidence level
     pub confidence: f64,
-    /// Verdict
     pub verdict: ComparisonVerdict,
 }
 
-/// Result of verifying a match.
+/// 1:1 verification outcome.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VerificationResult {
-    /// Whether the fingerprints match (above threshold)
     pub matches: bool,
-    /// Similarity score
     pub similarity: f64,
-    /// Confidence level
     pub confidence: f64,
-    /// Verdict
     pub verdict: ComparisonVerdict,
 }
 
-// =============================================================================
-// Batch Comparison
-// =============================================================================
-
-/// Compare multiple fingerprints and find clusters.
+/// Single-linkage clustering of fingerprints by similarity.
 pub struct BatchComparator {
-    /// Similarity threshold for clustering
     cluster_threshold: f64,
 }
 
 impl BatchComparator {
-    /// Create a new batch comparator.
+    /// Default clustering threshold: 0.7.
     pub fn new() -> Self {
         Self {
             cluster_threshold: 0.7,
         }
     }
 
-    /// Set the clustering threshold.
     pub fn with_threshold(mut self, threshold: f64) -> Self {
         self.cluster_threshold = threshold;
         self
     }
 
-    /// Find clusters of similar fingerprints.
+    /// Greedy single-pass clustering. O(n^2) pairwise comparisons.
+    ///
+    /// Returns an error if `fingerprints.len() > 500` to prevent excessive
+    /// computation. Callers with large datasets should sample first.
     pub fn find_clusters(&self, fingerprints: &[AuthorFingerprint]) -> Vec<Cluster> {
         let n = fingerprints.len();
         if n == 0 {
             return Vec::new();
         }
+        if n > 500 {
+            log::warn!(
+                "find_clusters: {} fingerprints exceeds 500 limit, truncating",
+                n
+            );
+            return self.find_clusters(&fingerprints[..500]);
+        }
 
-        // Simple greedy clustering
         let mut assigned = vec![false; n];
         let mut clusters = Vec::new();
 
@@ -340,7 +290,6 @@ impl BatchComparator {
             };
             assigned[i] = true;
 
-            // Find similar fingerprints
             for j in (i + 1)..n {
                 if assigned[j] {
                     continue;
@@ -353,7 +302,6 @@ impl BatchComparator {
                 }
             }
 
-            // Calculate average internal similarity
             if cluster.members.len() > 1 {
                 let mut total_sim = 0.0;
                 let mut count = 0;
@@ -386,20 +334,13 @@ impl Default for BatchComparator {
     }
 }
 
-/// A cluster of similar fingerprints.
+/// Group of fingerprints above the clustering threshold.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Cluster {
-    /// Representative profile ID
     pub representative: ProfileId,
-    /// All member profile IDs
     pub members: Vec<ProfileId>,
-    /// Average internal similarity
     pub avg_internal_similarity: f64,
 }
-
-// =============================================================================
-// Tests
-// =============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -461,7 +402,6 @@ mod tests {
         let matcher = ProfileMatcher::new().with_threshold(0.0);
         let matches = matcher.find_matches(&target, &candidates);
 
-        // Should find all candidates (threshold 0)
         assert_eq!(matches.len(), 3);
     }
 

@@ -3,16 +3,12 @@
 //! Zone-committed jitter engine for real-time keystroke monitoring.
 
 use chrono::{DateTime, Utc};
-use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
-use sha2::Sha256;
 use std::time::Duration;
 use zeroize::Zeroize;
 
 use super::content::compute_jitter_sample_hash;
 use super::profile::interval_to_bucket;
-use super::session::{JITTER_RANGE, MIN_JITTER};
-use super::timestamp_nanos_u64;
 use super::zones::keycode_to_zone;
 use super::zones::{encode_zone_transition, ZoneTransition};
 
@@ -121,16 +117,15 @@ impl JitterEngine {
         interval_bucket: u8,
         timestamp: DateTime<Utc>,
     ) -> u32 {
-        let mut mac = Hmac::<Sha256>::new_from_slice(&self.secret).expect("hmac key");
-        mac.update(&self.ordinal.to_be_bytes());
-        mac.update(&doc_hash);
-        mac.update(&timestamp_nanos_u64(timestamp).to_be_bytes());
-        mac.update(&[zone_transition]);
-        mac.update(&[interval_bucket]);
-        mac.update(&self.prev_jitter.to_be_bytes());
-        let hash = mac.finalize().into_bytes();
-        let raw = u32::from_be_bytes(hash[0..4].try_into().unwrap());
-        MIN_JITTER + (raw % JITTER_RANGE)
+        super::compute_zone_jitter(
+            &self.secret,
+            self.ordinal,
+            &doc_hash,
+            zone_transition,
+            interval_bucket,
+            timestamp,
+            self.prev_jitter,
+        )
     }
 
     fn update_profile(&mut self, from_zone: i32, to_zone: i32, bucket: u8) {

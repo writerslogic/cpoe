@@ -34,11 +34,8 @@ pub enum AttestationTier {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum ContentTier {
-    /// Core tier: minimal required evidence
     Core = 1,
-    /// Enhanced tier: additional behavioral evidence
     Enhanced = 2,
-    /// Maximum tier: full evidence including hardware
     Maximum = 3,
 }
 
@@ -46,9 +43,7 @@ pub enum ContentTier {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum ProofAlgorithm {
-    /// Sequential work function using Argon2id
     SwfArgon2id = 20,
-    /// Entangled sequential work function using Argon2id
     SwfArgon2idEntangled = 21,
 }
 
@@ -56,13 +51,9 @@ pub enum ProofAlgorithm {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum Verdict {
-    /// Consistent with human authorship
     Authentic = 1,
-    /// Insufficient evidence
     Inconclusive = 2,
-    /// Anomalies detected
     Suspicious = 3,
-    /// Chain broken or forged
     Invalid = 4,
 }
 
@@ -70,9 +61,7 @@ pub enum Verdict {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum HashSaltMode {
-    /// No salt applied
     Unsalted = 0,
-    /// Author-provided salt
     AuthorSalted = 1,
 }
 
@@ -80,9 +69,7 @@ pub enum HashSaltMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum CostUnit {
-    /// US Dollars
     Usd = 1,
-    /// CPU hours
     CpuHours = 2,
 }
 
@@ -90,11 +77,8 @@ pub enum CostUnit {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum AbsenceType {
-    /// Verifiable from evidence alone
     ComputationallyBound = 1,
-    /// Requires trust in AE monitoring
     MonitoringDependent = 2,
-    /// Environmental assertions
     Environmental = 3,
 }
 
@@ -102,11 +86,8 @@ pub enum AbsenceType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum ProbeType {
-    /// Galton invariant challenge
     GaltonBoard = 1,
-    /// Motor reflex timing gate
     ReflexGate = 2,
-    /// Spatial accuracy challenge
     SpatialTarget = 3,
 }
 
@@ -114,6 +95,5 @@ pub enum ProbeType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum BindingType {
-    /// TLS Exporter Key Material
     TlsExporter = 1,
 }

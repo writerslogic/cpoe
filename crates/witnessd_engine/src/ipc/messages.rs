@@ -4,13 +4,12 @@ use crate::jitter::SimpleJitterSample;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// Maximum message size (1 MB)
+/// 1 MB cap on IPC frames
 pub(crate) const MAX_MESSAGE_SIZE: usize = 1024 * 1024;
 
-/// IPC Message Protocol for high-performance communication between Brain and Face.
+/// IPC message protocol between the engine (Brain) and GUI (Face).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum IpcMessage {
-    // Requests
     Handshake {
         version: String,
     },
@@ -22,22 +21,18 @@ pub enum IpcMessage {
     },
     GetStatus,
 
-    // Nonce Protocol Requests
-    /// Request the current session's attestation nonce
     GetAttestationNonce,
-    /// Export evidence with a verifier-provided nonce binding
     ExportWithNonce {
         file_path: PathBuf,
         title: String,
         verifier_nonce: [u8; 32],
     },
-    /// Verify evidence with expected nonce validation
     VerifyWithNonce {
         evidence_path: PathBuf,
         expected_nonce: Option<[u8; 32]>,
     },
 
-    // Events (Push from Brain to Face)
+    // Push events (Brain → Face)
     Pulse(SimpleJitterSample),
     CheckpointCreated {
         id: i64,
@@ -48,7 +43,6 @@ pub enum IpcMessage {
         message: String,
     },
 
-    // Status
     Heartbeat,
 
     // Responses
@@ -71,11 +65,9 @@ pub enum IpcMessage {
         tracked_files: Vec<String>,
         uptime_secs: u64,
     },
-    /// Response containing the attestation nonce
     AttestationNonceResponse {
         nonce: [u8; 32],
     },
-    /// Response for nonce-bound evidence export
     NonceExportResponse {
         success: bool,
         output_path: Option<String>,
@@ -86,7 +78,6 @@ pub enum IpcMessage {
         attestation_report: Option<String>,
         error: Option<String>,
     },
-    /// Response for nonce-validated verification
     NonceVerifyResponse {
         valid: bool,
         nonce_valid: bool,
@@ -97,12 +88,10 @@ pub enum IpcMessage {
         errors: Vec<String>,
     },
 
-    // P2: Crypto Operation Requests (for Windows IPC, macOS uses FFI)
-    /// Verify an evidence file
+    // Crypto ops (Windows IPC; macOS uses FFI)
     VerifyFile {
         path: PathBuf,
     },
-    /// Response for VerifyFile
     VerifyFileResponse {
         success: bool,
         checkpoint_count: u32,
@@ -112,23 +101,19 @@ pub enum IpcMessage {
         error: Option<String>,
     },
 
-    /// Export evidence for a file
     ExportFile {
         path: PathBuf,
         tier: String,
         output: PathBuf,
     },
-    /// Response for ExportFile
     ExportFileResponse {
         success: bool,
         error: Option<String>,
     },
 
-    /// Get forensic analysis for a file
     GetFileForensics {
         path: PathBuf,
     },
-    /// Response for GetFileForensics
     ForensicsResponse {
         assessment_score: f64,
         risk_level: String,
@@ -139,11 +124,9 @@ pub enum IpcMessage {
         error: Option<String>,
     },
 
-    /// Compute the Process Score for a file
     ComputeProcessScore {
         path: PathBuf,
     },
-    /// Response for ComputeProcessScore
     ProcessScoreResponse {
         residency: f64,
         sequence: f64,
@@ -153,12 +136,10 @@ pub enum IpcMessage {
         error: Option<String>,
     },
 
-    /// Create a manual checkpoint for a file
     CreateFileCheckpoint {
         path: PathBuf,
         message: String,
     },
-    /// Response for CreateFileCheckpoint
     CheckpointResponse {
         success: bool,
         hash: Option<String>,
@@ -166,33 +147,20 @@ pub enum IpcMessage {
     },
 }
 
-/// Error codes for IPC responses
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum IpcErrorCode {
-    /// Unknown or generic error
     Unknown = 0,
-    /// Invalid message format
     InvalidMessage = 1,
-    /// File not found
     FileNotFound = 2,
-    /// File already being tracked
     AlreadyTracking = 3,
-    /// File not being tracked
     NotTracking = 4,
-    /// Permission denied
     PermissionDenied = 5,
-    /// Version mismatch
     VersionMismatch = 6,
-    /// Internal server error
     InternalError = 7,
-    /// Nonce validation failed
     NonceInvalid = 8,
-    /// Identity not initialized
     NotInitialized = 9,
 }
 
-/// Trait for handling IPC messages
 pub trait IpcMessageHandler: Send + Sync + 'static {
-    /// Handle an incoming IPC message and return a response
     fn handle(&self, msg: IpcMessage) -> IpcMessage;
 }

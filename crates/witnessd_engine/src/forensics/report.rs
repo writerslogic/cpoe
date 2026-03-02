@@ -6,18 +6,16 @@ use chrono::Duration as ChronoDuration;
 
 use super::types::{AuthorshipProfile, Severity};
 
-/// Generates a human-readable forensic report.
+/// Generate a human-readable forensic report.
 pub fn generate_report(profile: &AuthorshipProfile) -> String {
     let mut report = String::new();
 
-    // Header
     report.push_str(&"=".repeat(72));
     report.push('\n');
     report.push_str("                    FORENSIC AUTHORSHIP ANALYSIS\n");
     report.push_str(&"=".repeat(72));
     report.push_str("\n\n");
 
-    // File info
     if !profile.file_path.is_empty() {
         report.push_str(&format!("File:           {}\n", profile.file_path));
     }
@@ -39,7 +37,6 @@ pub fn generate_report(profile: &AuthorshipProfile) -> String {
     }
     report.push('\n');
 
-    // Primary Metrics
     report.push_str(&"-".repeat(72));
     report.push_str("\nPRIMARY METRICS\n");
     report.push_str(&"-".repeat(72));
@@ -47,7 +44,6 @@ pub fn generate_report(profile: &AuthorshipProfile) -> String {
 
     let m = &profile.metrics;
 
-    // Monotonic Append Ratio
     report.push_str(&format!(
         "Monotonic Append Ratio:   {:.3}  {}\n",
         m.monotonic_append_ratio,
@@ -58,7 +54,6 @@ pub fn generate_report(profile: &AuthorshipProfile) -> String {
         interpret_monotonic_append(m.monotonic_append_ratio)
     ));
 
-    // Edit Entropy
     let max_entropy = 4.32; // log2(20) for 20 bins
     report.push_str(&format!(
         "Edit Entropy:             {:.3}  {}\n",
@@ -70,7 +65,6 @@ pub fn generate_report(profile: &AuthorshipProfile) -> String {
         interpret_edit_entropy(m.edit_entropy)
     ));
 
-    // Median Interval
     report.push_str(&format!(
         "Median Interval:          {:.2} sec\n",
         m.median_interval
@@ -80,7 +74,6 @@ pub fn generate_report(profile: &AuthorshipProfile) -> String {
         interpret_median_interval(m.median_interval)
     ));
 
-    // Positive/Negative Ratio
     report.push_str(&format!(
         "Positive/Negative Ratio:  {:.3}  {}\n",
         m.positive_negative_ratio,
@@ -91,7 +84,6 @@ pub fn generate_report(profile: &AuthorshipProfile) -> String {
         interpret_pos_neg_ratio(m.positive_negative_ratio)
     ));
 
-    // Deletion Clustering
     report.push_str(&format!(
         "Deletion Clustering:      {:.3}\n",
         m.deletion_clustering
@@ -101,7 +93,6 @@ pub fn generate_report(profile: &AuthorshipProfile) -> String {
         interpret_deletion_clustering(m.deletion_clustering)
     ));
 
-    // Anomalies
     if !profile.anomalies.is_empty() {
         report.push_str(&"-".repeat(72));
         report.push_str("\nANOMALIES DETECTED\n");
@@ -131,7 +122,6 @@ pub fn generate_report(profile: &AuthorshipProfile) -> String {
         report.push('\n');
     }
 
-    // Assessment
     report.push_str(&"=".repeat(72));
     report.push_str(&format!("\nASSESSMENT: {}\n", profile.assessment));
     report.push_str(&"=".repeat(72));
@@ -140,7 +130,7 @@ pub fn generate_report(profile: &AuthorshipProfile) -> String {
     report
 }
 
-/// Formats a duration in human-readable form.
+/// Format a `ChronoDuration` as "X days, Y hours" etc.
 fn format_duration(d: ChronoDuration) -> String {
     if d < ChronoDuration::zero() {
         return "0 seconds".to_string();
@@ -177,7 +167,7 @@ fn format_duration(d: ChronoDuration) -> String {
     }
 }
 
-/// Formats a metric bar for visualization.
+/// Render an ASCII bar `[####----]` for a metric value.
 fn format_metric_bar(value: f64, min: f64, max: f64, width: usize) -> String {
     if width == 0 || max <= min {
         return "-".repeat(width);

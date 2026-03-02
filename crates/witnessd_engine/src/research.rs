@@ -29,62 +29,43 @@ use std::time::Duration;
 use crate::config::ResearchConfig;
 use crate::jitter::{Evidence, Statistics};
 
-/// Default upload endpoint for research data
 pub const RESEARCH_UPLOAD_URL: &str =
     "https://aswcfxodrgcnjbwrcjrl.supabase.co/functions/v1/research-upload";
 
-/// Minimum sessions before attempting upload
 pub const MIN_SESSIONS_FOR_UPLOAD: usize = 5;
 
-/// Default upload interval (4 hours)
 pub const DEFAULT_UPLOAD_INTERVAL_SECS: u64 = 4 * 60 * 60;
 
-/// Witnessd version for upload headers
 pub const WITNESSD_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Anonymized jitter sample for research purposes.
-/// Contains only timing data, no document or user information.
+/// Anonymized jitter sample -- timing data only, no document/user info.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnonymizedSample {
-    /// Relative timestamp within session (seconds since session start)
     pub relative_time_secs: f64,
-    /// Jitter value in microseconds
     pub jitter_micros: u32,
-    /// Keystroke ordinal (relative position in session)
     pub keystroke_ordinal: u64,
-    /// Whether document changed since last sample (without revealing content)
     pub document_changed: bool,
 }
 
 /// Anonymized session data for research contribution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnonymizedSession {
-    /// Random session identifier (not linked to actual session)
     pub research_id: String,
-    /// Collection timestamp (rounded to hour)
     pub collected_at: DateTime<Utc>,
-    /// Hardware class identifier
     pub hardware_class: HardwareClass,
-    /// Operating system type
     pub os_type: OsType,
-    /// Anonymized timing samples
     pub samples: Vec<AnonymizedSample>,
-    /// Aggregate statistics
     pub statistics: AnonymizedStatistics,
 }
 
-/// Hardware class classification (coarse-grained for privacy)
+/// Coarse-grained hardware class (bucketed for privacy).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HardwareClass {
-    /// CPU architecture: x86_64, aarch64, etc.
     pub arch: String,
-    /// Core count bucket: "1-2", "3-4", "5-8", "9-16", "17+"
     pub core_bucket: String,
-    /// Memory bucket: "<=4GB", "4-8GB", "8-16GB", "16-32GB", "32GB+"
     pub memory_bucket: String,
 }
 
-/// Operating system type
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum OsType {
@@ -94,47 +75,33 @@ pub enum OsType {
     Other,
 }
 
-/// Anonymized statistics for research
+/// Bucketed statistics for research (no raw identifiers).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnonymizedStatistics {
-    /// Total sample count
     pub total_samples: usize,
-    /// Duration bucket: "0-5min", "5-15min", "15-30min", "30-60min", "60min+"
     pub duration_bucket: String,
-    /// Typing rate bucket: "slow", "moderate", "fast", "very_fast"
     pub typing_rate_bucket: String,
-    /// Mean jitter value
     pub mean_jitter_micros: f64,
-    /// Standard deviation of jitter
     pub jitter_std_dev: f64,
-    /// Minimum jitter value
     pub min_jitter_micros: u32,
-    /// Maximum jitter value
     pub max_jitter_micros: u32,
-    /// Physics/hardware entropy ratio (0.0 to 1.0), only present with witnessd_jitter
     #[serde(skip_serializing_if = "Option::is_none")]
     pub phys_ratio: Option<f64>,
-    /// Entropy source description, only present with witnessd_jitter
     #[serde(skip_serializing_if = "Option::is_none")]
     pub entropy_source: Option<String>,
 }
 
-/// Research data export format
+/// Serializable export envelope for research data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResearchDataExport {
-    /// Format version
     pub version: u32,
-    /// Export timestamp
     pub exported_at: DateTime<Utc>,
-    /// Data collection consent confirmation
     pub consent_confirmed: bool,
-    /// Anonymized sessions
     pub sessions: Vec<AnonymizedSession>,
 }
 
 impl AnonymizedSession {
-    /// Create an anonymized session from jitter evidence.
-    /// Strips all identifying information while preserving timing patterns.
+    /// Strip identifying info from `Evidence`, preserving only timing patterns.
     pub fn from_evidence(evidence: &Evidence) -> Self {
         let research_id = generate_research_id();
         let collected_at = round_timestamp_to_hour(Utc::now());
@@ -182,13 +149,11 @@ impl AnonymizedSession {
     }
 }
 
-/// Generate a random research ID not linked to actual session
 fn generate_research_id() -> String {
     let random_bytes: [u8; 16] = rand::random();
     hex::encode(random_bytes)
 }
 
-/// Round timestamp to nearest hour for privacy
 fn round_timestamp_to_hour(ts: DateTime<Utc>) -> DateTime<Utc> {
     ts.with_minute(0)
         .and_then(|t| t.with_second(0))
@@ -196,7 +161,6 @@ fn round_timestamp_to_hour(ts: DateTime<Utc>) -> DateTime<Utc> {
         .unwrap_or(ts)
 }
 
-/// Detect hardware class (coarse-grained)
 fn detect_hardware_class() -> HardwareClass {
     let arch = std::env::consts::ARCH.to_string();
 
@@ -213,7 +177,6 @@ fn detect_hardware_class() -> HardwareClass {
     }
     .to_string();
 
-    // Memory detection is platform-specific
     let memory_bucket = detect_memory_bucket();
 
     HardwareClass {
@@ -269,8 +232,7 @@ fn detect_memory_bucket() -> String {
 
 #[cfg(target_os = "windows")]
 fn detect_memory_bucket() -> String {
-    // Windows memory detection via GlobalMemoryStatusEx
-    // For now, return unknown to avoid unsafe code
+    // TODO: implement via GlobalMemoryStatusEx (requires unsafe)
     "unknown".to_string()
 }
 
@@ -291,7 +253,6 @@ fn memory_gb_to_bucket(gb: u64) -> String {
     .to_string()
 }
 
-/// Detect operating system type
 fn detect_os_type() -> OsType {
     match std::env::consts::OS {
         "macos" => OsType::MacOS,
@@ -301,7 +262,6 @@ fn detect_os_type() -> OsType {
     }
 }
 
-/// Compute anonymized statistics
 fn compute_anonymized_statistics(
     stats: &Statistics,
     samples: &[AnonymizedSample],
@@ -354,7 +314,7 @@ fn compute_anonymized_statistics(
     }
 }
 
-/// Compute anonymized statistics from hybrid evidence (with witnessd_jitter).
+/// Like `compute_anonymized_statistics` but includes hardware entropy metrics.
 #[cfg(feature = "witnessd_jitter")]
 pub fn compute_anonymized_statistics_hybrid(
     stats: &Statistics,
@@ -367,7 +327,6 @@ pub fn compute_anonymized_statistics_hybrid(
     base
 }
 
-/// Describe the entropy source based on physics ratio.
 #[cfg(feature = "witnessd_jitter")]
 fn describe_entropy_source(phys_ratio: f64) -> String {
     if phys_ratio > 0.9 {
@@ -381,7 +340,7 @@ fn describe_entropy_source(phys_ratio: f64) -> String {
     }
 }
 
-/// Research data collector
+/// Collects anonymized sessions and manages disk persistence / upload.
 pub struct ResearchCollector {
     config: ResearchConfig,
     sessions: Vec<AnonymizedSession>,
@@ -395,18 +354,16 @@ impl ResearchCollector {
         }
     }
 
-    /// Check if research contribution is enabled
     pub fn is_enabled(&self) -> bool {
         self.config.contribute_to_research
     }
 
-    /// Add a session for research contribution (if enabled)
+    /// Anonymize and enqueue a session (no-op if disabled or below min samples).
     pub fn add_session(&mut self, evidence: &Evidence) {
         if !self.is_enabled() {
             return;
         }
 
-        // Only include sessions with sufficient samples
         if evidence.samples.len() < self.config.min_samples_per_session {
             return;
         }
@@ -414,18 +371,15 @@ impl ResearchCollector {
         let anonymized = AnonymizedSession::from_evidence(evidence);
         self.sessions.push(anonymized);
 
-        // Trim to max sessions
         while self.sessions.len() > self.config.max_sessions {
             self.sessions.remove(0);
         }
     }
 
-    /// Get count of collected sessions
     pub fn session_count(&self) -> usize {
         self.sessions.len()
     }
 
-    /// Export collected research data
     pub fn export(&self) -> ResearchDataExport {
         ResearchDataExport {
             version: 1,
@@ -435,12 +389,10 @@ impl ResearchCollector {
         }
     }
 
-    /// Export to JSON string
     pub fn export_json(&self) -> Result<String, String> {
         serde_json::to_string_pretty(&self.export()).map_err(|e| e.to_string())
     }
 
-    /// Save research data to disk
     pub fn save(&self) -> Result<(), String> {
         if self.sessions.is_empty() {
             return Ok(());
@@ -458,7 +410,6 @@ impl ResearchCollector {
         Ok(())
     }
 
-    /// Load existing research data from disk
     pub fn load(&mut self) -> Result<(), String> {
         if !self.config.research_data_dir.exists() {
             return Ok(());
@@ -479,7 +430,6 @@ impl ResearchCollector {
             }
         }
 
-        // Trim to max sessions
         while self.sessions.len() > self.config.max_sessions {
             self.sessions.remove(0);
         }
@@ -487,7 +437,6 @@ impl ResearchCollector {
         Ok(())
     }
 
-    /// Clear all collected research data
     pub fn clear(&mut self) -> Result<(), String> {
         self.sessions.clear();
 
@@ -498,8 +447,6 @@ impl ResearchCollector {
         Ok(())
     }
 
-    /// Upload collected research data to the research server.
-    /// Returns the number of sessions successfully uploaded.
     pub async fn upload(&mut self) -> Result<UploadResult, String> {
         if !self.is_enabled() {
             return Err("Research contribution not enabled".to_string());
@@ -513,7 +460,6 @@ impl ResearchCollector {
             });
         }
 
-        // Don't upload if we don't have enough sessions
         if self.sessions.len() < MIN_SESSIONS_FOR_UPLOAD {
             return Ok(UploadResult {
                 sessions_uploaded: 0,
@@ -550,10 +496,8 @@ impl ResearchCollector {
             .await
             .map_err(|e| format!("Failed to parse response: {}", e))?;
 
-        // Clear uploaded sessions on success
         if result.uploaded > 0 {
             self.sessions.clear();
-            // Also clear local files
             if self.config.research_data_dir.exists() {
                 let _ = fs::remove_dir_all(&self.config.research_data_dir);
             }
@@ -566,13 +510,11 @@ impl ResearchCollector {
         })
     }
 
-    /// Check if upload should be attempted (enough sessions collected)
     pub fn should_upload(&self) -> bool {
         self.is_enabled() && self.sessions.len() >= MIN_SESSIONS_FOR_UPLOAD
     }
 }
 
-/// Result of an upload attempt
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UploadResult {
     pub sessions_uploaded: usize,
@@ -580,7 +522,6 @@ pub struct UploadResult {
     pub message: String,
 }
 
-/// Response from the upload endpoint
 #[derive(Debug, Clone, Deserialize)]
 struct UploadResponse {
     uploaded: usize,
@@ -588,7 +529,6 @@ struct UploadResponse {
     message: String,
 }
 
-/// Background uploader for periodic research data submission
 pub struct ResearchUploader {
     collector: Arc<tokio::sync::Mutex<ResearchCollector>>,
     running: Arc<AtomicBool>,
@@ -596,7 +536,6 @@ pub struct ResearchUploader {
 }
 
 impl ResearchUploader {
-    /// Create a new research uploader
     pub fn new(collector: Arc<tokio::sync::Mutex<ResearchCollector>>) -> Self {
         Self {
             collector,
@@ -605,7 +544,6 @@ impl ResearchUploader {
         }
     }
 
-    /// Create with custom upload interval
     pub fn with_interval(
         collector: Arc<tokio::sync::Mutex<ResearchCollector>>,
         interval: Duration,
@@ -617,7 +555,6 @@ impl ResearchUploader {
         }
     }
 
-    /// Start the background upload task
     pub fn start(&self) -> tokio::task::JoinHandle<()> {
         let collector = Arc::clone(&self.collector);
         let running = Arc::clone(&self.running);
@@ -627,14 +564,12 @@ impl ResearchUploader {
 
         tokio::spawn(async move {
             while running.load(Ordering::SeqCst) {
-                // Wait for the interval
                 tokio::time::sleep(interval).await;
 
                 if !running.load(Ordering::SeqCst) {
                     break;
                 }
 
-                // Attempt upload
                 let mut guard = collector.lock().await;
                 if guard.should_upload() {
                     match guard.upload().await {
@@ -648,7 +583,6 @@ impl ResearchUploader {
                         }
                         Err(e) => {
                             eprintln!("[research] Upload failed: {}", e);
-                            // Save locally as backup
                             let _ = guard.save();
                         }
                     }
@@ -657,17 +591,14 @@ impl ResearchUploader {
         })
     }
 
-    /// Stop the background upload task
     pub fn stop(&self) {
         self.running.store(false, Ordering::SeqCst);
     }
 
-    /// Check if the uploader is running
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::SeqCst)
     }
 
-    /// Trigger an immediate upload attempt
     pub async fn upload_now(&self) -> Result<UploadResult, String> {
         let mut guard = self.collector.lock().await;
         guard.upload().await
@@ -710,7 +641,6 @@ mod tests {
 
     #[test]
     fn test_anonymized_session_creation() {
-        // Create a temp file for testing
         let mut temp_file = NamedTempFile::new().unwrap();
         writeln!(temp_file, "test content").unwrap();
         temp_file.flush().unwrap();
@@ -718,7 +648,6 @@ mod tests {
         let params = default_parameters();
         let mut session = Session::new(temp_file.path(), params).unwrap();
 
-        // Record some keystrokes
         for _ in 0..100 {
             let _ = session.record_keystroke();
         }
@@ -726,7 +655,6 @@ mod tests {
         let evidence = session.export();
         let anonymized = AnonymizedSession::from_evidence(&evidence);
 
-        // Verify anonymization
         assert!(!anonymized.research_id.is_empty());
         assert_eq!(anonymized.collected_at.minute(), 0);
         assert!(!anonymized.hardware_class.arch.is_empty());
@@ -742,7 +670,6 @@ mod tests {
         let mut collector = ResearchCollector::new(config);
         assert!(!collector.is_enabled());
 
-        // Create dummy evidence
         let evidence = Evidence {
             session_id: "test".to_string(),
             started_at: Utc::now(),

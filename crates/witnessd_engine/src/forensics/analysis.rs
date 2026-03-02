@@ -17,9 +17,9 @@ use super::types::{
     Assessment, AuthorshipProfile, EventData, ForensicMetrics, RegionData, DEFAULT_SESSION_GAP_SEC,
     MIN_EVENTS_FOR_ANALYSIS,
 };
-use super::velocity::{compute_session_stats, detect_sessions};
+use super::velocity::{compute_session_stats, count_sessions_sorted};
 
-/// Builds a complete authorship profile from events and regions.
+/// Build a complete authorship profile from events and edit regions.
 pub fn build_profile(
     events: &[EventData],
     regions_by_event: &HashMap<i64, Vec<RegionData>>,
@@ -45,7 +45,7 @@ pub fn build_profile(
         DateTime::from_timestamp_nanos(sorted.last().map(|e| e.timestamp_ns).unwrap_or(0));
     let time_span = last_ts.signed_duration_since(first_ts);
 
-    let sessions = detect_sessions(&sorted, DEFAULT_SESSION_GAP_SEC);
+    let session_count = count_sessions_sorted(&sorted, DEFAULT_SESSION_GAP_SEC);
 
     let metrics = match compute_primary_metrics(&sorted, regions_by_event) {
         Ok(m) => m,
@@ -54,7 +54,7 @@ pub fn build_profile(
                 file_path,
                 event_count: events.len(),
                 time_span,
-                session_count: sessions.len(),
+                session_count,
                 first_event: first_ts,
                 last_event: last_ts,
                 assessment: Assessment::Insufficient,
@@ -70,7 +70,7 @@ pub fn build_profile(
         file_path,
         event_count: events.len(),
         time_span,
-        session_count: sessions.len(),
+        session_count,
         first_event: first_ts,
         last_event: last_ts,
         metrics,
@@ -79,7 +79,7 @@ pub fn build_profile(
     }
 }
 
-/// Performs comprehensive forensic analysis.
+/// Run comprehensive forensic analysis across all dimensions.
 pub fn analyze_forensics(
     events: &[EventData],
     regions: &HashMap<i64, Vec<RegionData>>,
@@ -89,61 +89,47 @@ pub fn analyze_forensics(
 ) -> ForensicMetrics {
     let mut metrics = ForensicMetrics::default();
 
-    // Perplexity analysis
     if let (Some(model), Some(text)) = (perplexity_model, document_text) {
         metrics.perplexity_score = model.calculate_perplexity(text);
         if metrics.perplexity_score > 15.0 {
-            // Heuristic threshold for "too surprising"
             metrics.anomaly_count += 1;
         }
     } else {
         metrics.perplexity_score = 1.0;
     }
 
-    // Primary metrics
     if let Ok(primary) = compute_primary_metrics(events, regions) {
         metrics.primary = primary;
     }
 
-    // Cadence and Behavioral metrics
     if let Some(samples) = jitter_samples {
         metrics.cadence = analyze_cadence(samples);
 
-        // Compute behavioral fingerprint (the "How")
         let fingerprint = BehavioralFingerprint::from_samples(samples);
         metrics.behavioral = Some(fingerprint);
 
-        // Run forgery detection
         let forgery = BehavioralFingerprint::detect_forgery(samples);
         metrics.forgery_analysis = Some(forgery.clone());
 
-        // Compute Steganographic Confidence (the "What")
-        // In a full implementation, this would verify the HMAC-jitter values.
-        // For now, we correlate stability with steganographic presence.
+        // TODO: verify HMAC-jitter values; for now, approximate via CV
         metrics.steg_confidence = if metrics.cadence.coefficient_of_variation > 0.3 {
-            0.95 // High entropy suggests authentic human jitter
+            0.95
         } else {
-            0.20 // Too stable suggests either replaying or missing steganography
+            0.20
         };
 
-        // Fusion: If steg is "perfect" but behavioral is "suspicious", penalize score heavily.
+        // "Perfect Replay" detection: steg looks valid but behavioral is suspicious
         if forgery.is_suspicious && metrics.steg_confidence > 0.8 {
-            // "Perfect Replay" detection
             metrics.anomaly_count += 1;
         }
     }
 
-    // Velocity metrics
     metrics.velocity = super::velocity::analyze_velocity(events);
-
-    // Session stats
     metrics.session_stats = compute_session_stats(events);
 
-    // Anomaly count
     let anomalies = detect_anomalies(events, regions, &metrics.primary);
     metrics.anomaly_count += anomalies.len();
 
-    // Assessment score
     metrics.assessment_score = calculate_assessment_score(
         &metrics.primary,
         &metrics.cadence,
@@ -151,7 +137,6 @@ pub fn analyze_forensics(
         events.len(),
     );
 
-    // Risk level
     metrics.risk_level = determine_risk_level(metrics.assessment_score, events.len());
 
     metrics

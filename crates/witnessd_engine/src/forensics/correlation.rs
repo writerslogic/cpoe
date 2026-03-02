@@ -7,26 +7,20 @@ use std::fmt;
 
 use super::types::{DEFAULT_EDIT_RATIO, INCONSISTENT_RATIO_THRESHOLD, SUSPICIOUS_RATIO_THRESHOLD};
 
-/// Input for content-keystroke correlation analysis.
+/// Input parameters for content-keystroke correlation.
 #[derive(Debug, Clone, Default)]
 pub struct CorrelationInput {
-    /// Final document size in bytes.
     pub document_length: i64,
-    /// Total keystroke count.
     pub total_keystrokes: i64,
-    /// Characters from detected pastes.
     pub detected_paste_chars: i64,
-    /// Number of paste operations.
     pub detected_paste_count: i64,
-    /// Characters from velocity-detected autocomplete.
     pub autocomplete_chars: i64,
-    /// Number of suspicious velocity bursts.
     pub suspicious_bursts: usize,
-    /// Actual edit ratio if known.
+    /// Override for estimated edit ratio (fraction of keystrokes that are deletions).
     pub actual_edit_ratio: Option<f64>,
 }
 
-/// Result of content-keystroke correlation analysis.
+/// Result of content-keystroke correlation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CorrelationResult {
     pub document_length: i64,
@@ -44,7 +38,7 @@ pub struct CorrelationResult {
     pub flags: Vec<CorrelationFlag>,
 }
 
-/// Correlation status.
+/// Content-keystroke correlation verdict.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CorrelationStatus {
     Consistent,
@@ -64,7 +58,7 @@ impl fmt::Display for CorrelationStatus {
     }
 }
 
-/// Correlation flags.
+/// Flags raised during correlation analysis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CorrelationFlag {
     ExcessContent,
@@ -88,7 +82,7 @@ impl fmt::Display for CorrelationFlag {
     }
 }
 
-/// Content-keystroke correlator.
+/// Configurable content-keystroke correlator with tunable thresholds.
 #[derive(Debug, Clone)]
 pub struct ContentKeystrokeCorrelator {
     suspicious_ratio_threshold: f64,
@@ -111,26 +105,12 @@ impl Default for ContentKeystrokeCorrelator {
 }
 
 impl ContentKeystrokeCorrelator {
-    /// Creates a new correlator with default config.
+    /// Create with default thresholds.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Creates a correlator with custom thresholds.
-    pub fn with_thresholds(
-        suspicious_threshold: f64,
-        inconsistent_threshold: f64,
-        edit_ratio: f64,
-    ) -> Self {
-        Self {
-            suspicious_ratio_threshold: suspicious_threshold,
-            inconsistent_ratio_threshold: inconsistent_threshold,
-            estimated_edit_ratio: edit_ratio,
-            ..Default::default()
-        }
-    }
-
-    /// Performs correlation analysis.
+    /// Run correlation analysis.
     pub fn analyze(&self, input: &CorrelationInput) -> CorrelationResult {
         let mut result = CorrelationResult {
             document_length: input.document_length,
@@ -148,7 +128,6 @@ impl ContentKeystrokeCorrelator {
             flags: Vec::new(),
         };
 
-        // Insufficient data check
         if input.total_keystrokes < self.min_keystrokes
             && input.document_length < self.min_document_length
         {
@@ -157,15 +136,12 @@ impl ContentKeystrokeCorrelator {
             return result;
         }
 
-        // Calculate effective keystrokes
         let edit_ratio = input.actual_edit_ratio.unwrap_or(self.estimated_edit_ratio);
         result.effective_keystrokes = (input.total_keystrokes as f64 * (1.0 - edit_ratio)) as i64;
 
-        // Expected content
         result.expected_content =
             result.effective_keystrokes + input.detected_paste_chars + input.autocomplete_chars;
 
-        // Handle edge case: no expected content
         if result.expected_content <= 0 {
             if input.document_length > 0 {
                 result.status = CorrelationStatus::Inconsistent;
@@ -180,11 +156,9 @@ impl ContentKeystrokeCorrelator {
             return result;
         }
 
-        // Calculate discrepancy
         result.discrepancy = input.document_length - result.expected_content;
         result.discrepancy_ratio = result.discrepancy as f64 / result.expected_content as f64;
 
-        // Assess discrepancy
         self.assess_discrepancy(&mut result, input);
 
         result
@@ -193,12 +167,10 @@ impl ContentKeystrokeCorrelator {
     fn assess_discrepancy(&self, result: &mut CorrelationResult, input: &CorrelationInput) {
         let abs_ratio = result.discrepancy_ratio.abs();
 
-        // Check for suspicious velocity patterns
         if input.suspicious_bursts > 0 {
             result.flags.push(CorrelationFlag::Autocomplete);
         }
 
-        // Positive discrepancy: more content than explained
         if result.discrepancy > 0 {
             if abs_ratio >= self.inconsistent_ratio_threshold {
                 result.status = CorrelationStatus::Inconsistent;
@@ -239,7 +211,6 @@ impl ContentKeystrokeCorrelator {
             return;
         }
 
-        // Negative discrepancy: less content than expected (heavy editing)
         if result.discrepancy < 0 {
             if abs_ratio >= self.suspicious_ratio_threshold {
                 result.status = CorrelationStatus::Suspicious;
@@ -257,28 +228,8 @@ impl ContentKeystrokeCorrelator {
             return;
         }
 
-        // Perfect match
         result.status = CorrelationStatus::Consistent;
         result.explanation =
             "Content length exactly matches expected keystroke activity".to_string();
     }
-}
-
-/// Quick correlation check.
-///
-/// Returns true if content is suspicious (likely not human-typed).
-pub fn quick_correlate(document_length: i64, keystrokes: i64, paste_chars: i64) -> bool {
-    if keystrokes == 0 && document_length > 50 {
-        return true;
-    }
-
-    let effective_keystrokes = (keystrokes as f64 * 0.85) as i64;
-    let expected = effective_keystrokes + paste_chars;
-
-    if expected <= 0 {
-        return document_length > 50;
-    }
-
-    let discrepancy_ratio = (document_length - expected) as f64 / expected as f64;
-    discrepancy_ratio > 0.5
 }

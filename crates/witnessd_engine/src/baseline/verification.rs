@@ -3,10 +3,8 @@
 use witnessd_protocol::baseline::{BaselineDigest, SessionBehavioralSummary};
 
 pub fn verify_against_baseline(digest: &BaselineDigest, session: &SessionBehavioralSummary) -> f64 {
-    // 1. Bhattacharyya coefficient on IKI histograms
     let b_coeff = calculate_bhattacharyya(&digest.aggregate_iki_histogram, &session.iki_histogram);
 
-    // 2. Gaussian similarity on CV, Hurst, and pause frequency
     let cv_sim = gaussian_similarity(
         session.iki_cv,
         digest.cv_stats.mean,
@@ -26,7 +24,6 @@ pub fn verify_against_baseline(digest: &BaselineDigest, session: &SessionBehavio
         digest.session_count,
     );
 
-    // Weighted composite similarity
     0.4 * b_coeff + 0.2 * cv_sim + 0.2 * hurst_sim + 0.2 * pause_sim
 }
 
@@ -40,7 +37,7 @@ fn calculate_bhattacharyya(h1: &[f64; 9], h2: &[f64; 9]) -> f64 {
 
 fn gaussian_similarity(value: f64, mean: f64, m2: f64, count: u64) -> f64 {
     if count < 2 {
-        return 1.0; // Perfect similarity if no baseline data exists yet
+        return 1.0;
     }
     let variance = m2 / (count - 1) as f64;
     if variance < 1e-9 {

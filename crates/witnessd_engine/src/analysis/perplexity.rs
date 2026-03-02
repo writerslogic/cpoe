@@ -3,8 +3,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// A lightweight character-level n-gram model for perplexity analysis.
-/// Used to detect text that deviates from the user's natural statistical patterns.
+/// Character-level n-gram model for perplexity-based authorship anomaly detection.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PerplexityModel {
     pub n: usize,
@@ -21,52 +20,68 @@ impl PerplexityModel {
         }
     }
 
-    /// Trains the model on a piece of text.
+    /// Ingest text, updating n-gram frequency tables.
     pub fn train(&mut self, text: &str) {
-        if text.len() < self.n {
+        let chars: Vec<char> = text.chars().collect();
+        if chars.len() <= self.n {
             return;
         }
 
-        let chars: Vec<char> = text.chars().collect();
+        let mut buf = String::with_capacity(self.n * 4);
         for i in 0..(chars.len() - self.n) {
-            let context: String = chars[i..(i + self.n)].iter().collect();
+            buf.clear();
+            buf.extend(&chars[i..(i + self.n)]);
             let next_char = chars[i + self.n];
 
-            *self
-                .counts
-                .entry(context.clone())
-                .or_default()
-                .entry(next_char)
-                .or_default() += 1;
-            *self.totals.entry(context).or_default() += 1;
+            // Lookup by &str avoids allocation for existing contexts (the common case).
+            if let Some(total) = self.totals.get_mut(buf.as_str()) {
+                *total += 1;
+                *self
+                    .counts
+                    .get_mut(buf.as_str())
+                    .unwrap()
+                    .entry(next_char)
+                    .or_default() += 1;
+            } else {
+                let key = buf.clone();
+                self.totals.insert(key.clone(), 1);
+                let mut char_map = HashMap::new();
+                char_map.insert(next_char, 1);
+                self.counts.insert(key, char_map);
+            }
         }
         self.sample_count += text.len();
     }
 
-    /// Calculates the perplexity of a piece of text.
-    /// Lower score = more "natural" (according to trained data).
-    /// Higher score = more "surprising" (potentially AI or different author).
+    /// Perplexity of `text` under the trained model.
+    /// Low = natural, high = anomalous. Returns 1.0 if undertrained (< 1000 chars).
     pub fn calculate_perplexity(&self, text: &str) -> f64 {
-        if self.sample_count < 1000 || text.len() < self.n {
-            return 1.0; // Neutral score if model is not sufficiently trained
+        if self.sample_count < 1000 {
+            return 1.0;
         }
 
         let chars: Vec<char> = text.chars().collect();
+        if chars.len() <= self.n {
+            return 1.0;
+        }
+
         let mut log_prob_sum = 0.0;
         let mut count = 0;
+        let mut buf = String::with_capacity(self.n * 4);
 
         for i in 0..(chars.len() - self.n) {
-            let context: String = chars[i..(i + self.n)].iter().collect();
+            buf.clear();
+            buf.extend(&chars[i..(i + self.n)]);
             let next_char = chars[i + self.n];
 
-            let prob = if let Some(context_counts) = self.counts.get(&context) {
+            let prob = if let Some(context_counts) = self.counts.get(buf.as_str()) {
                 let char_count = *context_counts.get(&next_char).unwrap_or(&0);
-                let total = *self.totals.get(&context).unwrap_or(&1);
+                let total = *self.totals.get(buf.as_str()).unwrap_or(&1);
 
-                // Simple Laplace smoothing
+                // Laplace smoothing
                 (char_count as f64 + 0.1) / (total as f64 + 0.1 * 256.0)
             } else {
-                // Backoff or absolute smoothing
+                // Backoff smoothing for unseen contexts
                 0.1 / (self.sample_count as f64 + 256.0)
             };
 
@@ -78,7 +93,6 @@ impl PerplexityModel {
             return 1.0;
         }
 
-        // Perplexity = exp(-1/N * sum(log P))
         (-log_prob_sum / count as f64).exp()
     }
 }

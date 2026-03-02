@@ -27,27 +27,22 @@ use super::serde_helpers::{fixed_bytes_32, fixed_bytes_32_opt, serde_bytes_opt};
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentRef {
-    /// Content hash of the document
     #[serde(rename = "1")]
     pub content_hash: HashValue,
 
-    /// Optional filename
     #[serde(rename = "2", default, skip_serializing_if = "Option::is_none")]
     pub filename: Option<String>,
 
-    /// Total byte length of document
     #[serde(rename = "3")]
     pub byte_length: u64,
 
-    /// Character count of document
     #[serde(rename = "4")]
     pub char_count: u64,
 
-    /// Hash salting mode
     #[serde(rename = "5", default, skip_serializing_if = "Option::is_none")]
     pub salt_mode: Option<HashSaltMode>,
 
-    /// Salt commitment (hash of author salt)
+    /// Hash of the author-provided salt
     #[serde(
         rename = "6",
         default,
@@ -69,19 +64,16 @@ pub struct DocumentRef {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EditDelta {
-    /// Characters added in this checkpoint interval
     #[serde(rename = "1")]
     pub chars_added: u64,
 
-    /// Characters deleted in this checkpoint interval
     #[serde(rename = "2")]
     pub chars_deleted: u64,
 
-    /// Number of edit operations
     #[serde(rename = "3")]
     pub op_count: u64,
 
-    /// Optional position-change pairs (offset, change)
+    /// (offset, delta) pairs
     #[serde(rename = "4", default, skip_serializing_if = "Option::is_none")]
     pub positions: Option<Vec<(u64, i64)>>,
 }
@@ -98,19 +90,16 @@ pub struct EditDelta {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProofParams {
-    /// Time cost parameter (t)
     #[serde(rename = "1")]
     pub time_cost: u64,
 
-    /// Memory cost parameter (m, in KiB)
+    /// In KiB
     #[serde(rename = "2")]
     pub memory_cost: u64,
 
-    /// Parallelism parameter (p)
     #[serde(rename = "3")]
     pub parallelism: u64,
 
-    /// Number of iterations
     #[serde(rename = "4")]
     pub iterations: u64,
 }
@@ -126,15 +115,13 @@ pub struct ProofParams {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MerkleProof {
-    /// Index of the leaf in the Merkle tree
     #[serde(rename = "1")]
     pub leaf_index: u64,
 
-    /// Sibling path hashes from leaf to root
+    /// Ordered leaf-to-root
     #[serde(rename = "2")]
     pub sibling_path: Vec<serde_bytes::ByteBuf>,
 
-    /// The leaf value being proved
     #[serde(rename = "3", with = "serde_bytes")]
     pub leaf_value: Vec<u8>,
 }
@@ -153,27 +140,22 @@ pub struct MerkleProof {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessProof {
-    /// Algorithm identifier
     #[serde(rename = "1")]
     pub algorithm: ProofAlgorithm,
 
-    /// SWF parameters
     #[serde(rename = "2")]
     pub params: ProofParams,
 
-    /// Input seed (hash digest)
     #[serde(rename = "3", with = "serde_bytes")]
     pub input: Vec<u8>,
 
-    /// Merkle root of computation chain
     #[serde(rename = "4", with = "serde_bytes")]
     pub merkle_root: Vec<u8>,
 
-    /// Sampled Merkle proofs for verification
     #[serde(rename = "5")]
     pub sampled_proofs: Vec<MerkleProof>,
 
-    /// Claimed duration in milliseconds
+    /// In milliseconds
     #[serde(rename = "6")]
     pub claimed_duration: u64,
 }
@@ -189,15 +171,15 @@ pub struct ProcessProof {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JitterBindingWire {
-    /// Inter-keystroke intervals in milliseconds
+    /// In milliseconds
     #[serde(rename = "1")]
     pub intervals: Vec<u64>,
 
-    /// Entropy estimate in centibits
+    /// In centibits
     #[serde(rename = "2")]
     pub entropy_estimate: u64,
 
-    /// Jitter seal (HMAC commitment)
+    /// HMAC seal
     #[serde(rename = "3", with = "serde_bytes")]
     pub jitter_seal: Vec<u8>,
 }
@@ -213,15 +195,13 @@ pub struct JitterBindingWire {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PhysicalState {
-    /// Thermal readings (relative, millidegrees)
+    /// Relative millidegrees
     #[serde(rename = "1")]
     pub thermal: Vec<i64>,
 
-    /// Entropy delta (signed)
     #[serde(rename = "2")]
     pub entropy_delta: i64,
 
-    /// Optional kernel commitment (32 bytes)
     #[serde(
         rename = "3",
         default,
@@ -241,11 +221,10 @@ pub struct PhysicalState {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PhysicalLiveness {
-    /// Thermal trajectory samples (timestamp, temperature delta in millidegrees)
+    /// (timestamp, delta in millidegrees)
     #[serde(rename = "1")]
     pub thermal_trajectory: Vec<(u64, i64)>,
 
-    /// Entropy anchor (32 bytes)
     #[serde(rename = "2", with = "fixed_bytes_32")]
     pub entropy_anchor: [u8; 32],
 }
@@ -261,15 +240,15 @@ pub struct PhysicalLiveness {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PresenceChallenge {
-    /// Challenge nonce (128+ bits)
+    /// >= 128 bits
     #[serde(rename = "1", with = "serde_bytes")]
     pub challenge_nonce: Vec<u8>,
 
-    /// Device signature (COSE_Sign1)
+    /// `COSE_Sign1`
     #[serde(rename = "2", with = "serde_bytes")]
     pub device_signature: Vec<u8>,
 
-    /// Response time (epoch milliseconds)
+    /// Epoch ms
     #[serde(rename = "3")]
     pub response_time: u64,
 }
@@ -284,11 +263,10 @@ pub struct PresenceChallenge {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelBinding {
-    /// Binding type
     #[serde(rename = "1")]
     pub binding_type: BindingType,
 
-    /// Binding value (EKM output, 32 bytes)
+    /// TLS Exporter Key Material output
     #[serde(rename = "2", with = "fixed_bytes_32")]
     pub binding_value: [u8; 32],
 }
@@ -305,19 +283,16 @@ pub struct ChannelBinding {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SelfReceipt {
-    /// Tool identifier (source environment)
     #[serde(rename = "1")]
     pub tool_id: String,
 
-    /// Output commitment (hash of tool output)
     #[serde(rename = "2")]
     pub output_commit: HashValue,
 
-    /// Evidence reference (hash of source evidence packet)
     #[serde(rename = "3")]
     pub evidence_ref: HashValue,
 
-    /// Transfer time (epoch milliseconds)
+    /// Epoch ms
     #[serde(rename = "4")]
     pub transfer_time: u64,
 }
@@ -336,27 +311,24 @@ pub struct SelfReceipt {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActiveProbe {
-    /// Challenge category
     #[serde(rename = "1")]
     pub probe_type: ProbeType,
 
-    /// Stimulus delivery time (epoch milliseconds)
+    /// Epoch ms
     #[serde(rename = "2")]
     pub stimulus_time: u64,
 
-    /// Response capture time (epoch milliseconds)
+    /// Epoch ms
     #[serde(rename = "3")]
     pub response_time: u64,
 
-    /// Stimulus data (challenge payload)
     #[serde(rename = "4", with = "serde_bytes")]
     pub stimulus_data: Vec<u8>,
 
-    /// Response data (captured response)
     #[serde(rename = "5", with = "serde_bytes")]
     pub response_data: Vec<u8>,
 
-    /// Optional response latency in milliseconds
+    /// In ms
     #[serde(rename = "6", default, skip_serializing_if = "Option::is_none")]
     pub response_latency: Option<u64>,
 }
@@ -371,11 +343,9 @@ pub struct ActiveProbe {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProfileDeclarationWire {
-    /// Profile identifier URI
     #[serde(rename = "1")]
     pub profile_id: String,
 
-    /// Feature flags (list of enabled feature IDs)
     #[serde(rename = "2")]
     pub feature_flags: Vec<u64>,
 }

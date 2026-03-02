@@ -1,85 +1,50 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
-//! Incremental Evidence with Continuation Tokens
+//! Continuation tokens for multi-packet Evidence series.
 //!
-//! This module implements continuation tokens for multi-packet Evidence series
-//! as defined in the witnessd RFC. Continuation tokens allow a single logical
-//! authorship effort to be documented across multiple Evidence packets without
-//! losing cryptographic continuity.
-//!
-//! # Use Cases
-//!
-//! - Long-form works (novels, dissertations) spanning months or years
-//! - Periodic Evidence snapshots for backup and sharing
-//! - Projects requiring incremental verification
-//!
-//! # Security Model
-//!
-//! Continuation tokens maintain cryptographic continuity by:
-//! 1. Including the previous packet's final chain hash in VDF input
-//! 2. Binding series-id into the VDF chain to prevent reassignment
-//! 3. Requiring consistent signing keys across the series (verified via
-//!    series-binding-signature)
+//! Allows a single authorship effort (e.g., a novel spanning months) to be
+//! documented across multiple Evidence packets with cryptographic continuity:
+//! previous chain hash feeds into VDF input, series-id is bound into the chain,
+//! and signing keys must be consistent (verified via series-binding-signature).
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// Cumulative statistics across an Evidence series
+/// Running totals across an Evidence series.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContinuationSummary {
-    /// Total checkpoints across all packets in series
     pub total_checkpoints: u64,
-
-    /// Total characters processed so far
     pub total_chars: u64,
-
-    /// Total VDF time in seconds across all packets
     pub total_vdf_time_seconds: f64,
-
-    /// Total entropy bits accumulated
     pub total_entropy_bits: f32,
-
-    /// Number of packets in this series (including current)
+    /// Including current packet
     pub packets_in_series: u32,
-
-    /// When the series started
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub series_started_at: Option<DateTime<Utc>>,
-
-    /// Total elapsed time since series start
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub total_elapsed_seconds: Option<f64>,
 }
 
-/// Continuation token for multi-packet Evidence series
+/// Continuation token linking an Evidence packet into a multi-packet series.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContinuationSection {
-    /// UUID that remains constant across all packets in the series
+    /// Stable across all packets in the series
     pub series_id: Uuid,
-
-    /// Zero-indexed sequence number (first packet = 0)
+    /// Zero-indexed (first packet = 0)
     pub packet_sequence: u32,
-
-    /// Hash of final checkpoint in previous packet
-    /// MUST be present for packet_sequence > 0
+    /// Required for `packet_sequence > 0`
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prev_packet_chain_hash: Option<String>,
-
-    /// UUID of previous packet in series
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prev_packet_id: Option<Uuid>,
-
-    /// Running totals across the series
     pub cumulative_summary: ContinuationSummary,
-
-    /// Signature binding this packet to the series
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub series_binding_signature: Option<String>,
 }
 
 impl ContinuationSection {
-    /// Create the first packet in a new series
+    /// Start a new series (sequence 0, no predecessor).
     pub fn new_series() -> Self {
         Self {
             series_id: Uuid::new_v4(),
@@ -99,7 +64,7 @@ impl ContinuationSection {
         }
     }
 
-    /// Create a continuation packet from a previous packet
+    /// Build a continuation packet linked to the previous one.
     pub fn continue_from(
         prev_series_id: Uuid,
         prev_sequence: u32,
@@ -125,7 +90,7 @@ impl ContinuationSection {
         }
     }
 
-    /// Update cumulative summary with this packet's statistics
+    /// Accumulate this packet's statistics into the running totals.
     pub fn add_packet_stats(
         &mut self,
         checkpoints: u64,
@@ -139,19 +104,17 @@ impl ContinuationSection {
         self.cumulative_summary.total_entropy_bits += entropy_bits;
     }
 
-    /// Set the series binding signature
     pub fn with_signature(mut self, signature: String) -> Self {
         self.series_binding_signature = Some(signature);
         self
     }
 
-    /// Check if this is the first packet in a series
     pub fn is_first(&self) -> bool {
         self.packet_sequence == 0
     }
 
-    /// Validate continuation chain integrity
-    /// Returns Ok if valid, Err with description if invalid
+    /// Validate chain integrity: checks `prev_packet_chain_hash` presence
+    /// and `packets_in_series` consistency.
     pub fn validate(&self) -> Result<(), String> {
         if self.packet_sequence > 0 {
             if self.prev_packet_chain_hash.is_none() {
@@ -174,23 +137,16 @@ impl ContinuationSection {
         Ok(())
     }
 
-    /// Generate VDF input incorporating continuation context
-    /// This is used to bind the new packet's VDF chain to the previous packet
+    /// Generate VDF input binding this packet to previous chain hash + series identity.
     pub fn generate_vdf_context(&self, content_hash: &[u8]) -> Vec<u8> {
         let mut context = Vec::new();
 
-        // Include previous packet's chain hash if present
         if let Some(ref prev_hash) = self.prev_packet_chain_hash {
             context.extend_from_slice(prev_hash.as_bytes());
         }
 
-        // Include content hash
         context.extend_from_slice(content_hash);
-
-        // Include series ID
         context.extend_from_slice(self.series_id.as_bytes());
-
-        // Include sequence number (little-endian)
         context.extend_from_slice(&self.packet_sequence.to_le_bytes());
 
         context

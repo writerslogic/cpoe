@@ -96,7 +96,6 @@ pub fn analyze_pink_noise(data: &[f64], sample_rate: f64) -> Result<PinkNoiseAna
         return Err("Insufficient data for spectral analysis (minimum 32 points)".to_string());
     }
 
-    // Compute power spectral density using FFT
     let psd = compute_psd(data)?;
 
     // Frequency bins (skip DC component)
@@ -109,7 +108,6 @@ pub fn analyze_pink_noise(data: &[f64], sample_rate: f64) -> Result<PinkNoiseAna
     for (i, &power) in psd.iter().enumerate().take(nyquist_idx).skip(1) {
         let freq = i as f64 * freq_step;
 
-        // Filter out zero or negative power
         if power > 1e-20 {
             log_freq.push(freq.ln());
             log_power.push(power.ln());
@@ -131,7 +129,6 @@ pub fn analyze_pink_noise(data: &[f64], sample_rate: f64) -> Result<PinkNoiseAna
     let is_valid = (PinkNoiseAnalysis::MIN_VALID_SLOPE..=PinkNoiseAnalysis::MAX_VALID_SLOPE)
         .contains(&spectral_slope);
 
-    // Find dominant frequencies (peaks in PSD)
     let dominant_frequencies = find_dominant_frequencies(&psd, freq_step);
 
     Ok(PinkNoiseAnalysis {
@@ -180,7 +177,6 @@ fn compute_psd(data: &[f64]) -> Result<Vec<f64>, String> {
         })
         .collect();
 
-    // Zero-pad if necessary
     windowed.resize(fft_size, 0.0);
 
     // Compute DFT (simple O(n²) implementation for clarity)
@@ -196,7 +192,6 @@ fn compute_psd(data: &[f64]) -> Result<Vec<f64>, String> {
         }
     }
 
-    // Compute power spectral density (magnitude squared)
     let psd: Vec<f64> = real
         .iter()
         .zip(imag.iter())
@@ -223,63 +218,17 @@ fn find_dominant_frequencies(psd: &[f64], freq_step: f64) -> Vec<f64> {
 
     let mut peaks = Vec::new();
 
-    // Find local maxima above threshold
     for i in 2..nyquist_idx - 1 {
         if psd[i] > threshold && psd[i] > psd[i - 1] && psd[i] > psd[i + 1] {
             peaks.push(i as f64 * freq_step);
         }
     }
 
-    // Sort by power (strongest first) and take top 5
     peaks.truncate(5);
     peaks
 }
 
-/// Simple linear regression returning (slope, intercept, r_squared, std_error).
-fn linear_regression(x: &[f64], y: &[f64]) -> Result<(f64, f64, f64, f64), String> {
-    let n = x.len();
-    if n < 2 || n != y.len() {
-        return Err("Regression requires at least 2 matching data points".to_string());
-    }
-
-    let x_mean: f64 = x.iter().sum::<f64>() / n as f64;
-    let y_mean: f64 = y.iter().sum::<f64>() / n as f64;
-
-    let mut ss_xx = 0.0;
-    let mut ss_xy = 0.0;
-    let mut ss_yy = 0.0;
-
-    for i in 0..n {
-        let dx = x[i] - x_mean;
-        let dy = y[i] - y_mean;
-        ss_xx += dx * dx;
-        ss_xy += dx * dy;
-        ss_yy += dy * dy;
-    }
-
-    if ss_xx == 0.0 {
-        return Err("No variance in x data".to_string());
-    }
-
-    let slope = ss_xy / ss_xx;
-    let intercept = y_mean - slope * x_mean;
-
-    let r_squared = if ss_yy > 0.0 {
-        (ss_xy * ss_xy) / (ss_xx * ss_yy)
-    } else {
-        1.0
-    };
-
-    let mut ss_res = 0.0;
-    for i in 0..n {
-        let predicted = slope * x[i] + intercept;
-        ss_res += (y[i] - predicted).powi(2);
-    }
-    let mse = ss_res / (n - 2).max(1) as f64;
-    let std_error = (mse / ss_xx).sqrt();
-
-    Ok((slope, intercept, r_squared, std_error))
-}
+use super::stats::linear_regression;
 
 /// Generate synthetic pink noise for testing.
 ///

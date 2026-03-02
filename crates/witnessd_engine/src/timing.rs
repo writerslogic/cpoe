@@ -20,17 +20,11 @@ use std::time::{Duration, Instant};
 /// Configuration for behavioral checkpoint timing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    /// Minimum keystrokes between checkpoints
     pub min_keystroke_interval: u64,
-    /// Maximum keystrokes between checkpoints (force checkpoint)
     pub max_keystroke_interval: u64,
-    /// Minimum pause duration to trigger checkpoint (seconds)
     pub pause_threshold_secs: f64,
-    /// Minimum entropy bits to trigger checkpoint
     pub entropy_threshold_bits: f64,
-    /// Minimum document size change (bytes) to trigger checkpoint
     pub size_delta_threshold: i64,
-    /// Maximum time between checkpoints (seconds)
     pub max_time_interval_secs: f64,
 }
 
@@ -50,65 +44,43 @@ impl Default for Config {
 /// Reason a checkpoint was triggered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TriggerReason {
-    /// Reached maximum keystroke count
     MaxKeystrokes,
-    /// Detected typing pause
     TypingPause,
-    /// Accumulated sufficient entropy
     EntropyThreshold,
-    /// Document size changed significantly
     SizeDelta,
-    /// Maximum time interval reached
     MaxTimeInterval,
-    /// Manual checkpoint request
     Manual,
-    /// Session ended
     SessionEnd,
 }
 
 /// A checkpoint trigger event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TriggerEvent {
-    /// When the trigger occurred
     pub timestamp: DateTime<Utc>,
-    /// Why the checkpoint was triggered
     pub reason: TriggerReason,
-    /// Keystroke count at trigger time
     pub keystroke_count: u64,
-    /// Accumulated entropy at trigger time (bits)
     pub entropy_bits: f64,
-    /// Document size at trigger time
     pub document_size: i64,
-    /// Time since last checkpoint
     pub elapsed_since_last: Duration,
 }
 
 /// Tracks typing behavior and determines when to create checkpoints.
 pub struct CheckpointTrigger {
     config: Config,
-    /// Keystrokes since last checkpoint
     keystrokes_since_checkpoint: u64,
-    /// Total keystrokes in session
     total_keystrokes: u64,
-    /// Accumulated entropy (in bits)
     accumulated_entropy: f64,
-    /// Last keystroke timestamp
     last_keystroke: Option<Instant>,
-    /// Last checkpoint timestamp
     last_checkpoint: Instant,
-    /// Document size at last checkpoint
     last_checkpoint_size: i64,
-    /// Entropy accumulator state
     entropy_hash: [u8; 32],
 }
 
 impl CheckpointTrigger {
-    /// Create a new checkpoint trigger with default configuration.
     pub fn new() -> Self {
         Self::with_config(Config::default())
     }
 
-    /// Create a new checkpoint trigger with custom configuration.
     pub fn with_config(config: Config) -> Self {
         Self {
             config,
@@ -122,8 +94,6 @@ impl CheckpointTrigger {
         }
     }
 
-    /// Record a keystroke and return trigger event if checkpoint should be created.
-    ///
     /// The `jitter_micros` parameter is the timing jitter from the keystroke,
     /// which contributes to entropy accumulation.
     pub fn record_keystroke(
@@ -134,11 +104,8 @@ impl CheckpointTrigger {
         let now = Instant::now();
         self.total_keystrokes += 1;
         self.keystrokes_since_checkpoint += 1;
-
-        // Add jitter to entropy accumulator
         self.accumulate_entropy(jitter_micros);
 
-        // Check for typing pause
         if let Some(last) = self.last_keystroke {
             let pause = now.duration_since(last);
             if pause.as_secs_f64() >= self.config.pause_threshold_secs
@@ -150,19 +117,16 @@ impl CheckpointTrigger {
 
         self.last_keystroke = Some(now);
 
-        // Check max keystrokes
         if self.keystrokes_since_checkpoint >= self.config.max_keystroke_interval {
             return Some(self.create_trigger(TriggerReason::MaxKeystrokes, current_doc_size));
         }
 
-        // Check entropy threshold (only if we have minimum keystrokes)
         if self.keystrokes_since_checkpoint >= self.config.min_keystroke_interval
             && self.accumulated_entropy >= self.config.entropy_threshold_bits
         {
             return Some(self.create_trigger(TriggerReason::EntropyThreshold, current_doc_size));
         }
 
-        // Check size delta
         let size_delta = (current_doc_size - self.last_checkpoint_size).abs();
         if self.keystrokes_since_checkpoint >= self.config.min_keystroke_interval
             && size_delta >= self.config.size_delta_threshold
@@ -170,7 +134,6 @@ impl CheckpointTrigger {
             return Some(self.create_trigger(TriggerReason::SizeDelta, current_doc_size));
         }
 
-        // Check max time interval
         let elapsed = now.duration_since(self.last_checkpoint);
         if elapsed.as_secs_f64() >= self.config.max_time_interval_secs {
             return Some(self.create_trigger(TriggerReason::MaxTimeInterval, current_doc_size));
@@ -179,7 +142,6 @@ impl CheckpointTrigger {
         None
     }
 
-    /// Check if checkpoint should be created based on time alone (for idle detection).
     pub fn check_time_trigger(&mut self, current_doc_size: i64) -> Option<TriggerEvent> {
         let now = Instant::now();
         let elapsed = now.duration_since(self.last_checkpoint);
@@ -193,37 +155,30 @@ impl CheckpointTrigger {
         None
     }
 
-    /// Force a manual checkpoint trigger.
     pub fn manual_trigger(&mut self, current_doc_size: i64) -> TriggerEvent {
         self.create_trigger(TriggerReason::Manual, current_doc_size)
     }
 
-    /// Trigger checkpoint due to session end.
     pub fn session_end_trigger(&mut self, current_doc_size: i64) -> TriggerEvent {
         self.create_trigger(TriggerReason::SessionEnd, current_doc_size)
     }
 
-    /// Get current entropy hash for checkpoint binding.
     pub fn entropy_hash(&self) -> [u8; 32] {
         self.entropy_hash
     }
 
-    /// Get keystrokes since last checkpoint.
     pub fn keystrokes_since_checkpoint(&self) -> u64 {
         self.keystrokes_since_checkpoint
     }
 
-    /// Get total keystrokes in session.
     pub fn total_keystrokes(&self) -> u64 {
         self.total_keystrokes
     }
 
-    /// Get accumulated entropy in bits.
     pub fn accumulated_entropy(&self) -> f64 {
         self.accumulated_entropy
     }
 
-    /// Reset after checkpoint is created.
     pub fn reset_for_checkpoint(&mut self, doc_size: i64) {
         self.keystrokes_since_checkpoint = 0;
         self.accumulated_entropy = 0.0;
@@ -254,7 +209,7 @@ impl CheckpointTrigger {
         hasher.update(self.total_keystrokes.to_be_bytes());
         self.entropy_hash = hasher.finalize().into();
 
-        // Estimate entropy from jitter timing
+        // TODO: Estimate entropy from jitter timing
         // Assuming jitter has ~8 bits of entropy per sample (conservative)
         // This is a simplified model; real entropy estimation is more complex
         self.accumulated_entropy += estimate_jitter_entropy(jitter_micros);
@@ -268,7 +223,7 @@ impl Default for CheckpointTrigger {
 }
 
 /// Estimate entropy bits from jitter timing.
-///
+/// TODO:
 /// This is a simplified model based on the jitter range.
 /// Real implementations might use more sophisticated entropy estimation.
 fn estimate_jitter_entropy(jitter_micros: u32) -> f64 {
@@ -317,7 +272,6 @@ mod tests {
             );
         }
 
-        // 10th keystroke should trigger
         let result = trigger.record_keystroke(10, 100);
         assert!(result.is_some());
         let event = result.unwrap();
@@ -373,7 +327,6 @@ mod tests {
             );
         }
 
-        // Now jump doc size significantly (from ~45 to 500, delta > 100)
         let result = trigger.record_keystroke(10, 500);
         assert!(result.is_some());
         assert_eq!(result.unwrap().reason, TriggerReason::SizeDelta);
@@ -427,7 +380,6 @@ mod tests {
 
         assert_eq!(trigger.keystrokes_since_checkpoint(), 0);
         assert_eq!(trigger.accumulated_entropy(), 0.0);
-        // Total keystrokes should not reset
         assert_eq!(trigger.total_keystrokes(), 10);
     }
 
@@ -450,7 +402,6 @@ mod tests {
         assert_eq!(estimate_jitter_entropy(0), 0.0);
         assert!(estimate_jitter_entropy(100) > 0.0);
         assert!(estimate_jitter_entropy(1000) > estimate_jitter_entropy(100));
-        // Should be clamped to max 8 bits
         assert!(estimate_jitter_entropy(1_000_000) <= 8.0);
     }
 

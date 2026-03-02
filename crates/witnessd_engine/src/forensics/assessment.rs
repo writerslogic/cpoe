@@ -12,7 +12,7 @@ use super::types::{
     THRESHOLD_MONOTONIC_APPEND,
 };
 
-/// Detects anomalies in editing patterns.
+/// Detect anomalies in editing patterns (topology + temporal).
 pub fn detect_anomalies(
     events: &[EventData],
     regions: &HashMap<i64, Vec<RegionData>>,
@@ -20,7 +20,6 @@ pub fn detect_anomalies(
 ) -> Vec<Anomaly> {
     let mut anomalies = Vec::new();
 
-    // Check for high monotonic append ratio
     if metrics.monotonic_append_ratio > THRESHOLD_MONOTONIC_APPEND {
         anomalies.push(Anomaly {
             timestamp: None,
@@ -35,7 +34,6 @@ pub fn detect_anomalies(
         });
     }
 
-    // Check for low edit entropy
     if metrics.edit_entropy < THRESHOLD_LOW_ENTROPY && metrics.edit_entropy > 0.0 {
         anomalies.push(Anomaly {
             timestamp: None,
@@ -46,7 +44,6 @@ pub fn detect_anomalies(
         });
     }
 
-    // Check for scattered deletions
     if metrics.deletion_clustering > 0.9 && metrics.deletion_clustering < 1.1 {
         anomalies.push(Anomaly {
             timestamp: None,
@@ -60,13 +57,12 @@ pub fn detect_anomalies(
         });
     }
 
-    // Detect temporal anomalies
     anomalies.extend(detect_temporal_anomalies(events, regions));
 
     anomalies
 }
 
-/// Detects gaps and high-velocity editing periods.
+/// Detect temporal gaps and high-velocity editing periods.
 fn detect_temporal_anomalies(
     events: &[EventData],
     _regions: &HashMap<i64, Vec<RegionData>>,
@@ -88,7 +84,6 @@ fn detect_temporal_anomalies(
         let delta_sec = delta_ns as f64 / 1e9;
         let delta_hours = delta_sec / 3600.0;
 
-        // Check for long gaps
         if delta_hours > THRESHOLD_GAP_HOURS {
             anomalies.push(Anomaly {
                 timestamp: Some(DateTime::from_timestamp_nanos(curr.timestamp_ns)),
@@ -99,7 +94,6 @@ fn detect_temporal_anomalies(
             });
         }
 
-        // Check for high-velocity editing
         if delta_sec > 0.0 && delta_sec < 60.0 {
             let bytes_delta = curr.size_delta.abs();
             let bytes_per_sec = bytes_delta as f64 / delta_sec;
@@ -118,7 +112,7 @@ fn detect_temporal_anomalies(
     anomalies
 }
 
-/// Determines overall assessment verdict.
+/// Determine overall assessment verdict from metrics and anomalies.
 pub fn determine_assessment(
     metrics: &PrimaryMetrics,
     anomalies: &[Anomaly],
@@ -128,40 +122,33 @@ pub fn determine_assessment(
         return Assessment::Insufficient;
     }
 
-    // Count alerts
-    let alert_count = anomalies
-        .iter()
-        .filter(|a| a.severity == Severity::Alert)
-        .count();
-    let warning_count = anomalies
-        .iter()
-        .filter(|a| a.severity == Severity::Warning)
-        .count();
+    let (alert_count, warning_count) =
+        anomalies
+            .iter()
+            .fold((0, 0), |(a, w), anom| match anom.severity {
+                Severity::Alert => (a + 1, w),
+                Severity::Warning => (a, w + 1),
+                _ => (a, w),
+            });
 
-    // Count suspicious indicators
     let mut suspicious_indicators = 0;
 
-    // Very high monotonic append ratio
     if metrics.monotonic_append_ratio > 0.90 {
         suspicious_indicators += 1;
     }
 
-    // Very low entropy
     if metrics.edit_entropy < 1.0 && metrics.edit_entropy > 0.0 {
         suspicious_indicators += 1;
     }
 
-    // Extreme positive/negative ratio (almost all insertions)
     if metrics.positive_negative_ratio > 0.95 {
         suspicious_indicators += 1;
     }
 
-    // No clustering in deletions
     if metrics.deletion_clustering > 0.9 && metrics.deletion_clustering < 1.1 {
         suspicious_indicators += 1;
     }
 
-    // Determine verdict
     if alert_count >= ALERT_THRESHOLD || suspicious_indicators >= 3 {
         return Assessment::Suspicious;
     }
@@ -173,7 +160,7 @@ pub fn determine_assessment(
     Assessment::Consistent
 }
 
-/// Calculates an overall assessment score (0.0 - 1.0, higher = more human-like).
+/// Overall assessment score in `[0.0, 1.0]` (higher = more human-like).
 pub fn calculate_assessment_score(
     primary: &PrimaryMetrics,
     cadence: &CadenceMetrics,
@@ -181,74 +168,63 @@ pub fn calculate_assessment_score(
     event_count: usize,
 ) -> f64 {
     if event_count < MIN_EVENTS_FOR_ANALYSIS {
-        return 0.5; // Neutral for insufficient data
+        return 0.5;
     }
 
     let mut score = 1.0;
 
-    // Penalize high monotonic append ratio
     if primary.monotonic_append_ratio > 0.85 {
         score -= 0.2 * (primary.monotonic_append_ratio - 0.85) / 0.15;
     }
 
-    // Penalize low entropy (max entropy for 20 bins is log2(20) ~ 4.32)
+    // max entropy for 20 bins: log2(20) ~ 4.32
     let normalized_entropy = primary.edit_entropy / 4.32;
     if normalized_entropy < 0.35 {
         score -= 0.15;
     }
 
-    // Penalize extreme positive/negative ratio
     if primary.positive_negative_ratio > 0.95 {
         score -= 0.1;
     }
 
-    // Penalize scattered deletions
     if primary.deletion_clustering > 0.9 && primary.deletion_clustering < 1.1 {
         score -= 0.1;
     }
 
-    // Penalize robotic cadence (Behavioral check)
     if cadence.is_robotic {
-        score -= 0.35; // Increased penalty
+        score -= 0.35;
     }
 
-    // Penalize low coefficient of variation (too consistent)
     if cadence.coefficient_of_variation < 0.2 {
         score -= 0.15 * (0.2 - cadence.coefficient_of_variation) / 0.2;
     }
 
-    // Penalize anomalies
     score -= 0.05 * anomaly_count as f64;
 
     score.clamp(0.0, 1.0)
 }
 
-/// Calculates a quick forensic score based solely on keystroke cadence.
-/// Useful for real-time event scoring before full topology analysis is available.
+/// Quick cadence-only score for real-time use before full topology is available.
 pub fn calculate_cadence_score(cadence: &CadenceMetrics) -> f64 {
     let mut score = 1.0;
 
-    // Penalize robotic cadence (most significant indicator)
     if cadence.is_robotic {
         score -= 0.5;
     }
 
-    // Penalize low coefficient of variation (unnatural consistency)
     if cadence.coefficient_of_variation < 0.2 {
         let penalty = (0.2 - cadence.coefficient_of_variation) / 0.2;
         score -= 0.2 * penalty;
     }
 
-    // Insufficient data penalty
     if cadence.percentiles[4] == 0.0 {
-        // No samples or very few
         return 0.5;
     }
 
     score.clamp(0.0, 1.0)
 }
 
-/// Determines risk level from assessment score.
+/// Map assessment score to risk level.
 pub fn determine_risk_level(score: f64, event_count: usize) -> RiskLevel {
     if event_count < MIN_EVENTS_FOR_ANALYSIS {
         return RiskLevel::Insufficient;

@@ -39,19 +39,17 @@ pub struct WitnessdConfig {
     pub writersproof: WritersProofConfig,
 }
 
-/// Configuration for WritersProof external trust anchor.
+/// WritersProof external trust anchor integration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WritersProofConfig {
-    /// Enable WritersProof integration.
     #[serde(default = "default_false")]
     pub enabled: bool,
-    /// WritersProof API base URL.
     #[serde(default = "default_writersproof_url")]
     pub base_url: String,
-    /// Automatically submit evidence on export.
+    /// Auto-submit evidence on export
     #[serde(default = "default_false")]
     pub auto_attest: bool,
-    /// Queue attestations when offline for later submission.
+    /// Queue attestations when offline
     #[serde(default = "default_true")]
     pub offline_queue: bool,
 }
@@ -71,28 +69,24 @@ fn default_writersproof_url() -> String {
     "https://api.writersproof.com".to_string()
 }
 
-/// Configuration for author fingerprinting.
+/// Author fingerprinting configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FingerprintConfig {
-    /// Enable activity fingerprinting (typing dynamics).
-    /// Default: true (captures HOW you type, not WHAT you type)
+    /// Typing dynamics (captures HOW you type, not WHAT)
     #[serde(default = "default_true")]
     pub activity_enabled: bool,
 
-    /// Enable voice fingerprinting (writing style).
-    /// Default: false (requires explicit consent)
+    /// Writing style analysis (requires explicit consent)
     #[serde(default = "default_false")]
     pub voice_enabled: bool,
 
-    /// Retention period for fingerprint profiles in days.
     #[serde(default = "default_fingerprint_retention")]
     pub retention_days: u32,
 
-    /// Minimum samples before creating a fingerprint.
+    /// Minimum samples before creating a profile
     #[serde(default = "default_min_fingerprint_samples")]
     pub min_samples: u32,
 
-    /// Directory for fingerprint storage.
     #[serde(default = "default_fingerprint_dir")]
     pub storage_path: PathBuf,
 }
@@ -123,22 +117,20 @@ fn default_fingerprint_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(".witnessd/fingerprints"))
 }
 
-/// Privacy configuration.
+/// Privacy controls for sensitive data handling.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrivacyConfig {
-    /// Detect and skip sensitive input fields (password, etc.).
+    /// Skip password fields and similar sensitive inputs
     #[serde(default = "default_true")]
     pub detect_sensitive_fields: bool,
 
-    /// Hash URLs before storing (privacy).
     #[serde(default = "default_true")]
     pub hash_urls: bool,
 
-    /// Obfuscate window titles.
     #[serde(default = "default_true")]
     pub obfuscate_titles: bool,
 
-    /// Excluded applications (never track).
+    /// Apps that are never tracked
     #[serde(default = "default_privacy_excluded")]
     pub excluded_apps: Vec<String>,
 }
@@ -163,33 +155,26 @@ fn default_privacy_excluded() -> Vec<String> {
     ]
 }
 
-/// Configuration for anonymous research data contribution.
-/// When enabled, anonymized jitter timing samples are collected to help
-/// improve the security analysis of the proof-of-process primitive.
+/// Opt-in anonymous research data contribution (anonymized jitter timing).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResearchConfig {
-    /// Opt-in toggle for contributing anonymous research data.
-    /// Default: false (must be explicitly enabled by user)
+    /// Must be explicitly enabled by user
     #[serde(default = "default_false")]
     pub contribute_to_research: bool,
 
-    /// Directory for storing research data before export.
     #[serde(default = "default_research_dir")]
     pub research_data_dir: PathBuf,
 
-    /// Maximum number of sessions to retain locally before export.
     #[serde(default = "default_max_research_sessions")]
     pub max_sessions: usize,
 
-    /// Minimum samples per session before it's eligible for research.
     #[serde(default = "default_min_samples_for_research")]
     pub min_samples_per_session: usize,
 
-    /// Upload interval in seconds (default: 4 hours).
+    /// Default: 4 hours
     #[serde(default = "default_upload_interval")]
     pub upload_interval_secs: u64,
 
-    /// Enable automatic periodic uploads.
     #[serde(default = "default_true")]
     pub auto_upload: bool,
 }
@@ -222,7 +207,7 @@ fn default_min_samples_for_research() -> usize {
 }
 
 fn default_upload_interval() -> u64 {
-    4 * 60 * 60 // 4 hours
+    4 * 60 * 60
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -271,7 +256,6 @@ pub struct SentinelConfig {
     #[serde(default = "default_checkpoint")]
     pub checkpoint_interval_secs: u64,
 
-    // Expanded fields
     #[serde(default = "default_witnessd_dir")]
     pub witnessd_dir: PathBuf,
     #[serde(default)]
@@ -326,7 +310,6 @@ impl Default for SentinelConfig {
     }
 }
 
-// Defaults
 fn default_true() -> bool {
     true
 }
@@ -347,29 +330,28 @@ fn default_witnessd_dir() -> PathBuf {
 
 fn default_allowed_apps() -> Vec<String> {
     vec![
-        // macOS editors
+        // macOS
         "com.apple.TextEdit".to_string(),
         "com.apple.iWork.Pages".to_string(),
-        // Microsoft Office
+        // MS Office
         "com.microsoft.Word".to_string(),
         "com.microsoft.Excel".to_string(),
         "com.microsoft.Powerpoint".to_string(),
-        // Code editors / IDEs
+        // Editors / IDEs
         "code".to_string(),
         "com.microsoft.VSCode".to_string(),
         "com.sublimetext.4".to_string(),
         "com.jetbrains.intellij".to_string(),
         "com.googlecode.iterm2".to_string(),
         "org.vim.MacVim".to_string(),
-        // Cross-platform writing tools
+        // Writing tools
         "com.typora.Typora".to_string(),
         "md.obsidian".to_string(),
         "com.notion.Notion".to_string(),
-        // Google Docs (browser-based, matched by app_name)
+        // Browser-based (matched by app_name)
         "Google Docs".to_string(),
-        // LibreOffice
         "org.libreoffice.LibreOffice".to_string(),
-        // Terminal emulators (Linux)
+        // Linux terminals
         "org.gnome.Terminal".to_string(),
         "org.kde.konsole".to_string(),
     ]
@@ -438,7 +420,6 @@ impl SentinelConfig {
     }
 }
 
-// Defaults
 fn default_data_dir() -> PathBuf {
     #[cfg(target_os = "macos")]
     {
@@ -506,7 +487,6 @@ impl WitnessdConfig {
             return Ok(config);
         }
 
-        // Migration logic
         let mut config = Self::default_with_dir(data_dir);
         let cli_path = data_dir.join("config.json");
         let gui_path = data_dir.join("engine_config.json");
@@ -647,11 +627,8 @@ mod tests {
     #[test]
     fn test_sentinel_app_blocking() {
         let config = SentinelConfig::default();
-        // Check defaults
         assert!(config.is_app_allowed("com.apple.TextEdit", "TextEdit"));
         assert!(!config.is_app_allowed("com.apple.finder", "Finder"));
-
-        // Check unknown (assuming track_unknown_apps is true by default)
         assert!(config.is_app_allowed("com.unknown.App", "Unknown"));
     }
 }

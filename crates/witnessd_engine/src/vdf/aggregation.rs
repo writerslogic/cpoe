@@ -1,157 +1,126 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
-//! VDF Proof Aggregation
+//! VDF proof aggregation per the witnessd RFC.
 //!
-//! This module implements VDF proof aggregation as defined in the witnessd RFC.
-//! Aggregation enables O(1) or O(log n) verification of entire checkpoint chains
-//! that would otherwise require O(n) sequential VDF recomputation.
+//! Reduces O(n) sequential VDF recomputation to O(1) or O(log n) verification
+//! of entire checkpoint chains.
 //!
 //! # Aggregation Methods
 //!
-//! - **Merkle VDF Tree**: O(log n) verification via Merkle inclusion proofs
-//! - **SNARK**: O(1) verification using succinct proofs (requires trusted setup)
-//! - **STARK**: O(log n) verification without trusted setup
+//! - **Merkle VDF Tree**: O(log n) via Merkle inclusion proofs
+//! - **SNARK**: O(1), requires trusted setup
+//! - **STARK**: O(log n), no trusted setup
 //!
 //! # Security Model
 //!
-//! Aggregation provides a trade-off between verification efficiency and trust:
-//! - Full VDF recomputation: Zero trust required, O(n) time
-//! - Merkle + sampling: Statistical trust, O(k log n) time
-//! - SNARK: Trusted setup required, O(1) time
+//! Trade-off between verification efficiency and trust:
+//! - Full VDF recomputation: zero trust, O(n)
+//! - Merkle + sampling: statistical trust, O(k log n)
+//! - SNARK: trusted setup, O(1)
 
 use serde::{Deserialize, Serialize};
 
-/// Method used for VDF aggregation
+/// VDF aggregation method
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AggregationMethod {
-    /// Merkle tree over VDF outputs
     MerkleVdfTree,
-    /// Groth16 SNARK proof
     SnarkGroth16,
-    /// PLONK SNARK proof
     SnarkPlonk,
-    /// STARK proof
     Stark,
-    /// Recursive SNARK composition
     RecursiveSnark,
 }
 
-/// SNARK proof scheme
+/// SNARK proof scheme (curve + proof system)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SnarkScheme {
-    /// Groth16 on BN254 curve
     Groth16Bn254,
-    /// Groth16 on BLS12-381 curve
     Groth16Bls12381,
-    /// PLONK on BN254 curve
     PlonkBn254,
-    /// PLONK on BLS12-381 curve
     PlonkBls12381,
 }
 
-/// Metadata about the aggregation proof
+/// Aggregation proof metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AggregateMetadata {
-    /// Version of the prover used
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prover_version: Option<String>,
 
-    /// Time taken to generate proof (milliseconds)
+    /// Proof generation wall-clock time (ms)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proof_generation_time_ms: Option<u64>,
 
-    /// Size of the proof in bytes
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proof_size_bytes: Option<u32>,
 
-    /// Identifier for verification key (if not included)
+    /// Used when the full key is well-known and omitted
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_key_id: Option<String>,
 
-    /// Full verification key (if not well-known)
+    /// Included when the key is not well-known
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_key: Option<Vec<u8>>,
 }
 
-/// Sample from Merkle tree with proof
+/// Single sampled checkpoint with its Merkle inclusion path
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MerkleSample {
-    /// Index of the checkpoint sampled
     pub checkpoint_index: u32,
-
-    /// Merkle proof path (hashes from leaf to root)
+    /// Hashes from leaf to root
     pub merkle_path: Vec<String>,
-
-    /// Whether the VDF was verified by the aggregator
+    /// Whether the aggregator verified the VDF for this sample
     pub vdf_verified: bool,
 }
 
-/// Merkle VDF tree proof structure
+/// Merkle VDF tree proof
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MerkleVdfProof {
-    /// Root hash of the Merkle tree
     pub root_hash: String,
-
-    /// Total iterations across all checkpoints
+    /// Sum of iterations across all checkpoints
     pub total_iterations: u64,
-
-    /// Number of checkpoints covered
     pub checkpoint_count: u32,
 
-    /// Sampled proofs (for probabilistic verification)
+    /// Probabilistic verification samples
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sampled_proofs: Vec<MerkleSample>,
 
-    /// Signature from aggregator (optional trusted party)
+    /// Optional trusted-aggregator signature
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aggregator_signature: Option<String>,
 }
 
-/// SNARK VDF proof structure
+/// SNARK VDF proof
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SnarkVdfProof {
-    /// SNARK scheme used
     pub scheme: SnarkScheme,
-
-    /// The proof bytes
     pub proof_bytes: Vec<u8>,
-
-    /// Verification key (ID or full key)
+    /// Verification key ID or inline key
     pub verification_key: String,
-
-    /// Public inputs to the circuit
     pub public_inputs: Vec<Vec<u8>>,
 
-    /// Circuit version (for compatibility checking)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub circuit_version: Option<String>,
 
-    /// Hash of the trusted setup ceremony (for auditability)
+    /// For auditability of the trusted setup ceremony
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub setup_ceremony_hash: Option<Vec<u8>>,
 }
 
-/// VDF aggregate proof (polymorphic over method)
+/// VDF aggregate proof, polymorphic over `AggregationMethod`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VdfAggregateProof {
-    /// Number of checkpoints covered by this proof
     pub checkpoints_covered: u32,
-
-    /// Aggregation method used
     pub method: AggregationMethod,
-
-    /// The actual proof data (serialized)
+    /// Serialized inner proof (Merkle, SNARK, etc.)
     pub aggregate_proof: Vec<u8>,
 
-    /// Metadata about proof generation
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<AggregateMetadata>,
 }
 
 impl VdfAggregateProof {
-    /// Create a Merkle-based aggregate proof
+    /// Wrap a `MerkleVdfProof` into an aggregate proof
     pub fn from_merkle(proof: MerkleVdfProof) -> Result<Self, serde_json::Error> {
         let proof_bytes = serde_json::to_vec(&proof)?;
         Ok(Self {
@@ -162,7 +131,7 @@ impl VdfAggregateProof {
         })
     }
 
-    /// Create a SNARK-based aggregate proof
+    /// Wrap a `SnarkVdfProof` into an aggregate proof
     pub fn from_snark(
         proof: SnarkVdfProof,
         checkpoint_count: u32,
@@ -182,13 +151,13 @@ impl VdfAggregateProof {
         })
     }
 
-    /// Add metadata to the proof
+    /// Attach generation metadata (builder pattern)
     pub fn with_metadata(mut self, metadata: AggregateMetadata) -> Self {
         self.metadata = Some(metadata);
         self
     }
 
-    /// Extract Merkle proof (if applicable)
+    /// Deserialize inner proof as `MerkleVdfProof`; errors if method mismatches
     pub fn as_merkle(&self) -> Result<MerkleVdfProof, AggregateError> {
         if self.method != AggregationMethod::MerkleVdfTree {
             return Err(AggregateError::WrongMethod);
@@ -197,7 +166,7 @@ impl VdfAggregateProof {
             .map_err(|_| AggregateError::DeserializationError)
     }
 
-    /// Extract SNARK proof (if applicable)
+    /// Deserialize inner proof as `SnarkVdfProof`; errors if method mismatches
     pub fn as_snark(&self) -> Result<SnarkVdfProof, AggregateError> {
         match self.method {
             AggregationMethod::SnarkGroth16 | AggregationMethod::SnarkPlonk => {
@@ -208,7 +177,7 @@ impl VdfAggregateProof {
         }
     }
 
-    /// Get verification complexity description
+    /// Human-readable verification complexity (big-O)
     pub fn verification_complexity(&self) -> &'static str {
         match self.method {
             AggregationMethod::MerkleVdfTree => "O(k * log n) where k = samples",
@@ -219,7 +188,7 @@ impl VdfAggregateProof {
         }
     }
 
-    /// Check if this method requires trusted setup
+    /// Whether this scheme depends on a trusted setup ceremony
     pub fn requires_trusted_setup(&self) -> bool {
         matches!(
             self.method,
@@ -228,18 +197,13 @@ impl VdfAggregateProof {
     }
 }
 
-/// Errors for aggregate proof operations
+/// Aggregate proof operation errors
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AggregateError {
-    /// Attempted to extract wrong proof type
     WrongMethod,
-    /// Proof deserialization failed
     DeserializationError,
-    /// Verification failed
     VerificationFailed,
-    /// Invalid Merkle path
     InvalidMerklePath,
-    /// SNARK verification key not found
     MissingVerificationKey,
 }
 
@@ -257,14 +221,13 @@ impl std::fmt::Display for AggregateError {
 
 impl std::error::Error for AggregateError {}
 
-/// Builder for creating Merkle VDF proofs
+/// Incremental builder for `MerkleVdfProof`
 pub struct MerkleVdfBuilder {
     leaf_hashes: Vec<String>,
     total_iterations: u64,
 }
 
 impl MerkleVdfBuilder {
-    /// Create a new builder
     pub fn new() -> Self {
         Self {
             leaf_hashes: Vec::new(),
@@ -272,15 +235,13 @@ impl MerkleVdfBuilder {
         }
     }
 
-    /// Add a VDF proof to the tree
-    ///
-    /// The leaf hash should be H(VDF_input || VDF_output || iterations)
+    /// Append a VDF leaf: `leaf_hash` = H(input || output || iterations)
     pub fn add_vdf(&mut self, leaf_hash: String, iterations: u64) {
         self.leaf_hashes.push(leaf_hash);
         self.total_iterations += iterations;
     }
 
-    /// Build the Merkle tree and return the proof
+    /// Finalize the tree and return the proof
     pub fn build(self) -> MerkleVdfProof {
         let root_hash = self.compute_merkle_root();
         MerkleVdfProof {
@@ -292,7 +253,6 @@ impl MerkleVdfBuilder {
         }
     }
 
-    /// Compute Merkle root from leaf hashes
     fn compute_merkle_root(&self) -> String {
         if self.leaf_hashes.is_empty() {
             return String::new();
@@ -302,7 +262,6 @@ impl MerkleVdfBuilder {
             return self.leaf_hashes[0].clone();
         }
 
-        // Simple Merkle tree computation
         let mut level = self.leaf_hashes.clone();
         while level.len() > 1 {
             let mut next_level = Vec::new();
@@ -312,7 +271,7 @@ impl MerkleVdfBuilder {
                 } else {
                     chunk[0].clone()
                 };
-                // In production, use SHA-256 here
+                // TODO: replace with SHA-256 for production use
                 let hash = format!("H({})", combined);
                 next_level.push(hash);
             }
@@ -332,18 +291,18 @@ impl Default for MerkleVdfBuilder {
 /// Verification mode for aggregate proofs
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VerificationMode {
-    /// Recompute all VDFs - maximum assurance
+    /// Recompute all VDFs -- maximum assurance, O(n)
     Full,
-    /// Randomly sample and verify k proofs
+    /// Randomly sample and verify k proofs -- statistical assurance
     Sampled { sample_count: u32 },
-    /// Trust the aggregator, verify signature only
+    /// Trust aggregator signature only
     TrustedAggregator,
-    /// Verify SNARK proof only
+    /// Verify SNARK proof only -- O(1)
     SnarkOnly,
 }
 
 impl VerificationMode {
-    /// Get trust assumptions for this mode
+    /// Trust assumptions required by this mode
     pub fn trust_assumptions(&self) -> &'static str {
         match self {
             Self::Full => "None - cryptographically verified",
@@ -353,7 +312,7 @@ impl VerificationMode {
         }
     }
 
-    /// Suggested use case for this mode
+    /// Recommended use cases
     pub fn suggested_use_case(&self) -> &'static str {
         match self {
             Self::Full => "Litigation, forensics, maximum assurance",

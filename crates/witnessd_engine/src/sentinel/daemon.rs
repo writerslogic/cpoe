@@ -10,8 +10,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 
-/// Persistent state of the sentinel daemon
+/// Serialized daemon state persisted alongside the PID file.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DaemonState {
     pub pid: i32,
@@ -20,7 +21,7 @@ pub struct DaemonState {
     pub identity: Option<String>,
 }
 
-/// Status information for display
+/// Runtime status snapshot for display.
 #[derive(Debug, Clone)]
 pub struct DaemonStatus {
     pub running: bool,
@@ -31,7 +32,29 @@ pub struct DaemonStatus {
     pub identity: Option<String>,
 }
 
-/// Manages daemon lifecycle operations
+/// Handle returned by `cmd_start` that owns the IPC shutdown channel and task.
+///
+/// Dropping this handle sends the shutdown signal to the IPC server and aborts
+/// its task. Call `shutdown` for a graceful stop that also stops the sentinel.
+pub struct DaemonHandle {
+    sentinel: Arc<Sentinel>,
+    ipc_shutdown_tx: mpsc::Sender<()>,
+    ipc_handle: JoinHandle<()>,
+    daemon_mgr: DaemonManager,
+}
+
+impl DaemonHandle {
+    /// Gracefully shut down the IPC server and sentinel, then clean up files.
+    pub async fn shutdown(self) -> Result<()> {
+        let _ = self.ipc_shutdown_tx.send(()).await;
+        self.sentinel.stop().await?;
+        self.ipc_handle.abort();
+        self.daemon_mgr.cleanup();
+        Ok(())
+    }
+}
+
+/// Manages daemon lifecycle: PID files, state persistence, signal handling.
 pub struct DaemonManager {
     witnessd_dir: PathBuf,
     pid_file: PathBuf,
@@ -40,7 +63,7 @@ pub struct DaemonManager {
 }
 
 impl DaemonManager {
-    /// Create a new daemon manager
+    /// Create a daemon manager rooted at `witnessd_dir`.
     pub fn new(witnessd_dir: impl AsRef<Path>) -> Self {
         let witnessd_dir = witnessd_dir.as_ref().to_path_buf();
         let sentinel_dir = witnessd_dir.join("sentinel");
@@ -53,7 +76,7 @@ impl DaemonManager {
         }
     }
 
-    /// Check if the sentinel daemon is running
+    /// Check if the daemon PID is alive.
     pub fn is_running(&self) -> bool {
         if let Ok(pid) = self.read_pid() {
             is_process_running(pid)
@@ -62,7 +85,7 @@ impl DaemonManager {
         }
     }
 
-    /// Read the daemon's PID from the PID file
+    /// Read PID from the PID file.
     pub fn read_pid(&self) -> Result<i32> {
         let data = fs::read_to_string(&self.pid_file)?;
         data.trim().parse().map_err(|_| {
@@ -73,20 +96,20 @@ impl DaemonManager {
         })
     }
 
-    /// Write the current process PID to the PID file
+    /// Write current process PID to the PID file.
     pub fn write_pid(&self) -> Result<()> {
         fs::create_dir_all(self.pid_file.parent().unwrap())?;
         fs::write(&self.pid_file, std::process::id().to_string())?;
         Ok(())
     }
 
-    /// Remove the PID file
+    /// Remove the PID file.
     pub fn remove_pid(&self) -> Result<()> {
         fs::remove_file(&self.pid_file)?;
         Ok(())
     }
 
-    /// Write the daemon state
+    /// Persist daemon state as JSON.
     pub fn write_state(&self, state: &DaemonState) -> Result<()> {
         let json = serde_json::to_string_pretty(state)
             .map_err(|e| SentinelError::Serialization(e.to_string()))?;
@@ -94,13 +117,13 @@ impl DaemonManager {
         Ok(())
     }
 
-    /// Read the daemon state
+    /// Load daemon state from JSON.
     pub fn read_state(&self) -> Result<DaemonState> {
         let data = fs::read_to_string(&self.state_file)?;
         serde_json::from_str(&data).map_err(|e| SentinelError::Serialization(e.to_string()))
     }
 
-    /// Signal the daemon to stop (SIGTERM)
+    /// Send SIGTERM to the daemon.
     #[cfg(unix)]
     pub fn signal_stop(&self) -> Result<()> {
         use nix::sys::signal::{kill, Signal};
@@ -119,7 +142,7 @@ impl DaemonManager {
         ))
     }
 
-    /// Signal the daemon to reload (SIGHUP)
+    /// Send SIGHUP to the daemon.
     #[cfg(unix)]
     pub fn signal_reload(&self) -> Result<()> {
         use nix::sys::signal::{kill, Signal};
@@ -138,7 +161,7 @@ impl DaemonManager {
         ))
     }
 
-    /// Wait for the daemon to stop
+    /// Poll until the daemon exits or `timeout` expires.
     pub fn wait_for_stop(&self, timeout: Duration) -> Result<()> {
         let deadline = Instant::now() + timeout;
 
@@ -155,14 +178,14 @@ impl DaemonManager {
         )))
     }
 
-    /// Clean up PID and state files
+    /// Remove PID, state, and socket files.
     pub fn cleanup(&self) {
         let _ = fs::remove_file(&self.pid_file);
         let _ = fs::remove_file(&self.state_file);
         let _ = fs::remove_file(&self.socket_path);
     }
 
-    /// Get the current daemon status
+    /// Build a `DaemonStatus` from PID and state files.
     pub fn status(&self) -> DaemonStatus {
         let mut status = DaemonStatus {
             running: false,
@@ -173,7 +196,6 @@ impl DaemonManager {
             identity: None,
         };
 
-        // Check if running
         if let Ok(pid) = self.read_pid() {
             if is_process_running(pid) {
                 status.running = true;
@@ -181,7 +203,6 @@ impl DaemonManager {
             }
         }
 
-        // Read state if available
         if let Ok(state) = self.read_state() {
             let started_at = UNIX_EPOCH + Duration::from_secs(state.started_at as u64);
             status.started_at = Some(started_at);
@@ -196,18 +217,18 @@ impl DaemonManager {
         status
     }
 
-    /// Get the sentinel directory path
+    /// Path to the sentinel subdirectory.
     pub fn sentinel_dir(&self) -> PathBuf {
         self.witnessd_dir.join("sentinel")
     }
 
-    /// Get the WAL directory path
+    /// Path to the WAL subdirectory.
     pub fn wal_dir(&self) -> PathBuf {
         self.witnessd_dir.join("sentinel").join("wal")
     }
 }
 
-/// Check if a process with the given PID is running
+/// Probe process liveness via `kill(pid, SIGCONT)` (signal 0 alternative).
 #[cfg(unix)]
 fn is_process_running(pid: i32) -> bool {
     use nix::sys::signal::{kill, Signal};
@@ -221,17 +242,12 @@ fn is_process_running(_pid: i32) -> bool {
     false
 }
 
-// ============================================================================
-// CLI Command Handlers
-// ============================================================================
-
-/// Start the sentinel daemon with IPC server.
+/// Start the sentinel daemon with IPC server (background mode).
 ///
-/// This function:
-/// 1. Creates and starts the Sentinel for document tracking
-/// 2. Starts an IPC server to handle client requests
-/// 3. Writes the PID and state files for daemon management
-pub async fn cmd_start(witnessd_dir: &Path) -> Result<()> {
+/// Creates the sentinel, binds the IPC socket, writes PID/state files.
+/// Returns a `DaemonHandle` that owns the IPC shutdown channel and task;
+/// call `DaemonHandle::shutdown()` to stop gracefully.
+pub async fn cmd_start(witnessd_dir: &Path) -> Result<DaemonHandle> {
     let daemon_mgr = DaemonManager::new(witnessd_dir);
 
     if daemon_mgr.is_running() {
@@ -241,31 +257,24 @@ pub async fn cmd_start(witnessd_dir: &Path) -> Result<()> {
         }
     }
 
-    // Create config
     let config = SentinelConfig::default().with_witnessd_dir(witnessd_dir);
 
-    // Create and start sentinel
     let sentinel = Arc::new(Sentinel::new(config)?);
 
-    // Load signing key from secure storage if available
     if let Ok(Some(hmac_key)) = crate::identity::SecureStorage::load_hmac_key() {
         sentinel.set_hmac_key(hmac_key);
     }
 
     sentinel.start().await?;
 
-    // Create IPC server
     let socket_path = witnessd_dir.join("sentinel.sock");
     let ipc_server = IpcServer::bind(socket_path.clone())
         .map_err(|e| SentinelError::Ipc(format!("Failed to bind IPC socket: {}", e)))?;
 
-    // Create IPC handler
     let ipc_handler = Arc::new(SentinelIpcHandler::new(Arc::clone(&sentinel)));
 
-    // Create shutdown channel for IPC server
     let (ipc_shutdown_tx, ipc_shutdown_rx) = mpsc::channel::<()>(1);
 
-    // Start IPC server in background
     let ipc_handle = tokio::spawn(async move {
         if let Err(e) = ipc_server
             .run_with_shutdown(ipc_handler, ipc_shutdown_rx)
@@ -275,7 +284,6 @@ pub async fn cmd_start(witnessd_dir: &Path) -> Result<()> {
         }
     });
 
-    // Write PID and state
     daemon_mgr.write_pid()?;
     daemon_mgr.write_state(&DaemonState {
         pid: std::process::id() as i32,
@@ -287,20 +295,15 @@ pub async fn cmd_start(witnessd_dir: &Path) -> Result<()> {
         identity: None,
     })?;
 
-    // Store shutdown sender for later use (when stopping)
-    // For now, we'll just drop it since the daemon will be stopped via signal
-    // In a production setup, you'd want to store this in the DaemonManager
-    // or use a different shutdown mechanism
-    drop(ipc_shutdown_tx);
-    drop(ipc_handle);
-
-    Ok(())
+    Ok(DaemonHandle {
+        sentinel,
+        ipc_shutdown_tx,
+        ipc_handle,
+        daemon_mgr,
+    })
 }
 
-/// Start the sentinel daemon and run until shutdown signal.
-///
-/// This is the main entry point for running the daemon as a foreground process.
-/// It will block until a shutdown signal (SIGTERM, SIGINT) is received.
+/// Run the sentinel daemon in the foreground until SIGTERM/SIGINT.
 pub async fn cmd_start_foreground(witnessd_dir: &Path) -> Result<()> {
     let daemon_mgr = DaemonManager::new(witnessd_dir);
 
@@ -311,31 +314,24 @@ pub async fn cmd_start_foreground(witnessd_dir: &Path) -> Result<()> {
         }
     }
 
-    // Create config
     let config = SentinelConfig::default().with_witnessd_dir(witnessd_dir);
 
-    // Create and start sentinel
     let sentinel = Arc::new(Sentinel::new(config)?);
 
-    // Load signing key from secure storage if available
     if let Ok(Some(hmac_key)) = crate::identity::SecureStorage::load_hmac_key() {
         sentinel.set_hmac_key(hmac_key);
     }
 
     sentinel.start().await?;
 
-    // Create IPC server
     let socket_path = witnessd_dir.join("sentinel.sock");
     let ipc_server = IpcServer::bind(socket_path.clone())
         .map_err(|e| SentinelError::Ipc(format!("Failed to bind IPC socket: {}", e)))?;
 
-    // Create IPC handler
     let ipc_handler = Arc::new(SentinelIpcHandler::new(Arc::clone(&sentinel)));
 
-    // Create shutdown channel for IPC server
     let (ipc_shutdown_tx, ipc_shutdown_rx) = mpsc::channel::<()>(1);
 
-    // Write PID and state
     daemon_mgr.write_pid()?;
     daemon_mgr.write_state(&DaemonState {
         pid: std::process::id() as i32,
@@ -347,7 +343,6 @@ pub async fn cmd_start_foreground(witnessd_dir: &Path) -> Result<()> {
         identity: None,
     })?;
 
-    // Start IPC server in background
     let sentinel_clone = Arc::clone(&sentinel);
     let ipc_handle = tokio::spawn(async move {
         if let Err(e) = ipc_server
@@ -358,7 +353,6 @@ pub async fn cmd_start_foreground(witnessd_dir: &Path) -> Result<()> {
         }
     });
 
-    // Wait for shutdown signal
     #[cfg(unix)]
     {
         use tokio::signal::unix::{signal, SignalKind};
@@ -378,25 +372,22 @@ pub async fn cmd_start_foreground(witnessd_dir: &Path) -> Result<()> {
 
     #[cfg(not(unix))]
     {
-        // On non-Unix platforms, just wait for Ctrl+C
         tokio::signal::ctrl_c()
             .await
             .expect("Failed to install Ctrl+C handler");
         println!("Received shutdown signal, shutting down...");
     }
 
-    // Shutdown sequence
     let _ = ipc_shutdown_tx.send(()).await;
     sentinel_clone.stop().await?;
     ipc_handle.abort();
 
-    // Cleanup
     daemon_mgr.cleanup();
 
     Ok(())
 }
 
-/// Stop the sentinel daemon
+/// Signal the daemon to stop, wait up to 10s, then clean up.
 pub fn cmd_stop(witnessd_dir: &Path) -> Result<()> {
     let daemon_mgr = DaemonManager::new(witnessd_dir);
 
@@ -411,15 +402,13 @@ pub fn cmd_stop(witnessd_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Get sentinel status
+/// Query sentinel status from PID/state files.
 pub fn cmd_status(witnessd_dir: &Path) -> DaemonStatus {
     let daemon_mgr = DaemonManager::new(witnessd_dir);
     daemon_mgr.status()
 }
 
-/// Track a file via IPC to the running daemon.
-///
-/// Sends a StartWitnessing message to the daemon and waits for a response.
+/// Send a `StartWitnessing` IPC message to the running daemon.
 pub fn cmd_track(witnessd_dir: &Path, file_path: &Path) -> Result<()> {
     use crate::ipc::{IpcClient, IpcErrorCode, IpcMessage};
 
@@ -429,15 +418,12 @@ pub fn cmd_track(witnessd_dir: &Path, file_path: &Path) -> Result<()> {
         return Err(SentinelError::DaemonNotRunning);
     }
 
-    // Canonicalize the file path to get absolute path
     let abs_path = file_path.canonicalize()?;
 
-    // Connect to the daemon socket
     let socket_path = witnessd_dir.join("sentinel.sock");
     let mut client = IpcClient::connect(socket_path)
         .map_err(|e| SentinelError::Ipc(format!("Failed to connect to daemon: {}", e)))?;
 
-    // Send StartWitnessing message
     let msg = IpcMessage::StartWitnessing {
         file_path: abs_path.clone(),
     };
@@ -445,7 +431,6 @@ pub fn cmd_track(witnessd_dir: &Path, file_path: &Path) -> Result<()> {
         .send_and_recv(&msg)
         .map_err(|e| SentinelError::Ipc(format!("Failed to communicate with daemon: {}", e)))?;
 
-    // Handle response
     match response {
         IpcMessage::Ok { message } => {
             if let Some(msg) = message {
@@ -455,25 +440,21 @@ pub fn cmd_track(witnessd_dir: &Path, file_path: &Path) -> Result<()> {
             }
             Ok(())
         }
-        IpcMessage::Error { code, message } => {
-            // Map IPC error codes to appropriate sentinel errors
-            match code {
-                IpcErrorCode::FileNotFound => Err(SentinelError::Ipc(format!(
-                    "File not found: {}",
-                    abs_path.display()
-                ))),
-                IpcErrorCode::AlreadyTracking => {
-                    // Not necessarily an error - just inform user
-                    println!("Already tracking: {}", abs_path.display());
-                    Ok(())
-                }
-                IpcErrorCode::PermissionDenied => Err(SentinelError::Ipc(format!(
-                    "Permission denied: {}",
-                    abs_path.display()
-                ))),
-                _ => Err(SentinelError::Ipc(message)),
+        IpcMessage::Error { code, message } => match code {
+            IpcErrorCode::FileNotFound => Err(SentinelError::Ipc(format!(
+                "File not found: {}",
+                abs_path.display()
+            ))),
+            IpcErrorCode::AlreadyTracking => {
+                println!("Already tracking: {}", abs_path.display());
+                Ok(())
             }
-        }
+            IpcErrorCode::PermissionDenied => Err(SentinelError::Ipc(format!(
+                "Permission denied: {}",
+                abs_path.display()
+            ))),
+            _ => Err(SentinelError::Ipc(message)),
+        },
         _ => Err(SentinelError::Ipc(format!(
             "Unexpected response from daemon: {:?}",
             response
@@ -481,9 +462,7 @@ pub fn cmd_track(witnessd_dir: &Path, file_path: &Path) -> Result<()> {
     }
 }
 
-/// Untrack a file via IPC to the running daemon.
-///
-/// Sends a StopWitnessing message to the daemon and waits for a response.
+/// Send a `StopWitnessing` IPC message to the running daemon.
 pub fn cmd_untrack(witnessd_dir: &Path, file_path: &Path) -> Result<()> {
     use crate::ipc::{IpcClient, IpcErrorCode, IpcMessage};
 
@@ -493,15 +472,12 @@ pub fn cmd_untrack(witnessd_dir: &Path, file_path: &Path) -> Result<()> {
         return Err(SentinelError::DaemonNotRunning);
     }
 
-    // Canonicalize the file path to get absolute path
     let abs_path = file_path.canonicalize()?;
 
-    // Connect to the daemon socket
     let socket_path = witnessd_dir.join("sentinel.sock");
     let mut client = IpcClient::connect(socket_path)
         .map_err(|e| SentinelError::Ipc(format!("Failed to connect to daemon: {}", e)))?;
 
-    // Send StopWitnessing message
     let msg = IpcMessage::StopWitnessing {
         file_path: Some(abs_path.clone()),
     };
@@ -509,7 +485,6 @@ pub fn cmd_untrack(witnessd_dir: &Path, file_path: &Path) -> Result<()> {
         .send_and_recv(&msg)
         .map_err(|e| SentinelError::Ipc(format!("Failed to communicate with daemon: {}", e)))?;
 
-    // Handle response
     match response {
         IpcMessage::Ok { message } => {
             if let Some(msg) = message {
@@ -519,25 +494,21 @@ pub fn cmd_untrack(witnessd_dir: &Path, file_path: &Path) -> Result<()> {
             }
             Ok(())
         }
-        IpcMessage::Error { code, message } => {
-            // Map IPC error codes to appropriate sentinel errors
-            match code {
-                IpcErrorCode::FileNotFound => Err(SentinelError::Ipc(format!(
-                    "File not found: {}",
-                    abs_path.display()
-                ))),
-                IpcErrorCode::NotTracking => {
-                    // Not necessarily an error - just inform user
-                    println!("Not currently tracking: {}", abs_path.display());
-                    Ok(())
-                }
-                IpcErrorCode::PermissionDenied => Err(SentinelError::Ipc(format!(
-                    "Permission denied: {}",
-                    abs_path.display()
-                ))),
-                _ => Err(SentinelError::Ipc(message)),
+        IpcMessage::Error { code, message } => match code {
+            IpcErrorCode::FileNotFound => Err(SentinelError::Ipc(format!(
+                "File not found: {}",
+                abs_path.display()
+            ))),
+            IpcErrorCode::NotTracking => {
+                println!("Not currently tracking: {}", abs_path.display());
+                Ok(())
             }
-        }
+            IpcErrorCode::PermissionDenied => Err(SentinelError::Ipc(format!(
+                "Permission denied: {}",
+                abs_path.display()
+            ))),
+            _ => Err(SentinelError::Ipc(message)),
+        },
         _ => Err(SentinelError::Ipc(format!(
             "Unexpected response from daemon: {:?}",
             response

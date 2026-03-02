@@ -22,7 +22,7 @@ pub struct OfflineQueue {
 }
 
 impl OfflineQueue {
-    /// Create a new queue backed by the given directory.
+    /// Create a queue backed by `queue_dir`, creating it if needed.
     pub fn new(queue_dir: &Path) -> Result<Self> {
         fs::create_dir_all(queue_dir)?;
         Ok(Self {
@@ -30,7 +30,7 @@ impl OfflineQueue {
         })
     }
 
-    /// Default queue directory.
+    /// Return `~/.witnessd/queue/`, falling back to a relative path.
     pub fn default_dir() -> PathBuf {
         dirs::home_dir()
             .map(|h| h.join(".witnessd").join("queue"))
@@ -74,7 +74,7 @@ impl OfflineQueue {
         Ok(id)
     }
 
-    /// List all queued entries.
+    /// List all queued entries, sorted by creation time.
     pub fn list(&self) -> Result<Vec<QueuedAttestation>> {
         let mut entries = Vec::new();
         for entry in fs::read_dir(&self.queue_dir)? {
@@ -95,22 +95,18 @@ impl OfflineQueue {
         Ok(entries)
     }
 
-    /// Number of queued entries.
     pub fn len(&self) -> Result<usize> {
         Ok(self.list()?.len())
     }
 
-    /// Whether the queue is empty.
     pub fn is_empty(&self) -> Result<bool> {
         Ok(self.len()? == 0)
     }
 
-    /// Drain the queue, submitting all entries to the WritersProof client.
+    /// Submit all queued entries via `client`, fetching fresh nonces for each.
     ///
-    /// Each queued entry is re-signed with the provided signing key (since the
-    /// attest endpoint requires a fresh nonce+signature pair). Returns successful
-    /// attestation responses. Failed entries remain in the queue with incremented
-    /// retry_count and the error recorded.
+    /// Successful entries are removed; failed entries stay with incremented
+    /// `retry_count` and the error recorded.
     pub async fn drain(
         &self,
         client: &WritersProofClient,
@@ -126,7 +122,6 @@ impl OfflineQueue {
             )
             .map_err(|e| Error::crypto(format!("base64 decode failed: {e}")))?;
 
-            // Request a fresh nonce for each submission
             let nonce = match client.request_nonce().await {
                 Ok(resp) => {
                     let n = hex::decode(&resp.nonce)
@@ -145,7 +140,6 @@ impl OfflineQueue {
                 }
             };
 
-            // Submit with fresh nonce and re-signing
             match client
                 .attest(&evidence, &nonce, &entry.hardware_key_id, signing_key)
                 .await
@@ -163,7 +157,7 @@ impl OfflineQueue {
         Ok(results)
     }
 
-    /// Validate a queue entry ID contains only safe characters.
+    /// Reject IDs with non-alphanumeric chars to prevent path traversal.
     fn validate_id(id: &str) -> Result<()> {
         if id.is_empty()
             || !id
@@ -175,7 +169,6 @@ impl OfflineQueue {
         Ok(())
     }
 
-    /// Remove a queue entry by ID.
     pub fn remove_entry(&self, id: &str) -> Result<()> {
         Self::validate_id(id)?;
         let path = self.queue_dir.join(format!("{id}.json"));
@@ -185,7 +178,6 @@ impl OfflineQueue {
         Ok(())
     }
 
-    /// Update an entry with an error and increment retry count.
     fn update_entry_error(&self, entry: &mut QueuedAttestation, error: &str) -> Result<()> {
         Self::validate_id(&entry.id)?;
         entry.retry_count += 1;

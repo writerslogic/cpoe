@@ -15,7 +15,6 @@ pub mod verification;
 #[cfg(test)]
 mod tests;
 
-// Re-export all public types for API compatibility
 pub use crypto::{compute_entangled_nonce, fingerprint_for_public_key, hkdf_expand};
 pub use error::KeyHierarchyError;
 pub use identity::derive_master_identity;
@@ -32,6 +31,6 @@ pub use types::{
     SessionRecoveryState, VERSION,
 };
 pub use verification::{
-    verify_checkpoint_signatures, verify_key_hierarchy, verify_ratchet_signature,
-    verify_session_binding, verify_session_certificate, verify_session_certificate_bytes,
+    validate_cert_byte_lengths, verify_checkpoint_signatures, verify_key_hierarchy,
+    verify_ratchet_signature, verify_session_binding, verify_session_certificate,
 };

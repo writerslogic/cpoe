@@ -102,7 +102,6 @@ mod tests {
             active_probes: None,
         };
 
-        // Build 3 checkpoints (minimum required)
         let mut checkpoints = vec![checkpoint.clone()];
         for i in 1..3 {
             let mut cp = checkpoint.clone();
@@ -183,16 +182,13 @@ mod tests {
     fn test_evidence_packet_cbor_roundtrip() {
         let packet = create_test_evidence_packet();
 
-        // Encode with tag
         let encoded = packet.encode_cbor().expect("encode should succeed");
 
-        // Verify tag is present
         assert!(
             codec::cbor::has_tag(&encoded, CBOR_TAG_EVIDENCE_PACKET),
             "encoded packet should have CPOP tag"
         );
 
-        // Decode back
         let decoded = EvidencePacketWire::decode_cbor(&encoded).expect("decode should succeed");
 
         assert_eq!(decoded.version, 1);
@@ -217,16 +213,13 @@ mod tests {
     fn test_attestation_result_cbor_roundtrip() {
         let result = create_test_attestation_result();
 
-        // Encode with tag
         let encoded = result.encode_cbor().expect("encode should succeed");
 
-        // Verify tag is present
         assert!(
             codec::cbor::has_tag(&encoded, CBOR_TAG_ATTESTATION_RESULT),
             "encoded result should have CWAR tag"
         );
 
-        // Decode back
         let decoded = AttestationResultWire::decode_cbor(&encoded).expect("decode should succeed");
 
         assert_eq!(decoded.version, 1);
@@ -242,7 +235,6 @@ mod tests {
 
     #[test]
     fn test_correct_cbor_tag_values() {
-        // Verify the tag constants match the CDDL spec
         assert_eq!(
             CBOR_TAG_EVIDENCE_PACKET, 1129336656,
             "Evidence packet tag should be 1129336656 (CPOP)"
@@ -258,58 +250,47 @@ mod tests {
         let packet = create_test_evidence_packet();
         let encoded = packet.encode_cbor().expect("encode");
 
-        // Try to decode as attestation result (wrong tag)
         let result = AttestationResultWire::decode_cbor(&encoded);
         assert!(result.is_err(), "should reject wrong tag");
     }
 
     #[test]
     fn test_enum_values() {
-        // Hash algorithms
         assert_eq!(HashAlgorithm::Sha256 as u8, 1);
         assert_eq!(HashAlgorithm::Sha384 as u8, 2);
         assert_eq!(HashAlgorithm::Sha512 as u8, 3);
 
-        // Attestation tiers
         assert_eq!(AttestationTier::SoftwareOnly as u8, 1);
         assert_eq!(AttestationTier::AttestedSoftware as u8, 2);
         assert_eq!(AttestationTier::HardwareBound as u8, 3);
         assert_eq!(AttestationTier::HardwareHardened as u8, 4);
 
-        // Content tiers
         assert_eq!(ContentTier::Core as u8, 1);
         assert_eq!(ContentTier::Enhanced as u8, 2);
         assert_eq!(ContentTier::Maximum as u8, 3);
 
-        // Proof algorithms
         assert_eq!(ProofAlgorithm::SwfArgon2id as u8, 20);
         assert_eq!(ProofAlgorithm::SwfArgon2idEntangled as u8, 21);
 
-        // Verdicts
         assert_eq!(Verdict::Authentic as u8, 1);
         assert_eq!(Verdict::Inconclusive as u8, 2);
         assert_eq!(Verdict::Suspicious as u8, 3);
         assert_eq!(Verdict::Invalid as u8, 4);
 
-        // Hash salt modes
         assert_eq!(HashSaltMode::Unsalted as u8, 0);
         assert_eq!(HashSaltMode::AuthorSalted as u8, 1);
 
-        // Cost units
         assert_eq!(CostUnit::Usd as u8, 1);
         assert_eq!(CostUnit::CpuHours as u8, 2);
 
-        // Absence types
         assert_eq!(AbsenceType::ComputationallyBound as u8, 1);
         assert_eq!(AbsenceType::MonitoringDependent as u8, 2);
         assert_eq!(AbsenceType::Environmental as u8, 3);
 
-        // Probe types
         assert_eq!(ProbeType::GaltonBoard as u8, 1);
         assert_eq!(ProbeType::ReflexGate as u8, 2);
         assert_eq!(ProbeType::SpatialTarget as u8, 3);
 
-        // Binding types
         assert_eq!(BindingType::TlsExporter as u8, 1);
     }
 
@@ -317,18 +298,15 @@ mod tests {
     fn test_untagged_cbor_roundtrip() {
         let packet = create_test_evidence_packet();
 
-        // Encode without tag
         let encoded = packet
             .encode_cbor_untagged()
             .expect("untagged encode should succeed");
 
-        // Verify no tag
         assert!(
             !codec::cbor::has_tag(&encoded, CBOR_TAG_EVIDENCE_PACKET),
             "untagged packet should not have tag"
         );
 
-        // Decode without tag
         let decoded = EvidencePacketWire::decode_cbor_untagged(&encoded)
             .expect("untagged decode should succeed");
         assert_eq!(decoded.version, 1);
@@ -338,7 +316,6 @@ mod tests {
     fn test_evidence_packet_with_optional_fields() {
         let mut packet = create_test_evidence_packet();
 
-        // Add optional fields
         packet.limitations = Some(vec![
             "No hardware attestation available".to_string(),
             "Single device session".to_string(),
@@ -352,7 +329,6 @@ mod tests {
         packet.previous_packet_ref = Some(HashValue::sha256(vec![0xEE; 32]));
         packet.packet_sequence = Some(2);
 
-        // Roundtrip
         let encoded = packet.encode_cbor().expect("encode");
         let decoded = EvidencePacketWire::decode_cbor(&encoded).expect("decode");
 
@@ -370,24 +346,20 @@ mod tests {
     fn test_checkpoint_with_jitter_and_physical() {
         let mut packet = create_test_evidence_packet();
 
-        // Add jitter binding to first checkpoint
         packet.checkpoints[0].jitter_binding = Some(JitterBindingWire {
             intervals: vec![120, 85, 200, 150, 95, 180, 110, 160],
             entropy_estimate: 350,
             jitter_seal: vec![0x55; 32],
         });
 
-        // Add physical state to first checkpoint
         packet.checkpoints[0].physical_state = Some(PhysicalState {
             thermal: vec![45000, 45100, 45200, 45150],
             entropy_delta: -50,
             kernel_commitment: Some([0x66; 32]),
         });
 
-        // Add entangled MAC
         packet.checkpoints[0].entangled_mac = Some(vec![0x77; 32]);
 
-        // Roundtrip
         let encoded = packet.encode_cbor().expect("encode");
         let decoded = EvidencePacketWire::decode_cbor(&encoded).expect("decode");
 
@@ -423,7 +395,6 @@ mod tests {
 
         result.warnings = Some(vec!["Low entropy in first checkpoint".to_string()]);
 
-        // Roundtrip
         let encoded = result.encode_cbor().expect("encode");
         let decoded = AttestationResultWire::decode_cbor(&encoded).expect("decode");
 
@@ -450,7 +421,6 @@ mod tests {
             response_latency: Some(250),
         }]);
 
-        // Roundtrip
         let encoded = packet.encode_cbor().expect("encode");
         let decoded = EvidencePacketWire::decode_cbor(&encoded).expect("decode");
 
@@ -471,7 +441,6 @@ mod tests {
             transfer_time: 1700000002000,
         }]);
 
-        // Roundtrip
         let encoded = packet.encode_cbor().expect("encode");
         let decoded = EvidencePacketWire::decode_cbor(&encoded).expect("decode");
 
@@ -493,7 +462,6 @@ mod tests {
             entropy_anchor: [0xAB; 32],
         });
 
-        // Roundtrip
         let encoded = packet.encode_cbor().expect("encode");
         let decoded = EvidencePacketWire::decode_cbor(&encoded).expect("decode");
 
@@ -518,7 +486,6 @@ mod tests {
             binding_value: [0x33; 32],
         });
 
-        // Roundtrip
         let encoded = packet.encode_cbor().expect("encode");
         let decoded = EvidencePacketWire::decode_cbor(&encoded).expect("decode");
 

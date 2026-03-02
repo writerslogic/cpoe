@@ -112,6 +112,19 @@ pub fn analyze_labyrinth(
         return Err("Insufficient data for labyrinth analysis (minimum 50 points)".to_string());
     }
 
+    if params.max_embedding_dim > 20 {
+        return Err(format!(
+            "max_embedding_dim {} exceeds limit of 20",
+            params.max_embedding_dim
+        ));
+    }
+    if params.max_delay > 50 {
+        return Err(format!(
+            "max_delay {} exceeds limit of 50",
+            params.max_delay
+        ));
+    }
+
     // Step 1: Find optimal time delay using mutual information
     let optimal_delay = find_optimal_delay(data, params.max_delay);
 
@@ -253,6 +266,14 @@ fn estimate_embedding_dimension(data: &[f64], delay: usize, max_dim: usize) -> u
     max_dim
 }
 
+/// FNN distance threshold for detecting false nearest neighbors.
+///
+/// Per Kennel, Brown & Abarbanel (1992) "Determining embedding dimension for
+/// phase-space reconstruction using a geometrical construction", Phys. Rev. A,
+/// 45(6), 3403-3411. A threshold of 15.0 is standard for identifying neighbors
+/// that are "false" due to projection from a higher-dimensional space.
+const FNN_DISTANCE_THRESHOLD: f64 = 15.0;
+
 /// Calculate false nearest neighbors ratio.
 fn calculate_fnn_ratio(embedding: &[Vec<f64>], original: &[f64], dim: usize, delay: usize) -> f64 {
     let n = embedding.len();
@@ -260,7 +281,7 @@ fn calculate_fnn_ratio(embedding: &[Vec<f64>], original: &[f64], dim: usize, del
         return 1.0;
     }
 
-    let threshold = 15.0; // Typical FNN threshold
+    let threshold = FNN_DISTANCE_THRESHOLD;
     let mut fnn_count = 0;
     let mut total_count = 0;
 
@@ -284,18 +305,22 @@ fn calculate_fnn_ratio(embedding: &[Vec<f64>], original: &[f64], dim: usize, del
         }
 
         if min_dist > 0.0 && min_dist < f64::INFINITY {
-            // Check if this is a false neighbor
-            let orig_idx_i = i * delay + (dim - 1) * delay;
-            let orig_idx_j = nn_idx * delay + (dim - 1) * delay;
+            // Defense-in-depth: use checked arithmetic for index computation
+            let dim_offset = (dim - 1).checked_mul(delay);
+            let orig_idx_i =
+                dim_offset.and_then(|d| i.checked_mul(delay).and_then(|v| v.checked_add(d)));
+            let orig_idx_j =
+                dim_offset.and_then(|d| nn_idx.checked_mul(delay).and_then(|v| v.checked_add(d)));
 
-            if orig_idx_i + delay < original.len() && orig_idx_j + delay < original.len() {
-                let extra_dist =
-                    (original[orig_idx_i + delay] - original[orig_idx_j + delay]).abs();
-                let ratio = extra_dist / min_dist;
+            if let (Some(idx_i), Some(idx_j)) = (orig_idx_i, orig_idx_j) {
+                if idx_i + delay < original.len() && idx_j + delay < original.len() {
+                    let extra_dist = (original[idx_i + delay] - original[idx_j + delay]).abs();
+                    let ratio = extra_dist / min_dist;
 
-                total_count += 1;
-                if ratio > threshold {
-                    fnn_count += 1;
+                    total_count += 1;
+                    if ratio > threshold {
+                        fnn_count += 1;
+                    }
                 }
             }
         }
@@ -431,6 +456,10 @@ fn estimate_correlation_dimension(embedding: &[Vec<f64>]) -> f64 {
 
     let r_min = distances[distances.len() / 10];
     let r_max = distances[distances.len() * 9 / 10];
+
+    if r_max == r_min {
+        return 0.0;
+    }
 
     let num_bins = 10;
     for i in 0..num_bins {

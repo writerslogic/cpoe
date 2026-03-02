@@ -35,16 +35,12 @@ impl PhysicalContext {
             hasher.update(sample.duration_since_last_ns.to_be_bytes());
         }
 
-        let result = hasher.finalize();
-        let mut combined_hash = [0u8; 32];
-        combined_hash.copy_from_slice(&result);
-
         Self {
             clock_skew: skew,
             thermal_proxy: thermal,
             silicon_puf: puf,
             io_latency_ns: io_latency,
-            combined_hash,
+            combined_hash: hasher.finalize().into(),
         }
     }
 }

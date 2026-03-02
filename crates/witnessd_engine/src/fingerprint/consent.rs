@@ -1,23 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
-//! Voice Fingerprinting Consent Management
+//! Explicit consent management for voice fingerprinting.
 //!
-//! This module handles explicit consent for voice fingerprinting,
-//! which captures writing style patterns.
+//! Grant: `witnessd fingerprint enable-voice` -- displays explanation,
+//! records timestamped consent.
 //!
-//! # Consent Flow
-//!
-//! 1. User runs `witnessd fingerprint enable-voice`
-//! 2. System displays clear explanation of what is collected
-//! 3. User explicitly confirms consent
-//! 4. Consent record with timestamp is stored
-//!
-//! # Revocation
-//!
-//! Running `witnessd fingerprint disable-voice`:
-//! 1. Revokes consent
-//! 2. Deletes ALL stored voice fingerprint data
-//! 3. Records revocation timestamp
+//! Revoke: `witnessd fingerprint disable-voice` -- deletes all stored
+//! voice data and records revocation timestamp.
 
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
@@ -25,44 +14,29 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-// =============================================================================
-// Consent Types
-// =============================================================================
-
-/// Status of voice fingerprinting consent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConsentStatus {
-    /// Never asked
     NotRequested,
-    /// User granted consent
     Granted,
-    /// User denied consent
     Denied,
-    /// User revoked previously granted consent
     Revoked,
 }
 
 impl ConsentStatus {
-    /// Check if consent is currently active.
     pub fn is_granted(&self) -> bool {
         matches!(self, ConsentStatus::Granted)
     }
 }
 
-/// Record of consent decision.
+/// Timestamped consent decision with audit trail.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConsentRecord {
-    /// Current consent status
     pub status: ConsentStatus,
-    /// When consent was first requested
     pub first_requested: Option<DateTime<Utc>>,
-    /// When consent was granted (if ever)
     pub granted_at: Option<DateTime<Utc>>,
-    /// When consent was revoked (if ever)
     pub revoked_at: Option<DateTime<Utc>>,
-    /// Version of the consent text shown
     pub consent_version: String,
-    /// Hash of what was explained (for audit)
+    /// SHA-256 of explanation text shown at grant time
     pub explanation_hash: String,
 }
 
@@ -79,14 +53,9 @@ impl Default for ConsentRecord {
     }
 }
 
-// =============================================================================
-// Consent Text
-// =============================================================================
-
-/// Version of the consent text (bump when explanation changes).
+/// Bump when `CONSENT_EXPLANATION` text changes.
 pub const CONSENT_VERSION: &str = "1.0.0";
 
-/// Consent explanation shown to user.
 pub const CONSENT_EXPLANATION: &str = r#"
 VOICE FINGERPRINTING CONSENT
 
@@ -117,29 +86,34 @@ works without this and does not capture any content information.
 Do you consent to voice fingerprinting? [y/N]
 "#;
 
-// =============================================================================
-// Consent Manager
-// =============================================================================
-
-/// Manager for voice fingerprinting consent.
+/// Persists consent state to `voice_consent.json`.
 pub struct ConsentManager {
-    /// Path to consent record file
     consent_file: PathBuf,
-    /// Current consent record
     record: ConsentRecord,
 }
 
 impl ConsentManager {
-    /// Create a new consent manager.
+    /// Load existing consent record from `base_path`, or initialize default.
     pub fn new(base_path: &Path) -> Result<Self> {
         let consent_file = base_path.join("voice_consent.json");
 
-        let record = if consent_file.exists() {
+        let mut record: ConsentRecord = if consent_file.exists() {
             let contents = fs::read_to_string(&consent_file)?;
             serde_json::from_str(&contents)?
         } else {
             ConsentRecord::default()
         };
+
+        // If the consent explanation changed (version bump), force re-consent
+        // so the user sees the updated terms before data collection continues.
+        if record.status == ConsentStatus::Granted && record.consent_version != CONSENT_VERSION {
+            log::warn!(
+                "Consent version mismatch (stored={}, current={}), requiring re-consent",
+                record.consent_version,
+                CONSENT_VERSION,
+            );
+            record.status = ConsentStatus::NotRequested;
+        }
 
         Ok(Self {
             consent_file,
@@ -147,38 +121,31 @@ impl ConsentManager {
         })
     }
 
-    /// Get current consent status.
     pub fn status(&self) -> ConsentStatus {
         self.record.status
     }
 
-    /// Check if voice fingerprinting consent is currently granted.
     pub fn has_voice_consent(&self) -> Result<bool> {
         Ok(self.record.status.is_granted())
     }
 
-    /// Get the consent record.
     pub fn record(&self) -> &ConsentRecord {
         &self.record
     }
 
-    /// Request consent from user.
-    ///
-    /// This is typically called interactively from the CLI.
-    /// Returns true if consent was granted.
-    pub fn request_consent(&mut self) -> Result<bool> {
-        // In a real implementation, this would interact with the user
-        // For now, we just update the record to show consent was requested
+    /// Begin consent flow. Returns `Ok(false)` to indicate consent is not yet
+    /// granted. Caller must display `CONSENT_EXPLANATION` and call
+    /// `grant_consent`/`deny_consent` based on user input.
+    pub fn begin_consent_request(&mut self) -> Result<bool> {
         if self.record.first_requested.is_none() {
             self.record.first_requested = Some(Utc::now());
+            self.save()?;
         }
 
-        // Note: Actual consent decision should be made by the caller
-        // after displaying CONSENT_EXPLANATION to the user
         Ok(false)
     }
 
-    /// Grant consent (called after user confirms).
+    /// Record consent grant with timestamp and explanation hash.
     pub fn grant_consent(&mut self) -> Result<()> {
         self.record.status = ConsentStatus::Granted;
         self.record.granted_at = Some(Utc::now());
@@ -188,16 +155,13 @@ impl ConsentManager {
         Ok(())
     }
 
-    /// Deny consent.
     pub fn deny_consent(&mut self) -> Result<()> {
         self.record.status = ConsentStatus::Denied;
         self.save()?;
         Ok(())
     }
 
-    /// Revoke previously granted consent.
-    ///
-    /// This should also trigger deletion of all voice fingerprint data.
+    /// Revoke consent. Caller is responsible for deleting voice data.
     pub fn revoke_consent(&mut self) -> Result<()> {
         if self.record.status != ConsentStatus::Granted {
             return Err(anyhow!("Cannot revoke consent that was not granted"));
@@ -209,19 +173,15 @@ impl ConsentManager {
         Ok(())
     }
 
-    /// Get the consent explanation text.
     pub fn get_explanation(&self) -> &'static str {
         CONSENT_EXPLANATION
     }
 
-    /// Get the consent version.
     pub fn get_version(&self) -> &str {
         CONSENT_VERSION
     }
 
-    /// Save the consent record.
     fn save(&self) -> Result<()> {
-        // Ensure parent directory exists
         if let Some(parent) = self.consent_file.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -231,7 +191,6 @@ impl ConsentManager {
         Ok(())
     }
 
-    /// Delete the consent record file.
     pub fn delete_record(&self) -> Result<()> {
         if self.consent_file.exists() {
             fs::remove_file(&self.consent_file)?;
@@ -240,7 +199,7 @@ impl ConsentManager {
     }
 }
 
-/// Hash the consent explanation for audit purposes.
+/// SHA-256 hex digest of `CONSENT_EXPLANATION` for audit trail.
 fn hash_explanation() -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
@@ -248,11 +207,6 @@ fn hash_explanation() -> String {
     hex::encode(hasher.finalize())
 }
 
-// =============================================================================
-// CLI Helpers
-// =============================================================================
-
-/// Format consent status for CLI display.
 pub fn format_consent_status(status: ConsentStatus) -> &'static str {
     match status {
         ConsentStatus::NotRequested => "Not requested",
@@ -262,7 +216,7 @@ pub fn format_consent_status(status: ConsentStatus) -> &'static str {
     }
 }
 
-/// Format consent record for CLI display.
+/// Multi-line CLI-friendly representation.
 pub fn format_consent_record(record: &ConsentRecord) -> String {
     let mut lines = Vec::new();
     lines.push(format!("Status: {}", format_consent_status(record.status)));
@@ -293,10 +247,6 @@ pub fn format_consent_record(record: &ConsentRecord) -> String {
     lines.join("\n")
 }
 
-// =============================================================================
-// Tests
-// =============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -321,12 +271,10 @@ mod tests {
         let dir = tempdir().unwrap();
         let mut manager = ConsentManager::new(dir.path()).unwrap();
 
-        // Grant consent
         manager.grant_consent().unwrap();
         assert_eq!(manager.status(), ConsentStatus::Granted);
         assert!(manager.has_voice_consent().unwrap());
 
-        // Revoke consent
         manager.revoke_consent().unwrap();
         assert_eq!(manager.status(), ConsentStatus::Revoked);
         assert!(!manager.has_voice_consent().unwrap());
@@ -336,13 +284,11 @@ mod tests {
     fn test_consent_persistence() {
         let dir = tempdir().unwrap();
 
-        // Grant consent
         {
             let mut manager = ConsentManager::new(dir.path()).unwrap();
             manager.grant_consent().unwrap();
         }
 
-        // Reload and verify
         {
             let manager = ConsentManager::new(dir.path()).unwrap();
             assert_eq!(manager.status(), ConsentStatus::Granted);

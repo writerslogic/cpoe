@@ -9,7 +9,7 @@ fn create_test_events(count: usize) -> Vec<EventData> {
     (0..count)
         .map(|i| EventData {
             id: i as i64,
-            timestamp_ns: i as i64 * 1_000_000_000, // 1 second apart
+            timestamp_ns: i as i64 * 1_000_000_000,
             file_size: 100 + i as i64 * 10,
             size_delta: 10,
             file_path: "/test/file.txt".to_string(),
@@ -62,7 +62,6 @@ fn test_monotonic_append_ratio() {
 
 #[test]
 fn test_edit_entropy() {
-    // All edits in one bin should have entropy 0
     let regions_concentrated = vec![
         RegionData {
             start_pct: 0.5,
@@ -80,7 +79,6 @@ fn test_edit_entropy() {
     let entropy_low = edit_entropy(&regions_concentrated, 20);
     assert!(entropy_low < 0.1);
 
-    // Spread across bins should have higher entropy
     let regions_spread: Vec<_> = (0..20)
         .map(|i| RegionData {
             start_pct: i as f32 / 20.0,
@@ -119,7 +117,7 @@ fn test_positive_negative_ratio() {
             end_pct: 0.5,
             delta_sign: 0,
             byte_count: 10,
-        }, // Replacement, excluded
+        },
     ];
 
     let ratio = positive_negative_ratio(&regions);
@@ -128,7 +126,6 @@ fn test_positive_negative_ratio() {
 
 #[test]
 fn test_deletion_clustering() {
-    // Clustered deletions
     let regions_clustered = vec![
         RegionData {
             start_pct: 0.50,
@@ -152,7 +149,6 @@ fn test_deletion_clustering() {
     let coef_clustered = deletion_clustering_coef(&regions_clustered);
     assert!(coef_clustered < 0.5);
 
-    // Scattered deletions
     let regions_scattered = vec![
         RegionData {
             start_pct: 0.1,
@@ -181,10 +177,9 @@ fn test_deletion_clustering() {
 fn test_cadence_analysis() {
     use crate::jitter::SimpleJitterSample;
 
-    // Create samples with robotic timing
     let robotic_samples: Vec<_> = (0..50)
         .map(|i| SimpleJitterSample {
-            timestamp_ns: i as i64 * 100_000_000, // Exactly 100ms apart
+            timestamp_ns: i as i64 * 100_000_000,
             duration_since_last_ns: 100_000_000,
             zone: 0,
         })
@@ -194,10 +189,9 @@ fn test_cadence_analysis() {
     assert!(cadence.is_robotic);
     assert!(cadence.coefficient_of_variation < ROBOTIC_CV_THRESHOLD);
 
-    // Create samples with human-like variation
     let human_samples: Vec<_> = (0..50)
         .map(|i| {
-            let variation = ((i * 17) % 100) as i64 * 5_000_000; // Pseudo-random variation
+            let variation = ((i * 17) % 100) as i64 * 5_000_000;
             SimpleJitterSample {
                 timestamp_ns: i as i64 * 150_000_000 + variation,
                 duration_since_last_ns: 150_000_000 + variation as u64,
@@ -235,10 +229,9 @@ fn test_insufficient_data() {
 #[test]
 fn test_session_detection() {
     let mut events = create_test_events(10);
-    // Add a gap
     events[5].timestamp_ns = events[4].timestamp_ns + 3_600_000_000_000; // 1 hour gap
 
-    let sessions = detect_sessions(&events, 1800.0); // 30 min threshold
+    let sessions = detect_sessions(&events, 1800.0);
     assert_eq!(sessions.len(), 2);
 }
 
@@ -246,10 +239,9 @@ fn test_session_detection() {
 fn test_correlation() {
     let correlator = ContentKeystrokeCorrelator::new();
 
-    // Consistent case
     let input_consistent = CorrelationInput {
         document_length: 1000,
-        total_keystrokes: 1200, // With 15% edit ratio, effective = 1020
+        total_keystrokes: 1200,
         detected_paste_chars: 0,
         detected_paste_count: 0,
         autocomplete_chars: 0,
@@ -260,7 +252,6 @@ fn test_correlation() {
     let result = correlator.analyze(&input_consistent);
     assert_eq!(result.status, CorrelationStatus::Consistent);
 
-    // Suspicious case
     let input_suspicious = CorrelationInput {
         document_length: 5000,
         total_keystrokes: 1000,

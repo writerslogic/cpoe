@@ -154,7 +154,12 @@ pub fn verify_key_hierarchy(evidence: &KeyHierarchyEvidence) -> Result<(), KeyHi
     verify_checkpoint_signatures(&evidence.checkpoint_signatures)
 }
 
-pub fn verify_session_certificate_bytes(
+/// Validate Ed25519 byte lengths and verify the certificate signature.
+///
+/// Checks that `master_pubkey` is 32 bytes, `session_pubkey` is 32 bytes,
+/// and `cert_signature` is 64 bytes, then performs Ed25519 signature
+/// verification of `session_pubkey` against `master_pubkey`.
+pub fn validate_cert_byte_lengths(
     master_pubkey: &[u8],
     session_pubkey: &[u8],
     cert_signature: &[u8],
@@ -168,6 +173,13 @@ pub fn verify_session_certificate_bytes(
     if cert_signature.len() != 64 {
         return Err("invalid certificate signature size".to_string());
     }
+
+    let vk = VerifyingKey::from_bytes(master_pubkey.try_into().unwrap())
+        .map_err(|e| format!("invalid master public key: {e}"))?;
+    let sig = Signature::from_bytes(cert_signature.try_into().unwrap());
+    vk.verify(session_pubkey, &sig)
+        .map_err(|e| format!("certificate signature verification failed: {e}"))?;
+
     Ok(())
 }
 

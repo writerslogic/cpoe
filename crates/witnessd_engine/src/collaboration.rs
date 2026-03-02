@@ -1,32 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
-//! Collaborative Authorship Model
+//! Collaborative authorship with per-contributor independent attestations.
 //!
-//! This module implements the collaborative authorship mechanism defined in the
-//! witnessd RFC. It enables multiple contributors to independently attest to
-//! their contributions within a shared Evidence structure.
-//!
-//! # Security Model
-//!
-//! Each collaborator provides an independent attestation containing:
-//! - Their public key (for verification)
-//! - Role and contribution claims
-//! - Checkpoint ranges they authored
-//! - Signature over their attestation
-//!
-//! Verifiers can confirm that each participant acknowledged their role
-//! without requiring all collaborators to share signing keys.
+//! Each collaborator signs their own attestation (public key + role + checkpoint ranges),
+//! so verifiers can confirm participation without shared signing keys.
 //!
 //! # Privacy Considerations
 //!
-//! - Collaborator public keys may be linkable across documents
-//! - Active periods reveal when each contributor was working
+//! - Public keys may be linkable across documents
+//! - Active periods reveal contributor work schedules
 //! - Contribution percentages may be contentious
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-/// Mode of collaboration
+/// Collaboration mode between authors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CollaborationMode {
@@ -40,7 +28,7 @@ pub enum CollaborationMode {
     PeerReview,
 }
 
-/// Role of a collaborator in the work
+/// Collaborator's role in the work
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CollaboratorRole {
@@ -60,7 +48,7 @@ pub enum CollaboratorRole {
     Translator,
 }
 
-/// Type of contribution made
+/// Kind of contribution made
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContributionType {
@@ -82,7 +70,7 @@ pub enum ContributionType {
     Structural,
 }
 
-/// Strategy used for merging contributions
+/// Merge strategy for combining contributions
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MergeStrategy {
@@ -96,154 +84,106 @@ pub enum MergeStrategy {
     Automated,
 }
 
-/// Time interval during which a collaborator was active
+/// Time interval of collaborator activity
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimeInterval {
     pub start: DateTime<Utc>,
     pub end: DateTime<Utc>,
 }
 
-/// Summary of a collaborator's contributions
+/// Aggregate statistics for a collaborator's contributions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContributionSummary {
-    /// Number of checkpoints authored
     pub checkpoints_authored: u32,
-
-    /// Characters added
     pub chars_added: u64,
-
-    /// Characters deleted
     pub chars_deleted: u64,
-
-    /// Active time in seconds
     pub active_time_seconds: f64,
 
-    /// Estimated contribution percentage (0.0-1.0)
+    /// 0.0--1.0
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub estimated_contribution_pct: Option<f32>,
 }
 
-/// Individual collaborator record
+/// Individual collaborator record with attestation signature.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Collaborator {
-    /// Public key of the collaborator (hex-encoded or PEM)
+    /// Hex-encoded or PEM public key
     pub public_key: String,
-
-    /// Role in the collaboration
     pub role: CollaboratorRole,
-
-    /// Display name
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
-
     /// External identifier (email, ORCID, etc.)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identifier: Option<String>,
-
-    /// Periods when contributor was active
     pub active_periods: Vec<TimeInterval>,
-
-    /// Checkpoint indices (ranges) authored by this collaborator
+    /// Inclusive (start, end) checkpoint ranges authored
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checkpoint_ranges: Option<Vec<(u32, u32)>>,
-
     /// Signature over this collaborator's attestation
     pub attestation_signature: String,
-
-    /// Summary of contributions
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contribution_summary: Option<ContributionSummary>,
 }
 
-/// Detailed contribution claim
+/// Detailed contribution claim linking a contributor to specific work.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContributionClaim {
-    /// Type of contribution
     pub contribution_type: ContributionType,
-
-    /// Public key of contributor (reference to Collaborator)
+    /// Public key referencing a `Collaborator`
     pub contributor_key: String,
-
-    /// Checkpoint indices this claim applies to
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checkpoint_indices: Option<Vec<u32>>,
-
-    /// Description of contribution
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-
-    /// Extent (0.0-1.0)
+    /// 0.0--1.0
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extent: Option<f32>,
 }
 
-/// Record of a merge operation
+/// Record of a single merge operation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MergeEvent {
-    /// When the merge occurred
     pub merge_time: DateTime<Utc>,
-
-    /// Checkpoint index resulting from merge
     pub resulting_checkpoint: u32,
-
-    /// Public keys of merged contributors
     pub merged_contributor_keys: Vec<String>,
-
-    /// Strategy used
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub strategy: Option<MergeStrategy>,
-
-    /// Notes about the merge
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merge_note: Option<String>,
 }
 
-/// Record of merge operations
+/// Ordered log of merge operations.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MergeRecord {
     pub merges: Vec<MergeEvent>,
 }
 
-/// Governance policy for collaboration
+/// Governance policy for collaboration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollaborationPolicy {
-    /// Minimum approvers required for merge
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_approvers_for_merge: Option<u32>,
-
-    /// Whether all signatures are required
     #[serde(default)]
     pub requires_all_signatures: bool,
-
     /// URI to external policy document
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub policy_uri: Option<String>,
 }
 
-/// Complete collaboration section for an Evidence packet
+/// Collaboration section embedded in an Evidence packet.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollaborationSection {
-    /// Mode of collaboration
     pub mode: CollaborationMode,
-
-    /// Participating collaborators
     pub participants: Vec<Collaborator>,
-
-    /// Detailed contribution claims
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub contributions: Vec<ContributionClaim>,
-
-    /// Record of merge operations
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merge_record: Option<MergeRecord>,
-
-    /// Governance policy
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub policy: Option<CollaborationPolicy>,
 }
 
 impl CollaborationSection {
-    /// Create a new collaboration section
     pub fn new(mode: CollaborationMode) -> Self {
         Self {
             mode,
@@ -254,31 +194,27 @@ impl CollaborationSection {
         }
     }
 
-    /// Add a collaborator
     pub fn add_participant(mut self, collaborator: Collaborator) -> Self {
         self.participants.push(collaborator);
         self
     }
 
-    /// Add a contribution claim
     pub fn add_contribution(mut self, claim: ContributionClaim) -> Self {
         self.contributions.push(claim);
         self
     }
 
-    /// Set merge record
     pub fn with_merge_record(mut self, record: MergeRecord) -> Self {
         self.merge_record = Some(record);
         self
     }
 
-    /// Set collaboration policy
     pub fn with_policy(mut self, policy: CollaborationPolicy) -> Self {
         self.policy = Some(policy);
         self
     }
 
-    /// Check if all checkpoint indices are covered by participants
+    /// Verify all checkpoint indices `[0, total_checkpoints)` are claimed by at least one participant.
     pub fn validate_coverage(&self, total_checkpoints: u32) -> Result<(), String> {
         let mut covered = vec![false; total_checkpoints as usize];
 
@@ -311,12 +247,10 @@ impl CollaborationSection {
         }
     }
 
-    /// Count total participants
     pub fn participant_count(&self) -> usize {
         self.participants.len()
     }
 
-    /// Get participants by role
     pub fn participants_by_role(&self, role: CollaboratorRole) -> Vec<&Collaborator> {
         self.participants
             .iter()
@@ -326,7 +260,6 @@ impl CollaborationSection {
 }
 
 impl Collaborator {
-    /// Create a new collaborator
     pub fn new(public_key: String, role: CollaboratorRole, signature: String) -> Self {
         Self {
             public_key,
@@ -340,31 +273,26 @@ impl Collaborator {
         }
     }
 
-    /// Set display name
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.display_name = Some(name.into());
         self
     }
 
-    /// Set identifier (e.g., ORCID)
     pub fn with_identifier(mut self, id: impl Into<String>) -> Self {
         self.identifier = Some(id.into());
         self
     }
 
-    /// Add an active period
     pub fn add_active_period(mut self, start: DateTime<Utc>, end: DateTime<Utc>) -> Self {
         self.active_periods.push(TimeInterval { start, end });
         self
     }
 
-    /// Set checkpoint ranges
     pub fn with_checkpoint_ranges(mut self, ranges: Vec<(u32, u32)>) -> Self {
         self.checkpoint_ranges = Some(ranges);
         self
     }
 
-    /// Set contribution summary
     pub fn with_summary(mut self, summary: ContributionSummary) -> Self {
         self.contribution_summary = Some(summary);
         self

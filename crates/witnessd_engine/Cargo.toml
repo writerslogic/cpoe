@@ -10,6 +10,9 @@ readme = "README.md"
 keywords = ["cryptography", "authorship", "witnessing", "attestation", "proof-of-process"]
 categories = ["cryptography", "authentication"]
 rust-version = "1.75.0"
+homepage = "https://github.com/writerslogic/witnessd"
+documentation = "https://docs.rs/witnessd_engine"
+exclude = ["tests/", "fuzz/", "benches/"]
 
 [lib]
 crate-type = ["cdylib", "staticlib", "rlib"]
@@ -87,7 +90,7 @@ glob = "0.3.2"
 toml = "0.8.19"
 blake3 = "1.8.3"
 chacha20poly1305 = "0.10.1"
-aes-gcm = "0.10"
+aes-gcm = { version = "0.10", features = ["zeroize"] }
 p256 = { version = "0.13", features = ["ecdh"] }
 
 # Thread-safe concurrent collections

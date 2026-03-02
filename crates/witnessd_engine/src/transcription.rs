@@ -21,28 +21,16 @@ use sha2::{Digest, Sha256};
 /// without storing any content or audio data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TranscriptionMetadata {
-    /// Transcription engine identifier (e.g., "whisper", "azure", "google").
     pub engine: String,
-
-    /// Total number of words detected.
     pub word_count: u64,
-
-    /// Audio duration in milliseconds.
     pub audio_duration_ms: u64,
-
-    /// Transcription confidence score (0.0 to 1.0).
     pub confidence: f64,
 
-    /// Hash of timing characteristics (inter-word intervals).
-    #[serde(with = "hex_bytes")]
+    #[serde(with = "crate::rfc::serde_helpers::hex_bytes")]
     pub audio_fingerprint: [u8; 32],
-
-    /// Session timestamp in Unix epoch milliseconds.
     pub timestamp_ms: u64,
 }
 
-/// Collector for transcription metadata.
-///
 /// Aggregates word timing information to produce a fingerprint
 /// without retaining any content.
 pub struct TranscriptionCollector {
@@ -55,8 +43,6 @@ pub struct TranscriptionCollector {
 
 impl TranscriptionCollector {
     /// Create a new transcription collector.
-    ///
-    /// # Arguments
     /// * `engine` - Identifier for the transcription engine
     pub fn new(engine: &str) -> Self {
         Self {
@@ -69,16 +55,12 @@ impl TranscriptionCollector {
     }
 
     /// Record a word boundary timing.
-    ///
-    /// # Arguments
     /// * `interval_us` - Time since previous word in microseconds
     pub fn record_word_interval(&mut self, interval_us: u64) {
         self.word_intervals_us.push(interval_us);
     }
 
     /// Record word confidence.
-    ///
-    /// # Arguments
     /// * `confidence` - Word-level confidence (0.0 to 1.0)
     pub fn record_confidence(&mut self, confidence: f64) {
         self.confidence_sum += confidence.clamp(0.0, 1.0);
@@ -86,43 +68,29 @@ impl TranscriptionCollector {
     }
 
     /// Set the total audio duration.
-    ///
-    /// # Arguments
     /// * `duration_ms` - Total duration in milliseconds
     pub fn set_duration(&mut self, duration_ms: u64) {
         self.total_duration_ms = duration_ms;
     }
 
-    /// Compute a fingerprint from the timing characteristics.
-    ///
     /// The fingerprint is a SHA-256 hash of:
     /// - Inter-word intervals (quantized)
     /// - Total word count
     /// - Duration
-    ///
-    /// This provides a unique identifier for the timing pattern
-    /// without revealing content.
     fn compute_fingerprint(&self) -> [u8; 32] {
         let mut hasher = Sha256::new();
 
-        // Hash word count
         hasher.update(self.word_intervals_us.len().to_le_bytes());
 
-        // Hash quantized intervals (to reduce timing precision)
         for interval in &self.word_intervals_us {
-            // Quantize to 10ms buckets
             let quantized = interval / 10_000;
             hasher.update(quantized.to_le_bytes());
         }
 
-        // Hash duration
         hasher.update(self.total_duration_ms.to_le_bytes());
-
         hasher.finalize().into()
     }
 
-    /// Generate the transcription metadata.
-    ///
     /// Returns the privacy-safe metadata without any content.
     pub fn finalize(self) -> TranscriptionMetadata {
         let word_count = self.word_intervals_us.len() as u64;
@@ -156,19 +124,10 @@ impl TranscriptionCollector {
 /// Inter-word timing statistics for transcription evidence.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TranscriptionTimingStats {
-    /// Mean inter-word interval in microseconds.
     pub mean_interval_us: f64,
-
-    /// Standard deviation of intervals.
     pub std_dev_us: f64,
-
-    /// Minimum interval.
     pub min_interval_us: u64,
-
-    /// Maximum interval.
     pub max_interval_us: u64,
-
-    /// Words per minute estimate.
     pub words_per_minute: f64,
 }
 
@@ -206,30 +165,6 @@ impl TranscriptionTimingStats {
             max_interval_us: max,
             words_per_minute: wpm,
         })
-    }
-}
-
-// Hex serialization for fingerprint
-mod hex_bytes {
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    pub fn serialize<S>(bytes: &[u8; 32], serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&hex::encode(bytes))
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 32], D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        let bytes = hex::decode(&s).map_err(serde::de::Error::custom)?;
-        let arr: [u8; 32] = bytes
-            .try_into()
-            .map_err(|_| serde::de::Error::custom("expected 32 bytes"))?;
-        Ok(arr)
     }
 }
 

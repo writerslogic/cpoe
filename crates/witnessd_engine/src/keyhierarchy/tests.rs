@@ -39,8 +39,8 @@ fn test_key_hierarchy_evidence_verification() {
 }
 
 #[test]
-fn test_verify_session_certificate_bytes_invalid() {
-    let err = verify_session_certificate_bytes(&[1u8; 10], &[2u8; 32], &[3u8; 64]).unwrap_err();
+fn test_validate_cert_byte_lengths_invalid() {
+    let err = validate_cert_byte_lengths(&[1u8; 10], &[2u8; 32], &[3u8; 64]).unwrap_err();
     assert!(err.contains("invalid master public key size"));
 }
 
@@ -222,14 +222,14 @@ fn test_same_pubkey_same_fingerprint() {
 }
 
 #[test]
-fn test_verify_session_certificate_bytes_invalid_session_pubkey() {
-    let err = verify_session_certificate_bytes(&[1u8; 32], &[2u8; 16], &[3u8; 64]).unwrap_err();
+fn test_validate_cert_byte_lengths_invalid_session_pubkey() {
+    let err = validate_cert_byte_lengths(&[1u8; 32], &[2u8; 16], &[3u8; 64]).unwrap_err();
     assert!(err.contains("invalid session public key size"));
 }
 
 #[test]
-fn test_verify_session_certificate_bytes_invalid_cert_signature() {
-    let err = verify_session_certificate_bytes(&[1u8; 32], &[2u8; 32], &[3u8; 32]).unwrap_err();
+fn test_validate_cert_byte_lengths_invalid_cert_signature() {
+    let err = validate_cert_byte_lengths(&[1u8; 32], &[2u8; 32], &[3u8; 32]).unwrap_err();
     assert!(err.contains("invalid certificate signature size"));
 }
 

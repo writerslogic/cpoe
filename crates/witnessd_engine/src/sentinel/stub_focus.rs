@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 use super::error::{Result, SentinelError};
-use super::focus::{FocusMonitor, PollingFocusMonitor, WindowProvider};
+use super::focus::{PollingSentinelFocusTracker, SentinelFocusTracker, WindowProvider};
 use super::types::*;
 use crate::config::SentinelConfig;
 use crate::crypto::ObfuscatedString;
@@ -9,21 +9,18 @@ use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 use tokio::sync::mpsc;
 
-/// Focus monitor for Linux and other non-macOS, non-Windows platforms.
+/// Degraded focus monitor for Linux/non-macOS/non-Windows platforms.
 ///
-/// On Linux without X11, precise window focus tracking is not available.
-/// This monitor provides a degraded-but-functional experience:
-/// - Reports the terminal/session as the active "window"
-/// - Uses environment variables and process info for context
-/// - Allows witnessing to proceed without precise focus tracking
-pub struct StubFocusMonitor {
+/// Without X11/Wayland, precise window tracking is unavailable. Falls back to
+/// terminal/session heuristics via env vars and `/proc`.
+pub struct StubSentinelFocusTracker {
     #[allow(dead_code)]
     config: Arc<SentinelConfig>,
     focus_rx: Arc<Mutex<Option<mpsc::Receiver<FocusEvent>>>>,
     change_rx: Arc<Mutex<Option<mpsc::Receiver<ChangeEvent>>>>,
 }
 
-impl StubFocusMonitor {
+impl StubSentinelFocusTracker {
     pub fn new(config: Arc<SentinelConfig>) -> Self {
         let (_focus_tx, focus_rx) = mpsc::channel(1);
         let (_change_tx, change_rx) = mpsc::channel(1);
@@ -34,30 +31,26 @@ impl StubFocusMonitor {
         }
     }
 
-    /// Create a polling-based monitor using process/env heuristics
-    pub fn new_monitor(config: Arc<SentinelConfig>) -> Box<dyn FocusMonitor> {
+    /// Create a polling-based monitor using process/env heuristics.
+    pub fn new_monitor(config: Arc<SentinelConfig>) -> Box<dyn SentinelFocusTracker> {
         let provider = Arc::new(LinuxWindowProvider);
-        Box::new(PollingFocusMonitor::new(provider, config))
+        Box::new(PollingSentinelFocusTracker::new(provider, config))
     }
 }
 
-/// Window provider using Linux process heuristics.
-///
-/// Without X11/Wayland integration, this uses environment variables
-/// and /proc to provide basic session context.
+/// Window provider using Linux process heuristics via env vars and `/proc`.
 struct LinuxWindowProvider;
 
 impl LinuxWindowProvider {
-    /// Try to detect the terminal emulator or parent application
+    /// Detect terminal emulator or parent application name.
     fn detect_terminal_app() -> String {
-        // Check common environment variables
         if let Ok(term_program) = std::env::var("TERM_PROGRAM") {
             return term_program;
         }
         if let Ok(term) = std::env::var("TERM") {
             return term;
         }
-        // Fall back to reading parent process name from /proc
+        // Fallback: parent process name from /proc
         if let Ok(ppid_status) = std::fs::read_to_string("/proc/self/status") {
             for line in ppid_status.lines() {
                 if let Some(ppid) = line.strip_prefix("PPid:\t") {
@@ -77,7 +70,7 @@ impl WindowProvider for LinuxWindowProvider {
     fn get_active_window(&self) -> Option<WindowInfo> {
         let app_name = Self::detect_terminal_app();
 
-        // Try to get the current working directory as a basic "document" hint
+        // Use cwd as a basic "document" hint
         let cwd = std::env::current_dir()
             .ok()
             .map(|p| p.to_string_lossy().into_owned());
@@ -95,9 +88,9 @@ impl WindowProvider for LinuxWindowProvider {
     }
 }
 
-impl FocusMonitor for StubFocusMonitor {
+impl SentinelFocusTracker for StubSentinelFocusTracker {
     fn start(&self) -> Result<()> {
-        // On Linux without X11, we use degraded mode that still allows witnessing
+        // Degraded mode: witnessing works without precise window focus tracking
         log::info!("Starting degraded focus monitor (no X11/Wayland integration)");
         log::info!("Witnessing will work but without precise window focus tracking");
         Ok(())

@@ -1,102 +1,60 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
-//! Compact Evidence References
+//! Compact evidence references (~200B CBOR / ~300 chars base64).
 //!
-//! This module implements compact evidence references as defined in the witnessd
-//! RFC. Compact references provide a cryptographic link to full Evidence packets
-//! without requiring the full packet to be transmitted.
-//!
-//! # Use Cases
-//!
-//! - Embedding in document metadata (PDF, EXIF, Office)
-//! - QR codes for physical verification
-//! - Git commit messages
-//! - Protocol headers with size constraints
-//!
-//! # Size Target
-//!
-//! Compact references are designed to be ~200 bytes (CBOR) or ~300 characters
-//! (base64), fitting comfortably in most metadata fields and QR codes.
+//! Cryptographic link to a full Evidence packet for embedding in
+//! document metadata (PDF, EXIF, Office), QR codes, git commit messages,
+//! or protocol headers with size constraints.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// Summary of evidence for compact representation
+/// Summary statistics for compact representation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompactSummary {
-    /// Number of checkpoints in the Evidence
     pub checkpoint_count: u32,
-
-    /// Total characters in the document
     pub total_chars: u64,
-
-    /// Total VDF time in seconds
     pub total_vdf_time_seconds: f64,
-
-    /// Evidence tier (1=Basic, 2=Standard, 3=Enhanced, 4=Maximum)
+    /// 1=Basic, 2=Standard, 3=Enhanced, 4=Maximum
     pub evidence_tier: u8,
-
-    /// Verdict (if available from Attestation Result)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verdict: Option<String>,
-
-    /// Confidence score (if available)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confidence_score: Option<f32>,
 }
 
-/// Metadata for compact reference
+/// Optional metadata for compact references.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompactMetadata {
-    /// Author name (if disclosed)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub author_name: Option<String>,
-
-    /// When Evidence was created
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created: Option<DateTime<Utc>>,
-
-    /// Name of verifier (if verified)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verifier_name: Option<String>,
-
-    /// When verification occurred
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verified_at: Option<DateTime<Utc>>,
 }
 
-/// Compact Evidence Reference
-///
-/// Provides a cryptographically-bound reference to a full Evidence packet
-/// that can be embedded in space-constrained contexts.
+/// Cryptographically-bound reference to a full Evidence packet,
+/// embeddable in space-constrained contexts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompactEvidenceRef {
-    /// UUID of the full Evidence packet
     pub packet_id: Uuid,
-
-    /// Hash of the final checkpoint (for verification)
+    /// Final checkpoint hash
     pub chain_hash: String,
-
-    /// Hash of the document content
     pub document_hash: String,
-
-    /// Summary statistics
     pub summary: CompactSummary,
-
-    /// URI where full Evidence can be retrieved
+    /// Where the full Evidence can be retrieved
     pub evidence_uri: String,
-
-    /// Signature over the reference fields
+    /// Ed25519 over the reference fields
     pub signature: String,
-
-    /// Optional metadata
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<CompactMetadata>,
 }
 
 impl CompactEvidenceRef {
-    /// Create a new compact reference
     pub fn new(
         packet_id: Uuid,
         chain_hash: String,
@@ -116,17 +74,13 @@ impl CompactEvidenceRef {
         }
     }
 
-    /// Set metadata
     pub fn with_metadata(mut self, metadata: CompactMetadata) -> Self {
         self.metadata = Some(metadata);
         self
     }
 
-    /// Generate the signable payload for this reference
-    ///
-    /// The payload is what should be signed to produce the signature field.
+    /// Canonical payload to sign for the `signature` field.
     pub fn signable_payload(&self) -> Vec<u8> {
-        // Create a deterministic JSON representation of fields to sign
         let payload = serde_json::json!({
             "packet_id": self.packet_id.to_string(),
             "chain_hash": self.chain_hash,
@@ -143,9 +97,7 @@ impl CompactEvidenceRef {
         payload.to_string().into_bytes()
     }
 
-    /// Encode to base64 URI format
-    ///
-    /// Returns a string like: pop-ref:base64urldata...
+    /// Encode as `pop-ref:<base64url>` URI.
     pub fn to_base64_uri(&self) -> Result<String, serde_json::Error> {
         let json = serde_json::to_vec(self)?;
         let encoded =
@@ -153,7 +105,7 @@ impl CompactEvidenceRef {
         Ok(format!("pop-ref:{}", encoded))
     }
 
-    /// Decode from base64 URI format
+    /// Decode from `pop-ref:<base64url>` URI.
     pub fn from_base64_uri(uri: &str) -> Result<Self, CompactRefError> {
         let encoded = uri
             .strip_prefix("pop-ref:")
@@ -166,11 +118,8 @@ impl CompactEvidenceRef {
         serde_json::from_slice(&json).map_err(|_| CompactRefError::InvalidJson)
     }
 
-    /// Generate a verification URI
-    ///
-    /// Returns a clickable URI that opens the verification service
+    /// `pop://verify?...` URI for the verification service.
     pub fn verification_uri(&self) -> String {
-        // URL-encode the evidence URI
         let encoded_evidence = urlencoding::encode(&self.evidence_uri);
         format!(
             "pop://verify?packet={}&uri={}",
@@ -178,17 +127,9 @@ impl CompactEvidenceRef {
         )
     }
 
-    /// Estimate the encoded size in bytes
+    /// Rough estimate of encoded size in bytes.
     pub fn estimated_size(&self) -> usize {
-        // UUID: 16 bytes
-        // chain_hash: ~64 bytes (hex SHA-256)
-        // document_hash: ~64 bytes
-        // summary: ~50 bytes
-        // evidence_uri: variable (assume ~100)
-        // signature: ~88 bytes (Ed25519 base64)
-        // metadata: variable
-        // JSON overhead: ~100 bytes
-
+        // Fixed overhead: UUID(16) + hashes(128) + summary(50) + sig(88) + JSON(~200)
         let base = 16 + 64 + 64 + 50 + 100 + 88 + 100;
         let uri_len = self.evidence_uri.len();
         let metadata_len = self
@@ -205,18 +146,13 @@ impl CompactEvidenceRef {
     }
 }
 
-/// Errors that can occur when working with compact references
+/// Compact reference decoding/verification errors.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompactRefError {
-    /// URI doesn't start with "pop-ref:"
     InvalidPrefix,
-    /// Base64 decoding failed
     InvalidBase64,
-    /// JSON parsing failed
     InvalidJson,
-    /// Signature verification failed
     InvalidSignature,
-    /// Hash mismatch during verification
     HashMismatch,
 }
 
@@ -233,85 +169,6 @@ impl std::fmt::Display for CompactRefError {
 }
 
 impl std::error::Error for CompactRefError {}
-
-/// Builder for creating compact references from Evidence packets
-pub struct CompactRefBuilder {
-    packet_id: Option<Uuid>,
-    chain_hash: Option<String>,
-    document_hash: Option<String>,
-    summary: Option<CompactSummary>,
-    evidence_uri: Option<String>,
-    metadata: Option<CompactMetadata>,
-}
-
-impl CompactRefBuilder {
-    /// Create a new builder
-    pub fn new() -> Self {
-        Self {
-            packet_id: None,
-            chain_hash: None,
-            document_hash: None,
-            summary: None,
-            evidence_uri: None,
-            metadata: None,
-        }
-    }
-
-    /// Set packet ID
-    pub fn packet_id(mut self, id: Uuid) -> Self {
-        self.packet_id = Some(id);
-        self
-    }
-
-    /// Set chain hash
-    pub fn chain_hash(mut self, hash: impl Into<String>) -> Self {
-        self.chain_hash = Some(hash.into());
-        self
-    }
-
-    /// Set document hash
-    pub fn document_hash(mut self, hash: impl Into<String>) -> Self {
-        self.document_hash = Some(hash.into());
-        self
-    }
-
-    /// Set summary
-    pub fn summary(mut self, summary: CompactSummary) -> Self {
-        self.summary = Some(summary);
-        self
-    }
-
-    /// Set evidence URI
-    pub fn evidence_uri(mut self, uri: impl Into<String>) -> Self {
-        self.evidence_uri = Some(uri.into());
-        self
-    }
-
-    /// Set metadata
-    pub fn metadata(mut self, metadata: CompactMetadata) -> Self {
-        self.metadata = Some(metadata);
-        self
-    }
-
-    /// Build the compact reference (signature must be provided separately)
-    pub fn build(self, signature: String) -> Result<CompactEvidenceRef, &'static str> {
-        Ok(CompactEvidenceRef {
-            packet_id: self.packet_id.ok_or("packet_id required")?,
-            chain_hash: self.chain_hash.ok_or("chain_hash required")?,
-            document_hash: self.document_hash.ok_or("document_hash required")?,
-            summary: self.summary.ok_or("summary required")?,
-            evidence_uri: self.evidence_uri.ok_or("evidence_uri required")?,
-            signature,
-            metadata: self.metadata,
-        })
-    }
-}
-
-impl Default for CompactRefBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -360,22 +217,22 @@ mod tests {
     }
 
     #[test]
-    fn test_builder() {
-        let compact = CompactRefBuilder::new()
-            .packet_id(Uuid::new_v4())
-            .chain_hash("hash1")
-            .document_hash("hash2")
-            .summary(CompactSummary {
+    fn test_new_constructor() {
+        let compact = CompactEvidenceRef::new(
+            Uuid::new_v4(),
+            "hash1".to_string(),
+            "hash2".to_string(),
+            CompactSummary {
                 checkpoint_count: 10,
                 total_chars: 1000,
                 total_vdf_time_seconds: 600.0,
                 evidence_tier: 1,
                 verdict: None,
                 confidence_score: None,
-            })
-            .evidence_uri("https://example.com/evidence.pop")
-            .build("signature".to_string())
-            .unwrap();
+            },
+            "https://example.com/evidence.pop".to_string(),
+            "signature".to_string(),
+        );
 
         assert_eq!(compact.summary.checkpoint_count, 10);
     }

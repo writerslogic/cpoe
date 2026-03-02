@@ -13,7 +13,6 @@ mod sync_client;
 #[cfg(test)]
 mod tests;
 
-// Re-export public API
 pub use async_client::{AsyncIpcClient, AsyncIpcClientError};
 pub use messages::{IpcErrorCode, IpcMessage, IpcMessageHandler};
 pub use server::IpcServer;

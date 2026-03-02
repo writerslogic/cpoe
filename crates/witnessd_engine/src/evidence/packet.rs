@@ -118,7 +118,7 @@ impl Packet {
                 .map_err(|e| Error::evidence(format!("invalid session_certificate base64: {e}")))?;
 
             if let Err(err) =
-                keyhierarchy::verify_session_certificate_bytes(&master_pub, &session_pub, &cert_raw)
+                keyhierarchy::validate_cert_byte_lengths(&master_pub, &session_pub, &cert_raw)
             {
                 return Err(Error::evidence(format!(
                     "key hierarchy verification failed: {err}"
@@ -155,26 +155,21 @@ impl Packet {
             }
         }
 
-        // --- Step 6: Behavioral Baseline Verification ---
         if let Some(bv) = &self.baseline_verification {
             if let Some(digest) = &bv.digest {
-                // 1. Verify digest signature if present
                 if let Some(sig) = &bv.digest_signature {
-                    // Assuming Ed25519 signer for now
                     let public_key_bytes = self.signing_public_key.ok_or_else(|| {
                         Error::Signature("missing signing public key for baseline".into())
                     })?;
                     let public_key = VerifyingKey::from_bytes(&public_key_bytes)
                         .map_err(|e| Error::Signature(format!("invalid public key: {e}")))?;
 
-                    // Decode signature
                     let signature = Signature::from_bytes(
                         sig.as_slice()
                             .try_into()
                             .map_err(|_| Error::evidence("invalid signature length"))?,
                     );
 
-                    // Encode digest to CBOR for verification
                     let digest_cbor = serde_json::to_vec(digest)
                         .map_err(|e| Error::evidence(format!("digest serialize failed: {e}")))?;
 
@@ -183,7 +178,6 @@ impl Packet {
                     })?;
                 }
 
-                // 2. Verify identity fingerprint
                 let public_key_bytes = self
                     .signing_public_key
                     .ok_or_else(|| Error::Signature("missing signing public key".into()))?;
@@ -194,11 +188,12 @@ impl Packet {
                     return Err(Error::evidence("baseline identity fingerprint mismatch"));
                 }
 
-                // 3. Compare session vs digest
                 let similarity =
                     crate::baseline::verify_against_baseline(digest, &bv.session_summary);
                 if similarity < 0.7 {
-                    // Log warning or record in metadata - for now just informative
+                    // Not a hard failure: low behavioral similarity can occur
+                    // legitimately (e.g., different device, fatigue, new writing
+                    // style). Forensic analysis can weigh this signal later.
                     log::warn!("Behavioral consistency low: {:.2}", similarity);
                 }
             }
@@ -217,12 +212,12 @@ impl Packet {
         total
     }
 
-    /// Encode the packet to CBOR with PPP semantic tag (RFC-compliant default).
+    /// Encode to CBOR with PPP semantic tag (RFC-compliant default).
     pub fn encode(&self) -> crate::error::Result<Vec<u8>> {
         codec::cbor::encode_ppp(self).map_err(|e| Error::evidence(format!("encode failed: {e}")))
     }
 
-    /// Encode the packet in the specified format.
+    /// Encode in the specified format.
     pub fn encode_with_format(&self, format: Format) -> crate::error::Result<Vec<u8>> {
         match format {
             Format::Cbor => codec::cbor::encode_ppp(self)
@@ -232,14 +227,13 @@ impl Packet {
         }
     }
 
-    /// Decode a packet, auto-detecting format and validating CBOR tag.
+    /// Decode a packet, auto-detecting format. Validates CBOR tag if present.
     pub fn decode(data: &[u8]) -> crate::error::Result<Packet> {
         let format =
             Format::detect(data).ok_or_else(|| Error::evidence("unable to detect format"))?;
 
         match format {
             Format::Cbor => {
-                // Validate PPP semantic tag is present
                 if !codec::cbor::has_tag(data, CBOR_TAG_PPP) {
                     return Err(Error::evidence("missing or invalid CBOR PPP tag"));
                 }
@@ -251,11 +245,10 @@ impl Packet {
         }
     }
 
-    /// Decode a packet with explicit format (skips format detection).
+    /// Decode with explicit format (skips format detection).
     pub fn decode_with_format(data: &[u8], format: Format) -> crate::error::Result<Packet> {
         match format {
             Format::Cbor => {
-                // Validate PPP semantic tag is present
                 if !codec::cbor::has_tag(data, CBOR_TAG_PPP) {
                     return Err(Error::evidence("missing or invalid CBOR PPP tag"));
                 }
@@ -267,21 +260,17 @@ impl Packet {
         }
     }
 
-    /// Compute the deterministic hash of this packet using raw CBOR encoding.
-    ///
-    /// Uses untagged CBOR for deterministic, compact hashing (RFC 8949 Section 4.2).
+    /// Deterministic SHA-256 hash via untagged CBOR (RFC 8949 Section 4.2).
     pub fn hash(&self) -> crate::error::Result<[u8; 32]> {
-        // Use raw CBOR (no tag) for deterministic hashing
         let data = codec::cbor::encode(self)
             .map_err(|e| Error::evidence(format!("packet hash encode failed: {e}")))?;
         Ok(Sha256::digest(data).into())
     }
 
-    /// Compute the hash used for verifier nonce binding.
+    /// Hash of packet content excluding signature-related fields.
     ///
-    /// This creates a hash of the packet content excluding signature-related
-    /// fields (verifier_nonce, packet_signature, signing_public_key) to prevent
-    /// circular dependencies in the signature.
+    /// Omits `verifier_nonce`, `packet_signature`, and `signing_public_key`
+    /// to avoid circular dependencies during signing.
     pub fn content_hash(&self) -> [u8; 32] {
         let mut hasher = Sha256::new();
         hasher.update(b"witnessd-packet-content-v2");
@@ -289,7 +278,7 @@ impl Packet {
         hasher.update(self.exported_at.timestamp_nanos_safe().to_be_bytes());
         hasher.update((self.strength as i32).to_be_bytes());
 
-        // Length-prefix variable-length fields to prevent concatenation collisions
+        // Length-prefix variable-length fields to prevent concatenation collisions:
         let final_hash_bytes = self.document.final_hash.as_bytes();
         hasher.update((final_hash_bytes.len() as u32).to_be_bytes());
         hasher.update(final_hash_bytes);
@@ -300,7 +289,6 @@ impl Packet {
         hasher.update((chain_hash_bytes.len() as u32).to_be_bytes());
         hasher.update(chain_hash_bytes);
 
-        // Include checkpoint hashes with length prefixes
         hasher.update((self.checkpoints.len() as u64).to_be_bytes());
         for cp in &self.checkpoints {
             let hash_bytes = cp.hash.as_bytes();
@@ -308,24 +296,20 @@ impl Packet {
             hasher.update(hash_bytes);
         }
 
-        // Include declaration if present
         if let Some(decl) = &self.declaration {
             hasher.update(b"decl");
             hasher.update((decl.signature.len() as u32).to_be_bytes());
             hasher.update(&decl.signature);
         }
 
-        // Include VDF params
         hasher.update(self.vdf_params.iterations_per_second.to_be_bytes());
         hasher.update(self.vdf_params.min_iterations.to_be_bytes());
 
         hasher.finalize().into()
     }
 
-    /// Compute the signing payload for verifier nonce binding.
-    ///
-    /// Returns SHA-256(content_hash || verifier_nonce) if nonce is present,
-    /// or content_hash if no nonce.
+    /// Signing payload: `SHA-256(content_hash || nonce)` if nonce present,
+    /// otherwise just `content_hash`.
     pub fn signing_payload(&self) -> [u8; 32] {
         let content = self.content_hash();
         match &self.verifier_nonce {
@@ -340,25 +324,14 @@ impl Packet {
         }
     }
 
-    /// Set a verifier-provided freshness nonce.
-    ///
-    /// The nonce should be a random 32-byte value provided by the verifier
-    /// to prove the evidence was generated in response to their specific request.
+    /// Set a verifier-provided 32-byte freshness nonce. Clears any existing signature.
     pub fn set_verifier_nonce(&mut self, nonce: [u8; 32]) {
         self.verifier_nonce = Some(nonce);
-        // Clear any existing signature since the payload has changed
         self.packet_signature = None;
         self.signing_public_key = None;
     }
 
-    /// Sign the packet with the given signing key.
-    ///
-    /// This creates an Ed25519 signature over the signing payload, which includes
-    /// the verifier nonce if one has been set. The signature proves that the
-    /// evidence packet was generated by the holder of the signing key.
-    ///
-    /// If a verifier nonce is present, the signature proves the packet was
-    /// created in response to that specific verification request.
+    /// Ed25519-sign the packet. Binds to verifier nonce if one is set.
     pub fn sign(&mut self, signing_key: &SigningKey) -> crate::error::Result<()> {
         let payload = self.signing_payload();
         let signature = signing_key.sign(&payload);
@@ -367,9 +340,7 @@ impl Packet {
         Ok(())
     }
 
-    /// Sign the packet with a verifier-provided nonce.
-    ///
-    /// This is a convenience method that sets the nonce and signs in one call.
+    /// Convenience: set nonce and sign in one call.
     pub fn sign_with_nonce(
         &mut self,
         signing_key: &SigningKey,
@@ -379,15 +350,9 @@ impl Packet {
         self.sign(signing_key)
     }
 
-    /// Verify the packet signature.
-    ///
-    /// Returns Ok(()) if the signature is valid, or an error describing
-    /// why verification failed.
-    ///
-    /// If expected_nonce is provided, verification will fail if the packet's
-    /// verifier_nonce doesn't match, preventing replay attacks.
+    /// Verify the packet signature, optionally checking `expected_nonce`
+    /// to prevent replay attacks.
     pub fn verify_signature(&self, expected_nonce: Option<&[u8; 32]>) -> crate::error::Result<()> {
-        // Check nonce expectation
         match (expected_nonce, &self.verifier_nonce) {
             (Some(expected), Some(actual)) => {
                 if expected != actual {
@@ -399,16 +364,11 @@ impl Packet {
                     "expected verifier nonce but none present".into(),
                 ));
             }
-            (None, Some(_)) => {
-                // Verifier didn't expect a nonce but one is present - this is ok,
-                // it just means the signature binds to that nonce
-            }
-            (None, None) => {
-                // No nonce expected and none present - ok
-            }
+            // Nonce present but not expected is fine -- signature still binds to it
+            (None, Some(_)) => {}
+            (None, None) => {}
         }
 
-        // Get signature and public key
         let signature_bytes = self
             .packet_signature
             .ok_or_else(|| Error::Signature("packet not signed".into()))?;
@@ -416,14 +376,11 @@ impl Packet {
             .signing_public_key
             .ok_or_else(|| Error::Signature("missing signing public key".into()))?;
 
-        // Parse public key
         let public_key = VerifyingKey::from_bytes(&public_key_bytes)
             .map_err(|e| Error::Signature(format!("invalid public key: {e}")))?;
 
-        // Parse signature
         let signature = Signature::from_bytes(&signature_bytes);
 
-        // Verify
         let payload = self.signing_payload();
         public_key
             .verify(&payload, &signature)
@@ -432,27 +389,22 @@ impl Packet {
         Ok(())
     }
 
-    /// Check if this packet has a verifier nonce.
+    /// Whether a verifier nonce is set.
     pub fn has_verifier_nonce(&self) -> bool {
         self.verifier_nonce.is_some()
     }
 
-    /// Check if this packet has been signed.
+    /// Whether the packet is signed.
     pub fn is_signed(&self) -> bool {
         self.packet_signature.is_some() && self.signing_public_key.is_some()
     }
 
-    /// Get the verifier nonce if present.
+    /// Return the verifier nonce, if set.
     pub fn get_verifier_nonce(&self) -> Option<&[u8; 32]> {
         self.verifier_nonce.as_ref()
     }
 
-    /// Compute the trust tier based on current packet state.
-    ///
-    /// - `Attested` (4): WritersProof certificate issued
-    /// - `NonceBound` (3): Signed + verifier nonce (freshness proven)
-    /// - `Signed` (2): Signed, no verifier nonce
-    /// - `Local` (1): No signature, no nonce
+    /// Derive trust tier: `Attested` > `NonceBound` > `Signed` > `Local`.
     pub fn compute_trust_tier(&self) -> super::types::TrustTier {
         use super::types::TrustTier;
 
@@ -467,10 +419,7 @@ impl Packet {
         }
     }
 
-    /// Convert to RFC-compliant wire format.
-    ///
-    /// Creates a `PacketRfc` structure with integer keys suitable for
-    /// compact CBOR encoding per the RATS specification.
+    /// Convert to `PacketRfc` with integer keys for compact CBOR encoding.
     pub fn to_rfc(&self) -> rfc::PacketRfc {
         rfc::PacketRfc::from(self)
     }

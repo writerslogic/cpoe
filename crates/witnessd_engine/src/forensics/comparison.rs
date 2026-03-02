@@ -4,9 +4,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::types::{AuthorshipProfile, CadenceMetrics};
+use super::types::AuthorshipProfile;
 
-/// Compares two authorship profiles for consistency.
+/// Weighted similarity comparison of two authorship profiles.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProfileComparison {
     /// Overall similarity score (0.0 - 1.0).
@@ -19,7 +19,7 @@ pub struct ProfileComparison {
     pub explanation: String,
 }
 
-/// Scores for individual comparison dimensions.
+/// Per-dimension similarity scores.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DimensionScores {
     pub monotonic_append_similarity: f64,
@@ -30,7 +30,7 @@ pub struct DimensionScores {
     pub cadence_cv_similarity: f64,
 }
 
-/// Compares two profiles for authorship consistency.
+/// Compare two profiles for authorship consistency (Gaussian kernel similarity).
 #[allow(clippy::field_reassign_with_default)]
 pub fn compare_profiles(
     profile_a: &AuthorshipProfile,
@@ -38,11 +38,10 @@ pub fn compare_profiles(
 ) -> ProfileComparison {
     let mut scores = DimensionScores::default();
 
-    // Compare metrics with Gaussian similarity
     scores.monotonic_append_similarity = gaussian_similarity(
         profile_a.metrics.monotonic_append_ratio,
         profile_b.metrics.monotonic_append_ratio,
-        0.15, // Standard deviation threshold
+        0.15,
     );
 
     scores.entropy_similarity = gaussian_similarity(
@@ -69,7 +68,6 @@ pub fn compare_profiles(
         0.2,
     );
 
-    // Overall similarity (weighted average)
     let similarity_score = 0.25 * scores.monotonic_append_similarity
         + 0.20 * scores.entropy_similarity
         + 0.15 * scores.interval_similarity
@@ -98,26 +96,8 @@ pub fn compare_profiles(
     }
 }
 
-/// Computes Gaussian similarity between two values.
+/// Gaussian kernel similarity: `exp(-(a-b)^2 / 2*sigma^2)`
 fn gaussian_similarity(a: f64, b: f64, sigma: f64) -> f64 {
     let diff = a - b;
     (-diff * diff / (2.0 * sigma * sigma)).exp()
-}
-
-/// Compares cadence metrics for consistency.
-pub fn compare_cadence(cadence_a: &CadenceMetrics, cadence_b: &CadenceMetrics) -> f64 {
-    if cadence_a.mean_iki_ns == 0.0 || cadence_b.mean_iki_ns == 0.0 {
-        return 0.0;
-    }
-
-    let cv_sim = gaussian_similarity(
-        cadence_a.coefficient_of_variation,
-        cadence_b.coefficient_of_variation,
-        0.1,
-    );
-
-    let mean_ratio = cadence_a.mean_iki_ns.min(cadence_b.mean_iki_ns)
-        / cadence_a.mean_iki_ns.max(cadence_b.mean_iki_ns);
-
-    0.5 * cv_sim + 0.5 * mean_ratio
 }

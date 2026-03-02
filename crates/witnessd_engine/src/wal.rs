@@ -13,6 +13,7 @@ use thiserror::Error;
 const VERSION: u32 = 2;
 const MAGIC: &[u8; 4] = b"SWAL"; // Secure WAL
 const HEADER_SIZE: usize = 64;
+const MAX_ENTRY_SIZE: u32 = 16 * 1024 * 1024; // 16 MiB
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EntryType {
@@ -196,17 +197,17 @@ impl Wal {
         state.cumulative_hasher.update(&entry_hash);
         entry.cumulative_hash = *state.cumulative_hasher.finalize().as_bytes();
 
-        // Sign the cumulative hash
         let sig = state.signing_key.sign(&entry.cumulative_hash);
         entry.signature = sig.to_bytes();
 
         let data = serialize_entry(&entry)?;
         let length = data.len() as u32;
 
-        // Write length prefix then data
         state.file.write_all(&length.to_be_bytes())?;
         state.file.write_all(&data)?;
-        state.file.sync_all()?;
+        // fdatasync: flush data without metadata update (cheaper than sync_all).
+        // Batch sync is left as future work.
+        state.file.sync_data()?;
 
         state.last_hash = entry_hash;
         state.next_sequence += 1;
@@ -237,7 +238,6 @@ impl Wal {
         let mut count = 0u64;
 
         loop {
-            // ... (read entry)
             let mut len_buf = [0u8; 4];
             if let Err(err) = file.read_exact(&mut len_buf) {
                 if err.kind() == std::io::ErrorKind::UnexpectedEof {
@@ -247,6 +247,14 @@ impl Wal {
             }
 
             let entry_len = u32::from_be_bytes(len_buf);
+            if entry_len > MAX_ENTRY_SIZE {
+                return Ok(WalVerification {
+                    valid: false,
+                    entries: count,
+                    final_hash: prev_hash,
+                    error: Some(WalError::CorruptedEntry),
+                });
+            }
             let mut entry_buf = vec![0u8; entry_len as usize];
             file.read_exact(&mut entry_buf)?;
 
@@ -323,9 +331,8 @@ impl Wal {
 
     pub fn truncate(&self, before_seq: u64) -> Result<(), WalError> {
         let mut state = self.inner.lock().unwrap();
-        // For simplicity, read all entries and re-write them.
-        // In a real system we'd do this more efficiently.
-        let mut entries = Vec::new();
+        // Read all entries, verify hash chain linkage, then re-write retained entries.
+        let mut all_entries = Vec::new();
         let mut file = state.file.try_clone()?;
         file.seek(SeekFrom::Start(HEADER_SIZE as u64))?;
 
@@ -335,13 +342,28 @@ impl Wal {
                 break;
             }
             let entry_len = u32::from_be_bytes(len_buf);
+            if entry_len > MAX_ENTRY_SIZE {
+                return Err(WalError::CorruptedEntry);
+            }
             let mut entry_buf = vec![0u8; entry_len as usize];
             file.read_exact(&mut entry_buf)?;
             let entry = deserialize_entry(&entry_buf)?;
-            if entry.sequence >= before_seq {
-                entries.push(entry);
-            }
+            all_entries.push(entry);
         }
+
+        // Verify prev_hash chain linkage before re-signing
+        let mut expected_prev = [0u8; 32];
+        for entry in &all_entries {
+            if entry.prev_hash.ct_eq(&expected_prev).unwrap_u8() == 0 {
+                return Err(WalError::BrokenChain);
+            }
+            expected_prev = entry.compute_hash();
+        }
+
+        let entries: Vec<_> = all_entries
+            .into_iter()
+            .filter(|e| e.sequence >= before_seq)
+            .collect();
 
         let new_path = state.path.with_extension("wal.new");
         let mut new_file = File::create(&new_path)?;
@@ -478,6 +500,9 @@ impl Wal {
             if entry_len == 0 {
                 break;
             }
+            if entry_len > MAX_ENTRY_SIZE {
+                break;
+            }
 
             let mut entry_buf = vec![0u8; entry_len as usize];
             if state.file.read_exact(&mut entry_buf).is_err() {
@@ -489,8 +514,31 @@ impl Wal {
                 Err(_) => break,
             };
 
+            // Verify hash chain linkage (prev_hash must match our running last_hash).
+            // Ed25519 signatures are NOT verified here because the verifying key
+            // may differ from the signing key provided at open() time.
+            if entry.prev_hash != state.last_hash {
+                log::warn!(
+                    "WAL broken chain at seq {}: truncating to last valid entry (offset {})",
+                    entry.sequence,
+                    offset,
+                );
+                break;
+            }
+
             let entry_hash = entry.compute_hash();
             state.cumulative_hasher.update(&entry_hash);
+            let expected_cumulative = *state.cumulative_hasher.finalize().as_bytes();
+
+            if entry.cumulative_hash != expected_cumulative {
+                log::warn!(
+                    "WAL cumulative hash mismatch at seq {}: truncating to last valid entry \
+                     (offset {})",
+                    entry.sequence,
+                    offset,
+                );
+                break;
+            }
 
             state.next_sequence = entry.sequence + 1;
             state.last_hash = entry_hash;
@@ -498,6 +546,8 @@ impl Wal {
             offset += (4 + entry_len) as u64;
         }
 
+        // Truncate file to last valid entry to avoid appending after corrupt data
+        state.file.set_len(offset)?;
         state.byte_count = offset as i64;
         state.file.seek(SeekFrom::Start(offset))?;
         Ok(())

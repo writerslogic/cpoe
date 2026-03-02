@@ -26,10 +26,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use crate::jitter::SimpleJitterSession;
 
-// =============================================================================
-// Thread-safe HHOOK wrapper
-// =============================================================================
-
 /// A wrapper around HHOOK that implements Send + Sync.
 ///
 /// # Safety
@@ -47,10 +43,6 @@ struct HookHandle(HHOOK);
 // UnhookWindowsHookEx can be called from any thread.
 unsafe impl Send for HookHandle {}
 unsafe impl Sync for HookHandle {}
-
-// =============================================================================
-// Permission handling
-// =============================================================================
 
 /// Get combined permission status.
 /// On Windows, low-level keyboard hooks don't require special permissions.
@@ -74,10 +66,6 @@ pub fn has_required_permissions() -> bool {
     true
 }
 
-// =============================================================================
-// Focus tracking
-// =============================================================================
-
 /// Get information about the currently focused application and document.
 pub fn get_active_focus() -> Result<FocusInfo> {
     unsafe {
@@ -94,7 +82,6 @@ pub fn get_active_focus() -> Result<FocusInfo> {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
 
-        // Get window title
         let mut title_buffer = [0u16; 512];
         let title_len = GetWindowTextW(hwnd, &mut title_buffer);
         let window_title = if title_len > 0 {
@@ -169,10 +156,6 @@ fn looks_like_path(s: &str) -> bool {
         || (s.contains('.') && !s.contains(' '))
 }
 
-// =============================================================================
-// Legacy keystroke monitor
-// =============================================================================
-
 pub struct KeystrokeMonitor {
     session: Arc<Mutex<SimpleJitterSession>>,
     _hook: isize,
@@ -215,10 +198,6 @@ unsafe extern "system" fn low_level_keyboard_proc(
     CallNextHookEx(None, code, wparam, lparam)
 }
 
-// =============================================================================
-// Trait implementations
-// =============================================================================
-
 /// Windows keystroke capture implementation.
 pub struct WindowsKeystrokeCapture {
     running: Arc<AtomicBool>,
@@ -255,14 +234,12 @@ impl KeystrokeCapture for WindowsKeystrokeCapture {
         let (tx, rx) = mpsc::channel();
         self.sender = Some(tx.clone());
 
-        // Set global state for the hook callback
         *GLOBAL_SENDER.lock().unwrap_or_else(|p| p.into_inner()) = Some(tx);
         *GLOBAL_STATS.lock().unwrap_or_else(|p| p.into_inner()) = Some(Arc::clone(&self.stats));
         GLOBAL_STRICT_MODE.store(self.strict_mode, Ordering::SeqCst);
 
         self.running.store(true, Ordering::SeqCst);
 
-        // Install the hook
         unsafe {
             let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keystroke_capture_hook), None, 0)?;
             self.hook = Some(HookHandle(hook));
@@ -335,10 +312,8 @@ unsafe extern "system" fn keystroke_capture_hook(
     if code >= 0 && (wparam.0 as u32 == WM_KEYDOWN || wparam.0 as u32 == WM_SYSKEYDOWN) {
         let kbd = *(lparam.0 as *const KBDLLHOOKSTRUCT);
 
-        // Check for injected events
         let is_injected = (kbd.flags.0 & LLKHF_INJECTED.0) != 0;
 
-        // Update stats
         let stats_arc = GLOBAL_STATS.lock().ok().and_then(|g| g.clone());
         if let Some(stats) = stats_arc {
             if let Ok(mut s) = stats.write() {
@@ -352,12 +327,10 @@ unsafe extern "system" fn keystroke_capture_hook(
             }
         }
 
-        // In strict mode, reject injected events
         if is_injected && GLOBAL_STRICT_MODE.load(Ordering::SeqCst) {
             return CallNextHookEx(None, code, wparam, lparam);
         }
 
-        // Send keystroke event
         let sender = GLOBAL_SENDER.lock().ok().and_then(|g| g.clone());
         if let Some(sender) = sender {
             let now = chrono::Utc::now().timestamp_nanos_safe();
@@ -454,10 +427,6 @@ impl FocusMonitor for WindowsFocusMonitor {
     }
 }
 
-// =============================================================================
-// Mouse Capture Implementation
-// =============================================================================
-
 // Thread-safe global state for the mouse hook callback
 static MOUSE_GLOBAL_SENDER: Mutex<Option<mpsc::Sender<MouseEvent>>> = Mutex::new(None);
 static MOUSE_GLOBAL_IDLE_STATS: Mutex<Option<Arc<RwLock<MouseIdleStats>>>> = Mutex::new(None);
@@ -511,7 +480,6 @@ impl MouseCapture for WindowsMouseCapture {
         let (tx, rx) = mpsc::channel();
         self.sender = Some(tx.clone());
 
-        // Set global state for the hook callback
         *MOUSE_GLOBAL_SENDER
             .lock()
             .unwrap_or_else(|p| p.into_inner()) = Some(tx);
@@ -522,7 +490,6 @@ impl MouseCapture for WindowsMouseCapture {
 
         self.running.store(true, Ordering::SeqCst);
 
-        // Install the hook
         unsafe {
             let hook = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_capture_hook), None, 0)?;
             self.hook = Some(HookHandle(hook));
@@ -610,7 +577,6 @@ unsafe extern "system" fn mouse_capture_hook(code: i32, wparam: WPARAM, lparam: 
     if code >= 0 && wparam.0 as u32 == WM_MOUSEMOVE {
         let kb_active = MOUSE_KEYBOARD_ACTIVE.load(Ordering::SeqCst);
 
-        // Only capture if keyboard is active (idle mode) or idle_only_mode is disabled
         if MOUSE_IDLE_ONLY_MODE.load(Ordering::SeqCst) && !kb_active {
             return CallNextHookEx(None, code, wparam, lparam);
         }
@@ -621,7 +587,6 @@ unsafe extern "system" fn mouse_capture_hook(code: i32, wparam: WPARAM, lparam: 
         let x = mouse.pt.x as f64;
         let y = mouse.pt.y as f64;
 
-        // Calculate delta
         let (dx, dy) = if let Ok(mut pos) = MOUSE_LAST_POSITION.lock() {
             let dx = x - pos.0;
             let dy = y - pos.1;
@@ -642,7 +607,6 @@ unsafe extern "system" fn mouse_capture_hook(code: i32, wparam: WPARAM, lparam: 
             device_id: None,
         };
 
-        // Record idle stats for micro-movements
         if event.is_micro_movement() && kb_active {
             let idle_stats = MOUSE_GLOBAL_IDLE_STATS.lock().ok().and_then(|g| g.clone());
             if let Some(stats) = idle_stats {
@@ -652,7 +616,6 @@ unsafe extern "system" fn mouse_capture_hook(code: i32, wparam: WPARAM, lparam: 
             }
         }
 
-        // Send mouse event
         let sender = MOUSE_GLOBAL_SENDER.lock().ok().and_then(|g| g.clone());
         if let Some(sender) = sender {
             let _ = sender.send(event);
@@ -664,10 +627,6 @@ unsafe extern "system" fn mouse_capture_hook(code: i32, wparam: WPARAM, lparam: 
 
     CallNextHookEx(None, code, wparam, lparam)
 }
-
-// =============================================================================
-// Tests
-// =============================================================================
 
 #[cfg(test)]
 mod tests {

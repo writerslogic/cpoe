@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Statistics about synthetic event detection.
+/// Counters for synthetic event detection.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SyntheticStats {
     pub total_events: u64,
@@ -42,7 +42,7 @@ impl SyntheticStats {
     }
 }
 
-/// Platform-specific rejection reasons for synthetic events.
+/// Per-category rejection counters for synthetic event analysis.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RejectionReasons {
     pub bad_source_state: u64,
@@ -74,7 +74,7 @@ impl RejectionReasons {
     }
 }
 
-/// Result of verifying an event's source.
+/// Classification of an event's origin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EventVerificationResult {
     Hardware,
@@ -92,7 +92,7 @@ impl EventVerificationResult {
     }
 }
 
-/// Result of dual-layer keystroke validation.
+/// Dual-layer (high-level API vs low-level HID) keystroke count comparison.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DualLayerValidation {
     pub high_level_count: u64,

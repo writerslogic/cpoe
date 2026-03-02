@@ -24,9 +24,9 @@ impl WindowsFocusMonitor {
         Self { config }
     }
 
-    pub fn new_monitor(config: Arc<SentinelConfig>) -> Box<dyn FocusMonitor> {
+    pub fn new_monitor(config: Arc<SentinelConfig>) -> Box<dyn SentinelFocusTracker> {
         let provider = Arc::new(Self::new(Arc::clone(&config)));
-        Box::new(PollingFocusMonitor::new(provider, config))
+        Box::new(PollingSentinelFocusTracker::new(provider, config))
     }
 }
 

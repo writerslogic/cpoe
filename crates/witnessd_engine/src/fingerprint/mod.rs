@@ -21,5 +21,4 @@ pub use manager::{FingerprintManager, FingerprintStatus};
 pub use storage::{FingerprintStorage, StoredProfile};
 pub use voice::{VoiceCollector, VoiceFingerprint};
 
-// Re-export config::FingerprintConfig for convenience
 pub use crate::config::FingerprintConfig;

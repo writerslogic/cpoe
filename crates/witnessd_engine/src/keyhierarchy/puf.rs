@@ -6,6 +6,7 @@ use rand::RngCore;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::physics::puf::SiliconPUF;
 
@@ -14,11 +15,12 @@ use super::types::PUFProvider;
 
 const SOFTWARE_PUF_SEED_NAME: &str = "puf_seed";
 
-#[derive(Clone)]
+#[derive(Zeroize, ZeroizeOnDrop)]
 pub struct SoftwarePUF {
     device_id: String,
-    seed: Vec<u8>,
+    #[zeroize(skip)]
     seed_path: PathBuf,
+    seed: Vec<u8>,
 }
 
 impl SoftwarePUF {
@@ -228,10 +230,15 @@ fn witnessd_dir() -> PathBuf {
     PathBuf::from(".witnessd")
 }
 
-#[derive(Clone)]
 struct HardwarePUF {
     device_id: String,
     seed: [u8; 32],
+}
+
+impl Drop for HardwarePUF {
+    fn drop(&mut self) {
+        self.seed.zeroize();
+    }
 }
 
 impl HardwarePUF {

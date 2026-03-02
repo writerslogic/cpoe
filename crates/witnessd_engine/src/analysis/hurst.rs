@@ -86,7 +86,6 @@ pub fn calculate_hurst_rs(data: &[f64]) -> Result<HurstAnalysis, String> {
         return Err("Insufficient data points (minimum 20 required)".to_string());
     }
 
-    // Use multiple window sizes for regression
     let mut log_n_vec = Vec::new();
     let mut log_rs_vec = Vec::new();
 
@@ -111,6 +110,9 @@ pub fn calculate_hurst_rs(data: &[f64]) -> Result<HurstAnalysis, String> {
     // Linear regression: log(R/S) = H * log(n) + c
     let (slope, _intercept, r_squared, std_error) = linear_regression(&log_n_vec, &log_rs_vec)?;
 
+    // R/S Hurst exponent is bounded [0, 1] by definition of rescaled range.
+    // The shared biological validity range [0.55, 0.85] is enforced in
+    // `is_biologically_plausible()` and `is_valid` below.
     let exponent = slope.clamp(0.0, 1.0);
 
     let interpretation = if (exponent - 0.5).abs() < 0.05 {
@@ -157,7 +159,6 @@ fn calculate_rs_for_window(data: &[f64], window_size: usize) -> f64 {
         // Calculate mean
         let mean: f64 = window.iter().sum::<f64>() / window_size as f64;
 
-        // Calculate cumulative deviations from mean
         let mut cumulative = Vec::with_capacity(window_size);
         let mut cumsum = 0.0;
         for &x in window {
@@ -165,12 +166,10 @@ fn calculate_rs_for_window(data: &[f64], window_size: usize) -> f64 {
             cumulative.push(cumsum);
         }
 
-        // Range: max - min of cumulative deviations
         let max_cumsum = cumulative.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
         let min_cumsum = cumulative.iter().cloned().fold(f64::INFINITY, f64::min);
         let range = max_cumsum - min_cumsum;
 
-        // Standard deviation
         let variance: f64 =
             window.iter().map(|&x| (x - mean).powi(2)).sum::<f64>() / (window_size - 1) as f64;
         let std_dev = variance.sqrt();
@@ -203,7 +202,6 @@ pub fn calculate_hurst_dfa(data: &[f64]) -> Result<HurstAnalysis, String> {
         return Err("Insufficient data points for DFA (minimum 32 required)".to_string());
     }
 
-    // Calculate cumulative sum (profile)
     let mean: f64 = data.iter().sum::<f64>() / n as f64;
     let mut profile = Vec::with_capacity(n);
     let mut cumsum = 0.0;
@@ -212,7 +210,6 @@ pub fn calculate_hurst_dfa(data: &[f64]) -> Result<HurstAnalysis, String> {
         profile.push(cumsum);
     }
 
-    // Calculate fluctuation function for different scales
     let mut log_scales = Vec::new();
     let mut log_fluct = Vec::new();
 
@@ -234,9 +231,12 @@ pub fn calculate_hurst_dfa(data: &[f64]) -> Result<HurstAnalysis, String> {
         return Err("Insufficient scales for reliable DFA estimation".to_string());
     }
 
-    // Linear regression to get Hurst exponent
     let (slope, _intercept, r_squared, std_error) = linear_regression(&log_scales, &log_fluct)?;
 
+    // DFA alpha can reach 2.0 for strongly non-stationary signals
+    // (Brownian motion ≈ 1.5, ballistic ≈ 2.0), so the upper bound is wider
+    // than R/S's [0, 1]. The shared biological validity range [0.55, 0.85]
+    // still applies for human typing detection.
     let exponent = slope.clamp(0.0, 2.0);
 
     let interpretation = if (exponent - 0.5).abs() < 0.05 {
@@ -312,7 +312,6 @@ fn detrend_variance(segment: &[f64]) -> f64 {
     let a = if denom > 0.0 { num / denom } else { 0.0 };
     let b = y_mean - a * x_mean;
 
-    // Calculate variance of residuals
     let mut variance = 0.0;
     for i in 0..n {
         let predicted = a * x[i] + b;
@@ -322,53 +321,7 @@ fn detrend_variance(segment: &[f64]) -> f64 {
     variance / n as f64
 }
 
-/// Simple linear regression returning (slope, intercept, r_squared, std_error).
-fn linear_regression(x: &[f64], y: &[f64]) -> Result<(f64, f64, f64, f64), String> {
-    let n = x.len();
-    if n < 2 || n != y.len() {
-        return Err("Regression requires at least 2 matching data points".to_string());
-    }
-
-    let x_mean: f64 = x.iter().sum::<f64>() / n as f64;
-    let y_mean: f64 = y.iter().sum::<f64>() / n as f64;
-
-    let mut ss_xx = 0.0;
-    let mut ss_xy = 0.0;
-    let mut ss_yy = 0.0;
-
-    for i in 0..n {
-        let dx = x[i] - x_mean;
-        let dy = y[i] - y_mean;
-        ss_xx += dx * dx;
-        ss_xy += dx * dy;
-        ss_yy += dy * dy;
-    }
-
-    if ss_xx == 0.0 {
-        return Err("No variance in x data".to_string());
-    }
-
-    let slope = ss_xy / ss_xx;
-    let intercept = y_mean - slope * x_mean;
-
-    // R-squared
-    let r_squared = if ss_yy > 0.0 {
-        (ss_xy * ss_xy) / (ss_xx * ss_yy)
-    } else {
-        1.0
-    };
-
-    // Standard error of slope
-    let mut ss_res = 0.0;
-    for i in 0..n {
-        let predicted = slope * x[i] + intercept;
-        ss_res += (y[i] - predicted).powi(2);
-    }
-    let mse = ss_res / (n - 2).max(1) as f64;
-    let std_error = (mse / ss_xx).sqrt();
-
-    Ok((slope, intercept, r_squared, std_error))
-}
+use super::stats::linear_regression;
 
 #[cfg(test)]
 mod tests {

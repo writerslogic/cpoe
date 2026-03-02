@@ -2,9 +2,8 @@
 
 //! Per-chain MMR coordinator for anti-deletion protection.
 //!
-//! Each checkpoint chain gets an associated Merkle Mountain Range that records
-//! every checkpoint hash as a leaf. The MMR root + leaf count are signed into
-//! `ChainMetadata`, making checkpoint deletion detectable.
+//! Each chain's checkpoint hashes are appended as MMR leaves. The MMR root +
+//! leaf count are signed into `ChainMetadata`, making deletion detectable.
 
 use std::path::{Path, PathBuf};
 
@@ -14,17 +13,13 @@ use crate::checkpoint::{Chain, ChainMetadata};
 use crate::error::{Error, Result};
 use crate::mmr::{FileStore, InclusionProof, MemoryStore, RangeProof, MMR};
 
-/// Per-chain MMR coordinator.
-///
-/// Manages the MMR backing store and provides checkpoint append/verify operations.
+/// Per-chain MMR coordinator wrapping `MMR` with checkpoint-level operations.
 pub struct CheckpointMMR {
     mmr: MMR,
 }
 
 impl CheckpointMMR {
-    /// Open or create a file-backed MMR for the given chain ID.
-    ///
-    /// Store path: `{mmr_dir}/{chain_id}.mmr`
+    /// Open or create a file-backed MMR at `{mmr_dir}/{chain_id}.mmr`.
     pub fn open(mmr_dir: &Path, chain_id: &str) -> Result<Self> {
         std::fs::create_dir_all(mmr_dir)?;
         let store_path = mmr_dir.join(format!("{chain_id}.mmr"));
@@ -33,23 +28,23 @@ impl CheckpointMMR {
         Ok(Self { mmr })
     }
 
-    /// Create an in-memory MMR (for testing).
+    /// In-memory MMR for testing.
     pub fn in_memory() -> Result<Self> {
         let store = MemoryStore::new();
         let mmr = MMR::new(Box::new(store)).map_err(Error::from)?;
         Ok(Self { mmr })
     }
 
-    /// Append a checkpoint hash to the MMR and return the inclusion proof.
+    /// Append a checkpoint hash and return its inclusion proof.
     pub fn append_checkpoint(&self, checkpoint_hash: &[u8; 32]) -> Result<InclusionProof> {
         let leaf_index = self.mmr.append(checkpoint_hash).map_err(Error::from)?;
-        // Sync buffered writes before generating proof (FileStore needs this)
+        // FileStore requires sync before proof generation
         self.mmr.sync().map_err(Error::from)?;
         let proof = self.mmr.generate_proof(leaf_index).map_err(Error::from)?;
         Ok(proof)
     }
 
-    /// Verify that a checkpoint hash exists in the MMR at the given leaf ordinal.
+    /// Verify that `checkpoint_hash` matches the MMR leaf at `leaf_ordinal`.
     pub fn verify_checkpoint(&self, checkpoint_hash: &[u8; 32], leaf_ordinal: u64) -> Result<bool> {
         let leaf_index = self.mmr.get_leaf_index(leaf_ordinal).map_err(Error::from)?;
         let proof = self.mmr.generate_proof(leaf_index).map_err(Error::from)?;
@@ -57,17 +52,17 @@ impl CheckpointMMR {
         Ok(proof.leaf_hash == expected_leaf_hash)
     }
 
-    /// Get the current MMR root hash.
+    /// Current MMR root hash.
     pub fn root(&self) -> Result<[u8; 32]> {
         self.mmr.get_root().map_err(Error::from)
     }
 
-    /// Get the current leaf count.
+    /// Current leaf count.
     pub fn leaf_count(&self) -> u64 {
         self.mmr.leaf_count()
     }
 
-    /// Generate a range proof covering all checkpoints.
+    /// Range proof covering all checkpoints, or `None` if empty.
     pub fn range_proof(&self) -> Result<Option<RangeProof>> {
         let count = self.leaf_count();
         if count == 0 {
@@ -80,10 +75,9 @@ impl CheckpointMMR {
         Ok(Some(proof))
     }
 
-    /// Build `ChainMetadata` from the current MMR state.
+    /// Build unsigned `ChainMetadata` from current state.
     ///
-    /// The metadata is unsigned; call `sign_chain_metadata()` on the session
-    /// to add a signature.
+    /// Call `sign_chain_metadata()` on the session to add a signature.
     pub fn build_metadata(&self) -> Result<ChainMetadata> {
         let count = self.leaf_count();
         let mmr_root = if count > 0 { self.root()? } else { [0u8; 32] };
@@ -97,9 +91,7 @@ impl CheckpointMMR {
         })
     }
 
-    /// Rebuild MMR from an existing chain's checkpoints.
-    ///
-    /// Used during migration: replays all checkpoint hashes into a fresh MMR.
+    /// Replay all checkpoint hashes into this MMR (migration helper).
     pub fn rebuild_from_chain(&self, chain: &Chain) -> Result<()> {
         for cp in &chain.checkpoints {
             self.mmr.append(&cp.hash).map_err(Error::from)?;
@@ -107,22 +99,20 @@ impl CheckpointMMR {
         Ok(())
     }
 
-    /// Sync the MMR store to disk.
+    /// Flush to disk.
     pub fn sync(&self) -> Result<()> {
         self.mmr.sync().map_err(Error::from)
     }
 
-    /// Get the default MMR directory path.
-    pub fn default_mmr_dir() -> PathBuf {
-        dirs::home_dir()
-            .map(|h| h.join(".witnessd").join("mmr"))
-            .unwrap_or_else(|| PathBuf::from(".witnessd/mmr"))
+    /// Default MMR directory (`~/.witnessd/mmr`).
+    pub fn default_mmr_dir() -> Result<PathBuf> {
+        let home = dirs::home_dir()
+            .ok_or_else(|| Error::config("could not determine home directory for MMR storage"))?;
+        Ok(home.join(".witnessd").join("mmr"))
     }
 }
 
-/// Compute the metadata signing payload.
-///
-/// Returns `SHA256("witnessd-chain-metadata-v1" || checkpoint_count || mmr_root || mmr_leaf_count)`.
+/// `SHA256("witnessd-chain-metadata-v1" || checkpoint_count || mmr_root || mmr_leaf_count)`.
 pub fn metadata_signing_payload(metadata: &ChainMetadata) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(b"witnessd-chain-metadata-v1");

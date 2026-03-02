@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 
 /// Validation status for biology invariant claims.
 ///
-/// CDDL Definition:
 /// ```cddl
 /// validation-status = &(
 ///   empirical: 1,      ; Validated against empirical data
@@ -21,22 +20,18 @@ use serde::{Deserialize, Serialize};
 #[repr(u8)]
 #[derive(Default)]
 pub enum ValidationStatus {
-    /// Validated against empirical data from user studies.
     #[serde(rename = "empirical")]
     Empirical = 1,
 
-    /// Theoretically sound based on literature, but not empirically validated.
     #[serde(rename = "theoretical")]
     Theoretical = 2,
 
-    /// Claim not validated - use with caution.
     #[serde(rename = "unsupported")]
     #[default]
     Unsupported = 3,
 }
 
 impl ValidationStatus {
-    /// Returns the status name as a string.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Empirical => "empirical",
@@ -48,10 +43,8 @@ impl ValidationStatus {
 
 /// RFC-compliant biology-invariant-claim structure.
 ///
-/// This structure captures behavioral biometric evidence with scored
-/// confidence in millibits (1/1000 of a bit of information).
-///
-/// CDDL Definition:
+/// Captures behavioral biometric evidence with scored confidence
+/// in millibits (1/1000 of a bit of information).
 /// ```cddl
 /// biology-invariant-claim = {
 ///   1: validation-status,                    ; How the claim was validated
@@ -67,48 +60,37 @@ impl ValidationStatus {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BiologyInvariantClaim {
-    /// How the claim was validated (key 1).
     #[serde(rename = "1")]
     pub validation_status: ValidationStatus,
 
-    /// Millibits score (0-10000) representing confidence (key 2).
-    /// 1000 millibits = 1 bit of discriminating information.
+    /// 0-10000; 1000 = 1 bit of discriminating info
     #[serde(rename = "2")]
     pub millibits: u16,
 
-    /// Parameter version string for reproducibility (key 3).
     #[serde(rename = "3")]
     pub parameter_version: String,
 
-    /// Scoring parameters used for this claim (key 4).
     #[serde(rename = "4")]
     pub parameters: BiologyScoringParameters,
 
-    /// Raw behavioral measurements (key 5).
     #[serde(rename = "5")]
     pub measurements: BiologyMeasurements,
 
-    /// Hurst exponent for long-range dependence (key 6).
-    /// H_e ≈ 0.7 for human input; reject 0.5 (white noise) or 1.0 (predictable).
+    /// H_e ~ 0.7 for human input; reject 0.5 (white noise) or 1.0 (predictable)
     #[serde(rename = "6", skip_serializing_if = "Option::is_none")]
     pub hurst_exponent: Option<f64>,
 
-    /// Pink noise (1/f) spectral analysis (key 7).
     #[serde(rename = "7", skip_serializing_if = "Option::is_none")]
     pub pink_noise: Option<PinkNoiseAnalysis>,
 
-    /// Error topology scoring (key 8).
     #[serde(rename = "8", skip_serializing_if = "Option::is_none")]
     pub error_topology: Option<ErrorTopology>,
 
-    /// Detected anomaly flags (key 9).
     #[serde(rename = "9", skip_serializing_if = "Option::is_none")]
     pub anomaly_flags: Option<Vec<AnomalyFlag>>,
 }
 
 /// Scoring parameters for biology invariant calculation.
-///
-/// CDDL Definition:
 /// ```cddl
 /// biology-scoring-parameters = {
 ///   1: float64,        ; Hurst weight (w_H)
@@ -121,27 +103,21 @@ pub struct BiologyInvariantClaim {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BiologyScoringParameters {
-    /// Weight for Hurst exponent in scoring (0.0-1.0).
     #[serde(rename = "1")]
     pub hurst_weight: f64,
 
-    /// Weight for pink noise analysis in scoring (0.0-1.0).
     #[serde(rename = "2")]
     pub pink_noise_weight: f64,
 
-    /// Weight for error topology in scoring (0.0-1.0).
     #[serde(rename = "3")]
     pub error_topology_weight: f64,
 
-    /// Weight for cadence analysis in scoring (0.0-1.0).
     #[serde(rename = "4")]
     pub cadence_weight: f64,
 
-    /// Threshold score for human classification (0.0-1.0).
     #[serde(rename = "5")]
     pub human_threshold: f64,
 
-    /// Minimum number of samples required for valid scoring.
     #[serde(rename = "6")]
     pub min_samples: u32,
 }
@@ -160,8 +136,6 @@ impl Default for BiologyScoringParameters {
 }
 
 /// Raw behavioral measurements.
-///
-/// CDDL Definition:
 /// ```cddl
 /// biology-measurements = {
 ///   1: uint,           ; Sample count
@@ -176,45 +150,40 @@ impl Default for BiologyScoringParameters {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BiologyMeasurements {
-    /// Total number of samples analyzed.
     #[serde(rename = "1")]
     pub sample_count: u64,
 
-    /// Mean inter-key interval in microseconds.
+    /// Microseconds
     #[serde(rename = "2")]
     pub mean_iki_us: f64,
 
-    /// Standard deviation of intervals in microseconds.
+    /// Microseconds
     #[serde(rename = "3")]
     pub std_dev_us: f64,
 
-    /// Coefficient of variation (std_dev / mean).
     #[serde(rename = "4")]
     pub coefficient_of_variation: f64,
 
-    /// Percentile distribution [10th, 25th, 50th, 75th, 90th].
+    /// [10th, 25th, 50th, 75th, 90th]
     #[serde(rename = "5")]
     pub percentiles: [f64; 5],
 
-    /// Number of detected typing bursts.
     #[serde(rename = "6")]
     pub burst_count: u32,
 
-    /// Number of pauses (> 2 seconds between keystrokes).
+    /// Pauses > 2s
     #[serde(rename = "7")]
     pub pause_count: u32,
 
-    /// Overall typing rate in keys per minute.
+    /// Keys per minute
     #[serde(rename = "8")]
     pub typing_rate: f64,
 }
 
 /// Pink noise (1/f) spectral analysis.
 ///
-/// Human typing exhibits characteristic 1/f noise patterns
-/// with spectral slope α between 0.8 and 1.2.
-///
-/// CDDL Definition:
+/// Human typing exhibits characteristic 1/f noise with spectral slope
+/// α between 0.8 and 1.2.
 /// ```cddl
 /// pink-noise-analysis = {
 ///   1: float64,        ; Spectral slope (α)
@@ -226,30 +195,24 @@ pub struct BiologyMeasurements {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PinkNoiseAnalysis {
-    /// Spectral slope α from log-log regression.
-    /// Human typing typically has α ∈ [0.8, 1.2].
+    /// Human typing: α ∈ [0.8, 1.2]
     #[serde(rename = "1")]
     pub spectral_slope: f64,
 
-    /// R² coefficient of determination for the fit.
     #[serde(rename = "2")]
     pub r_squared: f64,
 
-    /// Power in low frequency band (long-term patterns).
     #[serde(rename = "3")]
     pub low_freq_power: f64,
 
-    /// Power in high frequency band (short-term patterns).
     #[serde(rename = "4")]
     pub high_freq_power: f64,
 
-    /// Whether the slope is within human range [0.8, 1.2].
     #[serde(rename = "5")]
     pub within_human_range: bool,
 }
 
 impl PinkNoiseAnalysis {
-    /// Check if spectral slope indicates human-like typing.
     pub fn is_human_like(&self) -> bool {
         self.spectral_slope >= 0.8 && self.spectral_slope <= 1.2 && self.r_squared > 0.7
     }
@@ -257,10 +220,7 @@ impl PinkNoiseAnalysis {
 
 /// Error topology analysis.
 ///
-/// Scores error patterns based on physical plausibility:
-/// S = 0.4×ρ_gap + 0.4×H + 0.2×adj_phys
-///
-/// CDDL Definition:
+/// Composite score: S = 0.4*ρ_gap + 0.4*H + 0.2*adj_phys.
 /// ```cddl
 /// error-topology = {
 ///   1: float64,        ; Gap ratio (ρ_gap)
@@ -272,36 +232,29 @@ impl PinkNoiseAnalysis {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ErrorTopology {
-    /// Gap ratio ρ_gap: proportion of errors with natural thinking gaps.
     #[serde(rename = "1")]
     pub gap_ratio: f64,
 
-    /// Error clustering H: how clustered are correction events.
-    /// Low values indicate revision passes (human-like).
     #[serde(rename = "2")]
     pub error_clustering: f64,
 
-    /// Adjacent key physical plausibility score.
-    /// Higher = errors more likely to be adjacent key typos.
     #[serde(rename = "3")]
     pub adjacent_key_score: f64,
 
-    /// Final composite score: S = 0.4×ρ_gap + 0.4×H + 0.2×adj_phys.
+    /// 0.4*gap_ratio + 0.4*error_clustering + 0.2*adjacent_key_score
     #[serde(rename = "4")]
     pub score: f64,
 
-    /// Whether the score passes threshold (S ≥ 0.75).
+    /// score >= 0.75
     #[serde(rename = "5")]
     pub passed: bool,
 }
 
 impl ErrorTopology {
-    /// Calculate the composite score from components.
     pub fn calculate_score(gap_ratio: f64, error_clustering: f64, adjacent_key_score: f64) -> f64 {
         0.4 * gap_ratio + 0.4 * error_clustering + 0.2 * adjacent_key_score
     }
 
-    /// Create a new ErrorTopology with calculated score.
     pub fn new(gap_ratio: f64, error_clustering: f64, adjacent_key_score: f64) -> Self {
         let score = Self::calculate_score(gap_ratio, error_clustering, adjacent_key_score);
         Self {
@@ -314,9 +267,7 @@ impl ErrorTopology {
     }
 }
 
-/// Anomaly flag indicating detected suspicious patterns.
-///
-/// CDDL Definition:
+/// Detected suspicious pattern flag.
 /// ```cddl
 /// anomaly-flag = {
 ///   1: anomaly-type,   ; Type of anomaly
@@ -327,26 +278,22 @@ impl ErrorTopology {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnomalyFlag {
-    /// Type of anomaly detected.
     #[serde(rename = "1")]
     pub anomaly_type: AnomalyType,
 
-    /// Human-readable description of the anomaly.
     #[serde(rename = "2")]
     pub description: String,
 
-    /// Severity level: 1=info, 2=warning, 3=alert.
+    /// 1=info, 2=warning, 3=alert
     #[serde(rename = "3")]
     pub severity: u8,
 
-    /// Timestamp when anomaly was detected (Unix epoch ms).
+    /// Unix epoch ms
     #[serde(rename = "4", skip_serializing_if = "Option::is_none")]
     pub timestamp_ms: Option<u64>,
 }
 
-/// Types of anomalies that can be detected.
-///
-/// CDDL Definition:
+/// Anomaly type discriminant.
 /// ```cddl
 /// anomaly-type = &(
 ///   white-noise-hurst: 1,           ; H ≈ 0.5 (no long-range dependence)
@@ -362,41 +309,25 @@ pub struct AnomalyFlag {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum AnomalyType {
-    /// Hurst exponent ≈ 0.5 (white noise, no long-range dependence).
     #[serde(rename = "white_noise_hurst")]
     WhiteNoiseHurst = 1,
-
-    /// Hurst exponent ≈ 1.0 (too predictable, non-human).
     #[serde(rename = "predictable_hurst")]
     PredictableHurst = 2,
-
-    /// Coefficient of variation < 0.15 (robotic consistency).
     #[serde(rename = "robotic_cadence")]
     RoboticCadence = 3,
-
-    /// Pink noise spectral slope outside [0.8, 1.2].
     #[serde(rename = "spectral_anomaly")]
     SpectralAnomaly = 4,
-
-    /// Error topology score < 0.75.
     #[serde(rename = "error_topology_fail")]
     ErrorTopologyFail = 5,
-
-    /// Insufficient data for reliable analysis.
     #[serde(rename = "insufficient_data")]
     InsufficientData = 6,
-
-    /// Suspicious temporal discontinuity.
     #[serde(rename = "temporal_discontinuity")]
     TemporalDiscontinuity = 7,
-
-    /// Superhuman typing velocity detected.
     #[serde(rename = "velocity_anomaly")]
     VelocityAnomaly = 8,
 }
 
 impl BiologyInvariantClaim {
-    /// Create a new claim with the given measurements.
     pub fn new(measurements: BiologyMeasurements, parameters: BiologyScoringParameters) -> Self {
         Self {
             validation_status: ValidationStatus::Unsupported,
@@ -411,38 +342,29 @@ impl BiologyInvariantClaim {
         }
     }
 
-    /// Add Hurst exponent analysis.
     pub fn with_hurst(mut self, h: f64) -> Self {
         self.hurst_exponent = Some(h);
         self
     }
 
-    /// Add pink noise analysis.
     pub fn with_pink_noise(mut self, analysis: PinkNoiseAnalysis) -> Self {
         self.pink_noise = Some(analysis);
         self
     }
 
-    /// Add error topology analysis.
     pub fn with_error_topology(mut self, topology: ErrorTopology) -> Self {
         self.error_topology = Some(topology);
         self
     }
 
-    /// Add an anomaly flag.
     pub fn add_anomaly(&mut self, flag: AnomalyFlag) {
-        if self.anomaly_flags.is_none() {
-            self.anomaly_flags = Some(Vec::new());
-        }
-        self.anomaly_flags.as_mut().unwrap().push(flag);
+        self.anomaly_flags.get_or_insert_with(Vec::new).push(flag);
     }
 
-    /// Calculate and update the millibits score.
     pub fn calculate_score(&mut self) {
         let mut score = 0.0;
         let mut components = 0;
 
-        // Hurst exponent contribution
         if let Some(h) = self.hurst_exponent {
             // Optimal H ≈ 0.7, score drops for H < 0.55 or H > 0.85
             let h_score = if (0.55..=0.85).contains(&h) {
@@ -454,7 +376,6 @@ impl BiologyInvariantClaim {
             components += 1;
         }
 
-        // Pink noise contribution
         if let Some(ref pn) = self.pink_noise {
             let pn_score = if pn.is_human_like() {
                 pn.r_squared
@@ -465,13 +386,11 @@ impl BiologyInvariantClaim {
             components += 1;
         }
 
-        // Error topology contribution
         if let Some(ref et) = self.error_topology {
             score += et.score * self.parameters.error_topology_weight;
             components += 1;
         }
 
-        // Cadence contribution (based on CV)
         let cv = self.measurements.coefficient_of_variation;
         let cv_score = if (0.15..=0.6).contains(&cv) {
             1.0 - ((cv - 0.35).abs() / 0.25).min(1.0)
@@ -481,7 +400,6 @@ impl BiologyInvariantClaim {
         score += cv_score * self.parameters.cadence_weight;
         components += 1;
 
-        // Normalize if not all components present
         if components > 0 && components < 4 {
             let total_weight = if self.hurst_exponent.is_some() {
                 self.parameters.hurst_weight
@@ -502,12 +420,9 @@ impl BiologyInvariantClaim {
             }
         }
 
-        // Convert to millibits (0-10000 scale)
-        // 1.0 score = 10 bits = 10000 millibits of discriminating information
-        // Clamp before cast to handle NaN/negative: NaN.clamp() returns the lower bound
+        // NaN.clamp() returns the lower bound, so this safely handles NaN/negative
         self.millibits = (score * 10000.0).round().clamp(0.0, 10000.0) as u16;
 
-        // Update validation status based on components
         self.validation_status = if self.hurst_exponent.is_some()
             && self.pink_noise.is_some()
             && self.error_topology.is_some()
@@ -520,47 +435,52 @@ impl BiologyInvariantClaim {
         };
     }
 
-    /// Check if the claim passes human threshold.
     pub fn is_human_like(&self) -> bool {
         (self.millibits as f64 / 10000.0) >= self.parameters.human_threshold
     }
 
-    /// Get anomaly count.
     pub fn anomaly_count(&self) -> usize {
         self.anomaly_flags.as_ref().map_or(0, |v| v.len())
     }
 
-    /// Check if there are any alert-level anomalies.
     pub fn has_alerts(&self) -> bool {
         self.anomaly_flags
             .as_ref()
             .is_some_and(|flags| flags.iter().any(|f| f.severity >= 3))
     }
 
-    /// Comprehensive validation of the BiologyInvariantClaim.
-    ///
-    /// Returns a list of validation errors, or empty if valid.
     pub fn validate(&self) -> Vec<String> {
         let mut errors = Vec::new();
 
-        // Validate millibits range
         if self.millibits > 10000 {
             errors.push(format!("millibits {} exceeds max 10000", self.millibits));
         }
 
-        // Validate parameter version
         if self.parameter_version.is_empty() {
             errors.push("parameter version is empty".into());
         }
 
-        // Validate parameters
         let params = &self.parameters;
+        let weights = [
+            params.hurst_weight,
+            params.pink_noise_weight,
+            params.error_topology_weight,
+            params.cadence_weight,
+        ];
+        for (i, &w) in weights.iter().enumerate() {
+            if !w.is_finite() {
+                errors.push(format!("parameter weight[{}] is NaN or infinite", i));
+            }
+        }
+        if !params.human_threshold.is_finite() {
+            errors.push("human_threshold is NaN or infinite".into());
+        }
         let total_weight = params.hurst_weight
             + params.pink_noise_weight
             + params.error_topology_weight
             + params.cadence_weight;
         if (total_weight - 1.0).abs() > 0.01 && total_weight > 0.0 {
-            // Allow 0.0 (no weights set) or 1.0 (normalized)
+            // Allow 0.0 (unset) or 1.0 (normalized)
             errors.push(format!(
                 "parameter weights sum to {} (expected 1.0)",
                 total_weight
@@ -573,7 +493,6 @@ impl BiologyInvariantClaim {
             ));
         }
 
-        // Validate measurements
         let m = &self.measurements;
         if m.sample_count == 0 {
             errors.push("sample count is zero".into());
@@ -590,7 +509,6 @@ impl BiologyInvariantClaim {
         if m.typing_rate < 0.0 {
             errors.push("typing rate is negative".into());
         }
-        // Validate percentiles are monotonically increasing
         for i in 1..5 {
             if m.percentiles[i] < m.percentiles[i - 1] {
                 errors.push(format!("percentiles not monotonic at index {}", i));
@@ -598,14 +516,12 @@ impl BiologyInvariantClaim {
             }
         }
 
-        // Validate Hurst exponent if present
         if let Some(h) = self.hurst_exponent {
             if !(0.0..=1.0).contains(&h) {
                 errors.push(format!("Hurst exponent {} out of range [0, 1]", h));
             }
         }
 
-        // Validate pink noise if present
         if let Some(pn) = &self.pink_noise {
             if pn.r_squared < 0.0 || pn.r_squared > 1.0 {
                 errors.push(format!(
@@ -615,7 +531,6 @@ impl BiologyInvariantClaim {
             }
         }
 
-        // Validate error topology if present
         if let Some(et) = &self.error_topology {
             if et.score < 0.0 || et.score > 1.0 {
                 errors.push(format!(
@@ -628,24 +543,18 @@ impl BiologyInvariantClaim {
         errors
     }
 
-    /// Check if the claim is valid (no validation errors).
     pub fn is_valid(&self) -> bool {
         self.validate().is_empty()
     }
 }
-
-// ============================================
-// Conversion from analysis module types
-// ============================================
 
 impl From<&crate::analysis::pink_noise::PinkNoiseAnalysis> for PinkNoiseAnalysis {
     fn from(analysis: &crate::analysis::pink_noise::PinkNoiseAnalysis) -> Self {
         Self {
             spectral_slope: analysis.spectral_slope,
             r_squared: analysis.r_squared,
-            // Estimate power distribution (simplified)
-            low_freq_power: 1.0,                                   // Normalized
-            high_freq_power: 10f64.powf(-analysis.spectral_slope), // Relative power at 10x frequency
+            low_freq_power: 1.0,
+            high_freq_power: 10f64.powf(-analysis.spectral_slope),
             within_human_range: analysis.is_valid,
         }
     }
@@ -669,9 +578,7 @@ impl From<&crate::analysis::hurst::HurstAnalysis> for Option<f64> {
     }
 }
 
-/// Builder for creating BiologyInvariantClaim from analysis results.
 impl BiologyInvariantClaim {
-    /// Create a BiologyInvariantClaim from analysis module results.
     pub fn from_analysis(
         measurements: BiologyMeasurements,
         hurst: Option<&crate::analysis::hurst::HurstAnalysis>,
@@ -683,7 +590,6 @@ impl BiologyInvariantClaim {
         if let Some(h) = hurst {
             claim.hurst_exponent = Some(h.exponent);
 
-            // Add anomaly flags based on Hurst analysis
             if h.is_white_noise() {
                 claim.add_anomaly(AnomalyFlag {
                     anomaly_type: AnomalyType::WhiteNoiseHurst,
@@ -730,7 +636,6 @@ impl BiologyInvariantClaim {
             }
         }
 
-        // Check cadence
         if claim.measurements.coefficient_of_variation < 0.15 {
             claim.add_anomaly(AnomalyFlag {
                 anomaly_type: AnomalyType::RoboticCadence,
@@ -743,7 +648,6 @@ impl BiologyInvariantClaim {
             });
         }
 
-        // Calculate final score
         claim.calculate_score();
 
         claim
@@ -757,13 +661,13 @@ mod tests {
     fn create_test_measurements() -> BiologyMeasurements {
         BiologyMeasurements {
             sample_count: 1000,
-            mean_iki_us: 150000.0, // 150ms mean
-            std_dev_us: 50000.0,   // 50ms std dev
+            mean_iki_us: 150000.0,
+            std_dev_us: 50000.0,
             coefficient_of_variation: 0.33,
             percentiles: [50000.0, 80000.0, 140000.0, 200000.0, 300000.0],
             burst_count: 50,
             pause_count: 10,
-            typing_rate: 60.0, // 60 WPM equivalent
+            typing_rate: 60.0,
         }
     }
 
@@ -807,7 +711,7 @@ mod tests {
         assert!(good_pn.is_human_like());
 
         let bad_pn = PinkNoiseAnalysis {
-            spectral_slope: 0.3, // Too low (white noise)
+            spectral_slope: 0.3,
             r_squared: 0.9,
             low_freq_power: 100.0,
             high_freq_power: 50.0,
@@ -833,7 +737,7 @@ mod tests {
 
         claim.calculate_score();
 
-        assert!(claim.millibits > 5000); // Should be reasonably high for human-like data
+        assert!(claim.millibits > 5000);
         assert_eq!(claim.validation_status, ValidationStatus::Empirical);
     }
 

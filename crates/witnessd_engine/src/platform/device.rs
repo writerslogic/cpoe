@@ -6,17 +6,14 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum TransportType {
-    /// USB wired connection
     Usb,
-    /// Bluetooth wireless connection
     Bluetooth,
-    /// Laptop integrated keyboard (internal I/O bus like i8042, SPI)
+    /// Internal I/O bus (i8042, SPI, etc.)
     Internal,
-    /// Android Debug Bridge (for mobile devices)
+    /// Android Debug Bridge
     Adb,
-    /// Virtual/software keyboard (uinput, virtual device)
+    /// Software keyboard (uinput, virtual device)
     Virtual,
-    /// Transport type could not be determined
     #[default]
     Unknown,
 }
@@ -103,7 +100,7 @@ impl std::fmt::Display for TransportType {
     }
 }
 
-/// Information about a connected HID keyboard device.
+/// Connected HID keyboard device metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HIDDeviceInfo {
     pub vendor_id: u32,

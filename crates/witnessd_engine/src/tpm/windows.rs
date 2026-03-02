@@ -15,21 +15,14 @@ use sha2::{Digest, Sha256};
 use std::ffi::c_void;
 use std::sync::Mutex;
 
-// Re-export the TBS functions from the windows crate
 use windows::Win32::System::TpmBaseServices::{
     Tbsi_Context_Create, Tbsi_GetDeviceInfo, Tbsip_Context_Close, Tbsip_Submit_Command,
     TBS_COMMAND_LOCALITY, TBS_COMMAND_PRIORITY, TBS_CONTEXT_PARAMS, TBS_CONTEXT_PARAMS2,
     TPM_DEVICE_INFO,
 };
 
-// ============================================================================
-// TBS Constants
-// ============================================================================
-
-/// TBS operation completed successfully
 const TBS_SUCCESS: u32 = 0x0;
 
-/// TBS error codes (used by tbs_result_to_error)
 mod tbs_error {
     pub const TBS_E_INTERNAL_ERROR: u32 = 0x80284001;
     pub const TBS_E_BAD_PARAMETER: u32 = 0x80284002;
@@ -46,94 +39,38 @@ mod tbs_error {
     pub const TBS_E_SERVICE_DISABLED: u32 = 0x80284010;
 }
 
-/// TPM version 2.0
 const TPM_VERSION_20: u32 = 2;
-
-/// Command locality (only zero is supported)
 const TBS_COMMAND_LOCALITY_ZERO: u32 = 0;
-
-/// Normal command priority
 const TBS_COMMAND_PRIORITY_NORMAL: u32 = 200;
 
-// ============================================================================
-// TPM2 Constants
-// ============================================================================
-
-/// TPM2 session tag: command/response has no sessions
 const TPM2_ST_NO_SESSIONS: u16 = 0x8001;
-
-/// TPM2 session tag: command/response has sessions
 const TPM2_ST_SESSIONS: u16 = 0x8002;
-
-/// TPM2 command code: Get random bytes
 const TPM2_CC_GET_RANDOM: u32 = 0x0000017B;
-
-/// TPM2 command code: Read PCR values
 const TPM2_CC_PCR_READ: u32 = 0x0000017E;
-
-/// TPM2 command code: Create (sealing object under parent)
 const TPM2_CC_CREATE: u32 = 0x00000153;
-
-/// TPM2 command code: Load (load sealed object into TPM)
 const TPM2_CC_LOAD: u32 = 0x00000157;
-
-/// TPM2 command code: Unseal (retrieve sealed data)
 const TPM2_CC_UNSEAL: u32 = 0x0000015E;
-
-/// TPM2 command code: CreatePrimary (create SRK under hierarchy)
 const TPM2_CC_CREATE_PRIMARY: u32 = 0x00000131;
-
-/// TPM2 algorithm: KeyedHash (for sealing objects)
 const TPM2_ALG_KEYEDHASH: u16 = 0x0008;
-
-/// TPM2 algorithm: NULL
 const TPM2_ALG_NULL: u16 = 0x0010;
-
-/// TPM2 algorithm: AES
 const TPM2_ALG_AES: u16 = 0x0006;
-
-/// TPM2 algorithm: CFB mode
 const TPM2_ALG_CFB: u16 = 0x0043;
-
-/// TPM2 algorithm: ECC
 const TPM2_ALG_ECC: u16 = 0x0023;
-
-/// TPM2 ECC curve: NIST P-256
 const TPM2_ECC_NIST_P256: u16 = 0x0003;
-
-/// TPM2 hierarchy handles
 const TPM2_RH_OWNER: u32 = 0x40000001;
-
-/// TPM2 algorithm identifier: SHA-256
 const TPM2_ALG_SHA256: u16 = 0x000B;
-
-/// Minimum TPM2 response header size (tag + responseSize + responseCode)
+/// tag (2) + responseSize (4) + responseCode (4)
 const TPM2_RESPONSE_HEADER_SIZE: usize = 10;
-
-/// TPM2 response code for success
 const TPM_RC_SUCCESS: u32 = 0x000;
-
-/// Maximum response buffer size
 const MAX_RESPONSE_SIZE: usize = 4096;
 
-// ============================================================================
-// TBS Error Type
-// ============================================================================
-
-/// Error type for TBS operations
 #[derive(Debug, Clone)]
 pub enum TbsError {
-    /// TBS API returned an error
     TbsError { code: u32, message: String },
-    /// TPM returned an error in the response
     TpmError { code: u32 },
-    /// Response was too short to parse
     ResponseTooShort,
-    /// Context is not valid
     InvalidContext,
-    /// TPM not found on system
     TpmNotFound,
-    /// TBS service not running
     ServiceNotRunning,
 }
 
@@ -164,7 +101,6 @@ impl From<TbsError> for TPMError {
     }
 }
 
-/// Convert TBS result code to error
 fn tbs_result_to_error(result: u32) -> TbsError {
     let message = match result {
         tbs_error::TBS_E_INTERNAL_ERROR => "Internal error",
@@ -196,46 +132,27 @@ fn tbs_result_to_error(result: u32) -> TbsError {
     }
 }
 
-// ============================================================================
-// TBS Context Wrapper
-// ============================================================================
-
 /// Wrapper around a TBS context handle for TPM 2.0 operations.
-///
-/// This struct provides a safe Rust interface to the Windows TBS API.
 /// The context is automatically closed when dropped.
 pub struct TbsContext {
-    /// The raw TBS context handle
     handle: *mut c_void,
-    /// Device ID derived from TPM
     device_id: String,
 }
 
-// TbsContext is Send + Sync because the handle is only accessed through &self
-// or &mut self, and TBS handles are thread-safe
+// SAFETY: TBS handles are thread-safe; access is gated through &self / &mut self
 unsafe impl Send for TbsContext {}
 unsafe impl Sync for TbsContext {}
 
 impl TbsContext {
     /// Creates a new TBS context for TPM 2.0.
-    ///
-    /// This initializes a connection to the TPM via the TBS service.
-    /// Returns an error if no TPM is available or the TBS service is not running.
     pub fn new() -> Result<Self, TbsError> {
-        // Initialize TBS_CONTEXT_PARAMS2 for TPM 2.0
         let mut params: TBS_CONTEXT_PARAMS2 = unsafe { std::mem::zeroed() };
         params.version = TPM_VERSION_20;
 
-        // Set includeTpm20 = 1 via the anonymous union
-        // The union has a field `asUINT32` where bit 2 is includeTpm20
-        // Note: Accessing union fields no longer requires unsafe in recent Rust
+        // Bit layout: 0=requestRaw, 1=includeTpm12, 2=includeTpm20
         #[allow(unused_unsafe)]
         unsafe {
-            // includeTpm20 is bit 2 (value 4) in the flags
-            // Bit 0: requestRaw
-            // Bit 1: includeTpm12
-            // Bit 2: includeTpm20
-            params.Anonymous.asUINT32 = 0b100; // includeTpm20 = 1
+            params.Anonymous.asUINT32 = 0b100;
         }
 
         let mut context: *mut c_void = std::ptr::null_mut();
@@ -255,19 +172,16 @@ impl TbsContext {
             return Err(TbsError::InvalidContext);
         }
 
-        // Generate device ID from random bytes from TPM
         let mut ctx = TbsContext {
             handle: context,
             device_id: String::new(),
         };
 
-        // Try to get random bytes for device ID
         match ctx.get_random(16) {
             Ok(random_bytes) => {
                 ctx.device_id = format!("windows-tpm-{}", hex::encode(&random_bytes[..8]));
             }
             Err(_) => {
-                // Fallback to timestamp-based ID
                 ctx.device_id = format!("windows-tpm-{:x}", Utc::now().timestamp());
             }
         }
@@ -275,12 +189,7 @@ impl TbsContext {
         Ok(ctx)
     }
 
-    /// Submits a raw TPM2 command and returns the response.
-    ///
-    /// The command must be a properly formatted TPM2 command buffer with
-    /// the standard 10-byte header (tag, size, command code) in big-endian format.
-    ///
-    /// Returns the full response including the 10-byte header.
+    /// Submits a raw TPM2 command and returns the full response including header.
     pub fn submit_command(&self, command: &[u8]) -> Result<Vec<u8>, TbsError> {
         if self.handle.is_null() {
             return Err(TbsError::InvalidContext);
@@ -304,15 +213,13 @@ impl TbsContext {
             return Err(tbs_result_to_error(result));
         }
 
-        // Truncate to actual response size
         response.truncate(response_size as usize);
 
-        // Verify minimum response size (10 bytes for header)
         if response.len() < TPM2_RESPONSE_HEADER_SIZE {
             return Err(TbsError::ResponseTooShort);
         }
 
-        // Check TPM response code (bytes 6-9, big-endian)
+        // Response code at bytes 6-9 (big-endian)
         let rc = u32::from_be_bytes([response[6], response[7], response[8], response[9]]);
         if rc != TPM_RC_SUCCESS {
             return Err(TbsError::TpmError { code: rc });
@@ -321,9 +228,6 @@ impl TbsContext {
         Ok(response)
     }
 
-    /// Gets TPM device information.
-    ///
-    /// Returns the TPM version information from the device.
     pub fn get_device_info(&self) -> Result<TpmDeviceInfo, TbsError> {
         let mut info: TPM_DEVICE_INFO = unsafe { std::mem::zeroed() };
 
@@ -346,14 +250,11 @@ impl TbsContext {
         })
     }
 
-    /// Gets random bytes from the TPM.
-    ///
-    /// Uses the TPM2_GetRandom command to obtain hardware random bytes.
+    /// Gets random bytes from the TPM via TPM2_GetRandom.
     pub fn get_random(&self, num_bytes: u16) -> Result<Vec<u8>, TbsError> {
         let cmd = build_get_random_command(num_bytes);
         let response = self.submit_command(&cmd)?;
 
-        // Parse response: header (10 bytes) + digest size (2 bytes) + digest data
         if response.len() < 12 {
             return Err(TbsError::ResponseTooShort);
         }
@@ -366,7 +267,6 @@ impl TbsContext {
         Ok(response[12..12 + digest_size].to_vec())
     }
 
-    /// Returns the device ID for this TPM context.
     pub fn device_id(&self) -> &str {
         &self.device_id
     }
@@ -376,7 +276,6 @@ impl Drop for TbsContext {
     fn drop(&mut self) {
         if !self.handle.is_null() {
             unsafe {
-                // Ignore the result - we're cleaning up
                 let _ = Tbsip_Context_Close(self.handle);
             }
             self.handle = std::ptr::null_mut();
@@ -384,83 +283,37 @@ impl Drop for TbsContext {
     }
 }
 
-// ============================================================================
-// TPM Device Info
-// ============================================================================
-
-/// Information about the TPM device.
 #[derive(Debug, Clone)]
 pub struct TpmDeviceInfo {
-    /// Structure version (should be TPM_VERSION_20)
     pub struct_version: u32,
-    /// TPM version (1 = 1.2, 2 = 2.0)
+    /// 1 = TPM 1.2, 2 = TPM 2.0
     pub tpm_version: u32,
-    /// TPM interface type (reserved)
     pub tpm_interface_type: u32,
-    /// TPM implementation revision (reserved)
     pub tpm_impl_revision: u32,
 }
 
 impl TpmDeviceInfo {
-    /// Returns true if this is a TPM 2.0 device.
     pub fn is_tpm20(&self) -> bool {
         self.tpm_version == TPM_VERSION_20
     }
 }
 
-// ============================================================================
-// TPM2 Command Builders
-// ============================================================================
-
-/// Builds a TPM2_GetRandom command to request random bytes from the TPM.
-///
-/// # Arguments
-/// * `num_bytes` - Number of random bytes to request (max typically 48-64 depending on TPM)
-///
-/// # Returns
-/// A `Vec<u8>` containing the complete TPM2 command in big-endian format.
-///
-/// # Command Structure
-/// - Header (10 bytes):
-///   - tag: u16 (TPM2_ST_NO_SESSIONS = 0x8001)
-///   - commandSize: u32 (total size = 12 bytes)
-///   - commandCode: u32 (TPM2_CC_GetRandom = 0x0000017B)
-/// - Parameters (2 bytes):
-///   - bytesRequested: u16
+/// Builds a TPM2_GetRandom command.
+/// `num_bytes`: max typically 48-64 depending on TPM.
 pub fn build_get_random_command(num_bytes: u16) -> Vec<u8> {
-    let command_size: u32 = 12; // 10 byte header + 2 byte parameter
+    let command_size: u32 = 12;
     let mut cmd = Vec::with_capacity(command_size as usize);
 
-    // Header
-    cmd.extend_from_slice(&TPM2_ST_NO_SESSIONS.to_be_bytes()); // tag (2 bytes)
-    cmd.extend_from_slice(&command_size.to_be_bytes()); // commandSize (4 bytes)
-    cmd.extend_from_slice(&TPM2_CC_GET_RANDOM.to_be_bytes()); // commandCode (4 bytes)
-
-    // Parameters
-    cmd.extend_from_slice(&num_bytes.to_be_bytes()); // bytesRequested (2 bytes)
+    cmd.extend_from_slice(&TPM2_ST_NO_SESSIONS.to_be_bytes());
+    cmd.extend_from_slice(&command_size.to_be_bytes());
+    cmd.extend_from_slice(&TPM2_CC_GET_RANDOM.to_be_bytes());
+    cmd.extend_from_slice(&num_bytes.to_be_bytes());
 
     cmd
 }
 
-/// Parses a TPM2_GetRandom response and extracts the random bytes.
-///
-/// # Arguments
-/// * `response` - The raw TPM2 response bytes
-///
-/// # Returns
-/// * `Ok(Vec<u8>)` - The random bytes from the TPM
-/// * `Err(TPMError)` - If the response is invalid or indicates an error
-///
-/// # Response Structure
-/// - Header (10 bytes):
-///   - tag: u16
-///   - responseSize: u32
-///   - responseCode: u32 (0 = success)
-/// - TPM2B_DIGEST:
-///   - size: u16
-///   - buffer: [u8; size]
+/// Parses a TPM2_GetRandom response, extracting the TPM2B_DIGEST payload.
 pub fn parse_get_random_response(response: &[u8]) -> Result<Vec<u8>, TPMError> {
-    // Validate minimum response size
     if response.len() < TPM2_RESPONSE_HEADER_SIZE {
         return Err(TPMError::Quote(format!(
             "Response too short: {} bytes, expected at least {}",
@@ -469,7 +322,6 @@ pub fn parse_get_random_response(response: &[u8]) -> Result<Vec<u8>, TPMError> {
         )));
     }
 
-    // Check response code
     let response_code = parse_response_code(response)?;
     if response_code != 0 {
         return Err(TPMError::Quote(format!(
@@ -478,7 +330,6 @@ pub fn parse_get_random_response(response: &[u8]) -> Result<Vec<u8>, TPMError> {
         )));
     }
 
-    // Parse TPM2B_DIGEST structure after header
     if response.len() < TPM2_RESPONSE_HEADER_SIZE + 2 {
         return Err(TPMError::Quote(
             "Response missing TPM2B_DIGEST size field".to_string(),
@@ -495,72 +346,36 @@ pub fn parse_get_random_response(response: &[u8]) -> Result<Vec<u8>, TPMError> {
         )));
     }
 
-    // Extract random bytes
-    let random_bytes = response[12..12 + digest_size].to_vec();
-    Ok(random_bytes)
+    Ok(response[12..12 + digest_size].to_vec())
 }
 
-/// Builds a TPM2_PCR_Read command to read PCR values.
-///
-/// # Arguments
-/// * `pcr_selection` - Array of PCR indices to read (0-23 for SHA-256 bank)
-///
-/// # Returns
-/// A `Vec<u8>` containing the complete TPM2 command in big-endian format.
-///
-/// # Command Structure
-/// - Header (10 bytes):
-///   - tag: u16 (TPM2_ST_NO_SESSIONS = 0x8001)
-///   - commandSize: u32
-///   - commandCode: u32 (TPM2_CC_PCR_Read = 0x0000017E)
-/// - TPML_PCR_SELECTION:
-///   - count: u32 (number of PCR selections, typically 1)
-///   - TPMS_PCR_SELECTION[count]:
-///     - hash: u16 (algorithm ID, e.g., TPM2_ALG_SHA256)
-///     - sizeofSelect: u8 (size of pcrSelect array, typically 3)
-///     - pcrSelect: [u8; sizeofSelect] (bitmap of PCRs)
+/// Builds a TPM2_PCR_Read command for the SHA-256 bank.
+/// `pcr_selection`: PCR indices 0-23; values >= 24 are silently ignored.
 pub fn build_pcr_read_command(pcr_selection: &[u32]) -> Vec<u8> {
-    // Build PCR selection bitmap (3 bytes covers PCRs 0-23)
     let mut pcr_bitmap: [u8; 3] = [0, 0, 0];
     for &pcr_index in pcr_selection {
         if pcr_index < 24 {
-            let byte_index = (pcr_index / 8) as usize;
-            let bit_index = pcr_index % 8;
-            pcr_bitmap[byte_index] |= 1 << bit_index;
+            pcr_bitmap[(pcr_index / 8) as usize] |= 1 << (pcr_index % 8);
         }
     }
 
-    // Command size: 10 (header) + 4 (count) + 2 (hash) + 1 (sizeofSelect) + 3 (pcrSelect)
-    let command_size: u32 = 10 + 4 + 2 + 1 + 3;
+    let command_size: u32 = 20;
     let mut cmd = Vec::with_capacity(command_size as usize);
 
-    // Header
-    cmd.extend_from_slice(&TPM2_ST_NO_SESSIONS.to_be_bytes()); // tag (2 bytes)
-    cmd.extend_from_slice(&command_size.to_be_bytes()); // commandSize (4 bytes)
-    cmd.extend_from_slice(&TPM2_CC_PCR_READ.to_be_bytes()); // commandCode (4 bytes)
+    cmd.extend_from_slice(&TPM2_ST_NO_SESSIONS.to_be_bytes());
+    cmd.extend_from_slice(&command_size.to_be_bytes());
+    cmd.extend_from_slice(&TPM2_CC_PCR_READ.to_be_bytes());
 
-    // TPML_PCR_SELECTION
-    cmd.extend_from_slice(&1u32.to_be_bytes()); // count = 1 (4 bytes)
-
-    // TPMS_PCR_SELECTION
-    cmd.extend_from_slice(&TPM2_ALG_SHA256.to_be_bytes()); // hash algorithm (2 bytes)
-    cmd.push(3u8); // sizeofSelect = 3 (1 byte)
-    cmd.extend_from_slice(&pcr_bitmap); // pcrSelect bitmap (3 bytes)
+    // TPML_PCR_SELECTION: 1 selection of SHA-256 with 3-byte bitmap
+    cmd.extend_from_slice(&1u32.to_be_bytes());
+    cmd.extend_from_slice(&TPM2_ALG_SHA256.to_be_bytes());
+    cmd.push(3u8);
+    cmd.extend_from_slice(&pcr_bitmap);
 
     cmd
 }
 
-/// Extracts the response code from a TPM2 response.
-///
-/// # Arguments
-/// * `response` - The raw TPM2 response bytes
-///
-/// # Returns
-/// * `Ok(u32)` - The response code (0 = success)
-/// * `Err(TPMError)` - If the response is too short
-///
-/// # Response Code Location
-/// The response code is at bytes 6-9 (big-endian u32) in the response header.
+/// Extracts the response code (bytes 6-9, big-endian) from a TPM2 response header.
 pub fn parse_response_code(response: &[u8]) -> Result<u32, TPMError> {
     if response.len() < TPM2_RESPONSE_HEADER_SIZE {
         return Err(TPMError::Quote(format!(
@@ -573,34 +388,20 @@ pub fn parse_response_code(response: &[u8]) -> Result<u32, TPMError> {
     Ok(response_code)
 }
 
-// ============================================================================
-// Windows TPM Provider
-// ============================================================================
-
-/// Windows TPM 2.0 provider implementation.
 pub struct WindowsTpmProvider {
-    /// The TBS context for TPM operations
     context: TbsContext,
-    /// Cached public key (generated on first use)
     public_key: Vec<u8>,
-    /// State protected by mutex for thread-safety
     state: Mutex<WindowsTpmState>,
 }
 
-/// Internal state for the Windows TPM provider
 struct WindowsTpmState {
-    /// Monotonic counter for bindings
     counter: u64,
 }
 
-/// Attempts to initialize the Windows TPM provider.
-///
-/// Returns `Some(WindowsTpmProvider)` if a TPM 2.0 is available and the TBS
-/// service is running. Returns `None` if no TPM is available.
+/// Returns `Some` if a TPM 2.0 is available and the TBS service is running.
 pub fn try_init() -> Option<WindowsTpmProvider> {
     match TbsContext::new() {
         Ok(context) => {
-            // Verify we have a TPM 2.0
             match context.get_device_info() {
                 Ok(info) if info.is_tpm20() => {
                     log::info!(
@@ -609,8 +410,7 @@ pub fn try_init() -> Option<WindowsTpmProvider> {
                         info.tpm_impl_revision
                     );
 
-                    // Generate a random public key for signing operations
-                    // In a full implementation, this would be a TPM-backed key
+                    // TODO: use a real TPM-backed key instead of random bytes
                     let public_key = match context.get_random(32) {
                         Ok(bytes) => bytes,
                         Err(e) => {
@@ -649,7 +449,6 @@ pub fn try_init() -> Option<WindowsTpmProvider> {
 }
 
 impl WindowsTpmProvider {
-    /// Read PCR values from the TPM.
     fn read_pcrs(&self, pcrs: &[u32]) -> Result<Vec<PcrValue>, TPMError> {
         if pcrs.is_empty() {
             return Ok(Vec::new());
@@ -661,31 +460,25 @@ impl WindowsTpmProvider {
             .submit_command(&cmd)
             .map_err(|e| TPMError::Quote(e.to_string()))?;
 
-        // Parse the PCR read response
         self.parse_pcr_read_response(&response, pcrs)
     }
 
-    /// Parse a TPM2_PCR_Read response.
+    /// Parse TPM2_PCR_Read response:
+    /// header(10) + pcrUpdateCounter(4) + TPML_PCR_SELECTION + TPML_DIGEST
     fn parse_pcr_read_response(
         &self,
         response: &[u8],
         pcrs: &[u32],
     ) -> Result<Vec<PcrValue>, TPMError> {
-        // Response format after header (10 bytes):
-        // - pcrUpdateCounter (4 bytes)
-        // - pcrSelectionOut (TPML_PCR_SELECTION)
-        // - pcrValues (TPML_DIGEST)
-
         if response.len() < 14 {
             return Err(TPMError::Quote("PCR read response too short".to_string()));
         }
 
         let mut offset = TPM2_RESPONSE_HEADER_SIZE;
 
-        // Skip pcrUpdateCounter (4 bytes)
+        // pcrUpdateCounter
         offset += 4;
 
-        // Parse pcrSelectionOut count
         if offset + 4 > response.len() {
             return Err(TPMError::Quote(
                 "PCR read response missing selection count".to_string(),
@@ -699,7 +492,6 @@ impl WindowsTpmProvider {
         ]);
         offset += 4;
 
-        // Skip each selection (hash: 2 bytes + sizeOfSelect: 1 byte + pcrSelect: sizeOfSelect bytes)
         for _ in 0..selection_count {
             if offset + 3 > response.len() {
                 return Err(TPMError::Quote(
@@ -711,7 +503,6 @@ impl WindowsTpmProvider {
             offset += 1 + size_of_select;
         }
 
-        // Read TPML_DIGEST count
         if offset + 4 > response.len() {
             return Err(TPMError::Quote(
                 "PCR read response missing digest count".to_string(),
@@ -725,7 +516,6 @@ impl WindowsTpmProvider {
         ]);
         offset += 4;
 
-        // Read each digest (TPM2B_DIGEST: size: u16 + buffer)
         let mut values = Vec::new();
         for (_i, &pcr) in pcrs.iter().take(digest_count as usize).enumerate() {
             if offset + 2 > response.len() {
@@ -746,23 +536,19 @@ impl WindowsTpmProvider {
         Ok(values)
     }
 
-    /// Sign a payload using TPM hash (TPM-assisted signature).
-    /// Note: Full TPM signing requires key loading. This uses TPM hash for now.
+    /// TPM-assisted signature: TPM random || SHA256(random || data).
+    /// TODO: use TPM2_Sign with a loaded key for real signatures.
     fn sign_payload(&self, data: &[u8]) -> Result<Vec<u8>, TPMError> {
-        // Use TPM random combined with hash for a TPM-assisted signature
-        // A full implementation would use TPM2_Sign with a loaded key
         let random = self
             .context
             .get_random(32)
             .map_err(|e| TPMError::Signing(e.to_string()))?;
 
-        // Combine random with hash of data for signature
         let mut hasher = Sha256::new();
         hasher.update(&random);
         hasher.update(data);
         let hash = hasher.finalize();
 
-        // Create signature by combining random and hash
         let mut signature = Vec::with_capacity(64);
         signature.extend_from_slice(&random);
         signature.extend_from_slice(&hash);
@@ -770,43 +556,30 @@ impl WindowsTpmProvider {
         Ok(signature)
     }
 
-    /// Create a primary Storage Root Key (SRK) under the Owner hierarchy.
-    ///
-    /// Uses ECC P-256 as the key type with null symmetric parameters.
+    /// Create ECC P-256 SRK under the Owner hierarchy via TPM2_CreatePrimary.
     fn create_primary_srk(&self) -> Result<Vec<u8>, TbsError> {
-        // Build TPM2_CreatePrimary command for an ECC SRK under Owner
         let mut cmd = Vec::with_capacity(128);
-
-        // We'll build the command body first, then prepend the header
         let mut body = Vec::new();
 
-        // primaryHandle: TPM_RH_OWNER (4 bytes)
         body.extend_from_slice(&TPM2_RH_OWNER.to_be_bytes());
 
-        // Authorization area (empty password auth)
-        // authorizationSize (4 bytes)
         let auth_area = build_empty_auth_area(TPM2_RH_OWNER);
         body.extend_from_slice(&(auth_area.len() as u32).to_be_bytes());
         body.extend_from_slice(&auth_area);
 
-        // inSensitive: TPM2B_SENSITIVE_CREATE (empty userAuth, empty data)
-        // size (2) + sensitiveCreate { userAuth: TPM2B(0), data: TPM2B(0) }
-        body.extend_from_slice(&4u16.to_be_bytes()); // size of TPMS_SENSITIVE_CREATE
-        body.extend_from_slice(&0u16.to_be_bytes()); // userAuth size = 0
-        body.extend_from_slice(&0u16.to_be_bytes()); // data size = 0
+        // inSensitive: empty userAuth + empty data
+        body.extend_from_slice(&4u16.to_be_bytes());
+        body.extend_from_slice(&0u16.to_be_bytes());
+        body.extend_from_slice(&0u16.to_be_bytes());
 
-        // inPublic: TPM2B_PUBLIC for ECC P-256 storage key
         let public_area = build_srk_public_ecc();
         body.extend_from_slice(&(public_area.len() as u16).to_be_bytes());
         body.extend_from_slice(&public_area);
 
-        // outsideInfo: TPM2B_DATA (empty)
+        // outsideInfo (empty) + creationPCR (none)
         body.extend_from_slice(&0u16.to_be_bytes());
-
-        // creationPCR: TPML_PCR_SELECTION (count = 0)
         body.extend_from_slice(&0u32.to_be_bytes());
 
-        // Build header
         let command_size = (10 + body.len()) as u32;
         cmd.extend_from_slice(&TPM2_ST_SESSIONS.to_be_bytes());
         cmd.extend_from_slice(&command_size.to_be_bytes());
@@ -816,40 +589,32 @@ impl WindowsTpmProvider {
         self.context.submit_command(&cmd)
     }
 
-    /// Create a sealed (KeyedHash) object under a parent key.
     fn create_sealed_object(&self, parent_handle: u32, data: &[u8]) -> Result<Vec<u8>, TbsError> {
         let mut body = Vec::new();
 
-        // parentHandle (4 bytes)
         body.extend_from_slice(&parent_handle.to_be_bytes());
 
-        // Authorization area (empty password for parent)
         let auth_area = build_empty_auth_area(parent_handle);
         body.extend_from_slice(&(auth_area.len() as u32).to_be_bytes());
         body.extend_from_slice(&auth_area);
 
-        // inSensitive: TPM2B_SENSITIVE_CREATE with the data to seal
-        // Machine-specific authValue for anti-hammering
+        // inSensitive: machine-specific authValue + data to seal
         let auth_value = self.derive_seal_auth_value();
         let sensitive_size = 2 + auth_value.len() + 2 + data.len();
         body.extend_from_slice(&(sensitive_size as u16).to_be_bytes());
-        body.extend_from_slice(&(auth_value.len() as u16).to_be_bytes()); // userAuth
+        body.extend_from_slice(&(auth_value.len() as u16).to_be_bytes());
         body.extend_from_slice(&auth_value);
-        body.extend_from_slice(&(data.len() as u16).to_be_bytes()); // data to seal
+        body.extend_from_slice(&(data.len() as u16).to_be_bytes());
         body.extend_from_slice(data);
 
-        // inPublic: TPM2B_PUBLIC for KeyedHash (sealing) object
         let public_area = build_sealing_public();
         body.extend_from_slice(&(public_area.len() as u16).to_be_bytes());
         body.extend_from_slice(&public_area);
 
-        // outsideInfo: TPM2B_DATA (empty)
+        // outsideInfo (empty) + creationPCR (none)
         body.extend_from_slice(&0u16.to_be_bytes());
-
-        // creationPCR: TPML_PCR_SELECTION (count = 0)
         body.extend_from_slice(&0u32.to_be_bytes());
 
-        // Build header
         let mut cmd = Vec::with_capacity(10 + body.len());
         let command_size = (10 + body.len()) as u32;
         cmd.extend_from_slice(&TPM2_ST_SESSIONS.to_be_bytes());
@@ -860,30 +625,16 @@ impl WindowsTpmProvider {
         self.context.submit_command(&cmd)
     }
 
-    /// Parse a TPM2_Create response to extract outPrivate and outPublic,
-    /// serialized into our sealed blob format:
-    ///   [pub_len: u32][pub_bytes][priv_len: u32][priv_bytes]
+    /// Extract outPrivate/outPublic from TPM2_Create response into sealed blob:
+    /// `[pub_len: u32][pub_bytes][priv_len: u32][priv_bytes]`
     fn parse_create_response(&self, response: &[u8]) -> Result<Vec<u8>, String> {
-        // Response after header (10 bytes) + parameter size (4 bytes, for sessions):
-        //   outPrivate: TPM2B_PRIVATE (2-byte size + data)
-        //   outPublic: TPM2B_PUBLIC (2-byte size + data)
-        //   ... (creationData, creationHash, creationTicket)
-
         if response.len() < 16 {
             return Err("response too short".into());
         }
 
-        let mut offset = 10;
-        // Skip parameterSize (4 bytes) for session-based response
-        let _param_size = u32::from_be_bytes([
-            response[offset],
-            response[offset + 1],
-            response[offset + 2],
-            response[offset + 3],
-        ]);
-        offset += 4;
+        // Skip header (10) + parameterSize (4)
+        let mut offset = 14;
 
-        // outPrivate: TPM2B_PRIVATE
         if offset + 2 > response.len() {
             return Err("missing outPrivate size".into());
         }
@@ -895,7 +646,6 @@ impl WindowsTpmProvider {
         let priv_bytes = &response[offset..offset + priv_size];
         offset += priv_size;
 
-        // outPublic: TPM2B_PUBLIC
         if offset + 2 > response.len() {
             return Err("missing outPublic size".into());
         }
@@ -906,7 +656,6 @@ impl WindowsTpmProvider {
         }
         let pub_bytes = &response[offset..offset + pub_size];
 
-        // Serialize into our blob format
         let mut blob = Vec::with_capacity(8 + pub_bytes.len() + priv_bytes.len());
         blob.extend_from_slice(&(pub_bytes.len() as u32).to_be_bytes());
         blob.extend_from_slice(pub_bytes);
@@ -916,7 +665,6 @@ impl WindowsTpmProvider {
         Ok(blob)
     }
 
-    /// Load a sealed object under a parent key.
     fn load_object(
         &self,
         parent_handle: u32,
@@ -925,23 +673,18 @@ impl WindowsTpmProvider {
     ) -> Result<Vec<u8>, TbsError> {
         let mut body = Vec::new();
 
-        // parentHandle (4 bytes)
         body.extend_from_slice(&parent_handle.to_be_bytes());
 
-        // Authorization area
         let auth_area = build_empty_auth_area(parent_handle);
         body.extend_from_slice(&(auth_area.len() as u32).to_be_bytes());
         body.extend_from_slice(&auth_area);
 
-        // inPrivate: TPM2B_PRIVATE
         body.extend_from_slice(&(priv_bytes.len() as u16).to_be_bytes());
         body.extend_from_slice(priv_bytes);
 
-        // inPublic: TPM2B_PUBLIC
         body.extend_from_slice(&(pub_bytes.len() as u16).to_be_bytes());
         body.extend_from_slice(pub_bytes);
 
-        // Build header
         let mut cmd = Vec::with_capacity(10 + body.len());
         let command_size = (10 + body.len()) as u32;
         cmd.extend_from_slice(&TPM2_ST_SESSIONS.to_be_bytes());
@@ -952,20 +695,16 @@ impl WindowsTpmProvider {
         self.context.submit_command(&cmd)
     }
 
-    /// Unseal data from a loaded sealed object.
     fn unseal_object(&self, obj_handle: u32) -> Result<Vec<u8>, TbsError> {
         let mut body = Vec::new();
 
-        // itemHandle (4 bytes)
         body.extend_from_slice(&obj_handle.to_be_bytes());
 
-        // Authorization area with machine-specific auth value
         let auth_value = self.derive_seal_auth_value();
         let auth_area = build_auth_area_with_password(obj_handle, &auth_value);
         body.extend_from_slice(&(auth_area.len() as u32).to_be_bytes());
         body.extend_from_slice(&auth_area);
 
-        // Build header
         let mut cmd = Vec::with_capacity(10 + body.len());
         let command_size = (10 + body.len()) as u32;
         cmd.extend_from_slice(&TPM2_ST_SESSIONS.to_be_bytes());
@@ -976,10 +715,9 @@ impl WindowsTpmProvider {
         self.context.submit_command(&cmd)
     }
 
-    /// Flush a transient TPM object handle.
     fn flush_context(&self, handle: u32) -> Result<(), TbsError> {
         let mut cmd = Vec::with_capacity(14);
-        let command_size: u32 = 14; // 10 header + 4 handle
+        let command_size: u32 = 14;
         cmd.extend_from_slice(&TPM2_ST_NO_SESSIONS.to_be_bytes());
         cmd.extend_from_slice(&command_size.to_be_bytes());
         cmd.extend_from_slice(&0x00000165u32.to_be_bytes()); // TPM2_CC_FlushContext
@@ -989,27 +727,19 @@ impl WindowsTpmProvider {
     }
 
     /// Derive a machine-specific auth value for sealed objects.
-    ///
-    /// This prevents an adversary from moving the sealed blob to another
-    /// machine and brute-forcing the unseal — the authValue is derived from
-    /// the TPM's own device ID, making it unique to this hardware.
+    /// Prevents moving the sealed blob to another machine -- the authValue
+    /// is derived from the TPM's device ID, making it hardware-bound.
     fn derive_seal_auth_value(&self) -> Vec<u8> {
         use sha2::Digest;
         let mut hasher = Sha256::new();
         hasher.update(b"witnessd-seal-auth-v1");
         hasher.update(self.context.device_id().as_bytes());
-        // Include TPM random for additional entropy binding
-        if let Ok(random) = self.context.get_random(16) {
-            // Use a deterministic derivation based on device_id, not random
-            // (random would change each time, making unseal impossible)
-            let _ = random; // intentionally unused — we need determinism
-        }
+        // Must be deterministic (not random), otherwise unseal would fail
         let hash = hasher.finalize();
-        // TPM auth values are typically limited to 32 bytes
         hash[..32].to_vec()
     }
 
-    /// Build attestation data structure for a quote.
+    /// Build a TPMS_ATTEST-like structure for a quote.
     fn build_quote_attestation_data(
         &self,
         nonce: &[u8],
@@ -1018,31 +748,24 @@ impl WindowsTpmProvider {
     ) -> Vec<u8> {
         let mut data = Vec::new();
 
-        // Magic (0xFF544347 = "TCG" marker)
-        data.extend_from_slice(&0xFF544347u32.to_be_bytes());
+        data.extend_from_slice(&0xFF544347u32.to_be_bytes()); // TCG magic
+        data.extend_from_slice(&0x8018u16.to_be_bytes()); // ATTEST_QUOTE
+        data.extend_from_slice(&0u16.to_be_bytes()); // qualifiedSigner (empty)
 
-        // Type (ATTEST_QUOTE = 0x8018)
-        data.extend_from_slice(&0x8018u16.to_be_bytes());
-
-        // Qualified signer (empty TPM2B_NAME)
-        data.extend_from_slice(&0u16.to_be_bytes());
-
-        // Extra data (nonce as TPM2B_DATA)
         let nonce_len = nonce.len().min(64) as u16;
-        data.extend_from_slice(&nonce_len.to_be_bytes());
+        data.extend_from_slice(&nonce_len.to_be_bytes()); // extraData (nonce)
         data.extend_from_slice(&nonce[..nonce_len as usize]);
 
-        // Clock info (TPMS_CLOCK_INFO)
+        // TPMS_CLOCK_INFO
         let clock = timestamp.timestamp() as u64;
-        data.extend_from_slice(&clock.to_be_bytes()); // clock
+        data.extend_from_slice(&clock.to_be_bytes());
         data.extend_from_slice(&0u32.to_be_bytes()); // resetCount
         data.extend_from_slice(&0u32.to_be_bytes()); // restartCount
-        data.push(1); // safe = true
+        data.push(1); // safe
 
-        // Firmware version
-        data.extend_from_slice(&0u64.to_be_bytes());
+        data.extend_from_slice(&0u64.to_be_bytes()); // firmwareVersion
 
-        // Quote-specific: PCR digest (hash of all PCR values)
+        // PCR digest
         let mut pcr_digest = Sha256::new();
         for pcr in pcr_values {
             pcr_digest.update(&pcr.value);
@@ -1061,7 +784,8 @@ impl Provider for WindowsTpmProvider {
             hardware_backed: true,
             supports_pcrs: true,
             supports_sealing: true,
-            supports_attestation: true,
+            // sign_payload uses SHA256(random||data), not real TPM2_Sign
+            supports_attestation: false,
             monotonic_counter: true,
             secure_clock: true,
         }
@@ -1082,17 +806,13 @@ impl Provider for WindowsTpmProvider {
     fn quote(&self, nonce: &[u8], pcrs: &[u32]) -> Result<Quote, TPMError> {
         let timestamp = Utc::now();
 
-        // Read PCR values if requested
         let pcr_values = if !pcrs.is_empty() {
             self.read_pcrs(pcrs)?
         } else {
             Vec::new()
         };
 
-        // Build attestation data structure (TPMS_ATTEST-like)
         let attested_data = self.build_quote_attestation_data(nonce, &pcr_values, &timestamp);
-
-        // Create signature over attested data using TPM hash
         let signature = self.sign_payload(&attested_data)?;
 
         Ok(Quote {
@@ -1109,7 +829,6 @@ impl Provider for WindowsTpmProvider {
     }
 
     fn bind(&self, data: &[u8]) -> Result<Binding, TPMError> {
-        // Increment monotonic counter
         let counter = {
             let mut state = self.state.lock().unwrap();
             state.counter += 1;
@@ -1118,17 +837,13 @@ impl Provider for WindowsTpmProvider {
 
         let timestamp = Utc::now();
         let device_id = self.device_id();
-
-        // Hash the data using SHA-256
         let attested_hash = Sha256::digest(data).to_vec();
 
-        // Build payload for signing
         let mut payload = Vec::new();
         payload.extend_from_slice(&attested_hash);
         payload.extend_from_slice(&timestamp.timestamp_nanos_safe().to_le_bytes());
         payload.extend_from_slice(device_id.as_bytes());
 
-        // Sign the payload using TPM
         let signature = self.sign_payload(&payload)?;
 
         Ok(Binding {
@@ -1149,12 +864,10 @@ impl Provider for WindowsTpmProvider {
     }
 
     fn verify(&self, binding: &Binding) -> Result<(), TPMError> {
-        // Use the common verification logic from the verification module
         super::verification::verify_binding(binding)
     }
 
     fn seal(&self, data: &[u8], _policy: &[u8]) -> Result<Vec<u8>, TPMError> {
-        // Create a Storage Root Key (SRK) under the Owner hierarchy
         let srk_response = self
             .create_primary_srk()
             .map_err(|e| TPMError::Sealing(format!("SRK creation failed: {}", e)))?;
@@ -1166,17 +879,14 @@ impl Provider for WindowsTpmProvider {
             srk_response[13],
         ]);
 
-        // Create a sealed object under the SRK
         let create_response = self
             .create_sealed_object(srk_handle, data)
             .map_err(|e| TPMError::Sealing(format!("seal create failed: {}", e)))?;
 
-        // Parse the Create response to extract outPublic and outPrivate
         let sealed_blob = self
             .parse_create_response(&create_response)
             .map_err(|e| TPMError::Sealing(format!("parse create response: {}", e)))?;
 
-        // Flush the SRK handle
         let _ = self.flush_context(srk_handle);
 
         Ok(sealed_blob)
@@ -1187,7 +897,6 @@ impl Provider for WindowsTpmProvider {
             return Err(TPMError::SealedDataTooShort);
         }
 
-        // Parse the sealed blob to recover outPublic and outPrivate
         let pub_len = u32::from_be_bytes([sealed[0], sealed[1], sealed[2], sealed[3]]) as usize;
         if sealed.len() < 4 + pub_len + 4 {
             return Err(TPMError::SealedCorrupted);
@@ -1205,7 +914,7 @@ impl Provider for WindowsTpmProvider {
         }
         let priv_bytes = &sealed[offset + 4..offset + 4 + priv_len];
 
-        // Re-create the SRK
+        // SRK must be recreated each time (transient primary)
         let srk_response = self
             .create_primary_srk()
             .map_err(|e| TPMError::Unsealing(format!("SRK creation failed: {}", e)))?;
@@ -1216,7 +925,6 @@ impl Provider for WindowsTpmProvider {
             srk_response[13],
         ]);
 
-        // Load the sealed object under the SRK
         let load_response = self
             .load_object(srk_handle, pub_bytes, priv_bytes)
             .map_err(|e| TPMError::Unsealing(format!("load failed: {}", e)))?;
@@ -1227,10 +935,9 @@ impl Provider for WindowsTpmProvider {
             load_response[13],
         ]);
 
-        // Unseal the data
         let unseal_result = self.unseal_object(obj_handle);
 
-        // Clean up handles regardless of result
+        // Clean up transient handles regardless of result
         let _ = self.flush_context(obj_handle);
         let _ = self.flush_context(srk_handle);
 
@@ -1250,8 +957,7 @@ impl Provider for WindowsTpmProvider {
     }
 
     fn clock_info(&self) -> Result<super::ClockInfo, TPMError> {
-        // TPM2_ReadClock command (TPM2_CC_ReadClock = 0x00000181)
-        let command_size: u32 = 10; // header only, no parameters
+        let command_size: u32 = 10;
         let mut cmd = Vec::with_capacity(command_size as usize);
         cmd.extend_from_slice(&TPM2_ST_NO_SESSIONS.to_be_bytes());
         cmd.extend_from_slice(&command_size.to_be_bytes());
@@ -1262,19 +968,13 @@ impl Provider for WindowsTpmProvider {
             .submit_command(&cmd)
             .map_err(|e| TPMError::Quote(format!("ReadClock failed: {}", e)))?;
 
-        // Response format after 10-byte header:
-        //   TPMS_TIME_INFO:
-        //     time: u64 (8 bytes) — milliseconds since last TPM2_Startup
-        //     TPMS_CLOCK_INFO:
-        //       clock: u64 (8 bytes) — milliseconds, cumulative
-        //       resetCount: u32 (4 bytes)
-        //       restartCount: u32 (4 bytes)
-        //       safe: TPMI_YES_NO (1 byte)
+        // TPMS_TIME_INFO: time(u64) + TPMS_CLOCK_INFO(clock:u64, reset:u32, restart:u32, safe:u8)
         if response.len() < 10 + 8 + 8 + 4 + 4 + 1 {
             return Err(TPMError::Quote("ReadClock response too short".into()));
         }
 
-        let offset = 10 + 8; // skip header + time field
+        // Skip header (10) + TPMS_TIME_INFO.time (8) to reach TPMS_CLOCK_INFO
+        let offset = 18;
         let clock = u64::from_be_bytes([
             response[offset],
             response[offset + 1],
@@ -1308,25 +1008,16 @@ impl Provider for WindowsTpmProvider {
     }
 }
 
-// ============================================================================
-// TPM2 Command Helpers for Seal/Unseal
-// ============================================================================
-
-/// Build an empty authorization area (password auth with empty password).
 fn build_empty_auth_area(handle: u32) -> Vec<u8> {
     build_auth_area_with_password(handle, &[])
 }
 
-/// Build an authorization area with a password (authValue).
+/// Build a TPM_RS_PW authorization area with the given password.
 fn build_auth_area_with_password(handle: u32, password: &[u8]) -> Vec<u8> {
     let mut auth = Vec::new();
-    // sessionHandle: TPM_RS_PW (password session)
-    auth.extend_from_slice(&0x40000009u32.to_be_bytes());
-    // nonceCaller: TPM2B (size = 0)
-    auth.extend_from_slice(&0u16.to_be_bytes());
-    // sessionAttributes: continueSession = 1
-    auth.push(0x01);
-    // hmac/password: TPM2B
+    auth.extend_from_slice(&0x40000009u32.to_be_bytes()); // TPM_RS_PW
+    auth.extend_from_slice(&0u16.to_be_bytes()); // nonceCaller (empty)
+    auth.push(0x01); // continueSession
     auth.extend_from_slice(&(password.len() as u16).to_be_bytes());
     auth.extend_from_slice(password);
     auth
@@ -1336,37 +1027,26 @@ fn build_auth_area_with_password(handle: u32, password: &[u8]) -> Vec<u8> {
 fn build_srk_public_ecc() -> Vec<u8> {
     let mut public = Vec::new();
 
-    // type: TPM2_ALG_ECC
     public.extend_from_slice(&TPM2_ALG_ECC.to_be_bytes());
-    // nameAlg: TPM2_ALG_SHA256
     public.extend_from_slice(&TPM2_ALG_SHA256.to_be_bytes());
 
-    // objectAttributes (4 bytes):
     // fixedTPM | fixedParent | sensitiveDataOrigin | userWithAuth | restricted | decrypt
-    let attrs: u32 = 0x00030472; // standard SRK attributes
+    let attrs: u32 = 0x00030472;
     public.extend_from_slice(&attrs.to_be_bytes());
 
-    // authPolicy: TPM2B_DIGEST (empty)
-    public.extend_from_slice(&0u16.to_be_bytes());
+    public.extend_from_slice(&0u16.to_be_bytes()); // authPolicy (empty)
 
-    // parameters: TPMS_ECC_PARMS
-    // symmetric: TPMT_SYM_DEF_OBJECT (AES-128-CFB for storage key)
+    // TPMS_ECC_PARMS: AES-128-CFB symmetric, NULL scheme, P-256, NULL kdf
     public.extend_from_slice(&TPM2_ALG_AES.to_be_bytes());
-    public.extend_from_slice(&128u16.to_be_bytes()); // keyBits = 128
+    public.extend_from_slice(&128u16.to_be_bytes());
     public.extend_from_slice(&TPM2_ALG_CFB.to_be_bytes());
-
-    // scheme: TPMT_ECC_SCHEME (NULL for storage key)
-    public.extend_from_slice(&TPM2_ALG_NULL.to_be_bytes());
-
-    // curveID: TPM2_ECC_NIST_P256
+    public.extend_from_slice(&TPM2_ALG_NULL.to_be_bytes()); // scheme
     public.extend_from_slice(&TPM2_ECC_NIST_P256.to_be_bytes());
+    public.extend_from_slice(&TPM2_ALG_NULL.to_be_bytes()); // kdf
 
-    // kdf: TPMT_KDF_SCHEME (NULL)
-    public.extend_from_slice(&TPM2_ALG_NULL.to_be_bytes());
-
-    // unique: TPMS_ECC_POINT (empty X and Y)
-    public.extend_from_slice(&0u16.to_be_bytes()); // x size = 0
-    public.extend_from_slice(&0u16.to_be_bytes()); // y size = 0
+    // unique: empty ECC point
+    public.extend_from_slice(&0u16.to_be_bytes());
+    public.extend_from_slice(&0u16.to_be_bytes());
 
     public
 }
@@ -1375,32 +1055,19 @@ fn build_srk_public_ecc() -> Vec<u8> {
 fn build_sealing_public() -> Vec<u8> {
     let mut public = Vec::new();
 
-    // type: TPM2_ALG_KEYEDHASH
     public.extend_from_slice(&TPM2_ALG_KEYEDHASH.to_be_bytes());
-    // nameAlg: TPM2_ALG_SHA256
     public.extend_from_slice(&TPM2_ALG_SHA256.to_be_bytes());
 
-    // objectAttributes (4 bytes):
-    // fixedTPM | fixedParent | userWithAuth (no sign, no decrypt, no restricted)
-    let attrs: u32 = 0x00000052; // fixedTPM | fixedParent | userWithAuth
+    // fixedTPM | fixedParent | userWithAuth
+    let attrs: u32 = 0x00000052;
     public.extend_from_slice(&attrs.to_be_bytes());
 
-    // authPolicy: TPM2B_DIGEST (empty)
-    public.extend_from_slice(&0u16.to_be_bytes());
-
-    // parameters: TPMS_KEYEDHASH_PARMS
-    // scheme: TPMT_KEYEDHASH_SCHEME (NULL for sealing)
-    public.extend_from_slice(&TPM2_ALG_NULL.to_be_bytes());
-
-    // unique: TPM2B_DIGEST (empty)
-    public.extend_from_slice(&0u16.to_be_bytes());
+    public.extend_from_slice(&0u16.to_be_bytes()); // authPolicy (empty)
+    public.extend_from_slice(&TPM2_ALG_NULL.to_be_bytes()); // scheme (NULL = sealing)
+    public.extend_from_slice(&0u16.to_be_bytes()); // unique (empty)
 
     public
 }
-
-// ============================================================================
-// Unit Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -1410,52 +1077,28 @@ mod tests {
     fn test_build_get_random_command() {
         let cmd = build_get_random_command(32);
 
-        // Command should be exactly 12 bytes
         assert_eq!(cmd.len(), 12);
-
-        // Check tag (bytes 0-1): TPM2_ST_NO_SESSIONS = 0x8001
-        assert_eq!(cmd[0], 0x80);
-        assert_eq!(cmd[1], 0x01);
-
-        // Check commandSize (bytes 2-5): 12 in big-endian
-        assert_eq!(cmd[2], 0x00);
-        assert_eq!(cmd[3], 0x00);
-        assert_eq!(cmd[4], 0x00);
-        assert_eq!(cmd[5], 0x0C); // 12 in hex
-
-        // Check commandCode (bytes 6-9): TPM2_CC_GetRandom = 0x0000017B
-        assert_eq!(cmd[6], 0x00);
-        assert_eq!(cmd[7], 0x00);
-        assert_eq!(cmd[8], 0x01);
-        assert_eq!(cmd[9], 0x7B);
-
-        // Check bytesRequested (bytes 10-11): 32 in big-endian
-        assert_eq!(cmd[10], 0x00);
-        assert_eq!(cmd[11], 0x20); // 32 in hex
+        assert_eq!(cmd[0..2], [0x80, 0x01]); // tag
+        assert_eq!(cmd[2..6], [0x00, 0x00, 0x00, 0x0C]); // commandSize
+        assert_eq!(cmd[6..10], [0x00, 0x00, 0x01, 0x7B]); // commandCode
+        assert_eq!(cmd[10..12], [0x00, 0x20]); // bytesRequested
     }
 
     #[test]
     fn test_build_get_random_command_max_bytes() {
         let cmd = build_get_random_command(0xFFFF);
-
-        // Check bytesRequested is 0xFFFF
         assert_eq!(cmd[10], 0xFF);
         assert_eq!(cmd[11], 0xFF);
     }
 
     #[test]
     fn test_parse_get_random_response_success() {
-        // Construct a valid response with 8 random bytes
         let mut response = Vec::new();
-
-        // Header
-        response.extend_from_slice(&TPM2_ST_NO_SESSIONS.to_be_bytes()); // tag
-        response.extend_from_slice(&20u32.to_be_bytes()); // responseSize
-        response.extend_from_slice(&0u32.to_be_bytes()); // responseCode (success)
-
-        // TPM2B_DIGEST
-        response.extend_from_slice(&8u16.to_be_bytes()); // size = 8
-        response.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE]); // random data
+        response.extend_from_slice(&TPM2_ST_NO_SESSIONS.to_be_bytes());
+        response.extend_from_slice(&20u32.to_be_bytes());
+        response.extend_from_slice(&0u32.to_be_bytes());
+        response.extend_from_slice(&8u16.to_be_bytes());
+        response.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE]);
 
         let result = parse_get_random_response(&response).unwrap();
         assert_eq!(result, vec![0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE]);
@@ -1463,13 +1106,10 @@ mod tests {
 
     #[test]
     fn test_parse_get_random_response_tpm_error() {
-        // Construct a response with an error code
         let mut response = Vec::new();
-
-        // Header
-        response.extend_from_slice(&TPM2_ST_NO_SESSIONS.to_be_bytes()); // tag
-        response.extend_from_slice(&10u32.to_be_bytes()); // responseSize
-        response.extend_from_slice(&0x101u32.to_be_bytes()); // responseCode (TPM_RC_FAILURE)
+        response.extend_from_slice(&TPM2_ST_NO_SESSIONS.to_be_bytes());
+        response.extend_from_slice(&10u32.to_be_bytes());
+        response.extend_from_slice(&0x101u32.to_be_bytes()); // TPM_RC_FAILURE
 
         let result = parse_get_random_response(&response);
         assert!(result.is_err());
@@ -1479,64 +1119,28 @@ mod tests {
 
     #[test]
     fn test_parse_get_random_response_too_short() {
-        let response = vec![0x80, 0x01, 0x00, 0x00]; // Only 4 bytes
-
-        let result = parse_get_random_response(&response);
-        assert!(result.is_err());
+        let response = vec![0x80, 0x01, 0x00, 0x00];
+        assert!(parse_get_random_response(&response).is_err());
     }
 
     #[test]
     fn test_build_pcr_read_command_single_pcr() {
         let cmd = build_pcr_read_command(&[0]);
 
-        // Command should be exactly 20 bytes
         assert_eq!(cmd.len(), 20);
-
-        // Check tag (bytes 0-1): TPM2_ST_NO_SESSIONS = 0x8001
-        assert_eq!(cmd[0], 0x80);
-        assert_eq!(cmd[1], 0x01);
-
-        // Check commandSize (bytes 2-5): 20 in big-endian
-        assert_eq!(cmd[2], 0x00);
-        assert_eq!(cmd[3], 0x00);
-        assert_eq!(cmd[4], 0x00);
-        assert_eq!(cmd[5], 0x14); // 20 in hex
-
-        // Check commandCode (bytes 6-9): TPM2_CC_PCR_Read = 0x0000017E
-        assert_eq!(cmd[6], 0x00);
-        assert_eq!(cmd[7], 0x00);
-        assert_eq!(cmd[8], 0x01);
-        assert_eq!(cmd[9], 0x7E);
-
-        // Check count (bytes 10-13): 1 in big-endian
-        assert_eq!(cmd[10], 0x00);
-        assert_eq!(cmd[11], 0x00);
-        assert_eq!(cmd[12], 0x00);
-        assert_eq!(cmd[13], 0x01);
-
-        // Check hash algorithm (bytes 14-15): TPM2_ALG_SHA256 = 0x000B
-        assert_eq!(cmd[14], 0x00);
-        assert_eq!(cmd[15], 0x0B);
-
-        // Check sizeofSelect (byte 16): 3
-        assert_eq!(cmd[16], 0x03);
-
-        // Check pcrSelect bitmap (bytes 17-19): PCR 0 selected
-        assert_eq!(cmd[17], 0x01); // PCR 0 is bit 0 of byte 0
-        assert_eq!(cmd[18], 0x00);
-        assert_eq!(cmd[19], 0x00);
+        assert_eq!(cmd[0..2], [0x80, 0x01]); // tag
+        assert_eq!(cmd[2..6], [0x00, 0x00, 0x00, 0x14]); // commandSize
+        assert_eq!(cmd[6..10], [0x00, 0x00, 0x01, 0x7E]); // commandCode
+        assert_eq!(cmd[10..14], [0x00, 0x00, 0x00, 0x01]); // count
+        assert_eq!(cmd[14..16], [0x00, 0x0B]); // hash alg
+        assert_eq!(cmd[16], 0x03); // sizeofSelect
+        assert_eq!(cmd[17..20], [0x01, 0x00, 0x00]); // PCR 0 bitmap
     }
 
     #[test]
     fn test_build_pcr_read_command_multiple_pcrs() {
-        // Select PCRs 0, 4, 7 (typical attestation PCRs)
         let cmd = build_pcr_read_command(&[0, 4, 7]);
-
-        // Check pcrSelect bitmap
-        // PCR 0 = bit 0 = 0x01
-        // PCR 4 = bit 4 = 0x10
-        // PCR 7 = bit 7 = 0x80
-        // Combined: 0x01 | 0x10 | 0x80 = 0x91
+        // PCR 0|4|7 = 0x01|0x10|0x80 = 0x91
         assert_eq!(cmd[17], 0x91);
         assert_eq!(cmd[18], 0x00);
         assert_eq!(cmd[19], 0x00);
@@ -1544,56 +1148,39 @@ mod tests {
 
     #[test]
     fn test_build_pcr_read_command_pcrs_across_bytes() {
-        // Select PCRs 0, 8, 16
         let cmd = build_pcr_read_command(&[0, 8, 16]);
-
-        // PCR 0 = bit 0 of byte 0 = 0x01
-        // PCR 8 = bit 0 of byte 1 = 0x01
-        // PCR 16 = bit 0 of byte 2 = 0x01
-        assert_eq!(cmd[17], 0x01);
-        assert_eq!(cmd[18], 0x01);
-        assert_eq!(cmd[19], 0x01);
+        // Each PCR is bit 0 of its respective byte
+        assert_eq!(cmd[17..20], [0x01, 0x01, 0x01]);
     }
 
     #[test]
     fn test_build_pcr_read_command_ignores_invalid_pcrs() {
-        // PCR 24 and above should be ignored (only 0-23 are valid)
         let cmd = build_pcr_read_command(&[0, 24, 100]);
-
-        // Only PCR 0 should be set
-        assert_eq!(cmd[17], 0x01);
-        assert_eq!(cmd[18], 0x00);
-        assert_eq!(cmd[19], 0x00);
+        assert_eq!(cmd[17..20], [0x01, 0x00, 0x00]);
     }
 
     #[test]
     fn test_parse_response_code_success() {
         let mut response = Vec::new();
-        response.extend_from_slice(&TPM2_ST_NO_SESSIONS.to_be_bytes()); // tag
-        response.extend_from_slice(&10u32.to_be_bytes()); // responseSize
-        response.extend_from_slice(&0u32.to_be_bytes()); // responseCode (success)
-
-        let code = parse_response_code(&response).unwrap();
-        assert_eq!(code, 0);
+        response.extend_from_slice(&TPM2_ST_NO_SESSIONS.to_be_bytes());
+        response.extend_from_slice(&10u32.to_be_bytes());
+        response.extend_from_slice(&0u32.to_be_bytes());
+        assert_eq!(parse_response_code(&response).unwrap(), 0);
     }
 
     #[test]
     fn test_parse_response_code_error() {
         let mut response = Vec::new();
-        response.extend_from_slice(&TPM2_ST_NO_SESSIONS.to_be_bytes()); // tag
-        response.extend_from_slice(&10u32.to_be_bytes()); // responseSize
-        response.extend_from_slice(&0x8CE_u32.to_be_bytes()); // responseCode (TPM_RC_AUTH_FAIL)
-
-        let code = parse_response_code(&response).unwrap();
-        assert_eq!(code, 0x8CE);
+        response.extend_from_slice(&TPM2_ST_NO_SESSIONS.to_be_bytes());
+        response.extend_from_slice(&10u32.to_be_bytes());
+        response.extend_from_slice(&0x8CE_u32.to_be_bytes());
+        assert_eq!(parse_response_code(&response).unwrap(), 0x8CE);
     }
 
     #[test]
     fn test_parse_response_code_too_short() {
-        let response = vec![0x80, 0x01, 0x00, 0x00, 0x00]; // Only 5 bytes
-
-        let result = parse_response_code(&response);
-        assert!(result.is_err());
+        let response = vec![0x80, 0x01, 0x00, 0x00, 0x00];
+        assert!(parse_response_code(&response).is_err());
     }
 
     #[test]

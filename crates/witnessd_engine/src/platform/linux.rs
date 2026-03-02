@@ -26,10 +26,6 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, RwLock};
 
-// =============================================================================
-// Linux keycode to zone mapping
-// =============================================================================
-
 /// Map Linux evdev keycode to keyboard zone (0-7).
 /// Zones are based on standard QWERTY keyboard layout and typical finger usage.
 pub fn linux_keycode_to_zone(keycode: u16) -> u8 {
@@ -59,18 +55,12 @@ pub fn linux_keycode_to_zone(keycode: u16) -> u8 {
         10 | 11 | 12 | 13 | 25 | 26 | 27 | 39 | 40 | 41 | 43 | 53 | 54 | 28 | 14 | 57 | 100
         | 97 | 56 => 7, // 9, 0, -, =, P, [, ], ;, ', `, \, /, RSHIFT, ENTER, BKSP, SPACE, RALT, RCTRL, LALT
 
-        // Default to zone 0 for unknown keys
         _ => 0,
     }
 }
 
-// =============================================================================
-// Permission handling
-// =============================================================================
-
 /// Check if we have access to input devices.
 fn check_input_device_access() -> bool {
-    // Try to enumerate devices to check access
     match fs::read_dir("/dev/input") {
         Ok(entries) => {
             for entry in entries.flatten() {
@@ -126,10 +116,6 @@ pub fn request_all_permissions() -> PermissionStatus {
 pub fn has_required_permissions() -> bool {
     check_input_device_access()
 }
-
-// =============================================================================
-// Device enumeration
-// =============================================================================
 
 /// Information about a Linux input device.
 #[derive(Debug, Clone)]
@@ -261,10 +247,6 @@ fn is_virtual_device(name: &str, phys: Option<&str>, vendor_id: u16, product_id:
     false
 }
 
-// =============================================================================
-// Focus tracking
-// =============================================================================
-
 /// Get information about the currently focused application and document.
 /// This uses various methods depending on the display server.
 pub fn get_active_focus() -> Result<FocusInfo> {
@@ -295,7 +277,6 @@ fn get_focus_from_proc() -> Result<FocusInfo> {
         let pid_str = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
         if pid_str.chars().all(|c| c.is_ascii_digit()) {
             if let Ok(cmdline) = fs::read_to_string(path.join("cmdline")) {
-                // Look for common editors
                 if cmdline.contains("vim")
                     || cmdline.contains("emacs")
                     || cmdline.contains("code")
@@ -406,10 +387,6 @@ fn get_x11_focus() -> Result<FocusInfo> {
     })
 }
 
-// =============================================================================
-// Keystroke capture
-// =============================================================================
-
 /// Linux keystroke capture implementation using evdev.
 pub struct LinuxKeystrokeCapture {
     running: Arc<AtomicBool>,
@@ -459,7 +436,6 @@ impl KeystrokeCapture for LinuxKeystrokeCapture {
             return Err(anyhow!("Keystroke capture already running"));
         }
 
-        // Check permissions
         if !check_input_device_access() {
             let _ = request_all_permissions();
             return Err(anyhow!(
@@ -472,7 +448,6 @@ impl KeystrokeCapture for LinuxKeystrokeCapture {
 
         self.running.store(true, Ordering::SeqCst);
 
-        // Enumerate physical devices
         let physical_paths = self.enumerate_physical_devices()?;
         if physical_paths.is_empty() {
             return Err(anyhow!("No physical keyboard devices found"));
@@ -483,7 +458,6 @@ impl KeystrokeCapture for LinuxKeystrokeCapture {
         let running = Arc::clone(&self.running);
         let devices = Arc::clone(&self.physical_devices);
 
-        // Start a reader thread for each physical device
         for path in physical_paths {
             let tx = tx.clone();
             let stats = Arc::clone(&stats);
@@ -505,7 +479,6 @@ impl KeystrokeCapture for LinuxKeystrokeCapture {
         self.running.store(false, Ordering::SeqCst);
         self.sender = None;
 
-        // Wait for threads to finish
         for thread in self.threads.drain(..) {
             let _ = thread.join();
         }
@@ -548,7 +521,6 @@ impl LinuxKeystrokeCapture {
             }
         };
 
-        // Get device info for synthetic detection
         let device_info = devices
             .read()
             .unwrap_or_else(|p| p.into_inner())
@@ -566,7 +538,6 @@ impl LinuxKeystrokeCapture {
             match device.fetch_events() {
                 Ok(events) => {
                     for event in events {
-                        // Only process key events
                         if event.event_type() != EventType::KEY {
                             continue;
                         }
@@ -578,7 +549,6 @@ impl LinuxKeystrokeCapture {
 
                         let keycode = event.code();
 
-                        // Update stats
                         {
                             let mut s = stats.write().unwrap_or_else(|p| p.into_inner());
                             s.total_events += 1;
@@ -599,7 +569,6 @@ impl LinuxKeystrokeCapture {
                         let now = chrono::Utc::now().timestamp_nanos_safe();
                         let zone = linux_keycode_to_zone(keycode);
 
-                        // Try to get character value
                         let char_value = keycode_to_char(keycode);
 
                         let keystroke = KeystrokeEvent {
@@ -631,7 +600,6 @@ impl LinuxKeystrokeCapture {
 
 /// Convert evdev keycode to character (basic implementation).
 fn keycode_to_char(keycode: u16) -> Option<char> {
-    // Basic mapping for common keys (lowercase, no modifiers)
     match keycode {
         16 => Some('q'),
         17 => Some('w'),
@@ -790,10 +758,6 @@ impl HIDEnumerator for LinuxHIDEnumerator {
     }
 }
 
-// =============================================================================
-// Mouse capture
-// =============================================================================
-
 /// Enumerate all mouse/pointing input devices.
 pub fn enumerate_mice() -> Result<Vec<LinuxInputDevice>> {
     let mut mice = Vec::new();
@@ -943,7 +907,6 @@ impl LinuxMouseCapture {
             }
         };
 
-        // Get device info for synthetic detection
         let device_info = devices
             .read()
             .unwrap_or_else(|p| p.into_inner())
@@ -954,7 +917,6 @@ impl LinuxMouseCapture {
             .as_ref()
             .map(|d| format!("{:04x}:{:04x}", d.vendor_id, d.product_id));
 
-        // Track relative movement accumulation
         let mut pending_dx: f64 = 0.0;
         let mut pending_dy: f64 = 0.0;
 
@@ -962,7 +924,6 @@ impl LinuxMouseCapture {
             match device.fetch_events() {
                 Ok(events) => {
                     for event in events {
-                        // Only process relative movement events
                         if event.event_type() != EventType::RELATIVE {
                             // SYN event indicates end of batch - emit accumulated movement
                             if event.event_type() == EventType::SYNCHRONIZATION
@@ -970,7 +931,6 @@ impl LinuxMouseCapture {
                             {
                                 let now = chrono::Utc::now().timestamp_nanos_safe();
 
-                                // Update position
                                 let (x, y) = {
                                     let mut pos =
                                         last_position.write().unwrap_or_else(|p| p.into_inner());
@@ -995,14 +955,12 @@ impl LinuxMouseCapture {
                                     device_id: device_id.clone(),
                                 };
 
-                                // Update stats for micro-movements
                                 if is_micro {
                                     if let Ok(mut s) = stats.write() {
                                         s.record(&mouse_event);
                                     }
                                 }
 
-                                // Send if not in idle-only mode, or if it's idle movement
                                 if (!idle_only_mode.load(Ordering::Relaxed) || is_micro)
                                     && tx.send(mouse_event).is_err()
                                 {
@@ -1015,7 +973,6 @@ impl LinuxMouseCapture {
                             continue;
                         }
 
-                        // Accumulate relative movement
                         if let InputEventKind::RelAxis(axis) = event.kind() {
                             match axis {
                                 RelativeAxisType::REL_X => {
@@ -1046,7 +1003,6 @@ impl MouseCapture for LinuxMouseCapture {
             return Err(anyhow!("Mouse capture already running"));
         }
 
-        // Check permissions
         if !check_input_device_access() {
             let _ = request_all_permissions();
             return Err(anyhow!(
@@ -1059,7 +1015,6 @@ impl MouseCapture for LinuxMouseCapture {
 
         self.running.store(true, Ordering::SeqCst);
 
-        // Enumerate physical devices
         let physical_paths = self.enumerate_physical_devices()?;
         if physical_paths.is_empty() {
             // Not an error - mice may not be connected
@@ -1072,7 +1027,6 @@ impl MouseCapture for LinuxMouseCapture {
         let last_position = Arc::clone(&self.last_position);
         let idle_only_mode = Arc::clone(&self.idle_only_mode);
 
-        // Start a reader thread for each physical device
         for path in physical_paths {
             let tx = tx.clone();
             let stats = Arc::clone(&stats);
@@ -1103,7 +1057,6 @@ impl MouseCapture for LinuxMouseCapture {
         self.running.store(false, Ordering::SeqCst);
         self.sender = None;
 
-        // Wait for threads to finish
         for thread in self.threads.drain(..) {
             let _ = thread.join();
         }
@@ -1148,10 +1101,6 @@ impl Drop for LinuxMouseCapture {
         let _ = self.stop();
     }
 }
-
-// =============================================================================
-// Tests
-// =============================================================================
 
 #[cfg(test)]
 mod tests {

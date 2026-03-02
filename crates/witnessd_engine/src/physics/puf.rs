@@ -50,10 +50,7 @@ impl SiliconPUF {
             }
         }
 
-        let result = sha2::Digest::finalize(hasher);
-        let mut out = [0u8; 32];
-        out.copy_from_slice(&result);
-        out
+        sha2::Digest::finalize(hasher).into()
     }
 }
 

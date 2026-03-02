@@ -1,61 +1,29 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
-//! Voice Fingerprint - Writing style analysis
+//! Writing style fingerprint (word length, punctuation, MinHash n-grams,
+//! correction patterns). No raw text is ever stored.
 //!
-//! This module captures writing style characteristics WITHOUT storing raw text:
-//! - Word length distribution
-//! - Punctuation patterns
-//! - N-gram signatures (hashed, not plaintext)
-//! - Correction/backspace patterns
-//!
-//! This is DISABLED by default and requires explicit consent.
-//!
-//! # Privacy
-//!
-//! - No raw text is ever stored
-//! - N-grams are hashed using MinHash for anonymization
-//! - All metrics are statistical aggregates
-//! - Data can be completely deleted by revoking consent
+//! Disabled by default; requires explicit consent.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet, VecDeque};
 
-// =============================================================================
-// Constants
-// =============================================================================
-
-/// Maximum word length tracked
 const MAX_WORD_LENGTH: usize = 20;
-/// Number of hash functions for MinHash
 const MINHASH_FUNCTIONS: usize = 100;
-/// N-gram size for signature
 const NGRAM_SIZE: usize = 3;
-/// Minimum n-grams before generating signature
 const MIN_NGRAMS: usize = 50;
 
-// =============================================================================
-// VoiceFingerprint
-// =============================================================================
-
-/// Voice fingerprint capturing writing style without storing content.
+/// Statistical writing-style fingerprint (content-free).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VoiceFingerprint {
-    /// Whether consent was given for this fingerprint
     pub consent_given: bool,
-    /// Word length distribution (1-20 characters)
     pub word_length_distribution: [f32; MAX_WORD_LENGTH],
-    /// Punctuation usage signature
     pub punctuation_signature: PunctuationSignature,
-    /// N-gram signature using MinHash (no raw text)
     pub ngram_signature: NgramSignature,
-    /// Correction/editing behavior
     pub correction_rate: f64,
-    /// Backspace usage patterns
     pub backspace_signature: BackspaceSignature,
-    /// Total characters processed
     pub total_chars: u64,
-    /// Total words processed
     pub total_words: u64,
 }
 
@@ -75,7 +43,6 @@ impl Default for VoiceFingerprint {
 }
 
 impl VoiceFingerprint {
-    /// Create a new voice fingerprint with consent flag.
     pub fn new(consent_given: bool) -> Self {
         Self {
             consent_given,
@@ -83,7 +50,7 @@ impl VoiceFingerprint {
         }
     }
 
-    /// Merge another fingerprint into this one.
+    /// Weighted merge by `total_chars`.
     pub fn merge(&mut self, other: &VoiceFingerprint) {
         let total = self.total_chars + other.total_chars;
         if total == 0 {
@@ -93,7 +60,6 @@ impl VoiceFingerprint {
         let self_weight = self.total_chars as f64 / total as f64;
         let other_weight = other.total_chars as f64 / total as f64;
 
-        // Word length distribution
         for i in 0..MAX_WORD_LENGTH {
             self.word_length_distribution[i] = (self.word_length_distribution[i] as f64
                 * self_weight
@@ -113,12 +79,11 @@ impl VoiceFingerprint {
         self.total_words += other.total_words;
     }
 
-    /// Calculate the average word length from the distribution.
     pub fn avg_word_length(&self) -> f64 {
         let mut weighted_sum = 0.0;
         let mut total_weight = 0.0;
         for (i, &freq) in self.word_length_distribution.iter().enumerate() {
-            let word_len = (i + 1) as f64; // 1-indexed
+            let word_len = (i + 1) as f64;
             weighted_sum += word_len * freq as f64;
             total_weight += freq as f64;
         }
@@ -129,7 +94,7 @@ impl VoiceFingerprint {
         }
     }
 
-    /// Calculate similarity with another fingerprint.
+    /// Weighted similarity (0.0-1.0) across all voice dimensions.
     pub fn similarity(&self, other: &VoiceFingerprint) -> f64 {
         let word_len_sim = histogram_similarity(
             &self.word_length_distribution,
@@ -144,34 +109,26 @@ impl VoiceFingerprint {
                 .abs()
                 .min(1.0);
 
-        // Weighted combination
         (word_len_sim * 0.25 + punct_sim * 0.25 + ngram_sim * 0.35 + correction_sim * 0.15)
             .clamp(0.0, 1.0)
     }
 }
 
-// =============================================================================
-// Punctuation Signature
-// =============================================================================
-
-/// Punctuation usage patterns.
+/// Normalized punctuation character frequencies.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PunctuationSignature {
-    /// Frequency of common punctuation marks (normalized)
     pub frequencies: HashMap<char, f32>,
-    /// Punctuation after word patterns (e.g., comma after "and")
-    pub context_patterns: Vec<u64>, // Hashed patterns
+    /// Hashed context patterns (privacy-preserving)
+    pub context_patterns: Vec<u64>,
 }
 
 impl PunctuationSignature {
-    /// Record a punctuation character.
     pub fn record(&mut self, c: char) {
         if c.is_ascii_punctuation() {
             *self.frequencies.entry(c).or_insert(0.0) += 1.0;
         }
     }
 
-    /// Normalize frequencies.
     pub fn normalize(&mut self) {
         let total: f32 = self.frequencies.values().sum();
         if total > 0.0 {
@@ -181,7 +138,7 @@ impl PunctuationSignature {
         }
     }
 
-    /// Merge with another signature.
+    /// Weighted merge.
     pub fn merge(&mut self, other: &PunctuationSignature, self_weight: f64, other_weight: f64) {
         for (k, v) in &other.frequencies {
             let entry = self.frequencies.entry(*k).or_insert(0.0);
@@ -189,7 +146,6 @@ impl PunctuationSignature {
         }
     }
 
-    /// Calculate similarity.
     pub fn similarity(&self, other: &PunctuationSignature) -> f64 {
         if self.frequencies.is_empty() && other.frequencies.is_empty() {
             return 1.0;
@@ -212,19 +168,11 @@ impl PunctuationSignature {
     }
 }
 
-// =============================================================================
-// N-gram Signature
-// =============================================================================
-
-/// N-gram signature using MinHash for privacy-preserving style matching.
-///
-/// This captures writing style patterns without storing actual text.
-/// The MinHash signature allows similarity comparison without revealing content.
+/// Privacy-preserving n-gram signature via MinHash.
+/// Allows Jaccard similarity estimation without revealing content.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NgramSignature {
-    /// MinHash signature (hashes of minimum hash values)
     pub minhash: Vec<u64>,
-    /// Number of n-grams processed
     pub ngram_count: u64,
 }
 
@@ -238,9 +186,8 @@ impl Default for NgramSignature {
 }
 
 impl NgramSignature {
-    /// Add an n-gram to the signature.
+    /// Update MinHash slots with a new n-gram.
     pub fn add_ngram(&mut self, ngram: &str) {
-        // Hash the n-gram with different seeds to get MinHash values
         for i in 0..MINHASH_FUNCTIONS {
             let hash = hash_with_seed(ngram, i as u64);
             if hash < self.minhash[i] {
@@ -250,19 +197,17 @@ impl NgramSignature {
         self.ngram_count += 1;
     }
 
-    /// Merge with another signature.
+    /// MinHash merge: element-wise minimum.
     pub fn merge(&mut self, other: &NgramSignature) {
-        // MinHash merge: take minimum of each position
         for i in 0..MINHASH_FUNCTIONS {
             self.minhash[i] = self.minhash[i].min(other.minhash[i]);
         }
         self.ngram_count += other.ngram_count;
     }
 
-    /// Calculate Jaccard similarity estimate using MinHash.
+    /// Estimated Jaccard similarity. Returns 0.5 if either side has < `MIN_NGRAMS`.
     pub fn similarity(&self, other: &NgramSignature) -> f64 {
         if self.ngram_count < MIN_NGRAMS as u64 || other.ngram_count < MIN_NGRAMS as u64 {
-            // Not enough data for reliable comparison
             return 0.5;
         }
 
@@ -277,30 +222,21 @@ impl NgramSignature {
     }
 }
 
-/// Hash a string with a seed for MinHash.
+/// SHA-256 with seed, truncated to `u64` for MinHash.
 fn hash_with_seed(s: &str, seed: u64) -> u64 {
     let mut hasher = Sha256::new();
     hasher.update(s.as_bytes());
     hasher.update(seed.to_le_bytes());
     let result = hasher.finalize();
-    // Take first 8 bytes as u64
     u64::from_le_bytes(result[0..8].try_into().unwrap())
 }
 
-// =============================================================================
-// Backspace Signature
-// =============================================================================
-
-/// Backspace/correction behavior patterns.
+/// Correction/backspace behavioral signature.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackspaceSignature {
-    /// Average characters before backspace
     pub mean_chars_before_backspace: f64,
-    /// Average consecutive backspaces
     pub mean_consecutive_backspaces: f64,
-    /// Backspace frequency (per 100 characters)
     pub backspace_frequency: f64,
-    /// Quick correction rate (backspace within 2 chars of mistake)
     pub quick_correction_rate: f64,
 }
 
@@ -316,7 +252,7 @@ impl Default for BackspaceSignature {
 }
 
 impl BackspaceSignature {
-    /// Merge with another signature.
+    /// Weighted merge.
     pub fn merge(&mut self, other: &BackspaceSignature, self_weight: f64, other_weight: f64) {
         self.mean_chars_before_backspace = self.mean_chars_before_backspace * self_weight
             + other.mean_chars_before_backspace * other_weight;
@@ -328,7 +264,6 @@ impl BackspaceSignature {
             self.quick_correction_rate * self_weight + other.quick_correction_rate * other_weight;
     }
 
-    /// Calculate similarity.
     pub fn similarity(&self, other: &BackspaceSignature) -> f64 {
         let sims = [
             relative_sim(
@@ -354,34 +289,20 @@ fn relative_sim(a: f64, b: f64) -> f64 {
     }
 }
 
-// =============================================================================
-// Voice Collector
-// =============================================================================
-
-/// Collector for building voice fingerprints from keystroke events.
+/// Streaming collector that builds a `VoiceFingerprint` from keystroke events.
 pub struct VoiceCollector {
-    /// Current word buffer
     current_word: String,
-    /// Recent n-grams (sliding window)
     ngram_buffer: VecDeque<char>,
-    /// Characters since last backspace
     chars_since_backspace: usize,
-    /// Consecutive backspace count
     consecutive_backspaces: usize,
-    /// Total backspace count
     total_backspaces: usize,
-    /// Quick corrections (backspace within 2 chars)
     quick_corrections: usize,
-    /// Total character count
     total_chars: usize,
-    /// Word length counts
     word_lengths: [usize; MAX_WORD_LENGTH],
-    /// Current fingerprint
     fingerprint: VoiceFingerprint,
 }
 
 impl VoiceCollector {
-    /// Create a new voice collector.
     pub fn new() -> Self {
         Self {
             current_word: String::new(),
@@ -392,13 +313,12 @@ impl VoiceCollector {
             quick_corrections: 0,
             total_chars: 0,
             word_lengths: [0; MAX_WORD_LENGTH],
-            fingerprint: VoiceFingerprint::new(true),
+            fingerprint: VoiceFingerprint::new(false),
         }
     }
 
-    /// Record a keystroke.
+    /// Process a keystroke, updating word/ngram/punctuation/backspace stats.
     pub fn record_keystroke(&mut self, keycode: u16, char_value: Option<char>) {
-        // Check for backspace
         if is_backspace_keycode(keycode) {
             self.handle_backspace();
             return;
@@ -431,7 +351,6 @@ impl VoiceCollector {
         }
         self.chars_since_backspace = 0;
 
-        // Remove from current word
         self.current_word.pop();
         self.ngram_buffer.pop_back();
     }
@@ -460,11 +379,10 @@ impl VoiceCollector {
         }
     }
 
-    /// Get the current fingerprint.
+    /// Snapshot the accumulated stats into a `VoiceFingerprint`.
     pub fn current_fingerprint(&self) -> VoiceFingerprint {
         let mut fp = self.fingerprint.clone();
 
-        // Update word length distribution
         let total_words: usize = self.word_lengths.iter().sum();
         if total_words > 0 {
             for i in 0..MAX_WORD_LENGTH {
@@ -472,7 +390,6 @@ impl VoiceCollector {
             }
         }
 
-        // Update backspace signature
         if self.total_chars > 0 {
             fp.correction_rate = self.total_backspaces as f64 / self.total_chars as f64;
             fp.backspace_signature.backspace_frequency =
@@ -489,12 +406,10 @@ impl VoiceCollector {
         fp
     }
 
-    /// Get the number of samples (characters).
     pub fn sample_count(&self) -> usize {
         self.total_chars
     }
 
-    /// Reset the collector.
     pub fn reset(&mut self) {
         self.current_word.clear();
         self.ngram_buffer.clear();
@@ -504,7 +419,7 @@ impl VoiceCollector {
         self.quick_corrections = 0;
         self.total_chars = 0;
         self.word_lengths = [0; MAX_WORD_LENGTH];
-        self.fingerprint = VoiceFingerprint::new(true);
+        self.fingerprint = VoiceFingerprint::new(false);
     }
 }
 
@@ -514,26 +429,18 @@ impl Default for VoiceCollector {
     }
 }
 
-/// Check if a keycode is backspace.
+/// Cross-platform backspace detection (macOS/Linux/Windows/ASCII DEL).
 fn is_backspace_keycode(keycode: u16) -> bool {
-    // Common backspace keycodes across platforms
-    keycode == 0x33     // macOS
-        || keycode == 14    // Linux evdev
-        || keycode == 0x08  // Windows VK_BACK
-        || keycode == 0x7F // ASCII DEL
+    keycode == 0x33 || keycode == 14 || keycode == 0x08 || keycode == 0x7F
 }
 
-/// Calculate histogram similarity (Bhattacharyya coefficient).
+/// Bhattacharyya coefficient between two histograms.
 pub fn histogram_similarity(a: &[f32], b: &[f32]) -> f64 {
     a.iter()
         .zip(b.iter())
         .map(|(x, y)| ((*x as f64) * (*y as f64)).sqrt())
         .sum()
 }
-
-// =============================================================================
-// Tests
-// =============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -551,7 +458,6 @@ mod tests {
         let mut sig1 = NgramSignature::default();
         let mut sig2 = NgramSignature::default();
 
-        // Same content should have high similarity
         for word in ["the", "quick", "brown", "fox", "jumps"] {
             for ngram in word.chars().collect::<Vec<_>>().windows(3) {
                 let s: String = ngram.iter().collect();
@@ -560,7 +466,6 @@ mod tests {
             }
         }
 
-        // Need minimum n-grams for comparison
         for i in 0..50 {
             sig1.add_ngram(&format!("xxx{}", i));
             sig2.add_ngram(&format!("xxx{}", i));
@@ -574,7 +479,6 @@ mod tests {
     fn test_voice_collector() {
         let mut collector = VoiceCollector::new();
 
-        // Simulate typing "hello world"
         for c in "hello".chars() {
             collector.record_keystroke(0, Some(c));
         }

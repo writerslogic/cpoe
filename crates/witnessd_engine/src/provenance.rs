@@ -1,168 +1,114 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
-//! Cross-Document Provenance Links
+//! Cross-document provenance links between Evidence packets.
 //!
-//! This module implements the provenance linking mechanism defined in the
-//! witnessd RFC. Provenance links establish cryptographic relationships
-//! between Evidence packets, enabling authors to prove that one document
-//! evolved from, merged with, or was derived from other documented works.
+//! Establishes cryptographic relationships (continuation, merge, fork, etc.)
+//! between packets so authors can prove derivation history. Verified via
+//! parent chain-hash matching, cross-packet attestation signatures, and
+//! temporal consistency checks.
 //!
-//! # Security Model
+//! # Privacy
 //!
-//! Provenance links are verified by:
-//! 1. Validating that parent-chain-hash matches the final checkpoint hash
-//!    of the parent Evidence packet (if available)
-//! 2. Verifying that cross-packet attestation signatures are valid
-//! 3. Checking temporal consistency (derivation cannot precede parent creation)
-//!
-//! # Privacy Considerations
-//!
-//! Provenance links may reveal:
-//! - Document lineage and creative history
-//! - Collaboration patterns and research relationships
-//! - Timing of derivative work
+//! Links may reveal document lineage, collaboration patterns, and derivation timing.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// Type of derivation relationship between documents
+/// Derivation relationship between documents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DerivationType {
-    /// Same work, new Evidence packet (e.g., monthly export of ongoing project)
     Continuation,
-    /// Combined from multiple sources
     Merge,
-    /// Extracted from larger work
     Split,
-    /// Substantial revision
     Rewrite,
-    /// Language translation
     Translation,
-    /// Independent development branch
     Fork,
-    /// References but not derived from (citation only)
     CitationOnly,
 }
 
-/// Aspect of the work that was derived
+/// Aspect of the work that was derived.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DerivationAspect {
-    /// Document organization
     Structure,
-    /// Textual content
     Content,
-    /// Conceptual elements
     Ideas,
-    /// Data or results
     Data,
-    /// Methods or approach
     Methodology,
-    /// Source code
     Code,
 }
 
-/// Extent of derivation
+/// Extent of derivation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DerivationExtent {
-    /// Not derived
     None,
-    /// Less than 10%
+    /// <10%
     Minimal,
-    /// 10-50%
+    /// 10--50%
     Partial,
-    /// 50-90%
+    /// 50--90%
     Substantial,
-    /// More than 90%
+    /// >90%
     Complete,
 }
 
-/// Link to a parent Evidence packet
+/// Cryptographic link to a parent Evidence packet.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProvenanceLink {
-    /// UUID of the parent Evidence packet
     pub parent_packet_id: Uuid,
-
-    /// Hash of the final checkpoint in the parent packet
-    /// Used for verification when parent is available
+    /// Final checkpoint hash; used for verification when parent is available
     pub parent_chain_hash: String,
-
-    /// Type of derivation relationship
     pub derivation_type: DerivationType,
-
-    /// When this derivation occurred
     pub derivation_timestamp: DateTime<Utc>,
-
-    /// Human-readable description of the relationship
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relationship_description: Option<String>,
-
-    /// Indices of checkpoints inherited from parent
-    /// (for continuation/split operations)
+    /// Checkpoint indices inherited from parent (continuation/split)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inherited_checkpoints: Option<Vec<u32>>,
-
-    /// Cross-packet attestation signature
     /// Proves author had access to parent at derivation time
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cross_attestation: Option<String>,
 }
 
-/// Claim about what was derived and how
+/// Claim about what was derived and to what extent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DerivationClaim {
-    /// What aspect was derived
     pub aspect: DerivationAspect,
-
-    /// Extent of derivation
     pub extent: DerivationExtent,
-
-    /// Description of derivation
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-
-    /// Estimated percentage (0.0-1.0)
+    /// 0.0--1.0
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub estimated_percentage: Option<f32>,
 }
 
-/// Metadata about provenance
+/// Provenance metadata and parent availability status.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProvenanceMetadata {
     /// Human-readable provenance statement
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub statement: Option<String>,
-
-    /// Whether all parent packets are available for verification
     #[serde(default)]
     pub all_parents_available: bool,
-
-    /// Reasons why some parents are missing
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub missing_parent_reasons: Vec<String>,
 }
 
-/// Complete provenance section for an Evidence packet
+/// Provenance section embedded in an Evidence packet.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProvenanceSection {
-    /// Links to parent Evidence packets
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parent_links: Vec<ProvenanceLink>,
-
-    /// Claims about derivation
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub derivation_claims: Vec<DerivationClaim>,
-
-    /// Metadata about provenance
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<ProvenanceMetadata>,
 }
 
 impl ProvenanceSection {
-    /// Create a new empty provenance section
     pub fn new() -> Self {
         Self {
             parent_links: Vec::new(),
@@ -171,25 +117,22 @@ impl ProvenanceSection {
         }
     }
 
-    /// Add a parent link
     pub fn add_link(mut self, link: ProvenanceLink) -> Self {
         self.parent_links.push(link);
         self
     }
 
-    /// Add a derivation claim
     pub fn add_claim(mut self, claim: DerivationClaim) -> Self {
         self.derivation_claims.push(claim);
         self
     }
 
-    /// Set metadata
     pub fn with_metadata(mut self, metadata: ProvenanceMetadata) -> Self {
         self.metadata = Some(metadata);
         self
     }
 
-    /// Check if this section is empty (no meaningful content)
+    /// Returns `true` if no links or claims are present.
     pub fn is_empty(&self) -> bool {
         self.parent_links.is_empty() && self.derivation_claims.is_empty()
     }
@@ -202,7 +145,6 @@ impl Default for ProvenanceSection {
 }
 
 impl ProvenanceLink {
-    /// Create a new provenance link
     pub fn new(
         parent_packet_id: Uuid,
         parent_chain_hash: String,
@@ -219,19 +161,16 @@ impl ProvenanceLink {
         }
     }
 
-    /// Set relationship description
     pub fn with_description(mut self, description: impl Into<String>) -> Self {
         self.relationship_description = Some(description.into());
         self
     }
 
-    /// Set inherited checkpoint indices
     pub fn with_inherited_checkpoints(mut self, checkpoints: Vec<u32>) -> Self {
         self.inherited_checkpoints = Some(checkpoints);
         self
     }
 
-    /// Set cross-attestation signature
     pub fn with_attestation(mut self, signature: String) -> Self {
         self.cross_attestation = Some(signature);
         self

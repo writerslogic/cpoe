@@ -13,10 +13,12 @@ const HMAC_ACCOUNT: &str = "hmac_key";
 const MNEMONIC_ACCOUNT: &str = "mnemonic_phrase";
 const DEVICE_ID_ACCOUNT: &str = "device_id";
 const MACHINE_ID_ACCOUNT: &str = "machine_id";
+const FINGERPRINT_KEY_ACCOUNT: &str = "fingerprint_key";
 
 // Caches to prevent repeated keychain access
 static SEED_CACHE: OnceLock<ProtectedBuf> = OnceLock::new();
 static HMAC_CACHE: OnceLock<ProtectedBuf> = OnceLock::new();
+static FINGERPRINT_KEY_CACHE: OnceLock<ProtectedBuf> = OnceLock::new();
 static MNEMONIC_CACHE: OnceLock<String> = OnceLock::new();
 static IDENTITY_CACHE: OnceLock<([u8; 16], String)> = OnceLock::new();
 static MIGRATION_ONCE: Once = Once::new();
@@ -268,6 +270,7 @@ impl SecureStorage {
                 MNEMONIC_ACCOUNT,
                 DEVICE_ID_ACCOUNT,
                 MACHINE_ID_ACCOUNT,
+                FINGERPRINT_KEY_ACCOUNT,
             ];
 
             for account in accounts {
@@ -380,5 +383,20 @@ impl SecureStorage {
         Self::delete(DEVICE_ID_ACCOUNT)?;
         Self::delete(MACHINE_ID_ACCOUNT)?;
         Ok(())
+    }
+
+    pub fn save_fingerprint_key(key: &[u8]) -> Result<()> {
+        Self::save(FINGERPRINT_KEY_ACCOUNT, key)
+    }
+
+    pub fn load_fingerprint_key() -> Result<Option<Vec<u8>>> {
+        if let Some(cached) = FINGERPRINT_KEY_CACHE.get() {
+            return Ok(Some(cached.as_slice().to_vec()));
+        }
+        let res = Self::load(FINGERPRINT_KEY_ACCOUNT)?;
+        if let Some(ref data) = res {
+            let _ = FINGERPRINT_KEY_CACHE.set(ProtectedBuf::new(data.clone()));
+        }
+        Ok(res)
     }
 }

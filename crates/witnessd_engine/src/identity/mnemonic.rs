@@ -83,8 +83,6 @@ mod tests {
         let phrase = MnemonicHandler::generate();
         let words: Vec<&str> = phrase.split_whitespace().collect();
         assert_eq!(words.len(), 12); // 128-bit entropy = 12 words
-
-        // Validate it works with BIP39 library directly
         let mnemonic = Mnemonic::parse_in(Language::English, &phrase);
         assert!(mnemonic.is_ok());
     }
@@ -104,7 +102,6 @@ mod tests {
         let seed = seed_result.unwrap();
         assert_eq!(seed.as_ref().len(), 64);
 
-        // Ensure it's not all zeros
         assert_ne!(seed.as_ref(), &[0u8; 64]);
     }
 
@@ -115,15 +112,12 @@ mod tests {
         assert!(fp_result.is_ok());
         let fp = fp_result.unwrap();
 
-        // 8 bytes hex encoded = 16 chars
-        assert_eq!(fp.len(), 16);
-        // Should be valid hex
+        assert_eq!(fp.len(), 16); // 8 bytes hex-encoded
         assert!(hex::decode(&fp).is_ok());
     }
 
     #[test]
     fn test_derive_silicon_seed_determinism() {
-        // This confirms the fix: derivation IS deterministic for persistent identity.
         let phrase = MnemonicHandler::generate();
         let seed1 = MnemonicHandler::derive_silicon_seed(&phrase).unwrap();
         let seed2 = MnemonicHandler::derive_silicon_seed(&phrase).unwrap();

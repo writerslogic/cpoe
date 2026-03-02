@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvError, SendError, Sender};
 use zeroize::Zeroize;
 
-/// Secure channel that encrypts messages in transit
+/// Typed channel pair with ChaCha20-Poly1305 encryption over `mpsc`
 pub struct SecureChannel<T> {
     _phantom: std::marker::PhantomData<T>,
 }
@@ -24,10 +24,9 @@ impl<T: serde::Serialize + serde::de::DeserializeOwned> SecureChannel<T> {
     pub fn new_pair() -> (SecureSender<T>, SecureReceiver<T>) {
         let (tx, rx) = mpsc::channel();
 
-        // Generate ephemeral session key (never persisted)
+        // Ephemeral session key -- zeroized immediately after cipher init
         let mut key = ChaCha20Poly1305::generate_key(&mut OsRng);
         let cipher = ChaCha20Poly1305::new(&key);
-        // Zeroize key material after cipher initialization
         key.as_mut_slice().zeroize();
 
         let sender = SecureSender {
@@ -64,7 +63,7 @@ impl<T: serde::Serialize> SecureSender<T> {
                 })
             })?;
 
-        // Incrementing nonce (safe for ephemeral keys)
+        // Counter-based nonce; safe because the key is ephemeral
         let counter = self.nonce_counter.fetch_add(1, Ordering::SeqCst);
         let mut nonce_bytes = [0u8; 12];
         nonce_bytes[4..].copy_from_slice(&counter.to_le_bytes());

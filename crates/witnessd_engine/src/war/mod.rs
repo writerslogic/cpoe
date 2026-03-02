@@ -2,8 +2,8 @@
 
 //! WAR (Witnessd Authorship Record) block encoding and verification.
 //!
-//! This module implements the WAR evidence block format, a PGP-style ASCII-armored
-//! representation of witnessd evidence that is human-readable and independently verifiable.
+//! PGP-style ASCII-armored evidence format -- human-readable and
+//! independently verifiable.
 
 pub mod encoding;
 pub mod types;
@@ -20,7 +20,7 @@ use crate::evidence::Packet;
 use witnessd_protocol::crypto::PoPSigner;
 
 impl Block {
-    /// Create a WAR block from an evidence packet.
+    /// Create from an evidence packet.
     pub fn from_packet(packet: &Packet) -> Result<Self, String> {
         let declaration = packet
             .declaration

@@ -3,18 +3,14 @@
 use crate::DateTimeNanosExt;
 use chrono::{DateTime, Utc};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
-use rand::RngCore;
 use std::fs;
 use std::path::Path;
 use zeroize::Zeroize;
 
-use super::crypto::{build_cert_data, hkdf_expand, RATCHET_INIT_DOMAIN, SESSION_DOMAIN};
 use super::error::KeyHierarchyError;
 use super::identity::derive_master_identity;
-use super::types::{
-    LegacyKeyMigration, MasterIdentity, PUFProvider, RatchetState, Session, SessionCertificate,
-    VERSION,
-};
+use super::session::start_session_inner;
+use super::types::{LegacyKeyMigration, MasterIdentity, PUFProvider, Session, VERSION};
 
 pub fn migrate_from_legacy_key(
     puf: &dyn PUFProvider,
@@ -80,21 +76,26 @@ fn build_migration_data(
 }
 
 fn load_legacy_private_key(path: impl AsRef<Path>) -> Result<SigningKey, KeyHierarchyError> {
-    let data = fs::read(path)?;
+    let mut data = fs::read(path)?;
 
-    if data.len() == 32 {
+    let result = if data.len() == 32 {
         let mut seed = [0u8; 32];
         seed.copy_from_slice(&data);
-        return Ok(SigningKey::from_bytes(&seed));
-    }
-
-    if data.len() == 64 {
+        let key = SigningKey::from_bytes(&seed);
+        seed.zeroize();
+        Ok(key)
+    } else if data.len() == 64 {
         let mut seed = [0u8; 32];
         seed.copy_from_slice(&data[0..32]);
-        return Ok(SigningKey::from_bytes(&seed));
-    }
+        let key = SigningKey::from_bytes(&seed);
+        seed.zeroize();
+        Ok(key)
+    } else {
+        Err(KeyHierarchyError::LegacyKeyNotFound)
+    };
 
-    Err(KeyHierarchyError::LegacyKeyNotFound)
+    data.zeroize();
+    result
 }
 
 pub fn start_session_from_legacy_key(
@@ -102,58 +103,5 @@ pub fn start_session_from_legacy_key(
     document_hash: [u8; 32],
 ) -> Result<Session, KeyHierarchyError> {
     let legacy_key = load_legacy_private_key(legacy_key_path)?;
-    let legacy_pub = legacy_key.verifying_key().to_bytes().to_vec();
-
-    let mut session_id = [0u8; 32];
-    rand::rng().fill_bytes(&mut session_id);
-
-    let session_input = {
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(&session_id);
-        bytes.extend_from_slice(Utc::now().to_rfc3339().as_bytes());
-        bytes
-    };
-
-    let mut session_seed = hkdf_expand(
-        legacy_key.to_bytes().as_slice(),
-        SESSION_DOMAIN.as_bytes(),
-        &session_input,
-    )?;
-    let session_key = SigningKey::from_bytes(&session_seed);
-    let session_pub = session_key.verifying_key().to_bytes().to_vec();
-
-    let created_at = Utc::now();
-    let cert_data = build_cert_data(session_id, &session_pub, created_at, document_hash);
-    let signature = legacy_key.sign(&cert_data).to_bytes();
-
-    let certificate = SessionCertificate {
-        session_id,
-        session_pubkey: session_pub,
-        created_at,
-        document_hash,
-        master_pubkey: legacy_pub,
-        signature,
-        version: VERSION,
-        start_quote: None,
-        end_quote: None,
-        start_counter: None,
-        end_counter: None,
-        start_reset_count: None,
-        start_restart_count: None,
-        end_reset_count: None,
-        end_restart_count: None,
-    };
-
-    let ratchet_init = hkdf_expand(&session_seed, RATCHET_INIT_DOMAIN.as_bytes(), &[])?;
-    session_seed.zeroize();
-
-    Ok(Session {
-        certificate,
-        ratchet: RatchetState {
-            current: crate::crypto::ProtectedKey::new(ratchet_init),
-            ordinal: 0,
-            wiped: false,
-        },
-        signatures: Vec::new(),
-    })
+    start_session_inner(&legacy_key, document_hash)
 }

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
-//! Core data types, enums, constants, and their implementations for forensic analysis.
+//! Core types, constants, and enums for forensic analysis.
 
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use serde::{Deserialize, Serialize};
@@ -9,57 +9,49 @@ use std::fmt;
 use crate::analysis::{BehavioralFingerprint, ForgeryAnalysis};
 use witnessd_protocol::forensics::{ForensicAnalysis as ProtocolForensicAnalysis, ForensicVerdict};
 
-// =============================================================================
-// Constants
-// =============================================================================
-
-/// Default threshold for considering an edit as an "append" (at 95% of document).
+/// Edits past this position (95%) count as "append".
 pub const DEFAULT_APPEND_THRESHOLD: f32 = 0.95;
 
-/// Default number of bins for edit entropy histogram.
+/// Bin count for edit entropy histogram.
 pub const DEFAULT_HISTOGRAM_BINS: usize = 20;
 
-/// Minimum events required for stable analysis.
+/// Minimum events for stable analysis.
 pub const MIN_EVENTS_FOR_ANALYSIS: usize = 5;
 
-/// Minimum events for assessment verdict.
+/// Minimum events for a verdict.
 pub const MIN_EVENTS_FOR_ASSESSMENT: usize = 10;
 
-/// Default session gap threshold in seconds (30 minutes).
+/// Session gap threshold: 30 minutes.
 pub const DEFAULT_SESSION_GAP_SEC: f64 = 1800.0;
 
-/// High monotonic append ratio threshold (suggests AI generation).
+/// Above this append ratio, AI generation is suspected.
 pub const THRESHOLD_MONOTONIC_APPEND: f64 = 0.85;
 
-/// Low entropy threshold (suggests non-human editing).
+/// Below this entropy, non-human editing is suspected.
 pub const THRESHOLD_LOW_ENTROPY: f64 = 1.5;
 
-/// High velocity threshold in bytes per second.
+/// Bytes/sec above which velocity is flagged as anomalous.
 pub const THRESHOLD_HIGH_VELOCITY_BPS: f64 = 100.0;
 
-/// Long gap threshold in hours.
+/// Gap longer than this (hours) triggers an anomaly.
 pub const THRESHOLD_GAP_HOURS: f64 = 24.0;
 
-/// Alert threshold for suspicious assessment.
+/// Alert-level anomalies needed for `Suspicious` verdict.
 pub const ALERT_THRESHOLD: usize = 2;
 
-/// Coefficient of variation threshold for robotic typing detection.
+/// CV below this indicates robotic typing.
 pub const ROBOTIC_CV_THRESHOLD: f64 = 0.15;
 
-/// Default edit ratio estimate (15% of keystrokes are deletions).
+/// Estimated fraction of keystrokes that are deletions.
 pub const DEFAULT_EDIT_RATIO: f64 = 0.15;
 
-/// Suspicious discrepancy ratio threshold.
+/// Discrepancy ratio above this is `Suspicious`.
 pub const SUSPICIOUS_RATIO_THRESHOLD: f64 = 0.3;
 
-/// Inconsistent discrepancy ratio threshold.
+/// Discrepancy ratio above this is `Inconsistent`.
 pub const INCONSISTENT_RATIO_THRESHOLD: f64 = 0.5;
 
-// =============================================================================
-// Core Data Types
-// =============================================================================
-
-/// Minimal event data for forensic analysis.
+/// Minimal event record for forensic analysis.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventData {
     pub id: i64,
@@ -69,88 +61,73 @@ pub struct EventData {
     pub file_path: String,
 }
 
-/// Edit region data for topology analysis.
+/// Edit region for topology analysis.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegionData {
-    /// Start position as percentage of document (0.0 - 1.0).
+    /// Position in document as fraction `[0.0, 1.0]`.
     pub start_pct: f32,
-    /// End position as percentage of document (0.0 - 1.0).
+    /// Position in document as fraction `[0.0, 1.0]`.
     pub end_pct: f32,
-    /// Delta sign: +1 insertion, -1 deletion, 0 replacement.
+    /// +1 insertion, -1 deletion, 0 replacement.
     pub delta_sign: i8,
-    /// Number of bytes affected.
     pub byte_count: i32,
 }
 
-/// Primary forensic metrics for authorship detection.
+/// Primary edit-topology metrics for authorship detection.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PrimaryMetrics {
-    /// Fraction of edits at end of document (>0.95 position).
+    /// Fraction of edits at document end (>0.95 position).
     pub monotonic_append_ratio: f64,
-    /// Shannon entropy of edit position histogram (20 bins).
+    /// Shannon entropy of edit positions (20-bin histogram).
     pub edit_entropy: f64,
-    /// Median inter-event interval in seconds.
+    /// Median inter-event interval (seconds).
     pub median_interval: f64,
-    /// Insertions / (insertions + deletions).
+    /// `insertions / (insertions + deletions)`.
     pub positive_negative_ratio: f64,
-    /// Nearest-neighbor ratio for deletions.
+    /// Nearest-neighbor distance ratio for deletions (<1 = clustered).
     pub deletion_clustering: f64,
 }
 
-/// Keystroke cadence metrics for typing pattern analysis.
+/// Keystroke cadence (inter-keystroke interval) metrics.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CadenceMetrics {
-    /// Mean inter-keystroke interval in nanoseconds.
     pub mean_iki_ns: f64,
-    /// Standard deviation of IKI in nanoseconds.
     pub std_dev_iki_ns: f64,
-    /// Coefficient of variation (std_dev / mean).
+    /// `std_dev / mean`
     pub coefficient_of_variation: f64,
-    /// Median IKI in nanoseconds.
     pub median_iki_ns: f64,
-    /// Number of detected typing bursts.
     pub burst_count: usize,
-    /// Number of detected pauses (>2 seconds).
+    /// Pauses > 2s.
     pub pause_count: usize,
-    /// Average burst length in keystrokes.
     pub avg_burst_length: f64,
-    /// Average pause duration in nanoseconds.
     pub avg_pause_duration_ns: f64,
-    /// Whether pattern suggests robotic/synthetic typing.
+    /// CV below `ROBOTIC_CV_THRESHOLD`.
     pub is_robotic: bool,
-    /// Percentile distribution of IKIs (10th, 25th, 50th, 75th, 90th).
+    /// IKI percentiles: p10, p25, p50, p75, p90.
     pub percentiles: [f64; 5],
 }
 
-/// Complete forensic metrics combining all analysis dimensions.
+/// Aggregate forensic metrics across all analysis dimensions.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ForensicMetrics {
-    /// Primary edit topology metrics.
     pub primary: PrimaryMetrics,
-    /// Keystroke cadence metrics.
     pub cadence: CadenceMetrics,
-    /// Behavioral fingerprint analysis.
     pub behavioral: Option<BehavioralFingerprint>,
-    /// Forgery detection results.
     pub forgery_analysis: Option<ForgeryAnalysis>,
-    /// Edit velocity metrics.
     pub velocity: VelocityMetrics,
-    /// Session-level statistics.
     pub session_stats: SessionStats,
-    /// Overall assessment score (0.0 - 1.0, higher = more human-like).
+    /// `[0.0, 1.0]` -- higher = more human-like.
     pub assessment_score: f64,
-    /// Perplexity score (lower = more expected/human-like).
+    /// Lower = more expected/human-like.
     pub perplexity_score: f64,
-    /// Steganographic confidence (validity of timing modulation).
+    /// Confidence that timing steganography is present.
     pub steg_confidence: f64,
-    /// Number of detected anomalies.
     pub anomaly_count: usize,
-    /// Risk level classification.
     pub risk_level: RiskLevel,
 }
 
 impl ForensicMetrics {
-    /// Maps internal metrics to the protocol-standard ForensicVerdict defined in pop-crate.
+    /// Map to protocol-standard `ForensicVerdict`.
     pub fn map_to_protocol_verdict(&self) -> ForensicVerdict {
         if let Some(forgery) = &self.forgery_analysis {
             if forgery.is_suspicious {
@@ -174,61 +151,51 @@ impl ForensicMetrics {
                     ForensicVerdict::V3Suspicious
                 }
             }
-            RiskLevel::Insufficient => ForensicVerdict::V2LikelyHuman, // Default to neutral-ish
+            RiskLevel::Insufficient => ForensicVerdict::V2LikelyHuman,
         }
     }
 
-    /// Converts internal metrics to a full ProtocolForensicAnalysis structure.
+    /// Convert to `ProtocolForensicAnalysis` for wire serialization.
     pub fn to_protocol_analysis(&self) -> ProtocolForensicAnalysis {
         ProtocolForensicAnalysis {
             verdict: self.map_to_protocol_verdict(),
             coefficient_of_variation: self.cadence.coefficient_of_variation,
             linearity_score: Some(self.primary.monotonic_append_ratio),
-            hurst_exponent: None, // Hurst analysis is only in pop-crate for now
-            checkpoint_count: self.session_stats.session_count, // rough mapping
+            hurst_exponent: None,
+            checkpoint_count: self.session_stats.session_count,
             chain_duration_secs: self.session_stats.total_editing_time_sec as u64,
             explanation: format!("Internal Assessment Score: {:.2}", self.assessment_score),
         }
     }
 }
 
-/// Edit velocity metrics.
+/// Edit velocity (bytes/sec) metrics.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct VelocityMetrics {
-    /// Mean bytes per second.
     pub mean_bps: f64,
-    /// Maximum bytes per second observed.
     pub max_bps: f64,
-    /// Number of high-velocity bursts detected.
     pub high_velocity_bursts: usize,
-    /// Estimated autocomplete characters.
+    /// Estimated characters from autocomplete (excess over human max).
     pub autocomplete_chars: i64,
 }
 
-/// Session-level statistics.
+/// Aggregate session statistics.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SessionStats {
-    /// Total number of editing sessions detected.
     pub session_count: usize,
-    /// Average session duration in seconds.
     pub avg_session_duration_sec: f64,
-    /// Total editing time in seconds.
     pub total_editing_time_sec: f64,
-    /// Time between first and last event in seconds.
+    /// Wall-clock span from first to last event (seconds).
     pub time_span_sec: f64,
 }
 
-/// Risk level classification.
+/// Forensic risk classification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum RiskLevel {
-    /// Low risk - consistent with human authorship.
     #[default]
     Low,
-    /// Medium risk - some suspicious patterns.
     Medium,
-    /// High risk - likely AI-generated or suspicious activity.
     High,
-    /// Insufficient data for assessment.
     Insufficient,
 }
 
@@ -243,11 +210,7 @@ impl fmt::Display for RiskLevel {
     }
 }
 
-// =============================================================================
-// Authorship Profile
-// =============================================================================
-
-/// Complete authorship analysis profile.
+/// Full authorship analysis profile for a tracked file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthorshipProfile {
     pub file_path: String,
@@ -277,7 +240,7 @@ impl Default for AuthorshipProfile {
     }
 }
 
-/// Detected anomaly in editing patterns.
+/// Detected editing anomaly.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Anomaly {
     pub timestamp: Option<DateTime<Utc>>,
@@ -287,24 +250,16 @@ pub struct Anomaly {
     pub context: Option<String>,
 }
 
-/// Types of anomalies that can be detected.
+/// Anomaly classification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AnomalyType {
-    /// Long gap between edits.
     Gap,
-    /// High-velocity content addition.
     HighVelocity,
-    /// High monotonic append pattern.
     MonotonicAppend,
-    /// Low edit entropy.
     LowEntropy,
-    /// Robotic keystroke cadence.
     RoboticCadence,
-    /// Undetected paste operation.
     UndetectedPaste,
-    /// Content-keystroke mismatch.
     ContentMismatch,
-    /// Scattered deletion pattern.
     ScatteredDeletions,
 }
 
@@ -323,7 +278,7 @@ impl fmt::Display for AnomalyType {
     }
 }
 
-/// Severity level for anomalies.
+/// Anomaly severity level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Severity {
     Info,
@@ -341,14 +296,11 @@ impl fmt::Display for Severity {
     }
 }
 
-/// Overall assessment verdict.
+/// Overall authorship assessment verdict.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum Assessment {
-    /// Consistent with human authorship.
     Consistent,
-    /// Suspicious patterns detected.
     Suspicious,
-    /// Insufficient data for assessment.
     #[default]
     Insufficient,
 }

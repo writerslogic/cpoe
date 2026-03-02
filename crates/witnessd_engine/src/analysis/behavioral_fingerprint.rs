@@ -2,9 +2,9 @@
 
 //! Generate unforgeable behavioral fingerprints from typing patterns
 
+use crate::analysis::stats;
 use crate::jitter::SimpleJitterSample;
 use serde::{Deserialize, Serialize};
-use statrs::statistics::Statistics;
 
 /// Features extracted from typing that are hard to fake
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,17 +15,14 @@ pub struct BehavioralFingerprint {
     pub keystroke_interval_skewness: f64,
     pub keystroke_interval_kurtosis: f64,
 
-    // Digraph timings (specific key pairs)
     // Note: We don't have key values in SimpleJitterSample, so we can't do digraphs yet.
     // We will use interval buckets instead.
     pub interval_buckets: Vec<f64>, // Histogram of intervals
 
-    // Pause patterns
     pub sentence_pause_mean: f64,
     pub paragraph_pause_mean: f64,
     pub thinking_pause_frequency: f64, // Pauses > 2 seconds
 
-    // Session patterns
     pub burst_length_mean: f64,    // Characters between pauses
     pub burst_speed_variance: f64, // Speed changes within bursts
 }
@@ -53,7 +50,6 @@ impl BehavioralFingerprint {
             return Self::default();
         }
 
-        // Calculate inter-key intervals (IKI) in milliseconds
         // SimpleJitterSample has timestamp_ns
         let intervals: Vec<f64> = samples
             .windows(2)
@@ -65,16 +61,11 @@ impl BehavioralFingerprint {
             return Self::default();
         }
 
-        let mean = intervals.clone().mean();
-        let std = intervals.clone().std_dev();
+        let (mean, std) = stats::mean_and_std_dev(&intervals);
 
-        // Skewness and Kurtosis require more complex calc, using simplified estimations or statrs if available
-        // statrs::statistics::Distribution doesn't implement skewness directly on Vec<f64> usually,
-        // but let's assume we implement a helper or use basic stats.
-        let skewness = calculate_skewness(&intervals, mean, std);
-        let kurtosis = calculate_kurtosis(&intervals, mean, std);
+        let skewness = stats::skewness(&intervals, mean, std);
+        let kurtosis = stats::kurtosis(&intervals, mean, std);
 
-        // Analyze pauses (> 2000ms)
         let long_pauses = samples
             .windows(2)
             .map(|w| (w[1].timestamp_ns - w[0].timestamp_ns) as f64 / 1_000_000.0)
@@ -87,7 +78,7 @@ impl BehavioralFingerprint {
             0.0
         };
 
-        // Burst analysis (sequences separated by > 500ms)
+        // Bursts: sequences separated by > 500ms
         let mut bursts = Vec::new();
         let mut current_burst_len = 0;
         for w in samples.windows(2) {
@@ -103,7 +94,7 @@ impl BehavioralFingerprint {
         }
 
         let burst_mean = if !bursts.is_empty() {
-            bursts.clone().mean()
+            bursts.iter().sum::<f64>() / bursts.len() as f64
         } else {
             0.0
         };
@@ -124,7 +115,6 @@ impl BehavioralFingerprint {
                 interval_buckets[0] += 1.0;
             }
         }
-        // Normalize to proportions
         let total = intervals.len() as f64;
         if total > 0.0 {
             for b in &mut interval_buckets {
@@ -132,7 +122,6 @@ impl BehavioralFingerprint {
             }
         }
 
-        // Sentence-level pauses: mean of intervals > 500ms
         let sentence_pauses: Vec<f64> = intervals.iter().copied().filter(|&i| i > 500.0).collect();
         let sentence_pause_mean = if !sentence_pauses.is_empty() {
             sentence_pauses.iter().sum::<f64>() / sentence_pauses.len() as f64
@@ -140,7 +129,6 @@ impl BehavioralFingerprint {
             0.0
         };
 
-        // Paragraph-level pauses: mean of intervals > 2000ms
         let paragraph_pauses: Vec<f64> =
             intervals.iter().copied().filter(|&i| i > 2000.0).collect();
         let paragraph_pause_mean = if !paragraph_pauses.is_empty() {
@@ -149,7 +137,7 @@ impl BehavioralFingerprint {
             0.0
         };
 
-        // Burst speed variance: variance of intervals < 200ms (fast typing bursts)
+        // < 200ms = fast typing bursts
         let burst_intervals: Vec<f64> = intervals.iter().copied().filter(|&i| i < 200.0).collect();
         let burst_speed_variance = if burst_intervals.len() >= 2 {
             let burst_mean_val = burst_intervals.iter().sum::<f64>() / burst_intervals.len() as f64;
@@ -189,31 +177,29 @@ impl BehavioralFingerprint {
         let intervals: Vec<f64> = samples
             .windows(2)
             .map(|w| (w[1].timestamp_ns - w[0].timestamp_ns) as f64 / 1_000_000.0)
+            .filter(|&i| i > 0.0 && i < 5000.0)
             .collect();
 
         let mut flags = Vec::new();
 
-        // Basic stats
-        let mean = intervals.clone().mean();
-        let std = intervals.clone().std_dev();
+        let (mean, std) = stats::mean_and_std_dev(&intervals);
 
-        // Check 1: Too regular (humans have high variance)
+        // Too regular (humans have high variance)
         if mean > 0.0 {
             let cv = std / mean; // Coefficient of variation
+                                 // Threshold 0.2 is conservative for forgery detection. Human typing
+                                 // typically > 0.3-0.4. The gap reduces false positives for slow/regular typists.
             if cv < 0.2 {
-                // Human typing usually > 0.3-0.4
                 flags.push(ForgeryFlag::TooRegular { cv });
             }
         }
 
-        // Check 2: Unnatural distribution shape
-        let skewness = calculate_skewness(&intervals, mean, std);
+        let skewness = stats::skewness(&intervals, mean, std);
         if skewness < 0.2 {
             // Human typing is usually positively skewed (long tail)
             flags.push(ForgeryFlag::WrongSkewness { skewness });
         }
 
-        // Check 3: Missing micro-pauses (150-500ms)
         let micro_pauses = intervals
             .iter()
             .filter(|&&i| i > 150.0 && i < 500.0)
@@ -222,8 +208,7 @@ impl BehavioralFingerprint {
             flags.push(ForgeryFlag::MissingMicroPauses);
         }
 
-        // Check 4: Impossible speeds (< 30ms between keystrokes is superhuman/rollover)
-        // High count of very low intervals implies script injection or mechanical rollover without debounce
+        // Impossible speeds: < 20ms implies script injection or mechanical rollover without debounce
         let impossibly_fast = intervals.iter().filter(|&&i| i < 20.0).count();
         if impossibly_fast > (intervals.len() / 10) {
             // >10% is suspicious
@@ -255,25 +240,6 @@ impl Default for BehavioralFingerprint {
             burst_speed_variance: 0.0,
         }
     }
-}
-
-// Helpers
-fn calculate_skewness(data: &[f64], mean: f64, std: f64) -> f64 {
-    if std == 0.0 {
-        return 0.0;
-    }
-    let n = data.len() as f64;
-    let sum_cubed_diff: f64 = data.iter().map(|&x| (x - mean).powi(3)).sum();
-    (sum_cubed_diff / n) / std.powi(3)
-}
-
-fn calculate_kurtosis(data: &[f64], mean: f64, std: f64) -> f64 {
-    if std == 0.0 {
-        return 0.0;
-    }
-    let n = data.len() as f64;
-    let sum_quad_diff: f64 = data.iter().map(|&x| (x - mean).powi(4)).sum();
-    (sum_quad_diff / n) / std.powi(4) - 3.0 // Excess kurtosis
 }
 
 #[cfg(test)]

@@ -36,7 +36,7 @@ pub struct EntropyReport {
     #[serde(rename = "3")]
     pub pause_entropy: f32,
 
-    /// Whether entropy meets the required threshold
+    /// Meets required threshold
     #[serde(rename = "4")]
     pub meets_threshold: bool,
 }
@@ -54,23 +54,23 @@ pub struct EntropyReport {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ForgeryCostEstimate {
-    /// Cost to forge sequential work function
+    /// SWF forgery cost
     #[serde(rename = "1")]
     pub c_swf: f32,
 
-    /// Cost to forge entropy
+    /// Entropy forgery cost
     #[serde(rename = "2")]
     pub c_entropy: f32,
 
-    /// Cost to forge hardware attestation
+    /// Hardware forgery cost
     #[serde(rename = "3")]
     pub c_hardware: f32,
 
-    /// Total forgery cost
+    /// Total cost
     #[serde(rename = "4")]
     pub c_total: f32,
 
-    /// Currency unit
+    /// Unit
     #[serde(rename = "5")]
     pub currency: CostUnit,
 }
@@ -88,11 +88,11 @@ pub struct ForgeryCostEstimate {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AbsenceClaim {
-    /// Proof category
+    /// Absence type
     #[serde(rename = "1")]
     pub absence_type: AbsenceType,
 
-    /// Claimed time window
+    /// Time window
     #[serde(rename = "2")]
     pub window: TimeWindow,
 
@@ -100,11 +100,11 @@ pub struct AbsenceClaim {
     #[serde(rename = "3")]
     pub claim_id: String,
 
-    /// Optional threshold/parameter
+    /// Threshold/parameter
     #[serde(rename = "4", default, skip_serializing_if = "Option::is_none")]
     pub threshold: Option<ciborium::Value>,
 
-    /// Assertion result
+    /// Assertion holds
     #[serde(rename = "5")]
     pub assertion: bool,
 }
@@ -125,15 +125,15 @@ pub struct ForensicFlag {
     #[serde(rename = "1")]
     pub mechanism: String,
 
-    /// Whether this flag was triggered
+    /// Triggered
     #[serde(rename = "2")]
     pub triggered: bool,
 
-    /// Number of affected windows
+    /// Affected windows
     #[serde(rename = "3")]
     pub affected_windows: u64,
 
-    /// Total windows evaluated
+    /// Total windows
     #[serde(rename = "4")]
     pub total_windows: u64,
 }
@@ -151,23 +151,23 @@ pub struct ForensicFlag {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ForensicSummary {
-    /// Number of forensic flags triggered
+    /// Flags triggered
     #[serde(rename = "1")]
     pub flags_triggered: u64,
 
-    /// Total number of flags evaluated
+    /// Flags evaluated
     #[serde(rename = "2")]
     pub flags_evaluated: u64,
 
-    /// Number of checkpoints with anomalies
+    /// Anomalous checkpoints
     #[serde(rename = "3")]
     pub affected_checkpoints: u64,
 
-    /// Total number of checkpoints analyzed
+    /// Total checkpoints
     #[serde(rename = "4")]
     pub total_checkpoints: u64,
 
-    /// Per-flag detail (optional)
+    /// Per-flag detail
     #[serde(rename = "5", default, skip_serializing_if = "Option::is_none")]
     pub flags: Option<Vec<ForensicFlag>>,
 }
@@ -195,76 +195,76 @@ pub struct ForensicSummary {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AttestationResultWire {
-    /// Schema version (MUST be 1)
+    /// Schema version (must be 1)
     #[serde(rename = "1")]
     pub version: u64,
 
-    /// Reference to the evidence packet being appraised
+    /// Evidence packet reference
     #[serde(rename = "2")]
     pub evidence_ref: HashValue,
 
-    /// Appraisal verdict
+    /// Verdict
     #[serde(rename = "3")]
     pub verdict: Verdict,
 
-    /// Assessed attestation tier
+    /// Assessed tier
     #[serde(rename = "4")]
     pub assessed_tier: AttestationTier,
 
-    /// Number of checkpoints in the chain
+    /// Chain length (checkpoints)
     #[serde(rename = "5")]
     pub chain_length: u64,
 
-    /// Total chain duration in seconds
+    /// Chain duration (seconds)
     #[serde(rename = "6")]
     pub chain_duration: u64,
 
-    /// Entropy assessment (omit for CORE tier)
+    /// Entropy assessment (omitted for CORE)
     #[serde(rename = "7", default, skip_serializing_if = "Option::is_none")]
     pub entropy_report: Option<EntropyReport>,
 
-    /// Quantified forgery cost
+    /// Forgery cost estimate
     #[serde(rename = "8", default, skip_serializing_if = "Option::is_none")]
     pub forgery_cost: Option<ForgeryCostEstimate>,
 
-    /// Absence claims (must contain at least 1 when present)
+    /// Absence claims
     #[serde(rename = "9", default, skip_serializing_if = "Option::is_none")]
     pub absence_claims: Option<Vec<AbsenceClaim>>,
 
-    /// Warning messages
+    /// Warnings
     #[serde(rename = "10", default, skip_serializing_if = "Option::is_none")]
     pub warnings: Option<Vec<String>>,
 
-    /// Verifier signature (COSE_Sign1)
+    /// Verifier signature (`COSE_Sign1`)
     #[serde(rename = "11", with = "serde_bytes")]
     pub verifier_signature: Vec<u8>,
 
-    /// Appraisal timestamp (epoch milliseconds)
+    /// Appraisal timestamp (epoch ms)
     #[serde(rename = "12")]
     pub created: u64,
 
-    /// Forensic assessment summary
+    /// Forensic summary
     #[serde(rename = "13", default, skip_serializing_if = "Option::is_none")]
     pub forensic_summary: Option<ForensicSummary>,
 }
 
 impl AttestationResultWire {
-    /// Encode this attestation result to CBOR with the standard tag (1129791826).
+    /// Encode to tagged CBOR (tag 1129791826).
     pub fn encode_cbor(&self) -> Result<Vec<u8>, CodecError> {
         codec::cbor::encode_tagged(self, CBOR_TAG_ATTESTATION_RESULT)
     }
 
-    /// Decode an attestation result from tagged CBOR bytes.
+    /// Decode from tagged CBOR bytes.
     pub fn decode_cbor(data: &[u8]) -> Result<Self, CodecError> {
         codec::cbor::decode_tagged(data, CBOR_TAG_ATTESTATION_RESULT)
     }
 
-    /// Encode this attestation result to untagged CBOR.
+    /// Encode to untagged CBOR.
     pub fn encode_cbor_untagged(&self) -> Result<Vec<u8>, CodecError> {
         codec::cbor::encode(self)
     }
 
-    /// Decode an attestation result from untagged CBOR bytes.
+    /// Decode from untagged CBOR bytes.
     pub fn decode_cbor_untagged(data: &[u8]) -> Result<Self, CodecError> {
         codec::cbor::decode(data)
     }

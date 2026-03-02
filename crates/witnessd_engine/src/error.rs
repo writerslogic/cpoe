@@ -1,22 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
-//! Unified error handling for witnessd_engine.
-//!
-//! This module provides a top-level `Error` type that wraps all subsystem errors,
-//! enabling consistent error handling across the crate while allowing specific
-//! error types for detailed matching.
+//! Unified error type wrapping all subsystem errors for consistent handling
+//! and pattern matching across the crate.
 
 use thiserror::Error;
 
 /// Top-level error type for witnessd_engine.
-///
-/// This enum wraps all subsystem errors and provides a unified interface
-/// for error handling throughout the crate.
 #[derive(Debug, Error)]
 pub enum Error {
-    // ============================================
-    // Subsystem errors (wrapped via #[from])
-    // ============================================
+    // --- Subsystem errors (wrapped via #[from]) ---
     /// Anchor/timestamping subsystem error
     #[error("anchor: {0}")]
     Anchor(#[from] crate::anchors::AnchorError),
@@ -62,9 +54,7 @@ pub enum Error {
     #[error("wal: {0}")]
     Wal(#[from] crate::wal::WalError),
 
-    // ============================================
-    // Common error types
-    // ============================================
+    // --- Common error types ---
     /// I/O error
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
@@ -142,81 +132,68 @@ pub enum Error {
     Legacy(String),
 }
 
-/// Result type alias using the unified Error.
+/// Crate-wide `Result` alias.
 pub type Result<T> = std::result::Result<T, Error>;
 
 impl Error {
-    /// Create a checkpoint error.
     pub fn checkpoint(msg: impl Into<String>) -> Self {
         Error::Checkpoint(msg.into())
     }
 
-    /// Create an evidence error.
     pub fn evidence(msg: impl Into<String>) -> Self {
         Error::Evidence(msg.into())
     }
 
-    /// Create a VDF error.
     pub fn vdf(msg: impl Into<String>) -> Self {
         Error::Vdf(msg.into())
     }
 
-    /// Create a validation error.
     pub fn validation(msg: impl Into<String>) -> Self {
         Error::Validation(msg.into())
     }
 
-    /// Create a crypto error.
     pub fn crypto(msg: impl Into<String>) -> Self {
         Error::Crypto(msg.into())
     }
 
-    /// Create a config error.
     pub fn config(msg: impl Into<String>) -> Self {
         Error::Config(msg.into())
     }
 
-    /// Create a not found error.
     pub fn not_found(msg: impl Into<String>) -> Self {
         Error::NotFound(msg.into())
     }
 
-    /// Create an invalid state error.
     pub fn invalid_state(msg: impl Into<String>) -> Self {
         Error::InvalidState(msg.into())
     }
 
-    /// Create a platform error.
     pub fn platform(msg: impl Into<String>) -> Self {
         Error::Platform(msg.into())
     }
 
-    /// Create an identity error.
     pub fn identity(msg: impl Into<String>) -> Self {
         Error::Identity(msg.into())
     }
 
-    /// Create a physics/entropy error.
     pub fn physics(msg: impl Into<String>) -> Self {
         Error::Physics(msg.into())
     }
 
-    /// Create an RFC structure error.
     pub fn rfc(msg: impl Into<String>) -> Self {
         Error::Rfc(msg.into())
     }
 
-    /// Create an internal error.
     pub fn internal(msg: impl Into<String>) -> Self {
         Error::Internal(msg.into())
     }
 
-    /// Check if this is a transient error that may succeed on retry.
+    /// Returns `true` for errors that may succeed on retry (I/O, timeout, anchor).
     pub fn is_transient(&self) -> bool {
         matches!(self, Error::Io(_) | Error::Timeout(_) | Error::Anchor(_))
     }
 
-    /// Check if this is a validation/input error.
+    /// Returns `true` for validation/input errors (bad data, hash mismatch, bad sig).
     pub fn is_validation(&self) -> bool {
         matches!(
             self,
@@ -225,7 +202,7 @@ impl Error {
     }
 }
 
-// Enable conversion from String for legacy code migration
+// Legacy code migration: String <-> Error conversions
 impl From<String> for Error {
     fn from(s: String) -> Self {
         Error::Legacy(s)
@@ -238,7 +215,6 @@ impl From<&str> for Error {
     }
 }
 
-// Enable conversion to String for backwards compatibility
 impl From<Error> for String {
     fn from(e: Error) -> Self {
         e.to_string()

@@ -6,7 +6,7 @@ use super::types::{
     EventData, SessionStats, VelocityMetrics, DEFAULT_SESSION_GAP_SEC, THRESHOLD_HIGH_VELOCITY_BPS,
 };
 
-/// Analyzes edit velocity patterns.
+/// Analyze edit velocity patterns (bytes/sec).
 pub fn analyze_velocity(events: &[EventData]) -> VelocityMetrics {
     let mut metrics = VelocityMetrics::default();
 
@@ -33,7 +33,6 @@ pub fn analyze_velocity(events: &[EventData]) -> VelocityMetrics {
             if bps > THRESHOLD_HIGH_VELOCITY_BPS {
                 high_velocity_bursts += 1;
 
-                // Estimate autocomplete chars: excess over human typing speed (~50 chars/sec)
                 let human_max_bps = 50.0;
                 if bps > human_max_bps {
                     let excess = (bps - human_max_bps) * delta_sec;
@@ -54,7 +53,22 @@ pub fn analyze_velocity(events: &[EventData]) -> VelocityMetrics {
     metrics
 }
 
-/// Detects editing sessions based on gap threshold.
+/// Count sessions in pre-sorted events without cloning.
+pub fn count_sessions_sorted(sorted_events: &[EventData], gap_threshold_sec: f64) -> usize {
+    if sorted_events.is_empty() {
+        return 0;
+    }
+    let mut count = 1;
+    for i in 1..sorted_events.len() {
+        let delta_ns = sorted_events[i].timestamp_ns - sorted_events[i - 1].timestamp_ns;
+        if delta_ns as f64 / 1e9 > gap_threshold_sec {
+            count += 1;
+        }
+    }
+    count
+}
+
+/// Split events into sessions using `gap_threshold_sec`.
 pub fn detect_sessions(events: &[EventData], gap_threshold_sec: f64) -> Vec<Vec<EventData>> {
     if events.is_empty() {
         return Vec::new();
@@ -63,29 +77,26 @@ pub fn detect_sessions(events: &[EventData], gap_threshold_sec: f64) -> Vec<Vec<
     let mut sorted = events.to_vec();
     sorted.sort_by_key(|e| e.timestamp_ns);
 
-    let mut sessions = Vec::new();
-    let mut current_session = vec![sorted[0].clone()];
-
-    for window in sorted.windows(2) {
-        let delta_ns = window[1].timestamp_ns - window[0].timestamp_ns;
-        let delta_sec = delta_ns as f64 / 1e9;
-
-        if delta_sec > gap_threshold_sec {
-            sessions.push(std::mem::take(&mut current_session));
-            current_session = vec![window[1].clone()];
-        } else {
-            current_session.push(window[1].clone());
+    // Find split points, then split_off to move data without cloning again.
+    let mut split_at: Vec<usize> = Vec::new();
+    for i in 1..sorted.len() {
+        let delta_ns = sorted[i].timestamp_ns - sorted[i - 1].timestamp_ns;
+        if delta_ns as f64 / 1e9 > gap_threshold_sec {
+            split_at.push(i);
         }
     }
 
-    if !current_session.is_empty() {
-        sessions.push(current_session);
+    let mut sessions = Vec::with_capacity(split_at.len() + 1);
+    let mut rest = sorted;
+    for &idx in split_at.iter().rev() {
+        sessions.push(rest.split_off(idx));
     }
-
+    sessions.push(rest);
+    sessions.reverse();
     sessions
 }
 
-/// Computes session statistics.
+/// Compute aggregate session statistics.
 pub fn compute_session_stats(events: &[EventData]) -> SessionStats {
     let mut stats = SessionStats::default();
 
@@ -98,9 +109,10 @@ pub fn compute_session_stats(events: &[EventData]) -> SessionStats {
 
     let mut total_duration = 0.0;
     for session in &sessions {
+        // Sessions are already sorted by timestamp_ns.
         if session.len() >= 2 {
-            let first = session.iter().map(|e| e.timestamp_ns).min().unwrap_or(0);
-            let last = session.iter().map(|e| e.timestamp_ns).max().unwrap_or(0);
+            let first = session.first().unwrap().timestamp_ns;
+            let last = session.last().unwrap().timestamp_ns;
             total_duration += (last - first) as f64 / 1e9;
         }
     }
@@ -110,9 +122,14 @@ pub fn compute_session_stats(events: &[EventData]) -> SessionStats {
         stats.avg_session_duration_sec = total_duration / stats.session_count as f64;
     }
 
-    // Time span
-    let first = events.iter().map(|e| e.timestamp_ns).min().unwrap_or(0);
-    let last = events.iter().map(|e| e.timestamp_ns).max().unwrap_or(0);
+    let first = sessions
+        .first()
+        .and_then(|s| s.first())
+        .map_or(0, |e| e.timestamp_ns);
+    let last = sessions
+        .last()
+        .and_then(|s| s.last())
+        .map_or(0, |e| e.timestamp_ns);
     stats.time_span_sec = (last - first) as f64 / 1e9;
 
     stats

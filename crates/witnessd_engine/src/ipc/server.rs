@@ -8,7 +8,7 @@ use super::crypto::{
 use super::messages::{IpcErrorCode, IpcMessage, IpcMessageHandler, MAX_MESSAGE_SIZE};
 use anyhow::Result;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 #[cfg(target_os = "windows")]
 use tokio::net::windows::named_pipe;
 #[cfg(unix)]
@@ -20,6 +20,7 @@ async fn handle_connection_inner<S: tokio::io::AsyncRead + tokio::io::AsyncWrite
     stream: &mut S,
     handler: &dyn IpcMessageHandler,
     transport_label: &str,
+    shared_rate_limiter: &Arc<Mutex<RateLimiter>>,
 ) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -75,40 +76,10 @@ async fn handle_connection_inner<S: tokio::io::AsyncRead + tokio::io::AsyncWrite
         None
     };
 
-    // For bincode, we already consumed 2 bytes of the first length prefix.
-    let mut first_message_pending = false;
-    let mut first_len: usize = 0;
-
-    if protocol == WireProtocol::Bincode {
-        let mut remaining = [0u8; 2];
-        if stream.read_exact(&mut remaining).await.is_err() {
-            return;
-        }
-        let len_bytes = [peek_buf[0], peek_buf[1], remaining[0], remaining[1]];
-        first_len = u32::from_le_bytes(len_bytes) as usize;
-        if first_len > MAX_MESSAGE_SIZE {
-            log::warn!(
-                "IPC: message too large: {} bytes on {} (dropping)",
-                first_len,
-                transport_label
-            );
-            return;
-        }
-        first_message_pending = true;
-    }
-
-    // NOTE: Rate limiter is per-connection. A client opening multiple connections
-    // can bypass the rate limit. Consider adding a global rate limiter shared
-    // across all connections for production hardening.
-    // Per-category rate limiter: 60-second window
-    let mut rate_limiter = RateLimiter::new(60);
     let mut len_buf = [0u8; 4];
 
     loop {
-        let msg_len = if first_message_pending {
-            first_message_pending = false;
-            first_len
-        } else {
+        let msg_len = {
             match stream.read_exact(&mut len_buf).await {
                 Ok(_) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
@@ -156,9 +127,13 @@ async fn handle_connection_inner<S: tokio::io::AsyncRead + tokio::io::AsyncWrite
 
         match decode_for_protocol(&plaintext, decode_protocol) {
             Ok(msg) => {
-                // Per-category rate limit check
+                // Per-category rate limit check (shared across all connections)
                 let key = rate_limit_key(&msg);
-                if !rate_limiter.check(key) {
+                let allowed = shared_rate_limiter
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .check(key);
+                if !allowed {
                     log::warn!(
                         "IPC: rate limit exceeded for '{}' on {} (limit: {}/60s)",
                         key,
@@ -212,6 +187,16 @@ async fn handle_connection_inner<S: tokio::io::AsyncRead + tokio::io::AsyncWrite
                             transport_label,
                             e
                         );
+                        // Try to send a plaintext error so client isn't left hanging
+                        let fallback = br#"{"type":"Error","code":"InternalError","message":"Internal serialization error"}"#;
+                        if let Some(ref session) = secure_session {
+                            let _ = send_encrypted(stream, session, fallback).await;
+                        } else {
+                            let len_bytes = (fallback.len() as u32).to_le_bytes();
+                            let _ = stream.write_all(&len_bytes).await;
+                            let _ = stream.write_all(fallback.as_slice()).await;
+                        }
+                        break;
                     }
                 }
             }
@@ -258,6 +243,11 @@ impl IpcServer {
             std::fs::create_dir_all(parent)?;
         }
         let listener = UnixListener::bind(&path)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+        }
         Ok(Self {
             listener,
             socket_path: path,
@@ -286,13 +276,15 @@ impl IpcServer {
 
     /// Run the IPC server with a message handler
     pub async fn run_with_handler<H: IpcMessageHandler>(self, handler: Arc<H>) -> Result<()> {
+        let rate_limiter = Arc::new(Mutex::new(RateLimiter::new(60)));
         #[cfg(not(target_os = "windows"))]
         {
             loop {
                 let (stream, _) = self.listener.accept().await?;
                 let handler_clone = Arc::clone(&handler);
+                let rl = Arc::clone(&rate_limiter);
                 tokio::spawn(async move {
-                    handle_connection(stream, handler_clone).await;
+                    handle_connection(stream, handler_clone, rl).await;
                 });
             }
         }
@@ -306,8 +298,9 @@ impl IpcServer {
 
                 server.connect().await?;
                 let handler_clone = Arc::clone(&handler);
+                let rl = Arc::clone(&rate_limiter);
                 tokio::spawn(async move {
-                    handle_windows_connection(server, handler_clone).await;
+                    handle_windows_connection(server, handler_clone, rl).await;
                 });
             }
         }
@@ -319,6 +312,7 @@ impl IpcServer {
         handler: Arc<H>,
         mut shutdown_rx: tokio::sync::mpsc::Receiver<()>,
     ) -> Result<()> {
+        let rate_limiter = Arc::new(Mutex::new(RateLimiter::new(60)));
         #[cfg(not(target_os = "windows"))]
         {
             loop {
@@ -327,8 +321,9 @@ impl IpcServer {
                         match result {
                             Ok((stream, _)) => {
                                 let handler_clone = Arc::clone(&handler);
+                                let rl = Arc::clone(&rate_limiter);
                                 tokio::spawn(async move {
-                                    handle_connection(stream, handler_clone).await;
+                                    handle_connection(stream, handler_clone, rl).await;
                                 });
                             }
                             Err(e) => {
@@ -356,8 +351,9 @@ impl IpcServer {
                     result = server.connect() => {
                         if result.is_ok() {
                             let handler_clone = Arc::clone(&handler);
+                            let rl = Arc::clone(&rate_limiter);
                             tokio::spawn(async move {
-                                handle_windows_connection(server, handler_clone).await;
+                                handle_windows_connection(server, handler_clone, rl).await;
                             });
                         }
                     }
@@ -372,8 +368,12 @@ impl IpcServer {
 }
 
 #[cfg(not(target_os = "windows"))]
-async fn handle_connection<H: IpcMessageHandler>(mut stream: UnixStream, handler: Arc<H>) {
-    handle_connection_inner(&mut stream, handler.as_ref(), "unix-socket").await;
+async fn handle_connection<H: IpcMessageHandler>(
+    mut stream: UnixStream,
+    handler: Arc<H>,
+    rate_limiter: Arc<Mutex<RateLimiter>>,
+) {
+    handle_connection_inner(&mut stream, handler.as_ref(), "unix-socket", &rate_limiter).await;
 }
 
 /// Verify that a Windows named pipe client is running as the same user as the server.
@@ -485,6 +485,7 @@ unsafe fn get_token_user_sid(token: windows::Win32::Foundation::HANDLE) -> Resul
 async fn handle_windows_connection<H: IpcMessageHandler>(
     mut pipe: named_pipe::NamedPipeServer,
     handler: Arc<H>,
+    rate_limiter: Arc<Mutex<RateLimiter>>,
 ) {
     // Verify the connecting client is running as the same user (Windows SID check)
     if let Err(e) = verify_windows_pipe_peer(&pipe) {
@@ -495,5 +496,5 @@ async fn handle_windows_connection<H: IpcMessageHandler>(
         return;
     }
 
-    handle_connection_inner(&mut pipe, handler.as_ref(), "named-pipe").await;
+    handle_connection_inner(&mut pipe, handler.as_ref(), "named-pipe", &rate_limiter).await;
 }

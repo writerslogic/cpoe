@@ -3,7 +3,7 @@
 use crate::platform::events::MouseEvent;
 use serde::{Deserialize, Serialize};
 
-/// Statistics about mouse idle jitter for fingerprinting.
+/// Running statistics for mouse idle jitter (used in behavioral fingerprinting).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MouseIdleStats {
     pub total_events: u64,
@@ -117,7 +117,7 @@ impl MouseIdleStats {
     }
 }
 
-/// Mode for mouse steganography.
+/// Mouse steganography encoding mode.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MouseStegoMode {
     #[default]
@@ -126,7 +126,7 @@ pub enum MouseStegoMode {
     FirstMoveOnly,
 }
 
-/// Parameters for mouse steganography.
+/// Configuration for mouse steganography timing injection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MouseStegoParams {
     pub enabled: bool,

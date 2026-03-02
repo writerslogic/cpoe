@@ -18,20 +18,18 @@ use super::enums::HashAlgorithm;
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HashValue {
-    /// Hash algorithm used
     #[serde(rename = "1")]
     pub algorithm: HashAlgorithm,
 
-    /// Raw digest bytes
     #[serde(rename = "2", with = "serde_bytes")]
     pub digest: Vec<u8>,
 }
 
 impl HashValue {
-    /// Create a new SHA-256 hash value from a 32-byte digest.
+    /// Create a SHA-256 hash value from a 32-byte digest.
     ///
     /// # Panics
-    /// Panics if `digest` is not exactly 32 bytes. Use `try_sha256` for fallible construction.
+    /// If `digest` is not 32 bytes. Use `try_sha256` for fallible construction.
     pub fn sha256(digest: Vec<u8>) -> Self {
         assert!(
             digest.len() == 32,
@@ -44,7 +42,6 @@ impl HashValue {
         }
     }
 
-    /// Try to create a new SHA-256 hash value, validating digest length.
     pub fn try_sha256(digest: Vec<u8>) -> Result<Self, String> {
         if digest.len() != 32 {
             return Err(format!(
@@ -58,10 +55,10 @@ impl HashValue {
         })
     }
 
-    /// Create a new SHA-384 hash value from a 48-byte digest.
+    /// Create a SHA-384 hash value from a 48-byte digest.
     ///
     /// # Panics
-    /// Panics if `digest` is not exactly 48 bytes. Use `try_sha384` for fallible construction.
+    /// If `digest` is not 48 bytes. Use `try_sha384` for fallible construction.
     pub fn sha384(digest: Vec<u8>) -> Self {
         assert!(
             digest.len() == 48,
@@ -74,7 +71,6 @@ impl HashValue {
         }
     }
 
-    /// Try to create a new SHA-384 hash value, validating digest length.
     pub fn try_sha384(digest: Vec<u8>) -> Result<Self, String> {
         if digest.len() != 48 {
             return Err(format!(
@@ -88,10 +84,10 @@ impl HashValue {
         })
     }
 
-    /// Create a new SHA-512 hash value from a 64-byte digest.
+    /// Create a SHA-512 hash value from a 64-byte digest.
     ///
     /// # Panics
-    /// Panics if `digest` is not exactly 64 bytes. Use `try_sha512` for fallible construction.
+    /// If `digest` is not 64 bytes. Use `try_sha512` for fallible construction.
     pub fn sha512(digest: Vec<u8>) -> Self {
         assert!(
             digest.len() == 64,
@@ -104,7 +100,6 @@ impl HashValue {
         }
     }
 
-    /// Try to create a new SHA-512 hash value, validating digest length.
     pub fn try_sha512(digest: Vec<u8>) -> Result<Self, String> {
         if digest.len() != 64 {
             return Err(format!(
@@ -118,7 +113,7 @@ impl HashValue {
         })
     }
 
-    /// Create a zero-valued SHA-256 hash (for prev_hash of first checkpoint).
+    /// For `prev_hash` of the first checkpoint in a chain.
     pub fn zero_sha256() -> Self {
         Self {
             algorithm: HashAlgorithm::Sha256,
@@ -126,7 +121,6 @@ impl HashValue {
         }
     }
 
-    /// Validate that the digest length matches the algorithm.
     pub fn validate_digest_length(&self) -> Result<(), String> {
         let expected = match self.algorithm {
             HashAlgorithm::Sha256 => 32,
@@ -156,15 +150,14 @@ impl HashValue {
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompactRef {
-    /// Algorithm used for the full hash
     #[serde(rename = "1")]
     pub algorithm: HashAlgorithm,
 
-    /// Truncated digest (8-32 bytes)
+    /// 8-32 bytes
     #[serde(rename = "2", with = "serde_bytes")]
     pub truncated_digest: Vec<u8>,
 
-    /// Prefix length (number of bytes from full digest)
+    /// Bytes retained from full digest
     #[serde(rename = "3")]
     pub prefix_length: u64,
 }
@@ -179,11 +172,11 @@ pub struct CompactRef {
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TimeWindow {
-    /// Start timestamp (epoch milliseconds)
+    /// Epoch ms
     #[serde(rename = "1")]
     pub start: u64,
 
-    /// End timestamp (epoch milliseconds)
+    /// Epoch ms
     #[serde(rename = "2")]
     pub end: u64,
 }

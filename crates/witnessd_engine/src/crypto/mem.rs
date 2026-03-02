@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
-//! Memory-hardened storage for sensitive cryptographic material.
-//!
-//! Provides wrappers that ensure sensitive keys are zeroized on drop and,
-//! where supported by the OS, locked in physical RAM to prevent swapping to disk.
+//! Memory-hardened wrappers for key material: zeroize-on-drop with
+//! optional `mlock` to prevent swap exposure.
 
 use std::ops::Deref;
 use zeroize::Zeroize;
@@ -11,13 +9,12 @@ use zeroize::Zeroize;
 #[cfg(unix)]
 use libc::{mlock, munlock};
 
-/// A wrapper for sensitive byte arrays that ensures zeroization on drop
-/// and locks memory in RAM to prevent swapping to disk.
+/// Fixed-size key buffer: zeroized on drop, `mlock`ed on Unix.
 #[derive(Clone)]
 pub struct ProtectedKey<const N: usize>([u8; N]);
 
 impl<const N: usize> ProtectedKey<N> {
-    /// Create a new protected key from raw bytes.
+    /// Wrap raw bytes, `mlock` the buffer, then zeroize the source.
     pub fn new(mut bytes: [u8; N]) -> Self {
         let mut key = Self(bytes);
         key.lock_memory();
@@ -25,7 +22,7 @@ impl<const N: usize> ProtectedKey<N> {
         key
     }
 
-    /// Access the underlying key bytes.
+    /// Borrow the underlying key bytes.
     pub fn as_bytes(&self) -> &[u8; N] {
         &self.0
     }
@@ -33,8 +30,7 @@ impl<const N: usize> ProtectedKey<N> {
     fn lock_memory(&mut self) {
         #[cfg(unix)]
         unsafe {
-            // Attempt to lock the memory. If it fails (e.g. limit reached),
-            // we proceed with just Zeroize protection.
+            // Best-effort; falls back to zeroize-only if mlock limit reached
             let _ = mlock(self.0.as_ptr() as *const libc::c_void, N);
         }
     }
@@ -74,19 +70,19 @@ impl<const N: usize> std::fmt::Debug for ProtectedKey<N> {
     }
 }
 
-/// A wrapper for variable-length sensitive data.
+/// Variable-length sensitive buffer, zeroized on drop.
 #[derive(Clone)]
 pub struct ProtectedBuf(Vec<u8>);
 
 impl ProtectedBuf {
-    /// Create a new protected buffer from a Vec.
+    /// Clone bytes into a protected buffer and zeroize the source.
     pub fn new(mut bytes: Vec<u8>) -> Self {
         let buf = Self(bytes.clone());
         bytes.zeroize();
         buf
     }
 
-    /// Access the underlying buffer bytes.
+    /// Borrow the underlying buffer bytes.
     pub fn as_slice(&self) -> &[u8] {
         &self.0
     }

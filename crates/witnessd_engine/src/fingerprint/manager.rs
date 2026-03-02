@@ -76,7 +76,7 @@ impl FingerprintManager {
     }
 
     pub fn request_voice_consent(&mut self) -> Result<bool> {
-        let granted = self.consent_manager.request_consent()?;
+        let granted = self.consent_manager.begin_consent_request()?;
         if granted {
             self.enable_voice_internal()?;
         }

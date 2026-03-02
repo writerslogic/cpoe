@@ -1,11 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
-//! Encrypted Fingerprint Storage
-//!
-//! This module handles secure storage of fingerprint profiles:
-//! - Encrypted at rest using ChaCha20-Poly1305
-//! - Key derived from device-specific secret
-//! - Automatic key rotation support
+//! Encrypted fingerprint storage (ChaCha20-Poly1305, HKDF-derived key).
 
 use super::{AuthorFingerprint, ProfileId};
 use anyhow::{anyhow, Result};
@@ -20,63 +15,38 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use zeroize::Zeroize;
 
-// =============================================================================
-// Constants
-// =============================================================================
+use crate::identity::SecureStorage;
 
-/// Storage file extension
 const PROFILE_EXTENSION: &str = ".profile";
-/// Nonce size for ChaCha20-Poly1305
 const NONCE_SIZE: usize = 12;
-/// Key size for ChaCha20-Poly1305
 const KEY_SIZE: usize = 32;
 
-// =============================================================================
-// Stored Profile Metadata
-// =============================================================================
-
-/// Metadata about a stored fingerprint profile.
+/// Index metadata for a stored profile (avoids full decryption).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredProfile {
-    /// Profile ID
     pub id: ProfileId,
-    /// Human-readable name
     pub name: Option<String>,
-    /// Creation timestamp
     pub created_at: DateTime<Utc>,
-    /// Last update timestamp
     pub updated_at: DateTime<Utc>,
-    /// Sample count
     pub sample_count: u64,
-    /// Confidence level
     pub confidence: f64,
-    /// Whether voice data is included
     pub has_voice: bool,
-    /// File size in bytes
     pub file_size: u64,
 }
 
-// =============================================================================
-// Fingerprint Storage
-// =============================================================================
-
-/// Secure storage for fingerprint profiles.
+/// Encrypted on-disk profile store. Key material is zeroized on drop.
 pub struct FingerprintStorage {
-    /// Storage directory
     storage_dir: PathBuf,
-    /// Encryption key (derived from device secret)
     encryption_key: [u8; KEY_SIZE],
-    /// Profile index cache
     profile_index: HashMap<ProfileId, StoredProfile>,
 }
 
 impl FingerprintStorage {
-    /// Create a new fingerprint storage.
+    /// Initialize storage, deriving encryption key and building index.
     pub fn new(storage_dir: &Path) -> Result<Self> {
         fs::create_dir_all(storage_dir)?;
 
-        // Derive encryption key from device-specific secret
-        let encryption_key = derive_storage_key(storage_dir)?;
+        let encryption_key = load_or_create_fingerprint_key(storage_dir)?;
 
         let mut storage = Self {
             storage_dir: storage_dir.to_path_buf(),
@@ -84,13 +54,12 @@ impl FingerprintStorage {
             profile_index: HashMap::new(),
         };
 
-        // Load profile index
         storage.refresh_index()?;
 
         Ok(storage)
     }
 
-    /// Refresh the profile index from disk.
+    /// Rebuild in-memory index by scanning `.profile` files on disk.
     pub fn refresh_index(&mut self) -> Result<()> {
         self.profile_index.clear();
 
@@ -112,20 +81,13 @@ impl FingerprintStorage {
         Ok(())
     }
 
-    /// Save a fingerprint profile.
+    /// Encrypt and persist a profile, updating the in-memory index.
     pub fn save(&mut self, fingerprint: &AuthorFingerprint) -> Result<()> {
         let path = self.profile_path(&fingerprint.id);
-
-        // Serialize fingerprint
         let plaintext = serde_json::to_vec(fingerprint)?;
-
-        // Encrypt
         let ciphertext = self.encrypt(&plaintext)?;
-
-        // Write to file
         fs::write(&path, &ciphertext)?;
 
-        // Update index
         let metadata = StoredProfile {
             id: fingerprint.id.clone(),
             name: fingerprint.name.clone(),
@@ -141,7 +103,7 @@ impl FingerprintStorage {
         Ok(())
     }
 
-    /// Load a fingerprint profile by ID.
+    /// Decrypt and deserialize a profile by ID.
     pub fn load(&self, id: &ProfileId) -> Result<AuthorFingerprint> {
         let path = self.profile_path(id);
 
@@ -149,22 +111,15 @@ impl FingerprintStorage {
             return Err(anyhow!("Profile not found: {}", id));
         }
 
-        // Read encrypted data
         let ciphertext = fs::read(&path)?;
-
-        // Decrypt
         let plaintext = self.decrypt(&ciphertext)?;
-
-        // Deserialize
         let fingerprint: AuthorFingerprint = serde_json::from_slice(&plaintext)?;
 
         Ok(fingerprint)
     }
 
-    /// Load only metadata without decrypting full profile.
+    /// Extract metadata (currently requires full decrypt; see TODO).
     fn load_metadata(&self, path: &Path) -> Result<StoredProfile> {
-        // For now, we load the full profile to get metadata
-        // In a production system, we might store metadata separately
         let ciphertext = fs::read(path)?;
         let plaintext = self.decrypt(&ciphertext)?;
         let fingerprint: AuthorFingerprint = serde_json::from_slice(&plaintext)?;
@@ -181,12 +136,11 @@ impl FingerprintStorage {
         })
     }
 
-    /// Delete a fingerprint profile.
+    /// Securely delete a profile (overwrite with random data, then unlink).
     pub fn delete(&mut self, id: &ProfileId) -> Result<()> {
         let path = self.profile_path(id);
 
         if path.exists() {
-            // Secure delete: overwrite with random data before removing
             let size = fs::metadata(&path)?.len() as usize;
             let mut random_data = vec![0u8; size];
             getrandom::getrandom(&mut random_data)
@@ -199,15 +153,28 @@ impl FingerprintStorage {
         Ok(())
     }
 
-    /// Delete all voice fingerprint data.
+    /// Strip voice data from all profiles (used on consent revocation).
     pub fn delete_all_voice_data(&mut self) -> Result<()> {
         let ids: Vec<ProfileId> = self.profile_index.keys().cloned().collect();
 
         for id in ids {
-            if let Ok(mut fp) = self.load(&id) {
-                if fp.voice.is_some() {
-                    fp.voice = None;
-                    self.save(&fp)?;
+            match self.load(&id) {
+                Ok(mut fp) => {
+                    if fp.voice.is_some() {
+                        fp.voice = None;
+                        self.save(&fp)?;
+                    }
+                }
+                Err(e) => {
+                    // Cannot decrypt profile — delete the file to guarantee voice data removal
+                    log::warn!(
+                        "Profile {} deleted (could not decrypt to verify voice data removal): {}",
+                        id,
+                        e
+                    );
+                    let path = self.profile_path(&id);
+                    let _ = std::fs::remove_file(&path);
+                    self.profile_index.remove(&id);
                 }
             }
         }
@@ -215,21 +182,16 @@ impl FingerprintStorage {
         Ok(())
     }
 
-    /// List all stored profiles.
     pub fn list_profiles(&self) -> Result<Vec<StoredProfile>> {
         Ok(self.profile_index.values().cloned().collect())
     }
 
-    /// Check if a profile exists.
     pub fn exists(&self, id: &ProfileId) -> bool {
         self.profile_index.contains_key(id)
     }
 
-    /// Get the path for a profile.
-    ///
-    /// Validates the ProfileId to prevent path traversal attacks.
+    /// Sanitize `id` to prevent path traversal, then return file path.
     fn profile_path(&self, id: &ProfileId) -> PathBuf {
-        // Sanitize ProfileId: only allow alphanumeric, dash, underscore
         let safe_id: String = id
             .chars()
             .map(|c| {
@@ -244,23 +206,20 @@ impl FingerprintStorage {
             .join(format!("{}{}", safe_id, PROFILE_EXTENSION))
     }
 
-    /// Encrypt data.
+    /// Encrypt with random nonce. Output: `nonce || ciphertext`.
     fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>> {
         let cipher = ChaCha20Poly1305::new_from_slice(&self.encryption_key)
             .map_err(|e| anyhow!("Failed to create cipher: {}", e))?;
 
-        // Generate random nonce
         let mut nonce_bytes = [0u8; NONCE_SIZE];
         getrandom::getrandom(&mut nonce_bytes)
             .map_err(|e| anyhow!("Failed to generate nonce: {}", e))?;
         let nonce = Nonce::from_slice(&nonce_bytes);
 
-        // Encrypt
         let ciphertext = cipher
             .encrypt(nonce, plaintext)
             .map_err(|e| anyhow!("Encryption failed: {}", e))?;
 
-        // Prepend nonce to ciphertext
         let mut result = Vec::with_capacity(NONCE_SIZE + ciphertext.len());
         result.extend_from_slice(&nonce_bytes);
         result.extend_from_slice(&ciphertext);
@@ -268,7 +227,7 @@ impl FingerprintStorage {
         Ok(result)
     }
 
-    /// Decrypt data.
+    /// Decrypt `nonce || ciphertext` format.
     fn decrypt(&self, data: &[u8]) -> Result<Vec<u8>> {
         if data.len() < NONCE_SIZE {
             return Err(anyhow!("Invalid encrypted data: too short"));
@@ -277,11 +236,9 @@ impl FingerprintStorage {
         let cipher = ChaCha20Poly1305::new_from_slice(&self.encryption_key)
             .map_err(|e| anyhow!("Failed to create cipher: {}", e))?;
 
-        // Extract nonce and ciphertext
         let nonce = Nonce::from_slice(&data[..NONCE_SIZE]);
         let ciphertext = &data[NONCE_SIZE..];
 
-        // Decrypt
         let plaintext = cipher
             .decrypt(nonce, ciphertext)
             .map_err(|e| anyhow!("Decryption failed: {}", e))?;
@@ -289,13 +246,14 @@ impl FingerprintStorage {
         Ok(plaintext)
     }
 
-    /// Export a profile to unencrypted JSON (for backup).
+    /// Export profile as unencrypted JSON (for backup). Voice data is stripped.
     pub fn export_json(&self, id: &ProfileId) -> Result<String> {
-        let fingerprint = self.load(id)?;
+        let mut fingerprint = self.load(id)?;
+        fingerprint.voice = None;
         Ok(serde_json::to_string_pretty(&fingerprint)?)
     }
 
-    /// Import a profile from JSON.
+    /// Import profile from JSON, encrypting on save.
     pub fn import_json(&mut self, json: &str) -> Result<ProfileId> {
         let fingerprint: AuthorFingerprint = serde_json::from_str(json)?;
         let id = fingerprint.id.clone();
@@ -310,54 +268,96 @@ impl Drop for FingerprintStorage {
     }
 }
 
-/// Derive storage encryption key from device-specific data.
-fn derive_storage_key(storage_dir: &Path) -> Result<[u8; KEY_SIZE]> {
-    use hkdf::Hkdf;
-    use sha2::Sha256;
+/// Load fingerprint encryption key from OS keychain, migrating from legacy file if needed.
+fn load_or_create_fingerprint_key(storage_dir: &Path) -> Result<[u8; KEY_SIZE]> {
+    // 1. Try keychain first
+    if let Ok(Some(mut key_vec)) = SecureStorage::load_fingerprint_key() {
+        if key_vec.len() == KEY_SIZE {
+            let mut key = [0u8; KEY_SIZE];
+            key.copy_from_slice(&key_vec);
+            key_vec.zeroize();
+            return Ok(key);
+        }
+        key_vec.zeroize();
+    }
 
-    // Key file path
+    // 2. Migrate legacy .storage_key file if present
     let key_file = storage_dir.join(".storage_key");
+    if key_file.exists() {
+        let key = hkdf_derive_from_file(&key_file)?;
 
-    // Try to load existing key material
-    let mut key_material = if key_file.exists() {
-        fs::read(&key_file)?
-    } else {
-        // Generate new key material
-        let mut material = vec![0u8; 32];
+        // Store the derived key in the keychain
+        if let Err(e) = SecureStorage::save_fingerprint_key(&key) {
+            log::warn!("Failed to migrate fingerprint key to secure storage: {}", e);
+        } else {
+            secure_delete_file(&key_file);
+        }
+
+        return Ok(key);
+    }
+
+    // 3. Generate new key, save to keychain (file fallback if keychain unavailable)
+    let mut key = [0u8; KEY_SIZE];
+    getrandom::getrandom(&mut key)
+        .map_err(|e| anyhow!("Failed to generate key material: {}", e))?;
+
+    if let Err(e) = SecureStorage::save_fingerprint_key(&key) {
+        log::warn!(
+            "Secure storage unavailable ({}), using file-based fallback",
+            e
+        );
+        // Write raw material and derive via HKDF, so re-reads through step 2
+        // produce the same derived key.
+        let mut material = [0u8; KEY_SIZE];
         getrandom::getrandom(&mut material)
             .map_err(|e| anyhow!("Failed to generate key material: {}", e))?;
-        fs::write(&key_file, &material)?;
-
-        // Set restrictive permissions on Unix
+        fs::write(&key_file, material)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mut perms = fs::metadata(&key_file)?.permissions();
-            perms.set_mode(0o600);
-            fs::set_permissions(&key_file, perms)?;
+            let _ = fs::set_permissions(&key_file, fs::Permissions::from_mode(0o600));
         }
+        material.zeroize();
+        key.zeroize();
+        return hkdf_derive_from_file(&key_file);
+    }
 
-        material
-    };
+    Ok(key)
+}
 
-    // Derive actual encryption key using HKDF
+/// HKDF-SHA256 derivation from a `.storage_key` file's raw material.
+fn hkdf_derive_from_file(key_file: &Path) -> Result<[u8; KEY_SIZE]> {
+    use hkdf::Hkdf;
+    use sha2::Sha256;
+
+    let mut key_material = fs::read(key_file)?;
+
     let salt = b"witnessd-fingerprint-storage-v1";
     let info = b"fingerprint-encryption-key";
-
     let hk = Hkdf::<Sha256>::new(Some(salt), &key_material);
     let mut key = [0u8; KEY_SIZE];
     hk.expand(info, &mut key)
         .map_err(|_| anyhow!("Key derivation failed"))?;
 
-    // Zeroize key material after deriving the key
     key_material.zeroize();
-
     Ok(key)
 }
 
-// =============================================================================
-// Tests
-// =============================================================================
+/// Best-effort secure delete: overwrite with random data, then unlink.
+fn secure_delete_file(path: &Path) {
+    let size = match fs::metadata(path) {
+        Ok(m) => m.len() as usize,
+        Err(_) => {
+            let _ = fs::remove_file(path);
+            return;
+        }
+    };
+    let mut random = vec![0u8; size];
+    if getrandom::getrandom(&mut random).is_ok() {
+        let _ = fs::write(path, &random);
+    }
+    let _ = fs::remove_file(path);
+}
 
 #[cfg(test)]
 mod tests {
@@ -430,5 +430,48 @@ mod tests {
         let imported_id = storage.import_json(&json).unwrap();
         assert_eq!(id, imported_id);
         assert!(storage.exists(&id));
+    }
+
+    /// Verify `hkdf_derive_from_file` produces the same key the old
+    /// `derive_storage_key` inline HKDF would have, and that
+    /// `secure_delete_file` cleans up the legacy file.
+    #[test]
+    fn test_legacy_key_derivation_compat() {
+        use hkdf::Hkdf;
+        use sha2::Sha256;
+
+        let dir = tempdir().unwrap();
+        let key_file = dir.path().join(".storage_key");
+
+        // Write raw material (same as old derive_storage_key would have)
+        let mut material = vec![0u8; 32];
+        getrandom::getrandom(&mut material).unwrap();
+        fs::write(&key_file, &material).unwrap();
+
+        // Derive via the old inline HKDF logic
+        let salt = b"witnessd-fingerprint-storage-v1";
+        let info = b"fingerprint-encryption-key";
+        let hk = Hkdf::<Sha256>::new(Some(salt), &material);
+        let mut expected_key = [0u8; KEY_SIZE];
+        hk.expand(info, &mut expected_key).unwrap();
+
+        // Derive via the new helper — must match
+        let actual_key = super::hkdf_derive_from_file(&key_file).unwrap();
+        assert_eq!(expected_key, actual_key);
+
+        // Verify the derived key can encrypt/decrypt (sanity check)
+        let cipher = ChaCha20Poly1305::new_from_slice(&actual_key).unwrap();
+        let mut nonce_bytes = [0u8; NONCE_SIZE];
+        getrandom::getrandom(&mut nonce_bytes).unwrap();
+        let nonce = Nonce::from_slice(&nonce_bytes);
+        let plaintext = b"test payload";
+        let ct = cipher.encrypt(nonce, plaintext.as_ref()).unwrap();
+        let pt = cipher.decrypt(nonce, ct.as_ref()).unwrap();
+        assert_eq!(plaintext.to_vec(), pt);
+
+        // Verify secure_delete_file removes the file
+        assert!(key_file.exists());
+        super::secure_delete_file(&key_file);
+        assert!(!key_file.exists());
     }
 }

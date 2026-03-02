@@ -3,7 +3,7 @@
 use crate::platform::device::TransportType;
 use serde::{Deserialize, Serialize};
 
-/// A captured keystroke event with timing and source information.
+/// Captured keystroke with timing, source device, and hardware verification.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeystrokeEvent {
     pub timestamp_ns: i64,
@@ -61,7 +61,7 @@ impl KeystrokeEvent {
     }
 }
 
-/// A captured mouse movement event with timing and position information.
+/// Captured mouse movement with position, delta, and idle/hardware flags.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MouseEvent {
     pub timestamp_ns: i64,

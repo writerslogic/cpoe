@@ -1,82 +1,56 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
-//! Error topology analysis for human behavioral verification.
+//! Error topology analysis per RFC draft-condrey-rats-pop-01.
 //!
-//! Analyzes the spatial and temporal distribution of errors (backspaces,
-//! corrections, deletions) in typing sessions. Human error patterns exhibit
-//! characteristic topological features that are difficult to simulate.
+//! Score = 0.4*rho_gap + 0.4*H + 0.2*adj_phys (threshold >= 0.75).
 //!
-//! RFC draft-condrey-rats-pop-01 specifies the error topology score:
-//!
-//!   S = 0.4 × ρ_gap + 0.4 × H + 0.2 × adj_phys
-//!
-//! Where:
-//! - ρ_gap: Gap correlation (pauses before/after errors)
-//! - H: Hurst exponent of error timing
-//! - adj_phys: Physical adjacency correlation (keyboard layout)
-//!
-//! A score ≥ 0.75 indicates biologically plausible error patterns.
+//! Human error patterns show characteristic gap correlation (hesitation
+//! before errors, quick correction after), long-range dependence in error
+//! timing (Hurst), and physical key adjacency in mistyped characters.
+
+use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
-/// Result of error topology analysis.
+/// Error topology analysis result.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ErrorTopology {
-    /// Gap correlation score (ρ_gap).
-    /// Measures correlation between pauses and error events.
+    /// rho_gap: pause/error correlation
     pub gap_correlation: f64,
-
-    /// Hurst exponent of error timing sequence.
+    /// Hurst exponent of inter-error intervals
     pub error_hurst: f64,
-
-    /// Physical adjacency correlation.
-    /// How often errors involve adjacent keys.
+    /// Adjacent-key error rate
     pub adjacency_correlation: f64,
-
-    /// Combined topology score.
-    /// S = 0.4 × ρ_gap + 0.4 × H + 0.2 × adj_phys
+    /// Weighted composite: 0.4*gap + 0.4*hurst + 0.2*adjacency
     pub score: f64,
-
-    /// Whether the score passes RFC threshold (≥ 0.75).
+    /// Passes RFC threshold (>= 0.75)
     pub is_valid: bool,
-
-    /// Total number of errors detected.
     pub error_count: usize,
-
-    /// Error rate (errors per 100 events).
+    /// Errors per 100 events
     pub error_rate: f64,
-
-    /// Breakdown of error types.
     pub error_distribution: ErrorDistribution,
 }
 
-/// Distribution of error types in the session.
+/// Error type breakdown by timing.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ErrorDistribution {
-    /// Immediate corrections (within 500ms).
+    /// < 500ms
     pub immediate_corrections: usize,
-    /// Delayed corrections (500ms - 2s).
+    /// 500ms - 2s
     pub delayed_corrections: usize,
-    /// Long-delayed corrections (> 2s).
+    /// > 2s
     pub long_delayed_corrections: usize,
-    /// Burst errors (multiple in quick succession).
+    /// Multiple errors within 1s
     pub burst_errors: usize,
-    /// Isolated errors (surrounded by normal typing).
     pub isolated_errors: usize,
 }
 
 impl ErrorTopology {
-    /// RFC threshold for valid error topology.
     pub const VALIDITY_THRESHOLD: f64 = 0.75;
-
-    /// Weight for gap correlation in score.
     pub const WEIGHT_GAP: f64 = 0.4;
-    /// Weight for Hurst exponent in score.
     pub const WEIGHT_HURST: f64 = 0.4;
-    /// Weight for adjacency correlation in score.
     pub const WEIGHT_ADJACENCY: f64 = 0.2;
 
-    /// Calculate the combined score from components.
     pub fn calculate_score(
         gap_correlation: f64,
         error_hurst: f64,
@@ -87,56 +61,39 @@ impl ErrorTopology {
             + Self::WEIGHT_ADJACENCY * adjacency_correlation
     }
 
-    /// Check if error patterns are biologically plausible.
     pub fn is_biologically_plausible(&self) -> bool {
         self.score >= Self::VALIDITY_THRESHOLD
     }
 
-    /// Check if error rate is within human range (1-10%).
+    /// Human-plausible error rate: 1-10%.
     pub fn is_error_rate_plausible(&self) -> bool {
         self.error_rate >= 1.0 && self.error_rate <= 10.0
     }
 }
 
-/// Event type for error analysis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventType {
-    /// Normal keystroke.
     Normal,
-    /// Backspace/delete (error correction).
     Correction,
-    /// Word deletion.
     WordDelete,
-    /// Line deletion.
     LineDelete,
 }
 
-/// A single event for error topology analysis.
 #[derive(Debug, Clone)]
 pub struct TopologyEvent {
-    /// Timestamp in nanoseconds.
     pub timestamp_ns: i64,
-    /// Event type.
     pub event_type: EventType,
-    /// Optional key code (for adjacency analysis).
+    /// For adjacency analysis
     pub key_code: Option<u16>,
-    /// Duration since last event (nanoseconds).
     pub gap_ns: u64,
 }
 
-/// Analyze error topology from a sequence of events.
-///
-/// # Arguments
-/// * `events` - Sequence of typed events with timestamps and types
-///
-/// # Returns
-/// * `ErrorTopology` analysis result
+/// Analyze error topology from a sequence of events. Requires >= 20 events.
 pub fn analyze_error_topology(events: &[TopologyEvent]) -> Result<ErrorTopology, String> {
     if events.len() < 20 {
         return Err("Insufficient events for error topology analysis (minimum 20)".to_string());
     }
 
-    // Identify error events
     let error_indices: Vec<usize> = events
         .iter()
         .enumerate()
@@ -151,7 +108,6 @@ pub fn analyze_error_topology(events: &[TopologyEvent]) -> Result<ErrorTopology,
 
     let error_count = error_indices.len();
     if error_count < 3 {
-        // Not enough errors for meaningful topology analysis
         return Ok(ErrorTopology {
             gap_correlation: 0.0,
             error_hurst: 0.5,
@@ -164,20 +120,12 @@ pub fn analyze_error_topology(events: &[TopologyEvent]) -> Result<ErrorTopology,
         });
     }
 
-    // Calculate gap correlation
     let gap_correlation = calculate_gap_correlation(events, &error_indices);
-
-    // Calculate Hurst exponent of error timing
     let error_hurst = calculate_error_hurst(events, &error_indices);
-
-    // Calculate adjacency correlation
     let adjacency_correlation = calculate_adjacency_correlation(events, &error_indices);
 
-    // Calculate combined score
     let score = ErrorTopology::calculate_score(gap_correlation, error_hurst, adjacency_correlation);
     let is_valid = score >= ErrorTopology::VALIDITY_THRESHOLD;
-
-    // Calculate error distribution
     let error_distribution = calculate_error_distribution(events, &error_indices);
 
     let error_rate = (error_count as f64 / events.len() as f64) * 100.0;
@@ -194,17 +142,14 @@ pub fn analyze_error_topology(events: &[TopologyEvent]) -> Result<ErrorTopology,
     })
 }
 
-/// Calculate gap correlation (ρ_gap).
-///
-/// Measures the correlation between pause duration and error probability.
-/// Human typing shows longer pauses before errors (hesitation) and
-/// shorter pauses after (quick correction).
+/// rho_gap: longer pauses before errors (hesitation), shorter after (quick correction).
 fn calculate_gap_correlation(events: &[TopologyEvent], error_indices: &[usize]) -> f64 {
     if error_indices.is_empty() || events.len() < 3 {
         return 0.0;
     }
 
-    // Collect gaps before and after errors
+    let error_set: HashSet<usize> = error_indices.iter().copied().collect();
+
     let mut pre_error_gaps = Vec::new();
     let mut post_error_gaps = Vec::new();
     let mut normal_gaps = Vec::new();
@@ -212,11 +157,9 @@ fn calculate_gap_correlation(events: &[TopologyEvent], error_indices: &[usize]) 
     for (i, event) in events.iter().enumerate() {
         let gap_ms = event.gap_ns as f64 / 1_000_000.0;
 
-        if error_indices.contains(&i) {
-            // This is an error event - record gap before it
+        if error_set.contains(&i) {
             pre_error_gaps.push(gap_ms);
-        } else if i > 0 && error_indices.contains(&(i - 1)) {
-            // Previous event was an error - record gap after error
+        } else if i > 0 && error_set.contains(&(i - 1)) {
             post_error_gaps.push(gap_ms);
         } else {
             normal_gaps.push(gap_ms);
@@ -227,7 +170,6 @@ fn calculate_gap_correlation(events: &[TopologyEvent], error_indices: &[usize]) 
         return 0.0;
     }
 
-    // Calculate means
     let normal_mean: f64 = normal_gaps.iter().sum::<f64>() / normal_gaps.len() as f64;
     let pre_error_mean: f64 = pre_error_gaps.iter().sum::<f64>() / pre_error_gaps.len() as f64;
     let post_error_mean: f64 = if !post_error_gaps.is_empty() {
@@ -236,9 +178,6 @@ fn calculate_gap_correlation(events: &[TopologyEvent], error_indices: &[usize]) 
         normal_mean
     };
 
-    // Gap correlation:
-    // - Pre-error gaps should be longer than normal (hesitation)
-    // - Post-error gaps should be shorter than normal (quick correction)
     let pre_ratio = if normal_mean > 0.0 {
         (pre_error_mean / normal_mean).min(3.0)
     } else {
@@ -251,21 +190,15 @@ fn calculate_gap_correlation(events: &[TopologyEvent], error_indices: &[usize]) 
         1.0
     };
 
-    // Normalize to 0-1 range
-    // Expect pre_ratio > 1 (longer before error) and post_ratio > 1 (faster after)
-
     ((pre_ratio - 1.0).max(0.0) * 0.5 + (post_ratio - 1.0).max(0.0) * 0.5).min(1.0)
 }
 
-/// Calculate Hurst exponent of error timing.
-///
-/// Uses simplified R/S analysis on the inter-error intervals.
+/// Simplified R/S Hurst exponent of inter-error intervals.
 fn calculate_error_hurst(events: &[TopologyEvent], error_indices: &[usize]) -> f64 {
     if error_indices.len() < 5 {
-        return 0.5; // Default to white noise if insufficient errors
+        return 0.5;
     }
 
-    // Calculate inter-error intervals
     let mut intervals = Vec::new();
     for i in 1..error_indices.len() {
         let prev_idx = error_indices[i - 1];
@@ -283,12 +216,10 @@ fn calculate_error_hurst(events: &[TopologyEvent], error_indices: &[usize]) -> f
         return 0.5;
     }
 
-    // Simplified Hurst estimation using variance ratio
     let n = intervals.len();
     let mean: f64 = intervals.iter().sum::<f64>() / n as f64;
     let variance: f64 = intervals.iter().map(|&x| (x - mean).powi(2)).sum::<f64>() / n as f64;
 
-    // Calculate range
     let mut cumsum = 0.0;
     let mut max_cumsum = f64::NEG_INFINITY;
     let mut min_cumsum = f64::INFINITY;
@@ -303,20 +234,15 @@ fn calculate_error_hurst(events: &[TopologyEvent], error_indices: &[usize]) -> f
     let std_dev = variance.sqrt();
 
     if std_dev > 0.0 && range > 0.0 {
-        // R/S ratio
         let rs = range / std_dev;
-        // Estimate Hurst: H ≈ log(R/S) / log(n)
-
+        // H ~ log(R/S) / log(n)
         (rs.ln() / (n as f64).ln()).clamp(0.0, 1.0)
     } else {
         0.5
     }
 }
 
-/// Calculate physical adjacency correlation.
-///
-/// Measures how often error corrections involve adjacent keys on
-/// the keyboard layout.
+/// Fraction of errors involving QWERTY-adjacent keys, normalized to 0-1.
 fn calculate_adjacency_correlation(events: &[TopologyEvent], error_indices: &[usize]) -> f64 {
     if error_indices.is_empty() {
         return 0.0;
@@ -326,7 +252,6 @@ fn calculate_adjacency_correlation(events: &[TopologyEvent], error_indices: &[us
     let mut total_with_keys = 0;
 
     for &error_idx in error_indices {
-        // Look at the key before the correction
         if error_idx > 0 {
             let prev_event = &events[error_idx - 1];
             let curr_event = &events[error_idx];
@@ -341,11 +266,9 @@ fn calculate_adjacency_correlation(events: &[TopologyEvent], error_indices: &[us
     }
 
     if total_with_keys > 0 {
-        // Human typing errors are often adjacent key mistakes
-        // Expected adjacency rate for humans: ~20-40%
         let adjacency_rate = adjacent_errors as f64 / total_with_keys as f64;
 
-        // Normalize: too low suggests random errors, too high suggests simulation
+        // Plausible human range: 15-50%; outside suggests random or simulated
         if (0.15..=0.50).contains(&adjacency_rate) {
             1.0
         } else if adjacency_rate < 0.15 {
@@ -354,19 +277,12 @@ fn calculate_adjacency_correlation(events: &[TopologyEvent], error_indices: &[us
             (1.0 - (adjacency_rate - 0.50) / 0.50).max(0.0)
         }
     } else {
-        // No key code data available - neutral score
         0.5
     }
 }
 
-/// Check if two key codes are adjacent on a QWERTY keyboard.
-///
-/// This is a simplified check using common key code mappings.
+/// Heuristic QWERTY adjacency check (US layout, within 1 row/col).
 fn are_keys_adjacent(key1: u16, key2: u16) -> bool {
-    // Define QWERTY keyboard adjacency (US layout)
-    // Key codes vary by platform; this is a simplified heuristic
-
-    // Group keys by row and check horizontal/vertical adjacency
     let pos1 = key_to_position(key1);
     let pos2 = key_to_position(key2);
 
@@ -374,19 +290,14 @@ fn are_keys_adjacent(key1: u16, key2: u16) -> bool {
         let row_diff = (r1 as i32 - r2 as i32).abs();
         let col_diff = (c1 as i32 - c2 as i32).abs();
 
-        // Adjacent if within 1 row and 1 column
         row_diff <= 1 && col_diff <= 1 && (row_diff + col_diff) > 0
     } else {
         false
     }
 }
 
-/// Map key code to approximate (row, column) position.
-///
-/// Returns None for unknown key codes.
+/// Approximate (row, col) on US QWERTY layout. `None` for unknown keys.
 fn key_to_position(key: u16) -> Option<(u8, u8)> {
-    // Simplified mapping for common ASCII letters
-    // Row 0: number row, Row 1: QWERTY, Row 2: ASDF, Row 3: ZXCV
     match key as u8 as char {
         '1'..='9' => Some((0, (key - '1' as u16) as u8)),
         '0' => Some((0, 9)),
@@ -420,7 +331,6 @@ fn key_to_position(key: u16) -> Option<(u8, u8)> {
     }
 }
 
-/// Calculate error distribution statistics.
 fn calculate_error_distribution(
     events: &[TopologyEvent],
     error_indices: &[usize],
@@ -431,7 +341,6 @@ fn calculate_error_distribution(
         let event = &events[error_idx];
         let gap_ms = event.gap_ns as f64 / 1_000_000.0;
 
-        // Classify by timing
         if gap_ms < 500.0 {
             dist.immediate_corrections += 1;
         } else if gap_ms < 2000.0 {
@@ -440,7 +349,6 @@ fn calculate_error_distribution(
             dist.long_delayed_corrections += 1;
         }
 
-        // Check for bursts (multiple errors within 1 second)
         let is_burst = if i > 0 {
             let prev_idx = error_indices[i - 1];
             let time_diff = (events[error_idx].timestamp_ns - events[prev_idx].timestamp_ns) as f64
@@ -483,13 +391,12 @@ mod tests {
 
     #[test]
     fn test_error_topology_basic() {
-        // Create realistic typing pattern with some errors
         let pattern: Vec<(i64, EventType, u64)> = vec![
             (200, EventType::Normal, 0),
             (150, EventType::Normal, 0),
             (180, EventType::Normal, 0),
-            (400, EventType::Correction, 0), // Pause before error
-            (100, EventType::Normal, 0),     // Quick recovery
+            (400, EventType::Correction, 0),
+            (100, EventType::Normal, 0),
             (200, EventType::Normal, 0),
             (150, EventType::Normal, 0),
             (350, EventType::Correction, 0),
@@ -534,11 +441,8 @@ mod tests {
 
     #[test]
     fn test_key_adjacency() {
-        // Q and W should be adjacent
         assert!(are_keys_adjacent('q' as u16, 'w' as u16));
-        // Q and A should be adjacent (diagonal)
         assert!(are_keys_adjacent('q' as u16, 'a' as u16));
-        // Q and Z should not be adjacent
         assert!(!are_keys_adjacent('q' as u16, 'z' as u16));
     }
 
@@ -546,14 +450,12 @@ mod tests {
     fn test_error_distribution() {
         let pattern: Vec<(i64, EventType, u64)> = vec![
             (200, EventType::Normal, 0),
-            (100, EventType::Correction, 0), // Immediate
+            (100, EventType::Correction, 0),
             (200, EventType::Normal, 0),
-            (800, EventType::Correction, 0), // Delayed
+            (800, EventType::Correction, 0),
             (200, EventType::Normal, 0),
-            (3000, EventType::Correction, 0), // Long-delayed
+            (3000, EventType::Correction, 0),
         ];
-
-        // Pad with more events to meet minimum
         let mut full_pattern = pattern.clone();
         for _ in 0..15 {
             full_pattern.push((200, EventType::Normal, 0));

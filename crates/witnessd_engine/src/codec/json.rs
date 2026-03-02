@@ -9,51 +9,51 @@ use std::io::{Read, Write};
 
 use super::{CodecError, Result};
 
-/// Encode a value to JSON bytes (pretty-printed).
+/// Serialize to pretty-printed JSON bytes.
 pub fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     serde_json::to_vec_pretty(value).map_err(|e| CodecError::JsonEncode(e.to_string()))
 }
 
-/// Encode a value to compact JSON bytes (no whitespace).
+/// Serialize to compact (no whitespace) JSON bytes.
 pub fn encode_compact<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     serde_json::to_vec(value).map_err(|e| CodecError::JsonEncode(e.to_string()))
 }
 
-/// Decode a value from JSON bytes.
+/// Deserialize from JSON bytes.
 pub fn decode<T: DeserializeOwned>(data: &[u8]) -> Result<T> {
     serde_json::from_slice(data).map_err(|e| CodecError::JsonDecode(e.to_string()))
 }
 
-/// Encode a value to a JSON writer (pretty-printed).
+/// Serialize pretty-printed JSON into a writer.
 pub fn encode_to<T: Serialize, W: Write>(value: &T, mut writer: W) -> Result<()> {
     let bytes = encode(value)?;
     writer.write_all(&bytes)?;
     Ok(())
 }
 
-/// Encode a value to a JSON writer (compact).
+/// Serialize compact JSON into a writer.
 pub fn encode_to_compact<T: Serialize, W: Write>(value: &T, mut writer: W) -> Result<()> {
     let bytes = encode_compact(value)?;
     writer.write_all(&bytes)?;
     Ok(())
 }
 
-/// Decode a value from a JSON reader.
+/// Deserialize from a JSON reader.
 pub fn decode_from<T: DeserializeOwned, R: Read>(reader: R) -> Result<T> {
     serde_json::from_reader(reader).map_err(|e| CodecError::JsonDecode(e.to_string()))
 }
 
-/// Encode a value to a JSON string.
+/// Serialize to a pretty-printed JSON `String`.
 pub fn to_string<T: Serialize>(value: &T) -> Result<String> {
     serde_json::to_string_pretty(value).map_err(|e| CodecError::JsonEncode(e.to_string()))
 }
 
-/// Encode a value to a compact JSON string.
+/// Serialize to a compact JSON `String`.
 pub fn to_string_compact<T: Serialize>(value: &T) -> Result<String> {
     serde_json::to_string(value).map_err(|e| CodecError::JsonEncode(e.to_string()))
 }
 
-/// Decode a value from a JSON string.
+/// Deserialize from a JSON `&str`.
 pub fn from_string<T: DeserializeOwned>(s: &str) -> Result<T> {
     serde_json::from_str(s).map_err(|e| CodecError::JsonDecode(e.to_string()))
 }
@@ -109,10 +109,8 @@ mod tests {
         let pretty = encode(&data).unwrap();
         let compact = encode_compact(&data).unwrap();
 
-        // Compact should be smaller
         assert!(compact.len() < pretty.len());
 
-        // Both should decode to same value
         let decoded_pretty: TestData = decode(&pretty).unwrap();
         let decoded_compact: TestData = decode(&compact).unwrap();
 

@@ -79,14 +79,14 @@ fn test_block_from_packet() {
     let (packet, _dir) = create_test_evidence();
     let block = Block::from_packet(&packet).expect("create block");
 
-    assert_eq!(block.version, Version::V1_0); // No jitter seal
+    assert_eq!(block.version, Version::V1_0);
     assert!(!block.author.is_empty());
     assert_eq!(
         block.statement,
         "I wrote this document myself without AI assistance."
     );
     assert!(block.evidence.is_some());
-    assert!(!block.signed); // Unsigned until sign() is called
+    assert!(!block.signed);
 }
 
 #[test]
@@ -96,9 +96,8 @@ fn test_block_from_packet_signed() {
     let block = Block::from_packet_signed(&packet, &signing_key).expect("create signed block");
 
     assert!(block.signed);
-    assert_ne!(block.seal.signature, [0u8; 64]); // Signature is not zero
+    assert_ne!(block.seal.signature, [0u8; 64]);
 
-    // Verify the signed block
     let report = block.verify();
     assert!(
         report.valid,
@@ -106,7 +105,6 @@ fn test_block_from_packet_signed() {
         report.summary
     );
 
-    // Check that seal signature passed
     let seal_check = report.checks.iter().find(|c| c.name == "seal_signature");
     assert!(seal_check.is_some(), "Should have seal_signature check");
     assert!(seal_check.unwrap().passed, "Seal signature should pass");
@@ -193,7 +191,6 @@ fn test_block_with_jitter_seal_is_v1_1() {
     let latest = chain.latest().expect("latest");
     let signing_key = test_signing_key();
 
-    // Create declaration with jitter seal
     let jitter = declaration::DeclarationJitter::from_samples(&[1000u32; 10], 1000, false);
     let decl =
         declaration::no_ai_declaration(latest.content_hash, latest.hash, "Test", "Statement")
@@ -218,8 +215,6 @@ fn test_seal_decode_invalid_length() {
 
 #[test]
 fn test_block_missing_declaration() {
-    // Create a packet without declaration (this will fail in Builder)
-    // So we test that from_packet properly handles missing declaration
     let (mut packet, _dir) = create_test_evidence();
     packet.declaration = None;
 
@@ -227,21 +222,15 @@ fn test_block_missing_declaration() {
     assert!(err.contains("missing declaration"));
 }
 
-// =========================================================================
-// Verifier Nonce Tests for WAR Blocks
-// =========================================================================
-
 #[test]
 fn test_block_with_verifier_nonce() {
     let (mut packet, _dir) = create_test_evidence();
 
-    // Set verifier nonce on packet
     let nonce: [u8; 32] = [0x42u8; 32];
     packet.verifier_nonce = Some(nonce);
 
     let block = Block::from_packet(&packet).expect("create block");
 
-    // Verify nonce is preserved in block
     assert!(block.verifier_nonce.is_some());
     assert_eq!(block.verifier_nonce.unwrap(), nonce);
 }
@@ -252,7 +241,6 @@ fn test_block_without_verifier_nonce() {
 
     let block = Block::from_packet(&packet).expect("create block");
 
-    // Verify no nonce is present
     assert!(block.verifier_nonce.is_none());
 }
 
@@ -260,14 +248,12 @@ fn test_block_without_verifier_nonce() {
 fn test_block_ascii_encode_with_verifier_nonce() {
     let (mut packet, _dir) = create_test_evidence();
 
-    // Set verifier nonce
     let nonce: [u8; 32] = [0xABu8; 32];
     packet.verifier_nonce = Some(nonce);
 
     let block = Block::from_packet(&packet).expect("create block");
     let ascii = block.encode_ascii();
 
-    // Verify nonce is present in ASCII output
     assert!(ascii.contains("BEGIN WITNESSD AUTHORSHIP RECORD"));
     assert!(ascii.contains("Verifier-Nonce:"));
     assert!(ascii.contains(&hex::encode(nonce)));
@@ -280,7 +266,6 @@ fn test_block_ascii_encode_without_verifier_nonce() {
     let block = Block::from_packet(&packet).expect("create block");
     let ascii = block.encode_ascii();
 
-    // Verify nonce header is NOT present in ASCII output
     assert!(ascii.contains("BEGIN WITNESSD AUTHORSHIP RECORD"));
     assert!(!ascii.contains("Verifier-Nonce:"));
 }
@@ -289,14 +274,12 @@ fn test_block_ascii_encode_without_verifier_nonce() {
 fn test_block_ascii_decode_with_verifier_nonce() {
     let (mut packet, _dir) = create_test_evidence();
 
-    // Set verifier nonce
     let nonce: [u8; 32] = [0xCDu8; 32];
     packet.verifier_nonce = Some(nonce);
 
     let block = Block::from_packet(&packet).expect("create block");
     let ascii = block.encode_ascii();
 
-    // Decode and verify nonce is preserved
     let decoded = Block::decode_ascii(&ascii).expect("decode");
     assert!(decoded.verifier_nonce.is_some());
     assert_eq!(decoded.verifier_nonce.unwrap(), nonce);
@@ -309,7 +292,6 @@ fn test_block_ascii_decode_without_verifier_nonce() {
     let block = Block::from_packet(&packet).expect("create block");
     let ascii = block.encode_ascii();
 
-    // Decode and verify no nonce
     let decoded = Block::decode_ascii(&ascii).expect("decode");
     assert!(decoded.verifier_nonce.is_none());
 }
@@ -318,14 +300,12 @@ fn test_block_ascii_decode_without_verifier_nonce() {
 fn test_forensic_details_with_verifier_nonce() {
     let (mut packet, _dir) = create_test_evidence();
 
-    // Set verifier nonce
     let nonce: [u8; 32] = [0xEFu8; 32];
     packet.verifier_nonce = Some(nonce);
 
     let block = Block::from_packet(&packet).expect("create block");
     let report = block.verify();
 
-    // Verify forensic details include nonce info
     assert!(report.details.has_verifier_nonce);
     assert!(report.details.verifier_nonce.is_some());
     assert_eq!(
@@ -341,7 +321,6 @@ fn test_forensic_details_without_verifier_nonce() {
     let block = Block::from_packet(&packet).expect("create block");
     let report = block.verify();
 
-    // Verify forensic details show no nonce
     assert!(!report.details.has_verifier_nonce);
     assert!(report.details.verifier_nonce.is_none());
 }
@@ -350,20 +329,15 @@ fn test_forensic_details_without_verifier_nonce() {
 fn test_block_roundtrip_with_nonce() {
     let (mut packet, _dir) = create_test_evidence();
 
-    // Set verifier nonce and sign
     let nonce: [u8; 32] = [0x99u8; 32];
     packet.verifier_nonce = Some(nonce);
 
     let signing_key = test_signing_key();
     let block = Block::from_packet_signed(&packet, &signing_key).expect("create signed block");
 
-    // Encode to ASCII
     let ascii = block.encode_ascii();
-
-    // Decode back
     let decoded = Block::decode_ascii(&ascii).expect("decode");
 
-    // Verify all fields preserved
     assert_eq!(decoded.version, block.version);
     assert_eq!(decoded.author, block.author);
     assert_eq!(decoded.document_id, block.document_id);
