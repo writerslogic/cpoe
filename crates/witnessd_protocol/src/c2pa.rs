@@ -3,22 +3,17 @@
 use crate::rfc::EvidencePacket;
 use serde::{Deserialize, Serialize};
 
-/// C2PA-compliant assertion structure for Proof-of-Process (PoP).
+/// C2PA-compliant assertion for Proof-of-Process evidence.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PoPAssertion {
-    /// C2PA label for this assertion.
     pub label: String,
-    /// The PoP protocol version.
     pub version: u32,
-    /// Unique identifier for the PoP evidence packet.
     pub evidence_id: String,
-    /// Cryptographic digest of the original PoP evidence.
+    /// Cryptographic digest of the original evidence (not the evidence itself).
     pub evidence_hash: String,
-    /// Mapping of jitter-based entropy seals to content checkpoints.
     pub jitter_seals: Vec<JitterSeal>,
 }
 
-/// A cryptographic seal derived from physical jitter entropy.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct JitterSeal {
     pub sequence: u64,
@@ -27,7 +22,6 @@ pub struct JitterSeal {
 }
 
 impl PoPAssertion {
-    /// Maps an EvidencePacket to a C2PA PoPAssertion.
     pub fn from_evidence(packet: &EvidencePacket, original_bytes: &[u8]) -> Self {
         use sha2::{Digest, Sha256};
         let hash = Sha256::digest(original_bytes);
@@ -51,7 +45,6 @@ impl PoPAssertion {
         }
     }
 
-    /// Converts the assertion to JSON for C2PA metadata embedding.
     #[cfg(feature = "serde_json")]
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string_pretty(self)

@@ -54,6 +54,7 @@ dependencies = [
  "ctr",
  "ghash",
  "subtle",
+ "zeroize",
 ]
 
 [[package]]
@@ -5046,10 +5047,12 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "subtle",
  "tempfile",
  "tokio",
  "url",
  "witnessd_engine",
+ "zeroize",
 ]
 
 [[package]]

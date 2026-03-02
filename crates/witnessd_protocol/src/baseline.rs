@@ -2,13 +2,11 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Progressive confidence tier for baseline maturity.
-///
-/// Baselines strengthen as the system observes more writing sessions:
-/// - PopulationReference (1-4 sessions): Human vs machine only
-/// - Emerging (5-9 sessions): Meaningful author consistency
-/// - Established (10-19 sessions): Author identity distinguishable
-/// - Mature (20+ sessions): Full authorship attribution
+/// Progressive confidence tier based on session count:
+/// - PopulationReference (0-4): Human vs machine only
+/// - Emerging (5-9): Meaningful author consistency
+/// - Established (10-19): Author identity distinguishable
+/// - Mature (20+): Full authorship attribution
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u64)]
 pub enum ConfidenceTier {
@@ -19,7 +17,6 @@ pub enum ConfidenceTier {
 }
 
 impl ConfidenceTier {
-    /// Determine confidence tier from session count.
     pub fn from_session_count(count: u64) -> Self {
         match count {
             0..=4 => Self::PopulationReference,
@@ -30,7 +27,7 @@ impl ConfidenceTier {
     }
 }
 
-/// Statistics for streaming metrics using Welford's algorithm.
+/// Welford's algorithm for streaming metrics.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamingStats {
     #[serde(rename = "1")]
@@ -45,19 +42,16 @@ pub struct StreamingStats {
     pub max: f64,
 }
 
-/// Summary of behavioral metrics for a single session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionBehavioralSummary {
     /// 9-bin IKI histogram (edges: 0, 50, 100, 150, 200, 300, 500, 1000, 2000ms)
     #[serde(rename = "1")]
     pub iki_histogram: [f64; 9],
-    /// Coefficient of Variation for IKI
     #[serde(rename = "2")]
     pub iki_cv: f64,
-    /// Hurst exponent for long-range dependency
+    /// Long-range dependency exponent
     #[serde(rename = "3")]
     pub hurst: f64,
-    /// Frequency of cognitive pauses
     #[serde(rename = "4")]
     pub pause_frequency: f64,
     #[serde(rename = "5")]
@@ -66,7 +60,6 @@ pub struct SessionBehavioralSummary {
     pub keystroke_count: u64,
 }
 
-/// Portable summary of an author's behavioral baseline.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BaselineDigest {
     #[serde(rename = "1")]
@@ -97,16 +90,14 @@ pub struct BaselineDigest {
     pub identity_fingerprint: Vec<u8>,
 }
 
-/// Baseline verification data included in an evidence packet.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BaselineVerification {
-    /// The current baseline digest (None during enrollment).
+    /// None during enrollment phase.
     #[serde(rename = "1", default, skip_serializing_if = "Option::is_none")]
     pub digest: Option<BaselineDigest>,
-    /// Behavioral summary of the current session.
     #[serde(rename = "2")]
     pub session_summary: SessionBehavioralSummary,
-    /// COSE_Sign1 signature over the CBOR-encoded digest.
+    /// COSE_Sign1 over the CBOR-encoded digest.
     #[serde(
         rename = "3",
         default,
@@ -207,7 +198,6 @@ mod tests {
         assert!(decoded.digest.is_none());
         assert!((decoded.session_summary.iki_cv - 0.45).abs() < 1e-10);
         assert_eq!(decoded.session_summary.keystroke_count, 5000);
-        // Enrollment packet should be compact
         assert!(
             buf.len() < 200,
             "Enrollment wire overhead: {} bytes",
@@ -271,7 +261,6 @@ mod tests {
         assert_eq!(d.confidence_tier, ConfidenceTier::Established);
         assert_eq!(d.identity_fingerprint, vec![0xBB; 32]);
         assert_eq!(decoded.digest_signature.as_ref().unwrap().len(), 64);
-        // Full packet with digest should be under 600 bytes
         assert!(buf.len() < 600, "Full wire overhead: {} bytes", buf.len());
     }
 }

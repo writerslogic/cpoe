@@ -3,13 +3,9 @@
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 
-/// CBOR Tag for Evidence Packets.
 pub const CBOR_TAG_EVIDENCE_PACKET: u64 = 1129336656;
-
-/// CBOR Tag for Attestation Results (WAR).
 pub const CBOR_TAG_ATTESTATION_RESULT: u64 = 1129791826;
 
-/// Hash Algorithm enumeration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u64)]
 pub enum HashAlgorithm {
@@ -18,7 +14,6 @@ pub enum HashAlgorithm {
     Sha512 = 3,
 }
 
-/// Attestation Tier enumeration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u64)]
 pub enum AttestationTier {
@@ -28,7 +23,6 @@ pub enum AttestationTier {
     HardwareHardened = 4,
 }
 
-/// Content Tier enumeration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u64)]
 pub enum ContentTier {
@@ -37,7 +31,6 @@ pub enum ContentTier {
     Maximum = 3,
 }
 
-/// SWF Proof Algorithm enumeration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u64)]
 pub enum ProofAlgorithm {
@@ -45,7 +38,6 @@ pub enum ProofAlgorithm {
     SwfArgon2idEntangled = 21,
 }
 
-/// Appraisal Verdict enumeration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u64)]
 pub enum Verdict {
@@ -55,7 +47,6 @@ pub enum Verdict {
     Invalid = 4,
 }
 
-/// Hash Value structure.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HashValue {
     #[serde(rename = "1")]
@@ -65,13 +56,11 @@ pub struct HashValue {
 }
 
 impl HashValue {
-    /// Constant-time comparison for use in verification paths.
-    /// Prevents timing side-channels when comparing HMAC outputs.
+    /// Constant-time comparison to prevent timing side-channels on HMAC outputs.
     pub fn ct_eq(&self, other: &Self) -> bool {
         self.algorithm == other.algorithm && self.digest.ct_eq(&other.digest).into()
     }
 
-    /// Returns the expected digest length for this hash algorithm.
     pub fn expected_digest_len(&self) -> usize {
         match self.algorithm {
             HashAlgorithm::Sha256 => 32,
@@ -80,14 +69,13 @@ impl HashValue {
         }
     }
 
-    /// Validates that the digest length matches the algorithm.
     pub fn validate(&self) -> bool {
         self.digest.len() == self.expected_digest_len()
     }
 }
 
-// Keep PartialEq/Eq for non-security-critical uses (serialization, tests).
-// Security-critical verification must use ct_eq() instead.
+// PartialEq/Eq for non-security-critical uses (serialization, tests).
+// Security-critical verification must use ct_eq().
 impl PartialEq for HashValue {
     fn eq(&self, other: &Self) -> bool {
         self.algorithm == other.algorithm && self.digest == other.digest
@@ -96,7 +84,6 @@ impl PartialEq for HashValue {
 
 impl Eq for HashValue {}
 
-/// Document Reference structure.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentRef {
     #[serde(rename = "1")]
@@ -109,7 +96,6 @@ pub struct DocumentRef {
     pub char_count: u64,
 }
 
-/// Checkpoint structure.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Checkpoint {
     #[serde(rename = "1")]
@@ -128,10 +114,8 @@ pub struct Checkpoint {
     pub checkpoint_hash: HashValue,
     #[serde(rename = "9", skip_serializing_if = "Option::is_none")]
     pub jitter_hash: Option<HashValue>,
-    // Additional fields can be added here
 }
 
-/// Evidence Packet structure.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvidencePacket {
     #[serde(rename = "1")]
@@ -152,7 +136,6 @@ pub struct EvidencePacket {
     pub baseline_verification: Option<crate::baseline::BaselineVerification>,
 }
 
-/// Attestation Result (WAR) structure.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AttestationResult {
     #[serde(rename = "1")]
@@ -169,7 +152,7 @@ pub struct AttestationResult {
     pub chain_duration: u64, // seconds
     #[serde(rename = "12")]
     pub created: u64,
-    /// Baseline confidence tier (None if no baseline verification was present).
+    /// None if no baseline verification was present in the evidence.
     #[serde(rename = "14", skip_serializing_if = "Option::is_none")]
     pub confidence_tier: Option<crate::baseline::ConfidenceTier>,
 }

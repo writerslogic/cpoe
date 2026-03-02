@@ -1,11 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
-//! WebAssembly bindings for pop-crate.
+//! WASM bindings for witnessd_protocol.
 //!
-//! Exports verification and forensic analysis logic for use in Cloudflare
-//! Workers via wasm-bindgen.
-//!
-//! Build with: wasm-pack build --target web --features wasm
+//! Build with: `wasm-pack build --target web --features wasm`
 
 #[cfg(feature = "wasm")]
 use wasm_bindgen::prelude::*;
@@ -17,7 +14,6 @@ use crate::forensics::{ForensicVerdict, ForensicsEngine};
 #[cfg(feature = "wasm")]
 use ed25519_dalek::VerifyingKey;
 
-/// Result of PoP evidence verification with forensic analysis, returned to JavaScript.
 #[cfg(feature = "wasm")]
 #[wasm_bindgen]
 pub struct VerificationResult {
@@ -26,8 +22,8 @@ pub struct VerificationResult {
     checkpoint_count: u32,
     chain_duration_secs: u64,
     coefficient_of_variation: f64,
-    hurst_exponent: f64,  // -1.0 if not computed
-    linearity_score: f64, // -1.0 if not computed
+    hurst_exponent: f64,
+    linearity_score: f64,
     error_message: String,
     explanation: String,
 }
@@ -81,27 +77,14 @@ impl VerificationResult {
     }
 }
 
-/// Verify a COSE-signed PoP evidence packet and run forensic analysis.
+/// Main WASM entry point: verify COSE-signed PoP evidence + forensic analysis.
 ///
-/// This is the main entry point called from the Cloudflare Worker.
-/// It performs:
-/// 1. COSE_Sign1 Ed25519 signature verification
-/// 2. CBOR tag validation (0x434F5050)
-/// 3. Causality chain (HMAC) verification
-/// 4. Adversarial Collapse detection (timing uniformity)
-/// 5. δ-Analysis (Coefficient of Variation)
-/// 6. Hurst exponent estimation (if enough data)
-///
-/// # Arguments
-/// * `evidence_bytes` - Raw COSE_Sign1 bytes from the pop-crate client
-/// * `public_key_bytes` - 32-byte Ed25519 public key of the signer
-///
-/// # Returns
-/// A `VerificationResult` with forensic verdict V1–V5 and analysis metrics.
+/// Performs COSE Ed25519 signature verification, CBOR tag validation,
+/// causality chain verification, adversarial collapse detection,
+/// and Hurst exponent estimation. Returns forensic verdict V1-V5.
 #[cfg(feature = "wasm")]
 #[wasm_bindgen]
 pub fn verify_pop_evidence(evidence_bytes: &[u8], public_key_bytes: &[u8]) -> VerificationResult {
-    // Parse the Ed25519 public key
     let key_bytes: [u8; 32] = match public_key_bytes.try_into() {
         Ok(bytes) => bytes,
         Err(_) => {
@@ -138,10 +121,8 @@ pub fn verify_pop_evidence(evidence_bytes: &[u8], public_key_bytes: &[u8]) -> Ve
 
     let verifier = PoPVerifier::new(verifying_key);
 
-    // Step 1: Cryptographic verification (COSE + causality chain)
     match verifier.verify(evidence_bytes) {
         Ok(packet) => {
-            // Step 2: Forensic analysis on the verified packet
             let timestamps: Vec<u64> = std::iter::once(packet.created)
                 .chain(packet.checkpoints.iter().map(|cp| cp.timestamp))
                 .collect();
@@ -162,7 +143,6 @@ pub fn verify_pop_evidence(evidence_bytes: &[u8], public_key_bytes: &[u8]) -> Ve
             }
         }
         Err(e) => {
-            // Map crypto/chain errors to forensic verdicts
             let verdict = match &e {
                 crate::error::Error::Validation(msg) if msg.contains("Adversarial collapse") => {
                     ForensicVerdict::V4LikelySynthetic

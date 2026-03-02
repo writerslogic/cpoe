@@ -2,10 +2,8 @@
 
 use thiserror::Error;
 
-/// Result type for pop-crate operations.
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// Error types for the PoP Protocol.
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("I/O error: {0}")]

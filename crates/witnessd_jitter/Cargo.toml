@@ -10,6 +10,9 @@ repository = "https://github.com/writerslogic/witnessd"
 keywords = ["cryptography", "authentication", "timing", "entropy", "authorship"]
 categories = ["cryptography", "authentication"]
 readme = "README.md"
+homepage = "https://github.com/writerslogic/witnessd"
+documentation = "https://docs.rs/witnessd_jitter"
+exclude = ["fuzz/", "benches/"]
 
 [dependencies]
 hmac = { version = "0.12", default-features = false }

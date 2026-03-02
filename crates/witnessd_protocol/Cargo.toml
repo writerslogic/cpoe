@@ -9,6 +9,10 @@ repository = "https://github.com/writerslogic/witnessd"
 readme = "README.md"
 keywords = ["cryptography", "authentication", "pop", "ietf", "rats"]
 categories = ["cryptography", "authentication"]
+rust-version = "1.75.0"
+homepage = "https://github.com/writerslogic/witnessd"
+documentation = "https://docs.rs/witnessd_protocol"
+exclude = ["tests/", "fuzz/", "benches/"]
 
 [lib]
 crate-type = ["rlib", "staticlib", "cdylib"]

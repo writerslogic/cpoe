@@ -1,6 +1,6 @@
 # Security Policy
 
-This document outlines the security policy for the `pop-crate` crate.
+This document outlines the security policy for the `witnessd_protocol` crate.
 
 ## Supported Versions
 

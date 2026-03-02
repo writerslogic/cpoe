@@ -9,7 +9,6 @@ use sha2::{Digest, Sha256};
 
 type HmacSha256 = Hmac<Sha256>;
 
-/// Computes the SHA-256 hash of the given data.
 pub fn hash_sha256(data: &[u8]) -> HashValue {
     let mut hasher = Sha256::new();
     hasher.update(data);
@@ -19,14 +18,12 @@ pub fn hash_sha256(data: &[u8]) -> HashValue {
     }
 }
 
-/// Length-prefix a field into the HMAC to prevent concatenation ambiguity.
+/// Length-prefixes fields to prevent concatenation ambiguity.
 fn hmac_update_field(mac: &mut HmacSha256, data: &[u8]) {
     mac.update(&(data.len() as u32).to_be_bytes());
     mac.update(data);
 }
 
-/// Computes the HMAC-SHA256 for the causality lock.
-///
 /// Inputs are length-prefixed and domain-separated to prevent concatenation ambiguity.
 pub fn compute_causality_lock(
     key: &[u8],
@@ -46,9 +43,8 @@ pub fn compute_causality_lock(
     })
 }
 
-/// Advanced causality lock that binds physical entropy (jitter) to the content chain.
-///
-/// Inputs are length-prefixed and domain-separated to prevent concatenation ambiguity.
+/// Binds physical entropy (jitter) to the content chain.
+/// Inputs are length-prefixed and domain-separated.
 pub fn compute_causality_lock_v2(
     key: &[u8],
     prev_hash: &[u8],
@@ -69,7 +65,7 @@ pub fn compute_causality_lock_v2(
     })
 }
 
-/// Abstract signer trait to support both software keys and hardware tokens (TPM/Secure Enclave).
+/// Supports both software keys and hardware tokens (TPM/Secure Enclave).
 pub trait PoPSigner {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>>;
     fn algorithm(&self) -> coset::iana::Algorithm;
@@ -90,15 +86,9 @@ impl PoPSigner for SigningKey {
     }
 }
 
-/// Signs a CBOR-encoded Evidence Packet using COSE_Sign1.
-///
-/// Dispatches to the provided [`PoPSigner`] implementation, which may
-/// be backed by a software key or by hardware (TPM/Secure Enclave).
 pub fn sign_evidence_cose(payload: &[u8], signer: &dyn PoPSigner) -> Result<Vec<u8>> {
-    // Construct the protected header
     let protected = HeaderBuilder::new().algorithm(signer.algorithm()).build();
 
-    // Construct the COSE_Sign1 structure, capturing any signing error
     let mut sign_error: Option<Error> = None;
     let sign1 = CoseSign1Builder::new()
         .protected(protected)
@@ -116,8 +106,7 @@ pub fn sign_evidence_cose(payload: &[u8], signer: &dyn PoPSigner) -> Result<Vec<
         return Err(e);
     }
 
-    // Safety: verify the signature is not empty (would indicate a signing failure
-    // that was not properly captured by the error path above)
+    // Empty signature indicates a signing failure not captured by the error path
     if sign1.signature.is_empty() {
         return Err(Error::Crypto(
             "COSE signing produced empty signature".to_string(),
@@ -129,7 +118,6 @@ pub fn sign_evidence_cose(payload: &[u8], signer: &dyn PoPSigner) -> Result<Vec<
         .map_err(|e| Error::Crypto(format!("COSE encoding error: {}", e)))
 }
 
-/// Verifies a COSE_Sign1 Evidence Packet.
 pub fn verify_evidence_cose(cose_data: &[u8], verifying_key: &VerifyingKey) -> Result<Vec<u8>> {
     let sign1 = coset::CoseSign1::from_slice(cose_data)
         .map_err(|e| Error::Crypto(format!("COSE decoding error: {}", e)))?;

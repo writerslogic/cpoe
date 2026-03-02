@@ -7,11 +7,11 @@ use crate::rfc::{
     AttestationTier, Checkpoint, DocumentRef, EvidencePacket, HashAlgorithm, HashValue,
 };
 use ed25519_dalek::VerifyingKey;
+use rand::rngs::OsRng;
 use rand::RngCore;
 use std::time::{SystemTime, UNIX_EPOCH};
 use witnessd_jitter::{EntropySource, PhysJitter};
 
-/// Builder for constructing Proof-of-Process Evidence.
 pub struct PoPBuilder {
     version: u32,
     profile_uri: String,
@@ -27,17 +27,15 @@ pub struct PoPBuilder {
 }
 
 impl PoPBuilder {
-    /// Creates a new PoPBuilder for a document.
     pub fn new(document: DocumentRef, signer: Box<dyn PoPSigner>) -> Self {
         let mut packet_id = [0u8; 16];
-        rand::thread_rng().fill_bytes(&mut packet_id);
+        OsRng.fill_bytes(&mut packet_id);
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
 
-        // Initial hash is the hash of the document's content hash
         let initial_hash = hash_sha256(&document.content_hash.digest);
 
         Self {
@@ -49,25 +47,22 @@ impl PoPBuilder {
             checkpoints: Vec::new(),
             last_checkpoint_hash: initial_hash,
             signer,
-            jitter: PhysJitter::new(1), // Lowered requirement for demo compatibility
+            jitter: PhysJitter::new(1), // Lowered for demo compatibility
             attestation_tier: AttestationTier::SoftwareOnly,
             baseline_verification: None,
         }
     }
 
-    /// Set the attestation tier for this evidence packet.
     pub fn with_attestation_tier(mut self, tier: AttestationTier) -> Self {
         self.attestation_tier = tier;
         self
     }
 
-    /// Set the baseline verification data for this evidence packet.
     pub fn with_baseline_verification(mut self, bv: crate::baseline::BaselineVerification) -> Self {
         self.baseline_verification = Some(bv);
         self
     }
 
-    /// Adds a new checkpoint to the evidence.
     pub fn add_checkpoint(&mut self, content: &[u8], char_count: u64) -> Result<()> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -76,17 +71,16 @@ impl PoPBuilder {
 
         let sequence = self.checkpoints.len() as u64;
         let mut checkpoint_id = [0u8; 16];
-        rand::thread_rng().fill_bytes(&mut checkpoint_id);
+        OsRng.fill_bytes(&mut checkpoint_id);
 
         let content_hash = hash_sha256(content);
 
-        // Record jitter entropy as part of the process
         let entropy = self
             .jitter
             .sample(content)
             .map_err(|e| Error::Crypto(format!("PhysJitter sampling failed: {}", e)))?;
 
-        // Causality Lock V2: HMAC(packet_id, prev_hash | current_content_hash | entropy)
+        // Causality Lock V2: HMAC(packet_id, prev_hash | content_hash | entropy)
         let checkpoint_hash = crate::crypto::compute_causality_lock_v2(
             &self.packet_id,
             &self.last_checkpoint_hash.digest,
@@ -114,7 +108,6 @@ impl PoPBuilder {
         Ok(())
     }
 
-    /// Finalizes the Evidence Packet and signs it.
     pub fn finalize(self) -> Result<Vec<u8>> {
         let packet = EvidencePacket {
             version: self.version,
@@ -132,18 +125,15 @@ impl PoPBuilder {
     }
 }
 
-/// Verifier for Proof-of-Process Evidence.
 pub struct PoPVerifier {
     verifying_key: VerifyingKey,
 }
 
 impl PoPVerifier {
-    /// Creates a new PoPVerifier.
     pub fn new(verifying_key: VerifyingKey) -> Self {
         Self { verifying_key }
     }
 
-    /// Verifies the given COSE-signed Evidence Packet.
     pub fn verify(&self, cose_data: &[u8]) -> Result<EvidencePacket> {
         // 1. Verify COSE signature
         let payload = verify_evidence_cose(cose_data, &self.verifying_key)?;
@@ -154,11 +144,10 @@ impl PoPVerifier {
         // 3. Validate structural integrity
         self.validate_structure(&packet)?;
 
-        // 4. Verify Causality Chain (using constant-time comparisons)
+        // 4. Verify causality chain (constant-time comparisons)
         let mut last_hash = hash_sha256(&packet.document.content_hash.digest);
 
         for (i, checkpoint) in packet.checkpoints.iter().enumerate() {
-            // Verify sequence numbers are contiguous
             if checkpoint.sequence != i as u64 {
                 return Err(Error::Validation(format!(
                     "Sequence mismatch at index {}: expected {}, got {}",
@@ -166,7 +155,6 @@ impl PoPVerifier {
                 )));
             }
 
-            // Verify prev_hash matches (constant-time)
             if !checkpoint.prev_hash.ct_eq(&last_hash) {
                 return Err(Error::Validation(format!(
                     "Causality chain broken at sequence {}: prev_hash mismatch",
@@ -174,7 +162,6 @@ impl PoPVerifier {
                 )));
             }
 
-            // Recompute checkpoint_hash using appropriate lock version
             let expected_hash = if let Some(ref jitter) = checkpoint.jitter_hash {
                 crate::crypto::compute_causality_lock_v2(
                     &packet.packet_id,
@@ -190,7 +177,6 @@ impl PoPVerifier {
                 )?
             };
 
-            // Constant-time comparison for checkpoint hash
             if !checkpoint.checkpoint_hash.ct_eq(&expected_hash) {
                 return Err(Error::Validation(format!(
                     "Causality chain broken at sequence {}: checkpoint_hash mismatch",
@@ -212,19 +198,14 @@ impl PoPVerifier {
         Ok(packet)
     }
 
-    /// Validates baseline verification structural integrity.
-    ///
-    /// If a digest is present, verifies:
-    /// - identity_fingerprint matches SHA-256(signer pubkey)
-    /// - digest_signature is present when digest is present
-    ///
-    /// Behavioral similarity scoring is done at a higher layer (engine crate).
+    /// Verifies identity_fingerprint == SHA-256(signer pubkey) and that
+    /// digest_signature is present when digest is present.
+    /// Behavioral similarity scoring is done at the engine layer.
     fn validate_baseline_verification(
         &self,
         bv: &crate::baseline::BaselineVerification,
     ) -> Result<()> {
         if let Some(ref digest) = bv.digest {
-            // Verify identity_fingerprint == SHA-256(signer pubkey)
             let pubkey_hash = hash_sha256(self.verifying_key.as_bytes());
             if digest.identity_fingerprint != pubkey_hash.digest {
                 return Err(Error::Validation(
@@ -233,7 +214,6 @@ impl PoPVerifier {
                 ));
             }
 
-            // Digest signature must be present when digest is present
             if bv.digest_signature.is_none() {
                 return Err(Error::Validation(
                     "Baseline digest present but digest_signature is missing".to_string(),
@@ -243,9 +223,7 @@ impl PoPVerifier {
         Ok(())
     }
 
-    /// Validates structural integrity of deserialized packet fields.
     fn validate_structure(&self, packet: &EvidencePacket) -> Result<()> {
-        // Validate packet_id is 16 bytes (UUID)
         if packet.packet_id.len() != 16 {
             return Err(Error::Validation(format!(
                 "Invalid packet_id length: expected 16, got {}",
@@ -253,14 +231,12 @@ impl PoPVerifier {
             )));
         }
 
-        // Validate document content hash
         if !packet.document.content_hash.validate() {
             return Err(Error::Validation(
                 "Document content_hash digest length does not match algorithm".to_string(),
             ));
         }
 
-        // Validate checkpoint count limit (DoS protection)
         const MAX_CHECKPOINTS: usize = 100_000;
         if packet.checkpoints.len() > MAX_CHECKPOINTS {
             return Err(Error::Validation(format!(
@@ -270,7 +246,6 @@ impl PoPVerifier {
             )));
         }
 
-        // Validate each checkpoint's structural fields
         for checkpoint in &packet.checkpoints {
             if checkpoint.checkpoint_id.len() != 16 {
                 return Err(Error::Validation(format!(
@@ -332,8 +307,7 @@ impl PoPVerifier {
             last_ts = checkpoint.timestamp;
         }
 
-        // Adversarial Collapse Check:
-        // If all intervals are identical (e.g. exactly 100ms), it's likely a script/playback.
+        // Adversarial Collapse: all-identical intervals indicate script/playback
         if intervals.len() >= 3 {
             let first = intervals[0];
             if intervals.iter().all(|&x| x == first) {

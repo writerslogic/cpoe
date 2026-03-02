@@ -74,7 +74,7 @@ In an era of AI-generated content, proving that text was actually *typed* by a h
 | **Automatic Fallback** | Uses hardware when available, gracefully degrades in VMs |
 | **Human Validation** | Statistical model trained on 136M real keystrokes |
 | **Evidence Chain** | Cryptographically-linked, serializable proof records |
-| **Zero Unsafe Code** | Pure safe Rust implementation (`#![forbid(unsafe_code)]`) |
+| **Zero Unsafe Code (pure mode)** | `#![forbid(unsafe_code)]` by default; `hardware` feature enables minimal `unsafe` for TSC/CNTVCT reads |
 | **`no_std` Support** | Works in embedded and WASM environments |
 | **SLSA Level 3** | Supply chain security with provenance attestation |
 | **Minimal Dependencies** | Only well-audited RustCrypto crates |
@@ -507,7 +507,7 @@ fn main() {
     println!("Physics ratio: {:.1}%", chain.phys_ratio() * 100.0);
 
     // Chain integrity hash
-    println!("Chain hash: {:02x?}...", &chain.chain_hash[..8]);
+    println!("Chain MAC: {:02x?}...", &chain.chain_mac[..8]);
 }
 ```
 
@@ -551,7 +551,7 @@ fn main() -> Result<(), serde_json::Error> {
       "timestamp_us": 1706745600100000
     }
   ],
-  "chain_hash": ["...32 bytes..."]
+  "chain_mac": ["...32 bytes..."]
 }
 ```
 

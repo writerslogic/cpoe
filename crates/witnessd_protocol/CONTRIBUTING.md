@@ -1,6 +1,6 @@
-# Contributing to pop-crate
+# Contributing to witnessd_protocol
 
-Thank you for your interest in contributing to pop-crate! This document provides guidelines and instructions for contributing to this core Rust implementation of the Proof-of-Process (PoP) Protocol.
+Thank you for your interest in contributing to witnessd_protocol! This document provides guidelines and instructions for contributing to this core Rust implementation of the Proof-of-Process (PoP) Protocol.
 
 ---
 
@@ -38,8 +38,8 @@ This project adheres to the [Contributor Covenant Code of Conduct](CODE_OF_CONDU
 
 ```bash
 # Clone the repository
-git clone https://github.com/writerslogic/pop-crate.git
-cd pop-crate
+git clone https://github.com/writerslogic/witnessd.git
+cd witnessd/crates/witnessd_protocol
 
 # Verify the build
 cargo build --all-features

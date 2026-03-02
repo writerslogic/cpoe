@@ -3,18 +3,17 @@
 use crate::forensics::transcription;
 use serde::{Deserialize, Serialize};
 
-/// Forensic verdict levels for PoP evidence appraisal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ForensicVerdict {
-    /// V1: High entropy, valid causality chain, non-linear composition confirmed.
+    /// High entropy, valid causality, non-linear composition.
     V1VerifiedHuman,
-    /// V2: Valid timing with minor causality drift (e.g., clock skew).
+    /// Valid timing with minor causality drift (e.g., clock skew).
     V2LikelyHuman,
-    /// V3: Low entropy or high linearity — potential transcription.
+    /// Low entropy or high linearity — potential transcription.
     V3Suspicious,
-    /// V4: Perfect timing uniformity — suggests histogram attack or bot.
+    /// Perfect timing uniformity — histogram attack or bot.
     V4LikelySynthetic,
-    /// V5: HMAC causality lock broken — confirmed evidence tampering.
+    /// HMAC causality lock broken — confirmed tampering.
     V5ConfirmedForgery,
 }
 
@@ -37,7 +36,6 @@ impl ForensicVerdict {
     }
 }
 
-/// Detailed forensic analysis result.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ForensicAnalysis {
     pub verdict: ForensicVerdict,
@@ -49,7 +47,6 @@ pub struct ForensicAnalysis {
     pub explanation: String,
 }
 
-/// Core forensics engine for PoP evidence analysis.
 pub struct ForensicsEngine {
     pub inter_checkpoint_intervals: Vec<f64>,
     pub causality_chain_valid: bool,
@@ -277,6 +274,7 @@ impl ForensicsEngine {
             .all(|&x| (x - first).abs() < tolerance)
     }
 
+    /// Rescaled range (R/S) method for Hurst exponent estimation.
     fn estimate_hurst_exponent(&self) -> f64 {
         let data = &self.inter_checkpoint_intervals;
         let n = data.len();

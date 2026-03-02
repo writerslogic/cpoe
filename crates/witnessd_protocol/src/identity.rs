@@ -3,6 +3,7 @@
 use crate::error::{Error, Result};
 use const_oid::AssociatedOid;
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
+use rand::rngs::OsRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -20,7 +21,7 @@ use x509_cert::ext::{AsExtension, Extension};
 use x509_cert::name::Name;
 use zeroize::Zeroizing;
 
-/// Wrapper for VerifyingKey to implement required traits for x509-cert builder.
+/// Wrapper to implement x509-cert builder traits for VerifyingKey.
 #[derive(Clone, Debug)]
 pub struct PoPVerifyingKey(pub VerifyingKey);
 
@@ -38,7 +39,7 @@ impl EncodePublicKey for PoPVerifyingKey {
     }
 }
 
-/// Wrapper for SigningKey to implement required traits for x509-cert builder.
+/// Wrapper to implement x509-cert builder traits for SigningKey.
 pub struct PoPSigner(pub SigningKey);
 
 impl Keypair for PoPSigner {
@@ -57,7 +58,7 @@ impl DynSignatureAlgorithmIdentifier for PoPSigner {
     }
 }
 
-/// We need a local signature type to implement SignatureBitStringEncoding due to orphan rules.
+/// Local signature type to implement SignatureBitStringEncoding (orphan rule).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PoPSignature(pub ed25519_dalek::Signature);
 
@@ -95,7 +96,7 @@ impl SignatureBitStringEncoding for PoPSignature {
     }
 }
 
-/// Custom extension for PoP Capability.
+/// X.509 extension for PoP capability (OID 1.3.6.1.4.1.54066.1.1).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PoPCapability(pub OctetString);
 
@@ -122,7 +123,6 @@ impl AsExtension for PoPCapability {
     }
 }
 
-/// Enrollment Request for the WritersLogic platform.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EnrollmentRequest {
     pub user_id: String,
@@ -130,34 +130,29 @@ pub struct EnrollmentRequest {
     pub hardware_attestation: Vec<u8>,
 }
 
-/// Manager for PoP Identities and cryptographic keys.
 pub struct IdentityManager {
     signer: PoPSigner,
 }
 
 impl IdentityManager {
-    /// Generates a new identity with a random Ed25519 key pair.
     pub fn generate() -> Self {
         let mut bytes = Zeroizing::new([0u8; 32]);
-        rand::thread_rng().fill_bytes(bytes.as_mut());
+        OsRng.fill_bytes(bytes.as_mut());
         Self {
             signer: PoPSigner(SigningKey::from_bytes(&bytes)),
         }
     }
 
-    /// Loads an identity from a secret key.
     pub fn from_secret_key(bytes: &[u8; 32]) -> Self {
         Self {
             signer: PoPSigner(SigningKey::from_bytes(bytes)),
         }
     }
 
-    /// Returns the signing key for this identity.
     pub fn signing_key(&self) -> &SigningKey {
         &self.signer.0
     }
 
-    /// Generates a Certificate Signing Request (CSR) for this identity.
     pub fn generate_csr(&self, subject_dn: &str) -> Result<Vec<u8>> {
         let subject = Name::from_str(subject_dn)
             .map_err(|e| Error::Validation(format!("Invalid Subject DN: {}", e)))?;
@@ -165,7 +160,6 @@ impl IdentityManager {
         let mut builder = RequestBuilder::new(subject, &self.signer)
             .map_err(|e| Error::Crypto(format!("CSR builder error: {}", e)))?;
 
-        // Add Subject Key Identifier extension
         let public_key_bytes = self.signer.0.verifying_key().to_bytes();
         let hash = Sha256::digest(public_key_bytes);
         let ski = SubjectKeyIdentifier(
@@ -176,7 +170,6 @@ impl IdentityManager {
             .add_extension(&ski)
             .map_err(|e| Error::Crypto(format!("Failed to add SKI extension: {}", e)))?;
 
-        // PoP Capability Extension
         let pop_cap =
             PoPCapability(OctetString::new(vec![0x01]).map_err(|e| Error::Crypto(e.to_string()))?);
         builder
@@ -191,11 +184,7 @@ impl IdentityManager {
             .map_err(|e| Error::Crypto(format!("DER encoding error: {}", e)))
     }
 
-    /// Constructs an EnrollmentRequest for the WritersLogic platform.
-    ///
-    /// `hardware_attestation` should be a TPM quote or Secure Enclave attestation
-    /// blob when hardware-backed keys are available. Pass an empty slice for
-    /// software-only mode.
+    /// `hardware_attestation`: TPM quote or Secure Enclave blob; empty for software-only.
     pub fn create_enrollment_request(
         &self,
         user_id: &str,
