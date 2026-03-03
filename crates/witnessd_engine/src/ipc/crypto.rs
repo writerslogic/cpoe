@@ -40,16 +40,12 @@ pub(crate) const JSON_PROTOCOL_MAGIC: [u8; 2] = [0x57, 0x4A];
 ///   5. All subsequent messages: [4-byte len][8-byte seq][12-byte nonce][ciphertext+tag]
 pub(crate) const SECURE_JSON_PROTOCOL_MAGIC: [u8; 2] = [0x57, 0x53];
 
-/// Minimum supported secure protocol version
 pub(crate) const SECURE_PROTOCOL_VERSION_MIN: u8 = 1;
-
-/// Maximum supported secure protocol version
 pub(crate) const SECURE_PROTOCOL_VERSION_MAX: u8 = 1;
 
 /// Size of an uncompressed P-256 public key (0x04 prefix + 32-byte X + 32-byte Y)
 pub(crate) const P256_PUBLIC_KEY_SIZE: usize = 65;
 
-/// HKDF salt for IPC session key derivation
 pub(crate) const IPC_HKDF_SALT: &[u8] = b"witnessd-ipc-v1";
 
 /// Timeout for the ECDH handshake phase (prevents hanging connections)
@@ -66,17 +62,14 @@ pub(crate) struct SecureSession {
     cipher: Aes256Gcm,
     /// Transmit sequence counter. Server uses odd (1,3,5...), client uses even (0,2,4...).
     tx_sequence: AtomicU64,
-    /// Expected receive sequence counter.
     rx_sequence: AtomicU64,
     /// Copy of key bytes for zeroization on drop
     key_bytes: [u8; 32],
 }
 
 impl SecureSession {
-    /// Create a secure session from a P-256 ECDH shared secret with channel binding.
-    /// `is_server` determines sequence number parity (server=odd tx, client=even tx).
-    /// `client_pubkey` and `server_pubkey` are included in the HKDF info for channel binding,
-    /// preventing MITM relay attacks.
+    /// Derive a session from a P-256 ECDH shared secret with channel binding.
+    /// Pubkeys are included in HKDF info to prevent MITM relay attacks.
     pub(crate) fn from_shared_secret(
         shared_secret: &[u8],
         client_pubkey: &[u8],
@@ -199,7 +192,7 @@ pub(crate) struct RateLimiter {
 pub(crate) struct RateLimitConfig;
 
 impl RateLimitConfig {
-    /// Get the maximum operations per window for a given operation category.
+    /// Max operations per window for a given category.
     pub(crate) fn max_ops(category: &str) -> u32 {
         match category {
             "heartbeat" | "status" => 120, // Frequent, cheap operations
@@ -219,8 +212,7 @@ impl RateLimiter {
         }
     }
 
-    /// Check if an operation is allowed. Returns true if within rate limit.
-    /// Uses per-category limits from RateLimitConfig.
+    /// Check if an operation is within its per-category rate limit.
     pub(crate) fn check(&mut self, operation: &str) -> bool {
         let now = Instant::now();
         let max_ops = RateLimitConfig::max_ops(operation);
@@ -262,7 +254,6 @@ pub(crate) async fn secure_handshake_server<
     use p256::{ecdh::EphemeralSecret, elliptic_curve::sec1::ToEncodedPoint, PublicKey};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    // Validate protocol version
     if protocol_version < SECURE_PROTOCOL_VERSION_MIN
         || protocol_version > SECURE_PROTOCOL_VERSION_MAX
     {
@@ -274,7 +265,6 @@ pub(crate) async fn secure_handshake_server<
         ));
     }
 
-    // Wrap the handshake in a timeout
     tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
         // 1. Read client's uncompressed P-256 public key (65 bytes)
         let mut client_pubkey_bytes = [0u8; P256_PUBLIC_KEY_SIZE];
@@ -340,7 +330,7 @@ pub(crate) async fn secure_handshake_server<
     .map_err(|_| anyhow!("Secure handshake timed out after {:?}", HANDSHAKE_TIMEOUT))?
 }
 
-/// Send an encrypted message over a stream using the secure session.
+/// Send an encrypted message over a stream.
 pub(crate) async fn send_encrypted<S: tokio::io::AsyncWrite + Unpin>(
     stream: &mut S,
     session: &SecureSession,
@@ -356,7 +346,7 @@ pub(crate) async fn send_encrypted<S: tokio::io::AsyncWrite + Unpin>(
     Ok(())
 }
 
-/// Get the operation name for rate limiting from an IPC message.
+/// Map an IPC message to its rate-limit category.
 pub(crate) fn rate_limit_key(msg: &IpcMessage) -> &'static str {
     match msg {
         IpcMessage::ExportFile { .. } | IpcMessage::ExportWithNonce { .. } => "export",
@@ -369,7 +359,6 @@ pub(crate) fn rate_limit_key(msg: &IpcMessage) -> &'static str {
     }
 }
 
-// Helper functions for bincode 2.0 serialization
 pub(crate) fn encode_message(msg: &IpcMessage) -> Result<Vec<u8>> {
     bincode::serde::encode_to_vec(msg, bincode::config::standard())
         .map_err(|e| anyhow!("Failed to encode message: {}", e))
@@ -382,17 +371,14 @@ pub(crate) fn decode_message(bytes: &[u8]) -> Result<IpcMessage> {
     Ok(msg)
 }
 
-/// JSON encode helper for Swift/C# clients
 pub(crate) fn encode_message_json(msg: &IpcMessage) -> Result<Vec<u8>> {
     serde_json::to_vec(msg).map_err(|e| anyhow!("JSON encode: {}", e))
 }
 
-/// JSON decode helper for Swift/C# clients
 pub(crate) fn decode_message_json(bytes: &[u8]) -> Result<IpcMessage> {
     serde_json::from_slice(bytes).map_err(|e| anyhow!("JSON decode: {}", e))
 }
 
-/// Encode a message using the specified protocol
 pub(crate) fn encode_for_protocol(msg: &IpcMessage, protocol: WireProtocol) -> Result<Vec<u8>> {
     match protocol {
         WireProtocol::Bincode => encode_message(msg),
@@ -400,7 +386,6 @@ pub(crate) fn encode_for_protocol(msg: &IpcMessage, protocol: WireProtocol) -> R
     }
 }
 
-/// Decode a message using the specified protocol
 pub(crate) fn decode_for_protocol(bytes: &[u8], protocol: WireProtocol) -> Result<IpcMessage> {
     match protocol {
         WireProtocol::Bincode => decode_message(bytes),

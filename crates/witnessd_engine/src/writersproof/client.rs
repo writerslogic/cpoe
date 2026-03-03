@@ -16,7 +16,6 @@ pub struct WritersProofClient {
 }
 
 impl WritersProofClient {
-    /// Create a new client with the given base URL.
     pub fn new(base_url: &str) -> Self {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),

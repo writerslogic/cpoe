@@ -175,10 +175,6 @@ unsafe fn get_ax_url_as_path(element: *mut std::ffi::c_void) -> Option<String> {
     }
 }
 
-// =============================================================================
-// MacOSFocusMonitor trait implementation
-// =============================================================================
-
 /// macOS focus monitor implementation.
 pub struct MacOSFocusMonitor {
     running: Arc<AtomicBool>,
@@ -187,7 +183,6 @@ pub struct MacOSFocusMonitor {
 }
 
 impl MacOSFocusMonitor {
-    /// Create a new macOS focus monitor instance.
     pub fn new() -> Result<Self> {
         Ok(Self {
             running: Arc::new(AtomicBool::new(false)),

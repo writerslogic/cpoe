@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex, RwLock};
 
 use crate::DateTimeNanosExt;
+use crate::RwLockRecover;
 
 /// macOS mouse capture implementation using CGEventTap.
 pub struct MacOSMouseCapture {
@@ -30,7 +31,6 @@ pub struct MacOSMouseCapture {
 }
 
 impl MacOSMouseCapture {
-    /// Create a new macOS mouse capture instance.
     pub fn new() -> Result<Self> {
         Ok(Self {
             running: Arc::new(AtomicBool::new(false)),
@@ -227,10 +227,7 @@ impl MouseCapture for MacOSMouseCapture {
     }
 
     fn idle_stats(&self) -> MouseIdleStats {
-        self.idle_stats
-            .read()
-            .unwrap_or_else(|p| p.into_inner())
-            .clone()
+        self.idle_stats.read_recover().clone()
     }
 
     fn reset_idle_stats(&mut self) {

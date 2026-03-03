@@ -281,13 +281,7 @@ impl BackspaceSignature {
     }
 }
 
-fn relative_sim(a: f64, b: f64) -> f64 {
-    if a == 0.0 && b == 0.0 {
-        1.0
-    } else {
-        1.0 - (a - b).abs() / (a + b + 0.001)
-    }
-}
+use crate::analysis::stats::relative_similarity as relative_sim;
 
 /// Streaming collector that builds a `VoiceFingerprint` from keystroke events.
 pub struct VoiceCollector {
@@ -434,12 +428,11 @@ fn is_backspace_keycode(keycode: u16) -> bool {
     keycode == 0x33 || keycode == 14 || keycode == 0x08 || keycode == 0x7F
 }
 
-/// Bhattacharyya coefficient between two histograms.
+/// Bhattacharyya coefficient between two f32 histograms.
 pub fn histogram_similarity(a: &[f32], b: &[f32]) -> f64 {
-    a.iter()
-        .zip(b.iter())
-        .map(|(x, y)| ((*x as f64) * (*y as f64)).sqrt())
-        .sum()
+    let a_f64: Vec<f64> = a.iter().map(|&x| x as f64).collect();
+    let b_f64: Vec<f64> = b.iter().map(|&x| x as f64).collect();
+    crate::analysis::stats::bhattacharyya_coefficient(&a_f64, &b_f64)
 }
 
 #[cfg(test)]

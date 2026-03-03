@@ -97,11 +97,7 @@ impl Provider for SoftwareProvider {
 
         let data_hash = Sha256::digest(data).to_vec();
         let timestamp = Utc::now();
-
-        let mut payload = Vec::new();
-        payload.extend_from_slice(&data_hash);
-        payload.extend_from_slice(&timestamp.timestamp_nanos_safe().to_le_bytes());
-        payload.extend_from_slice(state.device_id.as_bytes());
+        let payload = super::build_binding_payload(&data_hash, &timestamp, &state.device_id);
 
         let signature = self.sign_payload(&payload);
         let public_key = self.public_key();

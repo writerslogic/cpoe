@@ -42,8 +42,6 @@ pub struct TranscriptionCollector {
 }
 
 impl TranscriptionCollector {
-    /// Create a new transcription collector.
-    /// * `engine` - Identifier for the transcription engine
     pub fn new(engine: &str) -> Self {
         Self {
             engine: engine.to_string(),

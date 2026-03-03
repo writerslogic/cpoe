@@ -6,6 +6,7 @@ use super::crypto::{
     SECURE_JSON_PROTOCOL_MAGIC,
 };
 use super::messages::{IpcErrorCode, IpcMessage, IpcMessageHandler, MAX_MESSAGE_SIZE};
+use crate::MutexRecover;
 use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -129,10 +130,7 @@ async fn handle_connection_inner<S: tokio::io::AsyncRead + tokio::io::AsyncWrite
             Ok(msg) => {
                 // Per-category rate limit check (shared across all connections)
                 let key = rate_limit_key(&msg);
-                let allowed = shared_rate_limiter
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .check(key);
+                let allowed = shared_rate_limiter.lock_recover().check(key);
                 if !allowed {
                     log::warn!(
                         "IPC: rate limit exceeded for '{}' on {} (limit: {}/60s)",

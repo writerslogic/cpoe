@@ -26,8 +26,6 @@ static MIGRATION_ONCE: Once = Once::new();
 pub struct SecureStorage;
 
 impl SecureStorage {
-    // --- Generic Helpers ---
-
     fn save(account: &str, data: &[u8]) -> Result<()> {
         #[cfg(target_os = "macos")]
         {
@@ -87,8 +85,6 @@ impl SecureStorage {
             }
         }
     }
-
-    // --- macOS Specific Implementation ---
 
     #[cfg(target_os = "macos")]
     fn save_macos(account: &str, data: &[u8]) -> Result<()> {
@@ -293,8 +289,6 @@ impl SecureStorage {
             log::info!("macOS keychain migration complete.");
         });
     }
-
-    // --- Specific Accessors ---
 
     pub fn save_seed(seed: &[u8]) -> Result<()> {
         Self::save(SEED_ACCOUNT, seed)

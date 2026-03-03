@@ -5,12 +5,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-/// A string that is stored in memory in an obfuscated form (XORed with a random nonce).
-/// This provides defense-in-depth against memory scraping attacks that look for
-/// plaintext window titles or file paths.
-///
-/// Note: This is NOT encryption. It does not provide cryptographic confidentiality
-/// against an attacker who can read the nonce. It is strictly for obfuscation.
+/// In-memory XOR-obfuscated string (defense-in-depth against memory scraping).
+/// NOT encryption — does not resist an attacker who can read the nonce.
 #[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub struct ObfuscatedString {
     nonce: [u8; 8],
@@ -53,10 +49,7 @@ impl Default for ObfuscatedString {
     }
 }
 
-// Custom serialization to allow transparent usage with Serde (optional)
-// We serialize as the plaintext string to maintain compatibility with disk/IPC formats
-// that expect standard JSON strings, unless we want to obfuscate on disk too.
-// For now, let's serialize as plaintext to not break existing file formats.
+// Serialize as plaintext for disk/IPC format compatibility.
 impl Serialize for ObfuscatedString {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -76,7 +69,6 @@ impl<'de> Deserialize<'de> for ObfuscatedString {
     }
 }
 
-// PartialEq for comparison (decrypts to compare)
 impl PartialEq for ObfuscatedString {
     fn eq(&self, other: &Self) -> bool {
         // Optimization: if nonces are same, compare data directly

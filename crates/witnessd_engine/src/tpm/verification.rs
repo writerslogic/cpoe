@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 use super::{Binding, Quote, TPMError};
-use crate::DateTimeNanosExt;
 use ed25519_dalek::Verifier as _;
 use rsa::pkcs1::DecodeRsaPublicKey;
 use rsa::pkcs8::DecodePublicKey;
@@ -74,11 +73,11 @@ fn verify_binding_with_trusted(
 }
 
 fn binding_payload(binding: &Binding) -> Vec<u8> {
-    let mut payload = Vec::new();
-    payload.extend_from_slice(&binding.attested_hash);
-    payload.extend_from_slice(&binding.timestamp.timestamp_nanos_safe().to_le_bytes());
-    payload.extend_from_slice(binding.device_id.as_bytes());
-    payload
+    super::build_binding_payload(
+        &binding.attested_hash,
+        &binding.timestamp,
+        &binding.device_id,
+    )
 }
 
 pub fn verify_quote(quote: &Quote) -> Result<(), TPMError> {

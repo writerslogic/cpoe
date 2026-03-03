@@ -5,6 +5,7 @@ use super::focus::{PollingSentinelFocusTracker, SentinelFocusTracker, WindowProv
 use super::types::*;
 use crate::config::SentinelConfig;
 use crate::crypto::ObfuscatedString;
+use crate::MutexRecover;
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 use tokio::sync::mpsc;
@@ -112,26 +113,18 @@ impl SentinelFocusTracker for StubSentinelFocusTracker {
     }
 
     fn focus_events(&self) -> mpsc::Receiver<FocusEvent> {
-        self.focus_rx
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take()
-            .unwrap_or_else(|| {
-                log::error!("Focus receiver already consumed - returning dummy receiver");
-                let (_tx, rx) = mpsc::channel(1);
-                rx
-            })
+        self.focus_rx.lock_recover().take().unwrap_or_else(|| {
+            log::error!("Focus receiver already consumed - returning dummy receiver");
+            let (_tx, rx) = mpsc::channel(1);
+            rx
+        })
     }
 
     fn change_events(&self) -> mpsc::Receiver<ChangeEvent> {
-        self.change_rx
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take()
-            .unwrap_or_else(|| {
-                log::error!("Change receiver already consumed - returning dummy receiver");
-                let (_tx, rx) = mpsc::channel(1);
-                rx
-            })
+        self.change_rx.lock_recover().take().unwrap_or_else(|| {
+            log::error!("Change receiver already consumed - returning dummy receiver");
+            let (_tx, rx) = mpsc::channel(1);
+            rx
+        })
     }
 }

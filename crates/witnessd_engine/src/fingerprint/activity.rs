@@ -7,6 +7,7 @@
 
 use crate::analysis::stats;
 use crate::jitter::SimpleJitterSample;
+use crate::MutexRecover;
 use serde::{Deserialize, Serialize};
 use statrs::statistics::Statistics;
 use std::collections::VecDeque;
@@ -264,12 +265,8 @@ impl IkiDistribution {
 
     /// Similarity (0.0-1.0) via Bhattacharyya coefficient on histograms.
     pub fn similarity(&self, other: &IkiDistribution) -> f64 {
-        let hist_sim: f64 = self
-            .histogram
-            .iter()
-            .zip(other.histogram.iter())
-            .map(|(a, b)| (a * b).sqrt())
-            .sum();
+        let hist_sim =
+            crate::analysis::stats::bhattacharyya_coefficient(&self.histogram, &other.histogram);
 
         let mean_sim = 1.0 - (self.mean - other.mean).abs() / (self.mean + other.mean + 1.0);
         let std_sim =
@@ -719,10 +716,7 @@ impl ActivityFingerprintAccumulator {
 
     /// Recompute fingerprint from buffered samples if dirty, caching the result.
     pub fn current_fingerprint(&self) -> ActivityFingerprint {
-        let mut cached = self
-            .cached_fingerprint
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+        let mut cached = self.cached_fingerprint.lock_recover();
         if self.dirty.load(Ordering::Relaxed) || cached.sample_count == 0 {
             let samples: Vec<_> = self.samples.iter().cloned().collect();
             let fp = ActivityFingerprint::from_samples(&samples);
@@ -745,10 +739,7 @@ impl ActivityFingerprintAccumulator {
 
     pub fn reset(&mut self) {
         self.samples.clear();
-        *self
-            .cached_fingerprint
-            .lock()
-            .unwrap_or_else(|p| p.into_inner()) = ActivityFingerprint::default();
+        *self.cached_fingerprint.lock_recover() = ActivityFingerprint::default();
         self.dirty.store(false, Ordering::Relaxed);
     }
 }
@@ -774,13 +765,7 @@ fn merge_histogram(a: &mut [f64], b: &[f64], a_weight: f64, b_weight: f64) {
     }
 }
 
-fn relative_similarity(a: f64, b: f64) -> f64 {
-    if a == 0.0 && b == 0.0 {
-        1.0
-    } else {
-        1.0 - (a - b).abs() / (a + b + 0.001)
-    }
-}
+use crate::analysis::stats::relative_similarity;
 
 #[cfg(test)]
 mod tests {

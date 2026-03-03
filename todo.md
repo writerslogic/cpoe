@@ -1,5 +1,5 @@
 # Todo
-<!-- suggest | Updated: 2026-02-26 | PM-audit: 2026-02-26 | Fix-review: 2026-02-26 | Languages: rust | Files: 77 | Issues: 88 -->
+<!-- suggest | Updated: 2026-02-27 | PM-audit: 2026-02-26 | Fix-review: 2026-02-26 | Languages: rust | Files: 190 | Issues: 102 -->
 
 > Resolved items moved to `completed.md`. This file tracks only pending work.
 > Updated 2026-02-26 (full engine deep audit — 77 source files across 10 batches).
@@ -8,16 +8,17 @@
 > Fix-review pass 2026-02-26: All 95 issues reviewed against source code. 3 false positives removed (M-009, M-019, M-024). 11 fix descriptions rewritten to prevent introducing new problems. 1 escalation (M-036 → HIGH as H-037). 1 new systemic added (SYS-008). C-003+H-030 merged. Fix descriptions now include migration notes, compilation caveats, and phased approaches where applicable.
 > Previous audits: 390+ issues found and fixed across sessions 1-9; CLI src audit session 10.
 > Fix pass 2026-02-27: 82 of 88 issues fixed. All 9 CRITs resolved. 35 of 37 HIGHs resolved (H-013 deferred: large scope, H-025 deferred: medium effort). 31 of 36 MEDs resolved. 4 of 8 systemics fully resolved (SYS-001, SYS-004, SYS-006, SYS-008). Remaining open: SYS-002 (god modules), SYS-003 (blocking I/O), SYS-005 (error swallow), SYS-007 (O(n^2)).
+> Full codebase audit 2026-02-27: 190 files across 18 batches (4 waves). Expanded coverage from 77 to 190 files. H-013 confirmed fixed (SecureStorage migration). 14 new issues found: 1 CRITICAL, 9 HIGH, 4 MEDIUM, 1 systemic.
 
 ---
 
 ## Summary
 | Severity | Open | Fixed | Skipped | Eliminated |
 |----------|------|-------|---------|------------|
-| CRITICAL | 0    | 11    | 0       | 0          |
-| HIGH     | 2    | 42    | 0       | 0          |
-| MEDIUM   | 3    | 34    | 8       | 3          |
-| SYSTEMIC | 4    | 4     | 0       | 0          |
+| CRITICAL | 1    | 11    | 0       | 0          |
+| HIGH     | 10   | 43    | 0       | 0          |
+| MEDIUM   | 7    | 34    | 8       | 3          |
+| SYSTEMIC | 5    | 4     | 0       | 0          |
 
 > **Dedup note**: 18 specific issues are fully covered by a systemic root cause.
 > Fixing the systemic resolves the specific — see `→ SYS-XXX` tags below.
@@ -86,6 +87,14 @@
   Files: `tpm/secure_enclave.rs:560` (seal: XOR with SHA256(ECDSA-sig)), `sealed_identity.rs:337` (software wrap: XOR with SHA256(machine_salt)), `keyhierarchy/session.rs:396` (ratchet recovery: XOR with PUF-derived key)
   Fix: Replace all three with ChaCha20-Poly1305 AEAD (crate already in deps via `fingerprint/storage.rs`). Each needs a version byte prefix for backward-compatible migration — unseal old format, re-seal as new on next access. H-010 additionally requires strengthening the key derivation (see H-010 for details).
 
+- [ ] **SYS-009** `bare_lock_unwrap` — 52 sites across 6 files — HIGH
+  <!-- pid:bare_lock_unwrap | verified:true | first:2026-02-27 | last:2026-02-27 -->
+  Bare `.lock().unwrap()` on Mutex/RwLock across hot paths. Violates project poison convention (`.lock().unwrap_or_else(|p| p.into_inner())`). A single panic poisons all subsequent lock attempts, killing the process.
+  **Covers**: H-038, H-039
+  Files: `engine.rs` (18 sites), `tpm/secure_enclave.rs` (15), `wal.rs` (8), `tpm/linux.rs` (8), `tpm/software.rs` (2), `tpm/windows.rs` (1)
+  Note: sentinel/ was fully converted in prior fix pass (0 remaining). engine.rs and wal.rs are highest priority (hot paths).
+  Fix: Global find-replace `.lock().unwrap()` → `.lock().unwrap_or_else(|p| p.into_inner())` in all 6 files.
+
 ---
 
 ## Critical
@@ -130,6 +139,12 @@
   <!-- pid:missing_zeroize | batch:8 | verified:true | first:2026-02-26 | last:2026-02-26 -->
   `seed: [u8; 32]` at :86 on stack, used for SigningKey at :88, never zeroized. Private key lingers in stack memory. Also `data` from `fs::read()` at :83 is a Vec<u8> containing the raw key — also not zeroized. (`zeroize::Zeroize` is already imported on line 9.)
   Fix: Change `let data = fs::read(path)?;` to `let data = Zeroizing::new(fs::read(path)?);` (implements `Deref<Target=Vec<u8>>`). Add `seed.zeroize();` before each `return Ok(SigningKey::from_bytes(&seed));`. Update import to `use zeroize::{Zeroize, Zeroizing};`. | Effort: small
+
+- [ ] **C-008** `[security]` `vdf/aggregation.rs:274` — Merkle VDF tree root uses string concatenation instead of SHA-256
+  <!-- pid:crypto_weak_hash_construction | batch:14 | verified:true | first:2026-02-27 | last:2026-02-27 -->
+  `compute_root()` at :265-282 computes Merkle tree by concatenating leaf hashes as strings via `format!("H({})")` and `format!("{}{}")`. No cryptographic hash. TODO comment at :274 acknowledges this. Tree is trivially forgeable — any attacker can construct valid-looking Merkle root strings.
+  Impact: VDF aggregation proofs have zero cryptographic integrity. Verification of aggregated checkpoint chains provides no assurance.
+  Fix: Replace string concatenation with SHA-256: `let combined = Sha256::digest(&[chunk[0].as_bytes(), chunk[1].as_bytes()].concat()); let hash = hex::encode(combined);`. Import `sha2::{Sha256, Digest}`. Change return type from `String` to `[u8; 32]` and update callers. | Effort: small
 
 ### ~~CLI-C1. cmd_watch.rs syntax corruption~~ [x] FIXED
 - Duplicate/truncated code fragment at lines 406-409 deleted
@@ -216,10 +231,10 @@
   `CalibrationAttestation::validate()` checks non-empty/non-zero but never verifies signature. Forged calibration inflates `iterations_per_second`, defeats VDF time-lower-bound.
   Fix: **Phased approach.** (1) Short-term: rename `validate()` to document it's structural-only. Add separate `verify_signature(authority_pubkey: &[u8; 32]) -> Result<()>` method for callers who have an authority key. Add doc-link pointing callers to where crypto verification should happen. (2) Long-term: implement calibration authority key pinning and signing infrastructure. Do NOT block production readiness on the authority infrastructure — the structural validation + documentation is the immediate fix. | Effort: small (phase 1) / large (phase 2)
 
-- [ ] **H-013** `[security]` `fingerprint/storage.rs:260` — Storage key colocated with encrypted data
-  <!-- pid:key_colocation | batch:7 | verified:true | first:2026-02-26 | last:2026-02-26 -->
+- [x] **H-013** `[security]` `fingerprint/storage.rs:260` — Storage key colocated with encrypted data — FIXED
+  <!-- pid:key_colocation | batch:7 | verified:true | first:2026-02-26 | last:2026-02-27 -->
   `.storage_key` file in same dir as encrypted profiles. Read access = full decrypt. Encryption is security theater.
-  Fix: **Phased.** Phase 1: Add `StorageKeyProvider` trait with platform-specific implementations and file-based fallback. Phase 2: Implement macOS Keychain, DPAPI, libsecret backends. Phase 3: Migration logic. Interim mitigation: existing chmod 600 on key file (line 275) is already in place. | Effort: large
+  Fix: Fingerprint key moved to OS keychain via SecureStorage, with legacy file migration.
 
 - [x] **H-014** `[security]` `fingerprint/storage.rs:235` — export_json leaks consent-protected voice data
   <!-- pid:consent_bypass_export | batch:7 | verified:true | first:2026-02-26 | last:2026-02-26 -->
@@ -349,6 +364,54 @@
 - [x] **REL-H1** No code signing for release artifacts — `.github/workflows/release.yml` — FIXED (Sigstore provenance)
   Note: Workflow already has `permissions: id-token: write` and `attestations: write` (lines 19-20), suggesting Sigstore intent.
   Fix: Add `uses: actions/attest-build-provenance@v2` in the build job after artifact upload. This provides cryptographic provenance via Sigstore without managing keys. Platform-native signing (Apple/Windows) can be added later as a separate enhancement. | Effort: medium
+### New (2026-02-27 full-codebase scan)
+
+- [ ] **H-038** `[error_handling]` `engine.rs` — 18 bare `.lock().unwrap()` across engine hot paths `→ SYS-009`
+  <!-- pid:bare_lock_unwrap | batch:18 | verified:true | first:2026-02-27 | last:2026-02-27 -->
+  Every file change event triggers multiple mutex locks (status, file_sizes, watcher, jitter_session, keystroke_monitor, watch_dirs). Single panic poisons all.
+  Fix: Replace `.lock().unwrap()` → `.lock().unwrap_or_else(|p| p.into_inner())` at all 18 sites. | Effort: small
+
+- [ ] **H-039** `[error_handling]` `wal.rs:179,221,333` — 8 bare `.lock().unwrap()` in WAL hot path `→ SYS-009`
+  <!-- pid:bare_lock_unwrap | batch:8 | verified:true | first:2026-02-27 | last:2026-02-27 -->
+  WAL append (per-event), verify, truncate, and stats all use bare unwrap on inner Mutex. Evidence chain breaks on any panic.
+  Fix: Replace `.lock().unwrap()` → `.lock().unwrap_or_else(|p| p.into_inner())` at all 8 sites. | Effort: small
+
+- [ ] **H-040** `[security]` `identity/secure_storage.rs:299,318,333` — Cache returns unprotected copies of key material
+  <!-- pid:key_material_copy_leak | batch:17 | verified:true | first:2026-02-27 | last:2026-02-27 -->
+  `load_seed()` returns `cached.as_slice().to_vec()` — unzeroized `Vec<u8>` copy of master seed. Same for `load_hmac_key()` (:318) and `load_mnemonic()` (:333, returns `String::clone()`). Callers hold unprotected copies indefinitely.
+  Impact: Key material persists in heap across callers without zeroization guarantees.
+  Fix: Return `Zeroizing<Vec<u8>>` from `load_seed()` and `load_hmac_key()`. Return `Zeroizing<String>` from `load_mnemonic()`. Update caller signatures. | Effort: medium
+
+- [ ] **H-041** `[security]` `config.rs:289` — SentinelConfig falls back to CWD when home_dir unavailable
+  <!-- pid:unsafe_fallback_path | batch:18 | verified:true | first:2026-02-27 | last:2026-02-27 -->
+  `dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))` — if HOME unset (containers, systemd services), evidence written to CWD (possibly /tmp, web root, world-readable dir).
+  Fix: Return `Result<Self>` from `SentinelConfig::default()` or use a known safe fallback like `/var/lib/witnessd`. At minimum, create the dir with restrictive permissions (0o700). | Effort: small
+
+- [ ] **H-042** `[performance]` `fingerprint/comparison.rs:308-316` — O(n^4) in find_clusters member-pair similarity
+  <!-- pid:quadratic_algorithm | batch:5 | verified:true | first:2026-02-27 | last:2026-02-27 -->
+  For each cluster member pair, does `fingerprints.iter().find(|f| &f.id == m)` twice (linear scan) inside already-nested loops. With N fingerprints: O(N^2) clusters × O(N) find × 2 = O(N^4) worst case.
+  Fix: Build `HashMap<&str, &AuthorFingerprint>` before the loop. Replace `.find()` calls with O(1) lookup. | Effort: small
+
+- [ ] **H-043** `[security]` `native_messaging_host.rs` — No rate limiting on incoming browser messages
+  <!-- pid:dos_no_rate_limit | batch:13 | verified:true | first:2026-02-27 | last:2026-02-27 -->
+  `run_native_messaging()` reads and processes messages in tight loop with no rate limiting. Malicious browser extension can flood stdin with rapid requests, consuming 100% CPU and memory (checkpoint creation, jitter accumulation).
+  Fix: Add token-bucket rate limiter (e.g., 100 messages/second burst, 10/second sustained). On limit exceeded, return error response and continue. | Effort: small
+
+- [ ] **H-044** `[security]` `ffi/helpers.rs:32-38` — Signing key bytes not zeroized after use
+  <!-- pid:key_material_not_zeroized | batch:17 | verified:true | first:2026-02-27 | last:2026-02-27 -->
+  `key_data = std::fs::read(&key_path)` reads raw signing key seed from disk. Used to derive HMAC key at :38. `key_data` dropped without zeroization — 32+ bytes of key material persist in heap.
+  Fix: Wrap in `Zeroizing`: `let key_data = Zeroizing::new(std::fs::read(&key_path).ok()?);` | Effort: small
+
+- [ ] **H-045** `[security]` `sealed_identity.rs:157-159` — Master seed not zeroized on persist_blob failure
+  <!-- pid:seed_leak_on_error | batch:9 | verified:true | first:2026-02-27 | last:2026-02-27 -->
+  `self.persist_blob(&blob)?` at :157 may fail via `?` operator. `seed.zeroize()` at :159 is unreachable on error path. Master identity seed persists in heap. No `Zeroizing` wrapper (confirmed: no `Zeroizing` import in file).
+  Fix: Change `let mut seed = hkdf_expand(...)` to `let mut seed = Zeroizing::new(hkdf_expand(...)?)`. This auto-zeroizes on Drop including early returns. Explicit `.zeroize()` at :159 becomes redundant but harmless. | Effort: small
+
+- [ ] **H-046** `[security]` `keyhierarchy/puf.rs:105-106` — PUF seed entropy not zeroized on stack
+  <!-- pid:key_material_not_zeroized | batch:10 | verified:true | first:2026-02-27 | last:2026-02-27 -->
+  `let mut random_bytes = [0u8; 32]; rand::rng().fill_bytes(&mut random_bytes);` — 32 bytes of entropy used in PUF seed derivation. Never zeroized after `hasher.update(random_bytes)`. Lingers in stack frame.
+  Fix: Add `random_bytes.zeroize();` after `hasher.update(random_bytes);`. Import `Zeroize` if not already imported. | Effort: small
+
 ### ~~REL-H3~~ [x] FIXED | ~~REL-H4~~ [x] FIXED | ~~BE-H6~~ [x] FIXED | ~~PROTO-H2~~ [x] FIXED
 
 ### PROTO-H1. Protocol crate uses deprecated thread_rng() — FIXED
@@ -460,6 +523,27 @@
 - [ ] **M-039** `tpm/windows.rs:413` — Two TODOs document unimplemented security invariants | effort:medium
   Note: Same root cause as H-007/H-008 (Windows TPM is a stub). Tracked there. Resolve M-039 when H-007/H-008 are fixed.
 
+### New (2026-02-27 full-codebase scan)
+- [ ] **M-043** `wire_types/hash.rs:33` — HashValue::sha256() panics on non-32-byte input | effort:small
+  <!-- pid:assert_on_untrusted_input | batch:6 | verified:true | first:2026-02-27 | last:2026-02-27 -->
+  `assert!(digest.len() == 32)` panics on malformed CBOR deserialization. `try_sha256()` exists at :45 but callers on trust boundaries may use the panicking version.
+  Fix: Audit all callers of `sha256()` on trust boundaries (deserialized data). Replace with `try_sha256()`. Consider deprecating the panicking version.
+
+- [ ] **M-044** `vdf/aggregation.rs:281` — Empty tree returns empty string as Merkle root | effort:small
+  <!-- pid:silent_error_fallback | batch:14 | verified:true | first:2026-02-27 | last:2026-02-27 -->
+  `.pop().unwrap_or_default()` returns `""` for empty tree instead of signaling an error. Callers may treat empty string as valid root.
+  Fix: Return `Option<String>` or `Result<String>` from `compute_root()`. Empty tree → `None` or error.
+
+- [ ] **M-045** `keyhierarchy/migration.rs:78-98` — Legacy unencrypted key file not deleted after migration | effort:small
+  <!-- pid:legacy_key_not_deleted | batch:10 | verified:true | first:2026-02-27 | last:2026-02-27 -->
+  `load_legacy_private_key()` reads and zeroizes key in memory but does not delete the file. Raw 32-byte signing key persists on disk unencrypted.
+  Fix: After successful migration in `start_session_from_legacy_key()`, securely delete the legacy key file (overwrite with random bytes, then delete). Add log message noting migration.
+
+- [ ] **M-046** `sealed_identity.rs:109` — PUF challenge is a compile-time constant | effort:small
+  <!-- pid:static_challenge | batch:9 | verified:true | first:2026-02-27 | last:2026-02-27 -->
+  `Sha256::digest(format!("{}-challenge", "witnessd-identity-v1"))` produces the same challenge on every seal operation. PUF response is deterministic for same device + same challenge. No per-seal entropy in the derivation path.
+  Fix: Include a per-seal random nonce in the challenge. Store nonce in `SealedBlob` for unseal.
+
 ### CLI
 ### ~~M-040~~ [x] FIXED — getrandom fallback to all-zeros for packet ID
 - [x] **M-041** `cmd_watch.rs:373` — auto_checkpoint reloads config from disk on every call | effort:small
@@ -515,6 +599,15 @@ These issues were removed during the fix-review pass (2026-02-26) after source c
 | H-035 | HIGH | storage.rs:155 | Delete file on decrypt fail + log | small |
 | H-036 | HIGH | consent.rs:127 | Add save(), rename to begin_consent_request | small |
 | H-037 | HIGH | mouse_capture.rs:130 | Add ! to keyboard_active.load() | small |
+| C-008 | CRIT | vdf/aggregation.rs:274 | Replace string concat with SHA-256 Merkle | small |
+| H-038 | HIGH | engine.rs (18 sites) | bare_lock_unwrap → unwrap_or_else | small |
+| H-039 | HIGH | wal.rs (8 sites) | bare_lock_unwrap → unwrap_or_else | small |
+| H-041 | HIGH | config.rs:289 | Safe fallback when HOME unset | small |
+| H-042 | HIGH | comparison.rs:308 | HashMap lookup instead of .find() in O(n^4) | small |
+| H-043 | HIGH | native_messaging_host.rs | Add rate limiter | small |
+| H-044 | HIGH | ffi/helpers.rs:32 | Zeroizing wrapper on key_data | small |
+| H-045 | HIGH | sealed_identity.rs:157 | Zeroizing wrapper on seed | small |
+| H-046 | HIGH | puf.rs:105 | random_bytes.zeroize() after use | small |
 
 ---
 
@@ -548,7 +641,7 @@ These issues were removed during the fix-review pass (2026-02-26) after source c
 ---
 
 ## Coverage
-<!-- suggest | Updated: 2026-02-26 | Languages: rust | Files: 77 | Batches: 10 | Waves: 2 | Coverage: 100% -->
+<!-- suggest | Updated: 2026-02-27 | Languages: rust | Files: 190 | Batches: 18 | Waves: 4 | Coverage: 100% -->
 <!-- reviewed:apps/witnessd_cli/src/main.rs:2026-02-26 -->
 <!-- reviewed:apps/witnessd_cli/src/native_messaging_host.rs:2026-02-26 -->
 <!-- reviewed:apps/witnessd_cli/src/cmd_export.rs:2026-02-26 -->
@@ -605,3 +698,59 @@ These issues were removed during the fix-review pass (2026-02-26) after source c
 <!-- reviewed:crates/witnessd_engine/src/analysis/hurst.rs:2026-02-26 -->
 <!-- reviewed:crates/witnessd_engine/src/analysis/labyrinth.rs:2026-02-26 -->
 <!-- reviewed:crates/witnessd_engine/src/analysis/pink_noise.rs:2026-02-26 -->
+<!-- Full codebase scan 2026-02-27: 190 files across 18 batches, 4 waves -->
+<!-- reviewed:crates/witnessd_engine/src/engine.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/config.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/ffi/helpers.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/ffi/attestation.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/ffi/evidence.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/ffi/forensics.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/ffi/system.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/ffi/types.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/identity/secure_storage.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/identity/mnemonic.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/crypto/mem.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/vdf/aggregation.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/vdf/mod.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/mmr/proof.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/store/integrity.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/war/verification.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/platform/macos/keystroke.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/platform/macos/ffi.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/platform/linux.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/platform/windows.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/physics/biological.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/physics/entanglement.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/physics/puf.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/physics/environment.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/provenance.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/rfc/wire_types/hash.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/rfc/wire_types/packet.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/rfc/packet.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/rfc/checkpoint.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/jitter/codec.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/jitter/session.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/jitter/content.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/jitter/verification.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/collaboration.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/transcription.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/presence.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/trust_policy.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/timing.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/forensics/engine.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/forensics/analysis.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_engine/src/forensics/correlation.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_jitter/src/model.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_protocol/src/evidence.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_protocol/src/identity.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_protocol/src/forensics/engine.rs:2026-02-27 -->
+<!-- reviewed:crates/witnessd_protocol/src/wasm.rs:2026-02-27 -->
+<!-- reviewed:apps/witnessd_cli/src/cli.rs:2026-02-27 -->
+<!-- reviewed:apps/witnessd_cli/src/cmd_commit.rs:2026-02-27 -->
+<!-- reviewed:apps/witnessd_cli/src/cmd_daemon.rs:2026-02-27 -->
+<!-- reviewed:apps/witnessd_cli/src/cmd_identity.rs:2026-02-27 -->
+<!-- reviewed:apps/witnessd_cli/src/cmd_init.rs:2026-02-27 -->
+<!-- reviewed:apps/witnessd_cli/src/cmd_log.rs:2026-02-27 -->
+<!-- reviewed:apps/witnessd_cli/src/cmd_presence.rs:2026-02-27 -->
+<!-- reviewed:apps/witnessd_cli/src/cmd_session.rs:2026-02-27 -->
+<!-- reviewed:apps/witnessd_cli/src/util.rs:2026-02-27 -->

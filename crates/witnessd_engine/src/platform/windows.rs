@@ -11,6 +11,7 @@ use super::types::{
 };
 use super::{FocusMonitor, KeystrokeCapture, MouseCapture};
 use crate::DateTimeNanosExt;
+use crate::{MutexRecover, RwLockRecover};
 use anyhow::{anyhow, Result};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex, RwLock};
@@ -165,7 +166,7 @@ static GLOBAL_SESSION: Mutex<Option<Arc<Mutex<SimpleJitterSession>>>> = Mutex::n
 
 impl KeystrokeMonitor {
     pub fn start(session: Arc<Mutex<SimpleJitterSession>>) -> Result<Self> {
-        *GLOBAL_SESSION.lock().unwrap_or_else(|p| p.into_inner()) = Some(Arc::clone(&session));
+        *GLOBAL_SESSION.lock_recover() = Some(Arc::clone(&session));
         unsafe {
             let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(low_level_keyboard_proc), None, 0)?;
             std::thread::spawn(|| {
@@ -234,8 +235,8 @@ impl KeystrokeCapture for WindowsKeystrokeCapture {
         let (tx, rx) = mpsc::channel();
         self.sender = Some(tx.clone());
 
-        *GLOBAL_SENDER.lock().unwrap_or_else(|p| p.into_inner()) = Some(tx);
-        *GLOBAL_STATS.lock().unwrap_or_else(|p| p.into_inner()) = Some(Arc::clone(&self.stats));
+        *GLOBAL_SENDER.lock_recover() = Some(tx);
+        *GLOBAL_STATS.lock_recover() = Some(Arc::clone(&self.stats));
         GLOBAL_STRICT_MODE.store(self.strict_mode, Ordering::SeqCst);
 
         self.running.store(true, Ordering::SeqCst);
@@ -272,15 +273,15 @@ impl KeystrokeCapture for WindowsKeystrokeCapture {
             }
         }
 
-        *GLOBAL_SENDER.lock().unwrap_or_else(|p| p.into_inner()) = None;
-        *GLOBAL_STATS.lock().unwrap_or_else(|p| p.into_inner()) = None;
+        *GLOBAL_SENDER.lock_recover() = None;
+        *GLOBAL_STATS.lock_recover() = None;
 
         self.sender = None;
         Ok(())
     }
 
     fn synthetic_stats(&self) -> SyntheticStats {
-        self.stats.read().unwrap_or_else(|p| p.into_inner()).clone()
+        self.stats.read_recover().clone()
     }
 
     fn is_running(&self) -> bool {
@@ -480,12 +481,8 @@ impl MouseCapture for WindowsMouseCapture {
         let (tx, rx) = mpsc::channel();
         self.sender = Some(tx.clone());
 
-        *MOUSE_GLOBAL_SENDER
-            .lock()
-            .unwrap_or_else(|p| p.into_inner()) = Some(tx);
-        *MOUSE_GLOBAL_IDLE_STATS
-            .lock()
-            .unwrap_or_else(|p| p.into_inner()) = Some(Arc::clone(&self.idle_stats));
+        *MOUSE_GLOBAL_SENDER.lock_recover() = Some(tx);
+        *MOUSE_GLOBAL_IDLE_STATS.lock_recover() = Some(Arc::clone(&self.idle_stats));
         MOUSE_IDLE_ONLY_MODE.store(self.idle_only_mode, Ordering::SeqCst);
 
         self.running.store(true, Ordering::SeqCst);
@@ -522,12 +519,8 @@ impl MouseCapture for WindowsMouseCapture {
             }
         }
 
-        *MOUSE_GLOBAL_SENDER
-            .lock()
-            .unwrap_or_else(|p| p.into_inner()) = None;
-        *MOUSE_GLOBAL_IDLE_STATS
-            .lock()
-            .unwrap_or_else(|p| p.into_inner()) = None;
+        *MOUSE_GLOBAL_SENDER.lock_recover() = None;
+        *MOUSE_GLOBAL_IDLE_STATS.lock_recover() = None;
 
         self.sender = None;
         Ok(())
@@ -538,14 +531,11 @@ impl MouseCapture for WindowsMouseCapture {
     }
 
     fn idle_stats(&self) -> MouseIdleStats {
-        self.idle_stats
-            .read()
-            .unwrap_or_else(|p| p.into_inner())
-            .clone()
+        self.idle_stats.read_recover().clone()
     }
 
     fn reset_idle_stats(&mut self) {
-        *self.idle_stats.write().unwrap_or_else(|p| p.into_inner()) = MouseIdleStats::new();
+        *self.idle_stats.write_recover() = MouseIdleStats::new();
     }
 
     fn set_stego_params(&mut self, params: MouseStegoParams) {

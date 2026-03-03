@@ -17,20 +17,14 @@ pub use obfuscation::ObfuscatedString;
 
 pub type HmacSha256 = Hmac<Sha256>;
 
-/// Compute the SHA-256 hash of a file using a streaming chunked reader.
-///
-/// Prevents loading the entire file into memory, allowing the engine to
-/// handle very large files efficiently.
+/// Compute SHA-256 hash of a file via streaming chunked reader.
 pub fn hash_file(path: &Path) -> std::io::Result<[u8; 32]> {
     let (hash, _) = hash_file_with_size(path)?;
     Ok(hash)
 }
 
-/// Compute the SHA-256 hash of a file and return both the hash and the
-/// number of bytes actually read.
-///
-/// This eliminates TOCTOU races between hashing a file and querying its
-/// size via a separate `fs::metadata` call.
+/// Compute SHA-256 hash of a file, returning (hash, bytes_read).
+/// Eliminates TOCTOU races vs separate `fs::metadata` call.
 pub fn hash_file_with_size(path: &Path) -> std::io::Result<([u8; 32], u64)> {
     let file = File::open(path)?;
     let mut reader = BufReader::new(file);

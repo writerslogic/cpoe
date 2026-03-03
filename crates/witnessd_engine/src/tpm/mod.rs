@@ -36,6 +36,47 @@ pub trait Provider: Send + Sync {
 
 pub type ProviderHandle = Arc<dyn Provider + Send + Sync>;
 
+/// Build the canonical binding payload: data_hash || timestamp_nanos || device_id.
+pub(crate) fn build_binding_payload(
+    data_hash: &[u8],
+    timestamp: &chrono::DateTime<chrono::Utc>,
+    device_id: &str,
+) -> Vec<u8> {
+    use crate::DateTimeNanosExt;
+    let mut payload = Vec::new();
+    payload.extend_from_slice(data_hash);
+    payload.extend_from_slice(&timestamp.timestamp_nanos_safe().to_le_bytes());
+    payload.extend_from_slice(device_id.as_bytes());
+    payload
+}
+
+/// Parse a sealed blob into (public_bytes, private_bytes).
+///
+/// Format: [pub_len:u32be][pub_bytes][priv_len:u32be][priv_bytes]
+#[allow(dead_code)] // Used by cfg-gated windows.rs and linux.rs
+pub(crate) fn parse_sealed_blob(sealed: &[u8]) -> Result<(&[u8], &[u8]), TPMError> {
+    if sealed.len() < 8 {
+        return Err(TPMError::SealedDataTooShort);
+    }
+    let pub_len = u32::from_be_bytes([sealed[0], sealed[1], sealed[2], sealed[3]]) as usize;
+    if sealed.len() < 4 + pub_len + 4 {
+        return Err(TPMError::SealedCorrupted);
+    }
+    let pub_bytes = &sealed[4..4 + pub_len];
+    let offset = 4 + pub_len;
+    let priv_len = u32::from_be_bytes([
+        sealed[offset],
+        sealed[offset + 1],
+        sealed[offset + 2],
+        sealed[offset + 3],
+    ]) as usize;
+    if sealed.len() < offset + 4 + priv_len {
+        return Err(TPMError::SealedCorrupted);
+    }
+    let priv_bytes = &sealed[offset + 4..offset + 4 + priv_len];
+    Ok((pub_bytes, priv_bytes))
+}
+
 pub fn generate_attestation_report(
     provider: &dyn Provider,
     verifier_nonce: &[u8],

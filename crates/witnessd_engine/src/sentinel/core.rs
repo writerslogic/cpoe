@@ -10,6 +10,7 @@ use crate::crypto::ObfuscatedString;
 use crate::ipc::IpcErrorCode;
 use crate::platform::{KeystrokeCapture, MouseCapture};
 use crate::wal::{EntryType, Wal};
+use crate::{MutexRecover, RwLockRecover};
 use ed25519_dalek::{Signer, SigningKey};
 use sha2::Digest;
 use std::collections::HashMap;
@@ -81,10 +82,7 @@ impl Sentinel {
 
     /// Return existing or lazily generate a 32-byte attestation nonce.
     pub fn get_or_generate_nonce(&self) -> [u8; 32] {
-        let mut nonce_lock = self
-            .session_nonce
-            .write()
-            .unwrap_or_else(|p| p.into_inner());
+        let mut nonce_lock = self.session_nonce.write_recover();
         if let Some(nonce) = *nonce_lock {
             nonce
         } else {
@@ -98,19 +96,13 @@ impl Sentinel {
 
     /// Clear the session nonce, forcing regeneration on next access.
     pub fn reset_nonce(&self) {
-        let mut nonce_lock = self
-            .session_nonce
-            .write()
-            .unwrap_or_else(|p| p.into_inner());
+        let mut nonce_lock = self.session_nonce.write_recover();
         *nonce_lock = None;
     }
 
     /// Enable voice fingerprinting. Requires prior user consent.
     pub fn enable_voice_fingerprinting(&self) {
-        let mut collector = self
-            .voice_collector
-            .write()
-            .unwrap_or_else(|p| p.into_inner());
+        let mut collector = self.voice_collector.write_recover();
         if collector.is_none() {
             *collector = Some(crate::fingerprint::VoiceCollector::new());
         }
@@ -118,10 +110,7 @@ impl Sentinel {
 
     /// Disable voice fingerprinting and drop the collector.
     pub fn disable_voice_fingerprinting(&self) {
-        let mut collector = self
-            .voice_collector
-            .write()
-            .unwrap_or_else(|p| p.into_inner());
+        let mut collector = self.voice_collector.write_recover();
         *collector = None;
     }
 
@@ -144,18 +133,12 @@ impl Sentinel {
 
     /// Clone the current mouse idle jitter statistics.
     pub fn mouse_idle_stats(&self) -> crate::platform::MouseIdleStats {
-        self.mouse_idle_stats
-            .read()
-            .unwrap_or_else(|p| p.into_inner())
-            .clone()
+        self.mouse_idle_stats.read_recover().clone()
     }
 
     /// Reset mouse idle statistics to empty state.
     pub fn reset_mouse_idle_stats(&self) {
-        *self
-            .mouse_idle_stats
-            .write()
-            .unwrap_or_else(|p| p.into_inner()) = crate::platform::MouseIdleStats::new();
+        *self.mouse_idle_stats.write_recover() = crate::platform::MouseIdleStats::new();
     }
 
     /// Access the mouse steganography engine.
@@ -165,12 +148,9 @@ impl Sentinel {
 
     /// Re-derive the mouse steganography seed from the current signing key.
     fn update_mouse_stego_seed(&self) {
-        let key = self.signing_key.read().unwrap_or_else(|p| p.into_inner());
+        let key = self.signing_key.read_recover();
         let mut seed = key.to_bytes();
-        let mut engine = self
-            .mouse_stego_engine
-            .write()
-            .unwrap_or_else(|p| p.into_inner());
+        let mut engine = self.mouse_stego_engine.write_recover();
         engine.reset();
         *engine = crate::platform::MouseStegoEngine::new(seed);
         seed.zeroize();
@@ -178,7 +158,7 @@ impl Sentinel {
 
     /// Set the signing key (also re-seeds mouse steganography).
     pub fn set_signing_key(&self, key: SigningKey) {
-        *self.signing_key.write().unwrap_or_else(|p| p.into_inner()) = key;
+        *self.signing_key.write_recover() = key;
         self.update_mouse_stego_seed();
     }
 
@@ -192,8 +172,7 @@ impl Sentinel {
                     return;
                 }
             };
-            *self.signing_key.write().unwrap_or_else(|p| p.into_inner()) =
-                SigningKey::from_bytes(&bytes);
+            *self.signing_key.write_recover() = SigningKey::from_bytes(&bytes);
             bytes.zeroize();
             self.update_mouse_stego_seed();
         } else {
@@ -208,10 +187,7 @@ impl Sentinel {
         }
 
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
-        *self
-            .shutdown_tx
-            .lock()
-            .unwrap_or_else(|p: std::sync::PoisonError<_>| p.into_inner()) = Some(shutdown_tx);
+        *self.shutdown_tx.lock_recover() = Some(shutdown_tx);
 
         #[cfg(target_os = "macos")]
         let focus_monitor: Box<dyn SentinelFocusTracker> =
@@ -337,9 +313,9 @@ impl Sentinel {
                         };
                         // RwLock::write() per keystroke: at human typing speeds (5-10 Hz)
                         // contention is negligible. Revisit only if profiling shows otherwise.
-                        activity_accumulator.write().unwrap_or_else(|p| p.into_inner()).add_sample(&sample);
+                        activity_accumulator.write_recover().add_sample(&sample);
 
-                        if let Some(ref mut collector) = *voice_collector.write().unwrap_or_else(|p| p.into_inner()) {
+                        if let Some(ref mut collector) = *voice_collector.write_recover() {
                             collector.record_keystroke(event.keycode, event.char_value);
                         }
 
@@ -350,7 +326,7 @@ impl Sentinel {
                         // Record micro-movements only during active typing (idle jitter)
                         let is_during_typing = last_keystroke_time.elapsed() < Duration::from_secs(2);
                         if is_during_typing && event.is_micro_movement() {
-                            mouse_idle_stats.write().unwrap_or_else(|p| p.into_inner()).record(&event);
+                            mouse_idle_stats.write_recover().record(&event);
                         }
 
                         // Advance stego jitter chain for evidence binding
@@ -422,11 +398,7 @@ impl Sentinel {
         }
 
         // take() under lock, then await outside to avoid holding lock across .await
-        let tx = self
-            .shutdown_tx
-            .lock()
-            .unwrap_or_else(|p: std::sync::PoisonError<_>| p.into_inner())
-            .take();
+        let tx = self.shutdown_tx.lock_recover().take();
         if let Some(tx) = tx {
             let _ = tx.send(()).await;
         }
@@ -441,12 +413,7 @@ impl Sentinel {
     }
 
     pub fn sessions(&self) -> Vec<DocumentSession> {
-        self.sessions
-            .read()
-            .unwrap_or_else(|p| p.into_inner())
-            .values()
-            .cloned()
-            .collect()
+        self.sessions.read_recover().values().cloned().collect()
     }
 
     pub fn session(&self, path: &str) -> Result<DocumentSession> {
@@ -459,10 +426,7 @@ impl Sentinel {
     }
 
     pub fn current_focus(&self) -> Option<String> {
-        self.current_focus
-            .read()
-            .unwrap_or_else(|p| p.into_inner())
-            .clone()
+        self.current_focus.read_recover().clone()
     }
 
     /// Subscribe to session lifecycle events (started, focused, ended, etc.).
@@ -517,7 +481,7 @@ impl Sentinel {
         let path_str = file_path.to_string_lossy().to_string();
 
         // Single write lock for check+insert to avoid TOCTOU race
-        let mut sessions = self.sessions.write().unwrap_or_else(|p| p.into_inner());
+        let mut sessions = self.sessions.write_recover();
         if sessions.contains_key(&path_str) {
             return Err((
                 IpcErrorCode::AlreadyTracking,
@@ -545,11 +509,7 @@ impl Sentinel {
         let mut session_id_bytes = [0u8; 32];
         let hex_str = &session.session_id[..64.min(session.session_id.len())];
         if hex::decode_to_slice(hex_str, &mut session_id_bytes).is_ok() {
-            let key = self
-                .signing_key
-                .read()
-                .unwrap_or_else(|p| p.into_inner())
-                .clone();
+            let key = self.signing_key.read_recover().clone();
             if let Ok(wal) = Wal::open(&wal_path, session_id_bytes, key) {
                 let payload = create_session_start_payload(&session);
                 if let Err(e) = wal.append(EntryType::SessionStart, payload) {
@@ -584,11 +544,7 @@ impl Sentinel {
     ) -> std::result::Result<(), (IpcErrorCode, String)> {
         let path_str = file_path.to_string_lossy().to_string();
 
-        let session = self
-            .sessions
-            .write()
-            .unwrap_or_else(|p| p.into_inner())
-            .remove(&path_str);
+        let session = self.sessions.write_recover().remove(&path_str);
 
         if let Some(session) = session {
             let _ = self.session_events_tx.send(SessionEvent {
@@ -616,12 +572,7 @@ impl Sentinel {
     }
 
     pub fn tracked_files(&self) -> Vec<String> {
-        self.sessions
-            .read()
-            .unwrap_or_else(|p| p.into_inner())
-            .keys()
-            .cloned()
-            .collect()
+        self.sessions.read_recover().keys().cloned().collect()
     }
 
     pub fn start_time(&self) -> Option<SystemTime> {
@@ -639,7 +590,7 @@ impl Sentinel {
             return Ok(()); // Need at least 10 keystrokes for meaningful baseline
         }
 
-        let signing_key = self.signing_key.read().unwrap_or_else(|p| p.into_inner());
+        let signing_key = self.signing_key.read_recover();
         let public_key = signing_key.verifying_key().to_bytes();
         let mut hasher = sha2::Sha256::new();
         hasher.update(public_key);

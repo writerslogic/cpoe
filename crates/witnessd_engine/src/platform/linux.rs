@@ -18,6 +18,7 @@ use super::types::{
 };
 use super::{FocusMonitor, HIDEnumerator, KeystrokeCapture, MouseCapture};
 use crate::DateTimeNanosExt;
+use crate::RwLockRecover;
 use anyhow::{anyhow, Result};
 use evdev::{Device, EventType, InputEventKind, Key, RelativeAxisType};
 use std::collections::HashMap;
@@ -139,27 +140,12 @@ pub struct LinuxInputDevice {
 impl LinuxInputDevice {
     /// Check if this device appears to be virtual/synthetic.
     pub fn appears_virtual(&self) -> bool {
-        // Virtual device indicators
-        let name_lower = self.name.to_lowercase();
-        if name_lower.contains("uinput")
-            || name_lower.contains("virtual")
-            || name_lower.contains("xtest")
-            || name_lower.contains("ydotool")
-        {
-            return true;
-        }
-
-        // Empty phys path usually indicates virtual device
-        if self.phys.is_none() || self.phys.as_ref().is_some_and(|p| p.is_empty()) {
-            return true;
-        }
-
-        // Zero VID:PID often indicates virtual
-        if self.vendor_id == 0 && self.product_id == 0 {
-            return true;
-        }
-
-        false
+        is_virtual_device(
+            &self.name,
+            self.phys.as_deref(),
+            self.vendor_id,
+            self.product_id,
+        )
     }
 }
 
@@ -413,10 +399,7 @@ impl LinuxKeystrokeCapture {
     /// Enumerate and register physical keyboard devices.
     fn enumerate_physical_devices(&self) -> Result<Vec<PathBuf>> {
         let keyboards = enumerate_keyboards()?;
-        let mut devices = self
-            .physical_devices
-            .write()
-            .unwrap_or_else(|p| p.into_inner());
+        let mut devices = self.physical_devices.write_recover();
         let mut physical_paths = Vec::new();
 
         for kbd in keyboards {
@@ -487,7 +470,7 @@ impl KeystrokeCapture for LinuxKeystrokeCapture {
     }
 
     fn synthetic_stats(&self) -> SyntheticStats {
-        self.stats.read().unwrap_or_else(|p| p.into_inner()).clone()
+        self.stats.read_recover().clone()
     }
 
     fn is_running(&self) -> bool {
@@ -521,11 +504,7 @@ impl LinuxKeystrokeCapture {
             }
         };
 
-        let device_info = devices
-            .read()
-            .unwrap_or_else(|p| p.into_inner())
-            .get(&path)
-            .cloned();
+        let device_info = devices.read_recover().get(&path).cloned();
         let is_physical = device_info.as_ref().is_some_and(|d| d.is_physical);
         let device_id = device_info
             .as_ref()
@@ -550,7 +529,7 @@ impl LinuxKeystrokeCapture {
                         let keycode = event.code();
 
                         {
-                            let mut s = stats.write().unwrap_or_else(|p| p.into_inner());
+                            let mut s = stats.write_recover();
                             s.total_events += 1;
 
                             if is_physical {
@@ -873,10 +852,7 @@ impl LinuxMouseCapture {
     /// Enumerate and register physical mouse devices.
     fn enumerate_physical_devices(&self) -> Result<Vec<PathBuf>> {
         let mice = enumerate_mice()?;
-        let mut devices = self
-            .physical_devices
-            .write()
-            .unwrap_or_else(|p| p.into_inner());
+        let mut devices = self.physical_devices.write_recover();
         let mut physical_paths = Vec::new();
 
         for mouse in mice {
@@ -907,11 +883,7 @@ impl LinuxMouseCapture {
             }
         };
 
-        let device_info = devices
-            .read()
-            .unwrap_or_else(|p| p.into_inner())
-            .get(&path)
-            .cloned();
+        let device_info = devices.read_recover().get(&path).cloned();
         let is_physical = device_info.as_ref().is_some_and(|d| d.is_physical);
         let device_id = device_info
             .as_ref()
@@ -932,8 +904,7 @@ impl LinuxMouseCapture {
                                 let now = chrono::Utc::now().timestamp_nanos_safe();
 
                                 let (x, y) = {
-                                    let mut pos =
-                                        last_position.write().unwrap_or_else(|p| p.into_inner());
+                                    let mut pos = last_position.write_recover();
                                     pos.0 += pending_dx;
                                     pos.1 += pending_dy;
                                     (pos.0, pos.1)
@@ -1069,22 +1040,19 @@ impl MouseCapture for LinuxMouseCapture {
     }
 
     fn idle_stats(&self) -> MouseIdleStats {
-        self.stats.read().unwrap_or_else(|p| p.into_inner()).clone()
+        self.stats.read_recover().clone()
     }
 
     fn reset_idle_stats(&mut self) {
-        *self.stats.write().unwrap_or_else(|p| p.into_inner()) = MouseIdleStats::default();
+        *self.stats.write_recover() = MouseIdleStats::default();
     }
 
     fn set_stego_params(&mut self, params: MouseStegoParams) {
-        *self.stego_params.write().unwrap_or_else(|p| p.into_inner()) = params;
+        *self.stego_params.write_recover() = params;
     }
 
     fn get_stego_params(&self) -> MouseStegoParams {
-        self.stego_params
-            .read()
-            .unwrap_or_else(|p| p.into_inner())
-            .clone()
+        self.stego_params.read_recover().clone()
     }
 
     fn set_idle_only_mode(&mut self, enabled: bool) {

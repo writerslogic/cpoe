@@ -72,7 +72,6 @@ pub struct AsyncIpcClient {
 }
 
 impl AsyncIpcClient {
-    /// Create a new disconnected async IPC client
     pub fn new() -> Self {
         Self {
             stream: None,

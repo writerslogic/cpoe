@@ -29,7 +29,6 @@ pub struct ShadowManager {
 }
 
 impl ShadowManager {
-    /// Create a new shadow manager
     pub fn new(base_dir: impl AsRef<Path>) -> Result<Self> {
         let base_dir = base_dir.as_ref().to_path_buf();
         fs::create_dir_all(&base_dir)?;
@@ -40,7 +39,7 @@ impl ShadowManager {
         })
     }
 
-    /// Create a new shadow buffer for an unsaved document
+    /// Allocate a shadow buffer for an unsaved document.
     pub fn create(&self, app_name: &str, window_title: &str) -> Result<String> {
         use rand::Rng;
         let mut rng = rand::rng();

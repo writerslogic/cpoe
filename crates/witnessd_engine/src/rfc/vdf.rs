@@ -44,7 +44,6 @@ pub struct VdfProofRfc {
 }
 
 impl VdfProofRfc {
-    /// Create a new VDF proof.
     pub fn new(
         challenge: [u8; 32],
         output: [u8; 64],
@@ -91,7 +90,7 @@ impl VdfProofRfc {
         }
     }
 
-    /// Validate all fields. Returns a list of errors (empty if valid).
+    /// Validate all fields; returns a list of errors.
     pub fn validate(&self) -> Vec<String> {
         let mut errors = Vec::new();
 
@@ -128,7 +127,6 @@ impl VdfProofRfc {
         errors
     }
 
-    /// Returns `true` if no validation errors.
     pub fn is_valid(&self) -> bool {
         self.validate().is_empty()
     }
@@ -171,7 +169,6 @@ pub struct CalibrationAttestation {
 }
 
 impl CalibrationAttestation {
-    /// Create a calibration attestation without an authority.
     pub fn new(
         iterations_per_second: u64,
         hardware_class: String,
@@ -187,7 +184,6 @@ impl CalibrationAttestation {
         }
     }
 
-    /// Create a calibration attestation with an authority identifier.
     pub fn with_authority(
         iterations_per_second: u64,
         hardware_class: String,
@@ -204,7 +200,6 @@ impl CalibrationAttestation {
         }
     }
 
-    /// Age of this calibration in seconds.
     pub fn age_seconds(&self, current_time: u64) -> u64 {
         current_time.saturating_sub(self.timestamp)
     }
@@ -214,8 +209,7 @@ impl CalibrationAttestation {
         self.age_seconds(current_time) < 86400
     }
 
-    /// Structural validation only. Does NOT verify the calibration signature.
-    /// Returns a list of errors (empty if valid).
+    /// Structural validation only — does NOT verify the signature.
     pub fn validate_structure(&self) -> Vec<String> {
         let mut errors = Vec::new();
 
@@ -238,7 +232,6 @@ impl CalibrationAttestation {
         errors
     }
 
-    /// Returns `true` if no structural validation errors.
     pub fn is_valid(&self) -> bool {
         self.validate_structure().is_empty()
     }

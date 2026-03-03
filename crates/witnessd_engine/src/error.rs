@@ -8,7 +8,6 @@ use thiserror::Error;
 /// Top-level error type for witnessd_engine.
 #[derive(Debug, Error)]
 pub enum Error {
-    // --- Subsystem errors (wrapped via #[from]) ---
     /// Anchor/timestamping subsystem error
     #[error("anchor: {0}")]
     Anchor(#[from] crate::anchors::AnchorError),
@@ -54,7 +53,6 @@ pub enum Error {
     #[error("wal: {0}")]
     Wal(#[from] crate::wal::WalError),
 
-    // --- Common error types ---
     /// I/O error
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
