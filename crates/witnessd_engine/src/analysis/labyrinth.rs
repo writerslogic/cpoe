@@ -1,21 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
-//! Labyrinth structure analysis using Takens' theorem.
-//!
-//! Implements delay-coordinate embedding to reconstruct the
-//! attractor topology of human behavioral signals. Based on
-//! Takens' theorem, which states that the dynamics of a system
-//! can be reconstructed from a single observable.
-//!
-//! RFC draft-condrey-rats-pop-01 uses labyrinth structure to
-//! detect the characteristic topological invariants of human
-//! motor control, including:
-//! - Embedding dimension estimation
-//! - Betti numbers (topological holes)
-//! - Correlation dimension
-//!
-//! Human motor control produces characteristic attractor structures
-//! with specific topological properties that are difficult to fake.
+//! Labyrinth structure analysis via Takens' delay-coordinate embedding.
+//! RFC draft-condrey-rats-pop-01 §5.4.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -96,13 +82,6 @@ impl Default for LabyrinthParams {
 }
 
 /// Perform labyrinth structure analysis on a time series.
-///
-/// # Arguments
-/// * `data` - Time series data (e.g., inter-keystroke intervals)
-/// * `params` - Analysis parameters
-///
-/// # Returns
-/// * `LabyrinthAnalysis` with topological characteristics
 pub fn analyze_labyrinth(
     data: &[f64],
     params: &LabyrinthParams,
@@ -125,40 +104,27 @@ pub fn analyze_labyrinth(
         ));
     }
 
-    // Step 1: Find optimal time delay using mutual information
     let optimal_delay = find_optimal_delay(data, params.max_delay);
-
-    // Step 2: Estimate embedding dimension using false nearest neighbors
     let embedding_dimension =
         estimate_embedding_dimension(data, optimal_delay, params.max_embedding_dim);
-
-    // Step 3: Construct delay-coordinate embedding
     let embedding = construct_embedding(data, embedding_dimension, optimal_delay);
 
     if embedding.is_empty() {
         return Err("Could not construct valid embedding".to_string());
     }
 
-    // Step 4: Compute recurrence matrix and statistics
     let (recurrence_rate, determinism) = compute_recurrence_quantification(
         &embedding,
         params.recurrence_threshold,
         params.min_line_length,
     );
-
-    // Step 5: Estimate correlation dimension
     let correlation_dimension = estimate_correlation_dimension(&embedding);
-
-    // Step 6: Estimate Betti numbers (simplified)
     let betti_numbers = estimate_betti_numbers(&embedding, params.recurrence_threshold);
 
-    // Validate results
     let is_valid = (LabyrinthAnalysis::MIN_EMBEDDING_DIM..=LabyrinthAnalysis::MAX_EMBEDDING_DIM)
         .contains(&embedding_dimension)
         && (LabyrinthAnalysis::MIN_CORRELATION_DIM..=LabyrinthAnalysis::MAX_CORRELATION_DIM)
             .contains(&correlation_dimension);
-
-    // Calculate confidence based on data quality
     let confidence = calculate_confidence(n, embedding_dimension, optimal_delay);
 
     Ok(LabyrinthAnalysis {
@@ -500,9 +466,6 @@ fn estimate_correlation_dimension(embedding: &[Vec<f64>]) -> f64 {
 }
 
 /// Estimate Betti numbers using simplicial complex approximation.
-///
-/// This is a simplified estimation - full persistent homology
-/// would require a specialized library.
 fn estimate_betti_numbers(embedding: &[Vec<f64>], threshold: f64) -> [usize; 3] {
     let n = embedding.len();
     if n < 10 {

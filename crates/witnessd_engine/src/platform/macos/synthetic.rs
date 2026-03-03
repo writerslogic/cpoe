@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::RwLock;
 
+use crate::RwLockRecover;
+
 #[cfg(test)]
 use super::DualLayerValidation;
 #[cfg(test)]
@@ -48,14 +50,11 @@ pub fn get_strict_mode() -> bool {
 }
 
 pub fn get_synthetic_stats() -> SyntheticEventStats {
-    SYNTHETIC_STATS
-        .read()
-        .unwrap_or_else(|p| p.into_inner())
-        .clone()
+    SYNTHETIC_STATS.read_recover().clone()
 }
 
 pub fn reset_synthetic_stats() {
-    let mut stats = SYNTHETIC_STATS.write().unwrap_or_else(|p| p.into_inner());
+    let mut stats = SYNTHETIC_STATS.write_recover();
     *stats = SyntheticEventStats::default();
 }
 
@@ -71,7 +70,7 @@ pub fn verify_event_source(event: &core_graphics::event::CGEvent) -> EventVerifi
 
     // Private source state = programmatic injection
     if source_state_id == K_CG_EVENT_SOURCE_STATE_PRIVATE {
-        let mut stats = SYNTHETIC_STATS.write().unwrap_or_else(|p| p.into_inner());
+        let mut stats = SYNTHETIC_STATS.write_recover();
         stats.total_events += 1;
         stats.rejected_synthetic += 1;
         stats.rejected_bad_source_state += 1;
@@ -85,7 +84,7 @@ pub fn verify_event_source(event: &core_graphics::event::CGEvent) -> EventVerifi
     // Real keyboards report type (ANSI=40, ISO=41, JIS=42); synthetic events use 0
     if keyboard_type == 0 {
         if strict {
-            let mut stats = SYNTHETIC_STATS.write().unwrap_or_else(|p| p.into_inner());
+            let mut stats = SYNTHETIC_STATS.write_recover();
             stats.total_events += 1;
             stats.rejected_synthetic += 1;
             stats.rejected_bad_keyboard_type += 1;
@@ -95,7 +94,7 @@ pub fn verify_event_source(event: &core_graphics::event::CGEvent) -> EventVerifi
     }
 
     if keyboard_type > 100 {
-        let mut stats = SYNTHETIC_STATS.write().unwrap_or_else(|p| p.into_inner());
+        let mut stats = SYNTHETIC_STATS.write_recover();
         stats.total_events += 1;
         stats.rejected_synthetic += 1;
         stats.rejected_bad_keyboard_type += 1;
@@ -105,7 +104,7 @@ pub fn verify_event_source(event: &core_graphics::event::CGEvent) -> EventVerifi
     // Hardware events have PID 0 (kernel); CGEventPost carries the injector's PID
     if source_pid != 0 {
         if strict {
-            let mut stats = SYNTHETIC_STATS.write().unwrap_or_else(|p| p.into_inner());
+            let mut stats = SYNTHETIC_STATS.write_recover();
             stats.total_events += 1;
             stats.rejected_synthetic += 1;
             stats.rejected_non_kernel_pid += 1;
@@ -114,7 +113,7 @@ pub fn verify_event_source(event: &core_graphics::event::CGEvent) -> EventVerifi
         suspicious = true;
     }
 
-    let mut stats = SYNTHETIC_STATS.write().unwrap_or_else(|p| p.into_inner());
+    let mut stats = SYNTHETIC_STATS.write_recover();
     stats.total_events += 1;
     if suspicious {
         stats.suspicious_accepted += 1;

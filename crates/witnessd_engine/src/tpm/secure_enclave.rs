@@ -593,11 +593,7 @@ impl Provider for SecureEnclaveProvider {
 
         let timestamp = Utc::now();
         let data_hash = Sha256::digest(data).to_vec();
-
-        let mut payload = Vec::new();
-        payload.extend_from_slice(&data_hash);
-        payload.extend_from_slice(&timestamp.timestamp_nanos_safe().to_le_bytes());
-        payload.extend_from_slice(state.device_id.as_bytes());
+        let payload = super::build_binding_payload(&data_hash, &timestamp, &state.device_id);
 
         let signature = sign(&state, &payload)?;
 
@@ -689,23 +685,10 @@ impl Provider for SecureEnclaveProvider {
     }
 }
 
-// =============================================================================
-// Extended Secure Enclave operations (key attestation, device info)
-// =============================================================================
-
 #[allow(dead_code)]
 impl SecureEnclaveProvider {
-    /// Generate a key attestation for the signing key.
-    ///
-    /// Key attestation proves that a key was generated in and is protected by
-    /// the Secure Enclave. The attestation includes:
-    /// - The public key
-    /// - Device-specific identifier
-    /// - Timestamp
-    /// - Cryptographic proof signed by the attestation key
-    ///
-    /// Note: Full Apple App Attest requires entitlements and server-side verification.
-    /// This provides a self-attestation that can be verified with the attestation public key.
+    /// Generate a self-attestation proving the signing key lives in the Secure Enclave.
+    /// Full Apple App Attest requires entitlements; this is a local self-attestation.
     pub fn generate_key_attestation(&self, challenge: &[u8]) -> Result<KeyAttestation, TPMError> {
         let state = self.state.lock().unwrap();
         let timestamp = Utc::now();

@@ -4,6 +4,7 @@ use super::error::{Result, SentinelError};
 use super::types::*;
 use crate::config::SentinelConfig;
 use crate::crypto::ObfuscatedString;
+use crate::{MutexRecover, RwLockRecover};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime};
 use tokio::sync::mpsc;
@@ -124,24 +125,19 @@ impl<P: WindowProvider + ?Sized> SentinelFocusTracker for PollingSentinelFocusTr
             }
         });
 
-        *self.poll_handle.lock().unwrap_or_else(|p| p.into_inner()) = Some(handle);
+        *self.poll_handle.lock_recover() = Some(handle);
         Ok(())
     }
 
     fn stop(&self) -> Result<()> {
-        let mut running = self.running.write().unwrap_or_else(|p| p.into_inner());
+        let mut running = self.running.write_recover();
         if !*running {
             return Ok(());
         }
         *running = false;
         drop(running);
 
-        if let Some(handle) = self
-            .poll_handle
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .take()
-        {
+        if let Some(handle) = self.poll_handle.lock_recover().take() {
             handle.abort();
         }
 
@@ -157,26 +153,18 @@ impl<P: WindowProvider + ?Sized> SentinelFocusTracker for PollingSentinelFocusTr
     }
 
     fn focus_events(&self) -> mpsc::Receiver<FocusEvent> {
-        self.focus_rx
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take()
-            .unwrap_or_else(|| {
-                log::error!("Focus receiver already consumed - returning dummy receiver");
-                let (_tx, rx) = mpsc::channel(1);
-                rx
-            })
+        self.focus_rx.lock_recover().take().unwrap_or_else(|| {
+            log::error!("Focus receiver already consumed - returning dummy receiver");
+            let (_tx, rx) = mpsc::channel(1);
+            rx
+        })
     }
 
     fn change_events(&self) -> mpsc::Receiver<ChangeEvent> {
-        self.change_rx
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take()
-            .unwrap_or_else(|| {
-                log::error!("Change receiver already consumed - returning dummy receiver");
-                let (_tx, rx) = mpsc::channel(1);
-                rx
-            })
+        self.change_rx.lock_recover().take().unwrap_or_else(|| {
+            log::error!("Change receiver already consumed - returning dummy receiver");
+            let (_tx, rx) = mpsc::channel(1);
+            rx
+        })
     }
 }

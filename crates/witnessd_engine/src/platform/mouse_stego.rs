@@ -1,40 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
-//! Mouse Steganography Module
+//! HMAC-based steganographic timing injection for mouse events.
 //!
-//! This module implements HMAC-based steganographic timing injection for mouse events.
-//! It follows the same cryptographic pattern as the keystroke jitter in jitter.rs.
-//!
-//! # Steganography Modes
-//!
-//! - **TimingOnly**: Inject HMAC-derived delays on mouse movements (safest)
-//! - **SubPixel**: Encode in least significant bits of coordinates (higher bandwidth)
-//! - **FirstMoveOnly**: Single signature on first move per session (minimal footprint)
-//!
-//! # Imperceptibility
-//!
-//! The timing jitter stays within 500-2000 microseconds, well below human perception
-//! threshold (~10ms for timing differences).
+//! Modes: TimingOnly (HMAC delays), SubPixel (LSB coordinate encoding),
+//! FirstMoveOnly (single signature per session). Jitter stays within
+//! 500-2000us, well below human perception (~10ms).
 
 use crate::platform::{MouseStegoMode, MouseStegoParams};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
-/// Compute HMAC-based jitter value for mouse steganography.
-///
-/// This mirrors the approach used in jitter.rs `compute_jitter_value()`.
-///
-/// # Arguments
-///
-/// * `seed` - 32-byte secret seed (derived from signing key)
-/// * `doc_hash` - 32-byte document hash
-/// * `mouse_event_count` - Number of mouse events processed
-/// * `prev_mouse_jitter` - Hash from previous jitter computation (for chaining)
-/// * `params` - Steganography parameters
-///
-/// # Returns
-///
-/// Jitter value in microseconds within the configured range.
+/// Compute HMAC-chained jitter value (microseconds) for a mouse event.
 pub fn compute_mouse_jitter(
     seed: &[u8; 32],
     doc_hash: [u8; 32],
@@ -61,9 +37,7 @@ pub fn compute_mouse_jitter(
     params.min_delay_micros + (raw % jitter_range)
 }
 
-/// Compute the jitter hash for chaining.
-///
-/// This produces the prev_mouse_jitter value for the next computation.
+/// Compute the jitter hash for chaining to the next event.
 pub fn compute_jitter_hash(
     seed: &[u8; 32],
     doc_hash: [u8; 32],
@@ -83,26 +57,17 @@ pub fn compute_jitter_hash(
     result
 }
 
-/// Mouse steganography engine.
-///
-/// Manages state for HMAC-based timing injection on mouse events.
+/// HMAC-based timing injection engine for mouse events.
 pub struct MouseStegoEngine {
-    /// Secret seed for HMAC computations
     seed: [u8; 32],
-    /// Current steganography parameters
     params: MouseStegoParams,
-    /// Counter of mouse events processed
     event_count: u64,
-    /// Previous jitter hash for chaining
     prev_hash: [u8; 32],
-    /// Whether first move signature has been injected
     first_move_done: bool,
-    /// Current document hash
     doc_hash: [u8; 32],
 }
 
 impl MouseStegoEngine {
-    /// Create a new mouse steganography engine.
     pub fn new(seed: [u8; 32]) -> Self {
         Self {
             seed,
@@ -114,36 +79,29 @@ impl MouseStegoEngine {
         }
     }
 
-    /// Set the document hash for the current session.
     pub fn set_document_hash(&mut self, hash: [u8; 32]) {
         self.doc_hash = hash;
     }
 
-    /// Update steganography parameters.
     pub fn set_params(&mut self, params: MouseStegoParams) {
         self.params = params;
     }
 
-    /// Get current parameters.
     pub fn params(&self) -> &MouseStegoParams {
         &self.params
     }
 
-    /// Get the current event count.
     pub fn event_count(&self) -> u64 {
         self.event_count
     }
 
-    /// Reset the engine state for a new session.
     pub fn reset(&mut self) {
         self.event_count = 0;
         self.prev_hash = [0u8; 32];
         self.first_move_done = false;
     }
 
-    /// Compute jitter for the next mouse event.
-    ///
-    /// Returns `Some(jitter_micros)` if injection should occur, `None` otherwise.
+    /// Compute jitter for the next mouse event, or `None` if injection is skipped.
     pub fn next_jitter(&mut self) -> Option<u32> {
         if !self.params.enabled {
             self.event_count += 1;
@@ -199,10 +157,7 @@ impl MouseStegoEngine {
         }
     }
 
-    /// Get sub-pixel offset for coordinate steganography.
-    ///
-    /// Returns `(dx_offset, dy_offset)` to add to coordinates.
-    /// Only effective when mode is `SubPixel`.
+    /// Sub-pixel `(dx, dy)` offset for coordinate steganography (SubPixel mode only).
     pub fn sub_pixel_offset(&self) -> (f64, f64) {
         if !self.params.enabled || self.params.mode != MouseStegoMode::SubPixel {
             return (0.0, 0.0);
@@ -226,9 +181,7 @@ impl MouseStegoEngine {
         (dx, dy)
     }
 
-    /// Verify a sequence of mouse jitter values.
-    ///
-    /// Returns true if the jitter sequence matches the expected HMAC chain.
+    /// Verify a sequence of jitter values against the expected HMAC chain.
     pub fn verify_sequence(
         seed: &[u8; 32],
         doc_hash: [u8; 32],
@@ -254,10 +207,6 @@ impl MouseStegoEngine {
         true
     }
 }
-
-// =============================================================================
-// Tests
-// =============================================================================
 
 #[cfg(test)]
 mod tests {

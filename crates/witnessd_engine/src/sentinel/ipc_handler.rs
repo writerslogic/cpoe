@@ -2,6 +2,7 @@
 
 use super::core::Sentinel;
 use crate::ipc::{IpcErrorCode, IpcMessage, IpcMessageHandler};
+use crate::RwLockRecover;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -26,12 +27,7 @@ impl SentinelIpcHandler {
 
     fn open_db(&self) -> Result<crate::store::SecureStore, String> {
         let db_path = self.sentinel.config.witnessd_dir.join("events.db");
-        let key_bytes = self
-            .sentinel
-            .signing_key
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .to_bytes();
+        let key_bytes = self.sentinel.signing_key.read_recover().to_bytes();
         if key_bytes == [0u8; 32] {
             log::warn!(
                 "Using zero signing key for HMAC derivation — identity may not be initialized"
@@ -83,11 +79,7 @@ impl SentinelIpcHandler {
         let event_data = Self::to_forensic_data(&events);
         let regions = std::collections::HashMap::new();
 
-        let accumulator = self
-            .sentinel
-            .activity_accumulator
-            .read()
-            .unwrap_or_else(|e| e.into_inner());
+        let accumulator = self.sentinel.activity_accumulator.read_recover();
         let jitter_samples = if accumulator.sample_count() > 0 {
             Some(accumulator.samples())
         } else {
@@ -216,11 +208,7 @@ impl SentinelIpcHandler {
         let checkpoint =
             if chain.entanglement_mode == crate::checkpoint::EntanglementMode::Entangled {
                 // Gather jitter + physics data for entangled commit
-                let accumulator = self
-                    .sentinel
-                    .activity_accumulator
-                    .read()
-                    .unwrap_or_else(|e| e.into_inner());
+                let accumulator = self.sentinel.activity_accumulator.read_recover();
                 let samples = accumulator.samples();
                 let keystroke_count = samples.len() as u64;
 
@@ -237,8 +225,7 @@ impl SentinelIpcHandler {
                 let session_id = self
                     .sentinel
                     .sessions
-                    .read()
-                    .unwrap_or_else(|e| e.into_inner())
+                    .read_recover()
                     .get(&path.to_string_lossy().to_string())
                     .map(|s| s.session_id.clone())
                     .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
@@ -320,11 +307,7 @@ impl SentinelIpcHandler {
             .latest()
             .ok_or("Chain reported non-empty but latest() returned None")?;
 
-        let signing_key = self
-            .sentinel
-            .signing_key
-            .read()
-            .unwrap_or_else(|e| e.into_inner());
+        let signing_key = self.sentinel.signing_key.read_recover();
         let decl = crate::declaration::no_ai_declaration(
             latest.content_hash,
             latest.hash,
@@ -339,8 +322,7 @@ impl SentinelIpcHandler {
         let summary = self
             .sentinel
             .activity_accumulator
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
+            .read_recover()
             .to_session_summary();
         let mut bv = witnessd_protocol::baseline::BaselineVerification {
             digest: None,
@@ -349,11 +331,7 @@ impl SentinelIpcHandler {
         };
 
         let (identity_fingerprint, hmac_key) = {
-            let key = self
-                .sentinel
-                .signing_key
-                .read()
-                .unwrap_or_else(|e| e.into_inner());
+            let key = self.sentinel.signing_key.read_recover();
             let mut hasher = Sha256::new();
             hasher.update(key.verifying_key().to_bytes());
             let fingerprint = hasher.finalize().to_vec();
@@ -375,12 +353,7 @@ impl SentinelIpcHandler {
         builder = builder.with_baseline_verification(bv);
 
         // Capture physical context from hardware sensors + behavioral samples
-        let jitter_samples = self
-            .sentinel
-            .activity_accumulator
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .samples();
+        let jitter_samples = self.sentinel.activity_accumulator.read_recover().samples();
         let physics = crate::physics::PhysicalContext::capture(&jitter_samples);
         builder = builder.with_physical_context(&physics);
 

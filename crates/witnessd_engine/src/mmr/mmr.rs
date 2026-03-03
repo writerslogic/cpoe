@@ -4,6 +4,7 @@ use crate::mmr::errors::MmrError;
 use crate::mmr::node::Node;
 use crate::mmr::proof::{InclusionProof, ProofElement, RangeProof};
 use crate::mmr::store::Store;
+use crate::RwLockRecover;
 use std::sync::RwLock;
 
 pub struct MMR {
@@ -31,7 +32,7 @@ impl MMR {
     }
 
     pub fn append(&self, data: &[u8]) -> Result<u64, MmrError> {
-        let mut state = self.state.write().unwrap_or_else(|p| p.into_inner());
+        let mut state = self.state.write_recover();
         let leaf_index = state.size;
         let leaf = Node::new_leaf(leaf_index, data);
         self.store.append(&leaf)?;
@@ -60,7 +61,7 @@ impl MMR {
     }
 
     pub fn get_peaks(&self) -> Result<Vec<[u8; 32]>, MmrError> {
-        let state = self.state.read().unwrap_or_else(|p| p.into_inner());
+        let state = self.state.read_recover();
         if state.size == 0 {
             return Ok(Vec::new());
         }
@@ -88,11 +89,11 @@ impl MMR {
     }
 
     pub fn size(&self) -> u64 {
-        self.state.read().unwrap_or_else(|p| p.into_inner()).size
+        self.state.read_recover().size
     }
 
     pub fn leaf_count(&self) -> u64 {
-        leaf_count_from_size(self.state.read().unwrap_or_else(|p| p.into_inner()).size)
+        leaf_count_from_size(self.state.read_recover().size)
     }
 
     /// Sync the underlying store to disk.
@@ -101,7 +102,7 @@ impl MMR {
     }
 
     pub fn get(&self, index: u64) -> Result<Node, MmrError> {
-        let state = self.state.read().unwrap_or_else(|p| p.into_inner());
+        let state = self.state.read_recover();
         if index >= state.size {
             return Err(MmrError::IndexOutOfRange);
         }
@@ -109,7 +110,7 @@ impl MMR {
     }
 
     pub fn get_leaf_index(&self, leaf_ordinal: u64) -> Result<u64, MmrError> {
-        let state = self.state.read().unwrap_or_else(|p| p.into_inner());
+        let state = self.state.read_recover();
         if state.size == 0 {
             return Err(MmrError::Empty);
         }
@@ -124,7 +125,7 @@ impl MMR {
     }
 
     pub fn get_leaf_indices(&self, start: u64, end: u64) -> Result<Vec<u64>, MmrError> {
-        let state = self.state.read().unwrap_or_else(|p| p.into_inner());
+        let state = self.state.read_recover();
         if start > end {
             return Err(MmrError::InvalidProof);
         }
@@ -142,7 +143,7 @@ impl MMR {
     }
 
     pub fn generate_proof(&self, leaf_index: u64) -> Result<InclusionProof, MmrError> {
-        let state = self.state.read().unwrap_or_else(|p| p.into_inner());
+        let state = self.state.read_recover();
         if state.size == 0 {
             return Err(MmrError::Empty);
         }
@@ -181,7 +182,7 @@ impl MMR {
         start_leaf: u64,
         end_leaf: u64,
     ) -> Result<RangeProof, MmrError> {
-        let state = self.state.read().unwrap_or_else(|p| p.into_inner());
+        let state = self.state.read_recover();
         if state.size == 0 {
             return Err(MmrError::Empty);
         }
@@ -244,7 +245,7 @@ impl MMR {
     }
 
     fn find_family(&self, pos: u64, height: u8) -> Result<(u64, u64, bool, bool), MmrError> {
-        let state = self.state.read().unwrap_or_else(|p| p.into_inner());
+        let state = self.state.read_recover();
         let offset = 1u64 << (height + 1);
 
         let left_parent = pos + offset;

@@ -132,7 +132,6 @@ impl ProvenanceSection {
         self
     }
 
-    /// Returns `true` if no links or claims are present.
     pub fn is_empty(&self) -> bool {
         self.parent_links.is_empty() && self.derivation_claims.is_empty()
     }

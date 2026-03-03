@@ -6,10 +6,6 @@ use core_foundation_sys::base::{CFAllocatorRef, CFIndex, CFTypeID, CFTypeRef};
 use core_foundation_sys::dictionary::CFDictionaryRef;
 use core_foundation_sys::string::CFStringRef;
 
-// =============================================================================
-// IOKit HID Framework bindings for device enumeration
-// =============================================================================
-
 #[allow(dead_code)]
 #[link(name = "IOKit", kind = "framework")]
 extern "C" {
@@ -74,10 +70,6 @@ pub const K_IO_HID_MANUFACTURER_KEY: &str = "Manufacturer";
 pub const K_IO_HID_SERIAL_NUMBER_KEY: &str = "SerialNumber";
 pub const K_IO_HID_TRANSPORT_KEY: &str = "Transport";
 
-// =============================================================================
-// Accessibility API bindings for focus and document tracking
-// =============================================================================
-
 #[allow(dead_code)]
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
@@ -109,11 +101,7 @@ pub const K_AX_DESCRIPTION_ATTRIBUTE: &str = "AXDescription";
 pub const K_AX_FILENAME_ATTRIBUTE: &str = "AXFilename";
 pub const K_AX_URL_ATTRIBUTE: &str = "AXURL";
 
-// =============================================================================
-// CGEvent field constants for synthetic event detection
-// =============================================================================
-
-// CGEventField constants (values from Apple's CGEventTypes.h / macOS SDK)
+// CGEventField constants (values from Apple's CGEventTypes.h)
 pub const K_CG_EVENT_SOURCE_STATE_ID: u32 = 45;
 pub const K_CG_KEYBOARD_EVENT_KEYBOARD_TYPE: u32 = 10;
 pub const K_CG_KEYBOARD_EVENT_KEYCODE: u32 = 9;

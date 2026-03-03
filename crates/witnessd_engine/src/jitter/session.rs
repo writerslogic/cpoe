@@ -20,10 +20,6 @@ use zeroize::Zeroize;
 
 use super::timestamp_nanos_u64;
 
-// =============================================================================
-// Jitter chain (Layer 4a) - Go parity
-// =============================================================================
-
 pub(crate) const MIN_JITTER: u32 = 500; // microseconds
 pub(crate) const MAX_JITTER: u32 = 3000; // microseconds
 pub(crate) const JITTER_RANGE: u32 = MAX_JITTER - MIN_JITTER;

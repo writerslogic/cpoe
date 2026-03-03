@@ -392,10 +392,6 @@ fn test_vdf_input_mismatch_detection() {
     drop(dir);
 }
 
-// =========================================================================
-// Entangled mode tests (WAR/1.1)
-// =========================================================================
-
 #[test]
 fn test_entangled_chain_creation() {
     let (dir, path) = temp_document();
@@ -656,10 +652,6 @@ fn test_legacy_mode_default() {
     drop(dir);
 }
 
-// =========================================================================
-// RFC-compliant commit tests (draft-condrey-rats-pop-01)
-// =========================================================================
-
 #[test]
 fn test_commit_rfc_basic() {
     let (dir, path) = temp_document();
@@ -883,10 +875,6 @@ fn test_checkpoint_to_rfc_vdf_conversion() {
 
     drop(dir);
 }
-
-// =========================================================================
-// Phase 1: Ordinal gap detection & signature policy tests
-// =========================================================================
 
 #[test]
 fn test_ordinal_gap_detected() {

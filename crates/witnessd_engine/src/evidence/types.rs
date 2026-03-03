@@ -17,7 +17,6 @@ use crate::rfc::{BiologyInvariantClaim, JitterBinding, TimeEvidence};
 use crate::tpm;
 use crate::vdf;
 
-// Platform types for HID device enumeration
 use crate::platform::HIDDeviceInfo;
 
 use super::serde_helpers::{
@@ -95,12 +94,7 @@ pub struct Packet {
     pub collaboration: Option<collaboration::CollaborationSection>,
     /// VDF aggregate proof for efficient verification (RFC Section: VDF Aggregation)
     pub vdf_aggregate: Option<vdf::VdfAggregateProof>,
-    /// Verifier-provided freshness nonce for replay attack prevention.
-    ///
-    /// When a verifier requests evidence, they may provide a random 32-byte nonce.
-    /// This nonce is incorporated into the packet signature to prove that the
-    /// evidence was generated in response to a specific verification request,
-    /// preventing replay of old evidence packets.
+    /// Verifier-provided 32-byte freshness nonce; prevents replay of old packets.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -108,11 +102,7 @@ pub struct Packet {
         deserialize_with = "deserialize_optional_nonce"
     )]
     pub verifier_nonce: Option<[u8; 32]>,
-    /// Signature over the packet hash and verifier nonce (if present).
-    ///
-    /// This binds the entire evidence packet to the verifier's freshness challenge.
-    /// Format: Ed25519(packet_hash || verifier_nonce) if nonce present,
-    /// or Ed25519(packet_hash) if no nonce.
+    /// Ed25519 signature over packet_hash (|| verifier_nonce if present).
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -264,18 +254,11 @@ pub struct CheckpointProof {
 }
 
 /// Hardware attestation evidence binding TPM/TEE state to session.
-///
-/// The attestation nonce is a 32-byte cryptographically secure random value
-/// generated at session start. It binds the TPM quote to this specific session,
-/// preventing replay attacks where an attacker might reuse a quote from a
-/// different session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HardwareEvidence {
     pub bindings: Vec<tpm::Binding>,
     pub device_id: String,
-    /// Cryptographically secure 32-byte nonce generated at session start.
-    /// Used as the nonce parameter in TPM quote operations to bind
-    /// the attestation to this specific evidence session.
+    /// Session-bound nonce for TPM quote anti-replay.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -298,8 +281,7 @@ pub struct KeystrokeEvidence {
     pub chain_valid: bool,
     pub plausible_human_rate: bool,
     pub samples: Vec<jitter::Sample>,
-    /// Ratio of samples using hardware entropy (0.0 to 1.0).
-    /// Only set when using HybridJitterSession with witnessd_jitter feature.
+    /// Ratio of samples using hardware entropy (0.0..1.0, witnessd_jitter only).
     #[serde(default)]
     pub phys_ratio: Option<f64>,
 }

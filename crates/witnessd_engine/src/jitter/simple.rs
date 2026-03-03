@@ -7,10 +7,6 @@ use serde::{Deserialize, Serialize};
 
 use super::timestamp_nanos_u64;
 
-// =============================================================================
-// Simple jitter session (legacy capture used by platform hooks)
-// =============================================================================
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimpleJitterSample {
     pub timestamp_ns: i64,

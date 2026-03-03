@@ -144,7 +144,6 @@ unsafe impl Send for TbsContext {}
 unsafe impl Sync for TbsContext {}
 
 impl TbsContext {
-    /// Creates a new TBS context for TPM 2.0.
     pub fn new() -> Result<Self, TbsError> {
         let mut params: TBS_CONTEXT_PARAMS2 = unsafe { std::mem::zeroed() };
         params.version = TPM_VERSION_20;
@@ -250,7 +249,6 @@ impl TbsContext {
         })
     }
 
-    /// Gets random bytes from the TPM via TPM2_GetRandom.
     pub fn get_random(&self, num_bytes: u16) -> Result<Vec<u8>, TbsError> {
         let cmd = build_get_random_command(num_bytes);
         let response = self.submit_command(&cmd)?;
@@ -298,8 +296,7 @@ impl TpmDeviceInfo {
     }
 }
 
-/// Builds a TPM2_GetRandom command.
-/// `num_bytes`: max typically 48-64 depending on TPM.
+/// Build a TPM2_GetRandom command (`num_bytes` max ~48-64 depending on TPM).
 pub fn build_get_random_command(num_bytes: u16) -> Vec<u8> {
     let command_size: u32 = 12;
     let mut cmd = Vec::with_capacity(command_size as usize);
@@ -312,7 +309,7 @@ pub fn build_get_random_command(num_bytes: u16) -> Vec<u8> {
     cmd
 }
 
-/// Parses a TPM2_GetRandom response, extracting the TPM2B_DIGEST payload.
+/// Parse a TPM2_GetRandom response, extracting the TPM2B_DIGEST payload.
 pub fn parse_get_random_response(response: &[u8]) -> Result<Vec<u8>, TPMError> {
     if response.len() < TPM2_RESPONSE_HEADER_SIZE {
         return Err(TPMError::Quote(format!(
@@ -349,8 +346,7 @@ pub fn parse_get_random_response(response: &[u8]) -> Result<Vec<u8>, TPMError> {
     Ok(response[12..12 + digest_size].to_vec())
 }
 
-/// Builds a TPM2_PCR_Read command for the SHA-256 bank.
-/// `pcr_selection`: PCR indices 0-23; values >= 24 are silently ignored.
+/// Build a TPM2_PCR_Read command for SHA-256 bank (indices 0-23).
 pub fn build_pcr_read_command(pcr_selection: &[u32]) -> Vec<u8> {
     let mut pcr_bitmap: [u8; 3] = [0, 0, 0];
     for &pcr_index in pcr_selection {
@@ -375,7 +371,7 @@ pub fn build_pcr_read_command(pcr_selection: &[u32]) -> Vec<u8> {
     cmd
 }
 
-/// Extracts the response code (bytes 6-9, big-endian) from a TPM2 response header.
+/// Extract the response code (bytes 6-9, big-endian) from a TPM2 response header.
 pub fn parse_response_code(response: &[u8]) -> Result<u32, TPMError> {
     if response.len() < TPM2_RESPONSE_HEADER_SIZE {
         return Err(TPMError::Quote(format!(
@@ -398,7 +394,7 @@ struct WindowsTpmState {
     counter: u64,
 }
 
-/// Returns `Some` if a TPM 2.0 is available and the TBS service is running.
+/// Probe for an available TPM 2.0 via TBS.
 pub fn try_init() -> Option<WindowsTpmProvider> {
     match TbsContext::new() {
         Ok(context) => {
@@ -893,26 +889,7 @@ impl Provider for WindowsTpmProvider {
     }
 
     fn unseal(&self, sealed: &[u8]) -> Result<Vec<u8>, TPMError> {
-        if sealed.len() < 8 {
-            return Err(TPMError::SealedDataTooShort);
-        }
-
-        let pub_len = u32::from_be_bytes([sealed[0], sealed[1], sealed[2], sealed[3]]) as usize;
-        if sealed.len() < 4 + pub_len + 4 {
-            return Err(TPMError::SealedCorrupted);
-        }
-        let pub_bytes = &sealed[4..4 + pub_len];
-        let offset = 4 + pub_len;
-        let priv_len = u32::from_be_bytes([
-            sealed[offset],
-            sealed[offset + 1],
-            sealed[offset + 2],
-            sealed[offset + 3],
-        ]) as usize;
-        if sealed.len() < offset + 4 + priv_len {
-            return Err(TPMError::SealedCorrupted);
-        }
-        let priv_bytes = &sealed[offset + 4..offset + 4 + priv_len];
+        let (pub_bytes, priv_bytes) = super::parse_sealed_blob(sealed)?;
 
         // SRK must be recreated each time (transient primary)
         let srk_response = self

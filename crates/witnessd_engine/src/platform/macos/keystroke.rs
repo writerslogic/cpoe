@@ -17,19 +17,11 @@ use std::sync::{mpsc, Arc, Mutex};
 use crate::jitter::SimpleJitterSession;
 use crate::DateTimeNanosExt;
 
-// =============================================================================
-// RunLoopHandle
-// =============================================================================
-
 /// Thread-safe handle to a CFRunLoop that can be stopped from another thread.
 /// SAFETY: CFRunLoopStop is documented as thread-safe in Apple's documentation.
 pub struct RunLoopHandle(pub(super) *mut std::ffi::c_void);
 unsafe impl Send for RunLoopHandle {}
 unsafe impl Sync for RunLoopHandle {}
-
-// =============================================================================
-// KeystrokeMonitor
-// =============================================================================
 
 /// Extended keystroke information including device fingerprint.
 #[derive(Debug, Clone)]
@@ -282,10 +274,6 @@ impl Drop for KeystrokeMonitor {
         self.stop();
     }
 }
-
-// =============================================================================
-// MacOSKeystrokeCapture
-// =============================================================================
 
 /// macOS keystroke capture implementation.
 pub struct MacOSKeystrokeCapture {

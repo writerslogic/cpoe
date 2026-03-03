@@ -21,17 +21,12 @@ pub struct Declaration {
     pub version: u64,
     pub author_public_key: Vec<u8>,
     pub signature: Vec<u8>,
-    /// Declaration jitter seal (WAR/1.1): Hardware-sealed typing proof captured
-    /// during interactive declaration input. This binds the declaration to live
-    /// human presence at the time of signing.
+    /// Hardware-sealed typing proof binding declaration to live human presence (WAR/1.1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jitter_sealed: Option<DeclarationJitter>,
 }
 
-/// Jitter evidence captured during declaration input.
-///
-/// This captures keystroke timing during the interactive typing of the
-/// declaration statement, providing proof of human presence at signing time.
+/// Jitter evidence captured during interactive declaration typing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeclarationJitter {
     /// SHA-256 hash of the jitter samples collected during declaration typing
@@ -203,11 +198,7 @@ impl Builder {
         self
     }
 
-    /// Add jitter evidence captured during interactive declaration typing.
-    ///
-    /// This binds the declaration to live human presence at the time of signing.
-    /// The jitter evidence should be collected while the user types their
-    /// declaration statement.
+    /// Attach jitter evidence collected during interactive declaration typing.
     pub fn with_jitter_seal(mut self, jitter: DeclarationJitter) -> Self {
         self.decl.jitter_sealed = Some(jitter);
         self
@@ -394,7 +385,6 @@ impl Declaration {
         hasher.finalize().to_vec()
     }
 
-    /// Check if this declaration has jitter seal (WAR/1.1 feature)
     pub fn has_jitter_seal(&self) -> bool {
         self.jitter_sealed.is_some()
     }
@@ -517,12 +507,7 @@ pub fn ai_assisted_declaration(
 }
 
 impl DeclarationJitter {
-    /// Create a new declaration jitter from captured timing data.
-    ///
-    /// # Arguments
-    /// * `jitter_samples` - Raw jitter timing samples (microseconds)
-    /// * `duration_ms` - Total duration of typing in milliseconds
-    /// * `hardware_sealed` - Whether hardware entropy was used
+    /// Build from raw jitter timing samples (microseconds).
     pub fn from_samples(jitter_samples: &[u32], duration_ms: u64, hardware_sealed: bool) -> Self {
         let keystroke_count = jitter_samples.len() as u64;
 
@@ -570,7 +555,6 @@ impl DeclarationJitter {
         }
     }
 
-    /// Create a declaration jitter directly from computed values.
     pub fn new(
         jitter_hash: [u8; 32],
         keystroke_count: u64,
@@ -1042,10 +1026,6 @@ mod tests {
             .sign(&signing_key);
         assert!(result.is_err(), "Expected error for 105%, got success");
     }
-
-    // =========================================================================
-    // Declaration Jitter Seal Tests (WAR/1.1)
-    // =========================================================================
 
     #[test]
     fn test_declaration_jitter_from_samples() {

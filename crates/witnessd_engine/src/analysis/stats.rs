@@ -45,6 +45,20 @@ pub fn kurtosis(data: &[f64], mean: f64, std: f64) -> f64 {
     sum_fourth / n - 3.0
 }
 
+/// Bhattacharyya coefficient between two f64 histograms.
+pub fn bhattacharyya_coefficient(a: &[f64], b: &[f64]) -> f64 {
+    a.iter().zip(b.iter()).map(|(&x, &y)| (x * y).sqrt()).sum()
+}
+
+/// Relative similarity: 1.0 when both zero, else `1 - |a-b|/(a+b+ε)`.
+pub fn relative_similarity(a: f64, b: f64) -> f64 {
+    if a == 0.0 && b == 0.0 {
+        1.0
+    } else {
+        1.0 - (a - b).abs() / (a + b + 0.001)
+    }
+}
+
 /// Linear regression returning (slope, intercept, r_squared, std_error).
 pub fn linear_regression(x: &[f64], y: &[f64]) -> Result<(f64, f64, f64, f64), String> {
     let n = x.len();

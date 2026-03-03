@@ -4,7 +4,6 @@ use super::{
     default_pcr_selection, Attestation, Binding, Capabilities, PCRSelection, PcrValue, Provider,
     Quote, TPMError,
 };
-use crate::DateTimeNanosExt;
 use chrono::Utc;
 use sha2::{Digest as Sha2Digest, Sha256};
 use std::sync::Mutex;
@@ -158,11 +157,7 @@ impl Provider for LinuxTpmProvider {
 
         let timestamp = Utc::now();
         let data_hash = Sha256::digest(data).to_vec();
-
-        let mut payload = Vec::new();
-        payload.extend_from_slice(&data_hash);
-        payload.extend_from_slice(&timestamp.timestamp_nanos_safe().to_le_bytes());
-        payload.extend_from_slice(self.device_id().as_bytes());
+        let payload = super::build_binding_payload(&data_hash, &timestamp, &self.device_id());
 
         let digest = Sha256::digest(&payload);
 
@@ -313,26 +308,7 @@ impl Provider for LinuxTpmProvider {
 
     fn unseal(&self, sealed: &[u8]) -> Result<Vec<u8>, TPMError> {
         let mut state = self.inner.lock().unwrap();
-
-        if sealed.len() < 8 {
-            return Err(TPMError::SealedDataTooShort);
-        }
-        let pub_len = u32::from_be_bytes([sealed[0], sealed[1], sealed[2], sealed[3]]) as usize;
-        if sealed.len() < 4 + pub_len + 4 {
-            return Err(TPMError::SealedCorrupted);
-        }
-        let pub_bytes = &sealed[4..4 + pub_len];
-        let offset = 4 + pub_len;
-        let priv_len = u32::from_be_bytes([
-            sealed[offset],
-            sealed[offset + 1],
-            sealed[offset + 2],
-            sealed[offset + 3],
-        ]) as usize;
-        if sealed.len() < offset + 4 + priv_len {
-            return Err(TPMError::SealedCorrupted);
-        }
-        let priv_bytes = &sealed[offset + 4..offset + 4 + priv_len];
+        let (pub_bytes, priv_bytes) = super::parse_sealed_blob(sealed)?;
 
         let public =
             Public::unmarshall(pub_bytes).map_err(|_| TPMError::Unsealing("public".into()))?;

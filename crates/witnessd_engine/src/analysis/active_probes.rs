@@ -1,23 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 //! Active probe mechanisms for behavioral verification.
-//!
-//! Active probes are challenge-response mechanisms that test specific
-//! aspects of human motor control and cognitive processing. Unlike passive
-//! observation, active probes introduce controlled stimuli to measure
-//! response characteristics.
-//!
-//! RFC draft-condrey-rats-pop-01 specifies two primary probe types:
-//!
-//! ## Galton Invariant (Absorption Coefficient)
-//! Measures how quickly rhythmic patterns absorb perturbations.
-//! Human motor control shows characteristic absorption rates that
-//! differ from mechanical or scripted responses.
-//!
-//! ## Reflex Gate
-//! Measures the reflexive return latency after an unexpected stimulus.
-//! Human responses show neural pathway delays that are physiologically
-//! constrained.
+//! RFC draft-condrey-rats-pop-01 §5.5: Galton invariant and reflex gate probes.
 
 use serde::{Deserialize, Serialize};
 

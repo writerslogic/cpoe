@@ -134,6 +134,19 @@ impl Builder {
         }
     }
 
+    fn add_claim(
+        &mut self,
+        claim_type: ClaimType,
+        description: impl Into<String>,
+        confidence: &str,
+    ) {
+        self.packet.claims.push(Claim {
+            claim_type,
+            description: description.into(),
+            confidence: confidence.to_string(),
+        });
+    }
+
     pub fn with_declaration(mut self, decl: &declaration::Declaration) -> Self {
         if !decl.verify() {
             self.errors
@@ -264,14 +277,14 @@ impl Builder {
             if self.packet.strength < Strength::Enhanced {
                 self.packet.strength = Strength::Enhanced;
             }
-            self.packet.claims.push(Claim {
-                claim_type: ClaimType::KeystrokesVerified,
-                description: format!(
+            self.add_claim(
+                ClaimType::KeystrokesVerified,
+                format!(
                     "Hardware entropy ratio {:.0}% - strong assurance of genuine input",
                     evidence.entropy_quality.phys_ratio * 100.0
                 ),
-                confidence: "high".to_string(),
-            });
+                "high",
+            );
         }
 
         self
@@ -719,11 +732,11 @@ impl Builder {
     }
 
     fn generate_claims(&mut self) {
-        self.packet.claims.push(Claim {
-            claim_type: ClaimType::ChainIntegrity,
-            description: "Content states form an unbroken cryptographic chain".to_string(),
-            confidence: "cryptographic".to_string(),
-        });
+        self.add_claim(
+            ClaimType::ChainIntegrity,
+            "Content states form an unbroken cryptographic chain",
+            "cryptographic",
+        );
 
         let mut total_time = Duration::from_secs(0);
         for cp in &self.packet.checkpoints {
@@ -732,14 +745,14 @@ impl Builder {
             }
         }
         if total_time > Duration::from_secs(0) {
-            self.packet.claims.push(Claim {
-                claim_type: ClaimType::TimeElapsed,
-                description: format!(
+            self.add_claim(
+                ClaimType::TimeElapsed,
+                format!(
                     "At least {:?} elapsed during documented composition",
                     total_time
                 ),
-                confidence: "cryptographic".to_string(),
-            });
+                "cryptographic",
+            );
         }
 
         if let Some(decl) = &self.packet.declaration {
@@ -751,22 +764,22 @@ impl Builder {
             } else {
                 "No AI tools declared".to_string()
             };
-            self.packet.claims.push(Claim {
-                claim_type: ClaimType::ProcessDeclared,
-                description: format!("Author signed declaration of creative process. {ai_desc}"),
-                confidence: "attestation".to_string(),
-            });
+            self.add_claim(
+                ClaimType::ProcessDeclared,
+                format!("Author signed declaration of creative process. {ai_desc}"),
+                "attestation",
+            );
         }
 
         if let Some(presence) = &self.packet.presence {
-            self.packet.claims.push(Claim {
-                claim_type: ClaimType::PresenceVerified,
-                description: format!(
+            self.add_claim(
+                ClaimType::PresenceVerified,
+                format!(
                     "Author presence verified {:.0}% of challenged sessions",
                     presence.overall_rate * 100.0
                 ),
-                confidence: "cryptographic".to_string(),
-            });
+                "cryptographic",
+            );
         }
 
         if let Some(keystroke) = &self.packet.keystroke {
@@ -777,37 +790,31 @@ impl Builder {
             if keystroke.plausible_human_rate {
                 desc.push_str(", consistent with human typing");
             }
-            self.packet.claims.push(Claim {
-                claim_type: ClaimType::KeystrokesVerified,
-                description: desc,
-                confidence: "cryptographic".to_string(),
-            });
+            self.add_claim(ClaimType::KeystrokesVerified, desc, "cryptographic");
         }
 
         if self.packet.hardware.is_some() {
-            self.packet.claims.push(Claim {
-                claim_type: ClaimType::HardwareAttested,
-                description: "TPM attests chain was not rolled back or modified".to_string(),
-                confidence: "cryptographic".to_string(),
-            });
+            self.add_claim(
+                ClaimType::HardwareAttested,
+                "TPM attests chain was not rolled back or modified",
+                "cryptographic",
+            );
         }
 
         if self.packet.physical_context.is_some() {
-            self.packet.claims.push(Claim {
-                claim_type: ClaimType::HardwareAttested,
-                description: "Physical context captured: clock skew, thermal proxy, \
-                              silicon PUF, I/O latency"
-                    .to_string(),
-                confidence: "high".to_string(),
-            });
+            self.add_claim(
+                ClaimType::HardwareAttested,
+                "Physical context captured: clock skew, thermal proxy, silicon PUF, I/O latency",
+                "high",
+            );
         }
 
         if self.packet.behavioral.is_some() {
-            self.packet.claims.push(Claim {
-                claim_type: ClaimType::BehaviorAnalyzed,
-                description: "Edit patterns captured for forensic analysis".to_string(),
-                confidence: "statistical".to_string(),
-            });
+            self.add_claim(
+                ClaimType::BehaviorAnalyzed,
+                "Edit patterns captured for forensic analysis",
+                "statistical",
+            );
         }
 
         if !self.packet.contexts.is_empty() {
@@ -831,21 +838,17 @@ impl Builder {
             if external > 0 {
                 desc.push_str(&format!(" ({external} external)"));
             }
-            self.packet.claims.push(Claim {
-                claim_type: ClaimType::ContextsRecorded,
-                description: desc,
-                confidence: "attestation".to_string(),
-            });
+            self.add_claim(ClaimType::ContextsRecorded, desc, "attestation");
         }
 
         if let Some(external) = &self.packet.external {
             let count =
                 external.opentimestamps.len() + external.rfc3161.len() + external.proofs.len();
-            self.packet.claims.push(Claim {
-                claim_type: ClaimType::ExternalAnchored,
-                description: format!("Chain anchored to {count} external timestamp authorities"),
-                confidence: "cryptographic".to_string(),
-            });
+            self.add_claim(
+                ClaimType::ExternalAnchored,
+                format!("Chain anchored to {count} external timestamp authorities"),
+                "cryptographic",
+            );
         }
 
         if let Some(kh) = &self.packet.key_hierarchy {
@@ -864,11 +867,7 @@ impl Builder {
                     kh.checkpoint_signatures.len()
                 ));
             }
-            self.packet.claims.push(Claim {
-                claim_type: ClaimType::KeyHierarchy,
-                description: desc,
-                confidence: "cryptographic".to_string(),
-            });
+            self.add_claim(ClaimType::KeyHierarchy, desc, "cryptographic");
         }
     }
 

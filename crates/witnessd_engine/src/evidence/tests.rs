@@ -764,10 +764,6 @@ mod tests {
         assert_eq!(decoded.attestation_nonce, None);
     }
 
-    // =========================================================================
-    // Verifier Nonce Tests (Replay Attack Prevention)
-    // =========================================================================
-
     #[test]
     fn test_packet_sign_without_nonce() {
         let dir = TempDir::new().expect("temp dir");
@@ -1127,10 +1123,6 @@ mod tests {
             .to_string()
             .contains("missing or invalid CBOR PPP tag"));
     }
-
-    // =========================================================================
-    // Trust Tier Tests
-    // =========================================================================
 
     #[test]
     fn test_trust_tier_local() {

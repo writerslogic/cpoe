@@ -39,19 +39,8 @@ mod tests;
 
 use crate::codec::{CBOR_TAG_PPP, CBOR_TAG_WAR};
 
-// ============================================================
-// CBOR Tag Constants (re-exported for convenience)
-// ============================================================
-
-/// CBOR tag for Evidence Packets: 1129336656 (0x434F5050 = "CPOP")
 pub const CBOR_TAG_EVIDENCE_PACKET: u64 = CBOR_TAG_PPP;
-
-/// CBOR tag for Attestation Results: 1129791826 (0x43574152 = "CWAR")
 pub const CBOR_TAG_ATTESTATION_RESULT: u64 = CBOR_TAG_WAR;
-
-// ============================================================
-// Re-exports (preserve public API)
-// ============================================================
 
 pub use attestation::{
     AbsenceClaim, AttestationResultWire, EntropyReport, ForensicFlag, ForensicSummary,
