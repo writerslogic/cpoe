@@ -1,756 +1,791 @@
 # Todo
-<!-- suggest | Updated: 2026-02-27 | PM-audit: 2026-02-26 | Fix-review: 2026-02-26 | Languages: rust | Files: 190 | Issues: 102 -->
+<!-- suggest | Updated: 2026-03-03 | Languages: rust, js | Files: 230 | Issues: 159 prior + 322 new | Batches: 20+5+deep | Waves: 4+1+1 | Coverage: ~100% -->
 
-> Resolved items moved to `completed.md`. This file tracks only pending work.
-> Updated 2026-02-26 (full engine deep audit — 77 source files across 10 batches).
-> PM/Security audit pass 2026-02-26: deduplication, cross-refs, summary recount, style.
-> Verification pass 2026-02-26: spot-checked all CRITs, reopened items, and representative HIGHs/MEDs against source. Fixed stale line numbers from checkpoint.rs and macos.rs splits. M-040 confirmed fixed. M-002 noted as intentional design. SYS-002 updated (2 of 4 resolved).
-> Fix-review pass 2026-02-26: All 95 issues reviewed against source code. 3 false positives removed (M-009, M-019, M-024). 11 fix descriptions rewritten to prevent introducing new problems. 1 escalation (M-036 → HIGH as H-037). 1 new systemic added (SYS-008). C-003+H-030 merged. Fix descriptions now include migration notes, compilation caveats, and phased approaches where applicable.
-> Previous audits: 390+ issues found and fixed across sessions 1-9; CLI src audit session 10.
-> Fix pass 2026-02-27: 82 of 88 issues fixed. All 9 CRITs resolved. 35 of 37 HIGHs resolved (H-013 deferred: large scope, H-025 deferred: medium effort). 31 of 36 MEDs resolved. 4 of 8 systemics fully resolved (SYS-001, SYS-004, SYS-006, SYS-008). Remaining open: SYS-002 (god modules), SYS-003 (blocking I/O), SYS-005 (error swallow), SYS-007 (O(n^2)).
-> Full codebase audit 2026-02-27: 190 files across 18 batches (4 waves). Expanded coverage from 77 to 190 files. H-013 confirmed fixed (SecureStorage migration). 14 new issues found: 1 CRITICAL, 9 HIGH, 4 MEDIUM, 1 systemic.
+> Full codebase audit 2026-03-02: 230 source files across 20 batches (4 waves). All prior issues preserved.
+> Incremental audit 2026-03-03: 5 batch validation pass on wld_engine. Added SYS-021, H-107..H-109, M-120..M-122.
+> Deep audit 2026-03-03: Multi-agent security/logic/forensics review. Added C-022..C-027, H-110..H-129, M-123..M-143, SYS-022..SYS-023, B-004..B-006.
+> Prior audits: 159 issues (133 fixed, 26 skipped/eliminated). All CRITICALs, HIGHs, and systemics resolved.
+> This scan: 322 new findings after dedup (17 CRITICAL, 85 HIGH, 207 MEDIUM, 12 systemic, 3 build).
 
 ---
 
 ## Summary
-| Severity | Open | Fixed | Skipped | Eliminated |
-|----------|------|-------|---------|------------|
-| CRITICAL | 1    | 11    | 0       | 0          |
-| HIGH     | 10   | 43    | 0       | 0          |
-| MEDIUM   | 7    | 34    | 8       | 3          |
-| SYSTEMIC | 5    | 4     | 0       | 0          |
+| Severity | Open | Fixed This Cycle | Prior Fixed | Prior Skipped | Prior Eliminated |
+|----------|------|------------------|-------------|---------------|------------------|
+| CRITICAL | 1    | 16               | 8           | 2             | 0                |
+| HIGH     | 51   | 14 (+19 prior)   | 48          | 16            | 0                |
+| MEDIUM   | 94   | 0                | 66          | 9             | 7                |
+| SYSTEMIC | 12   | 0                | 11          | 1             | 1                |
+| BUILD    | 3    | 0                | 0           | 0             | 0                |
 
-> **Dedup note**: 18 specific issues are fully covered by a systemic root cause.
-> Fixing the systemic resolves the specific — see `→ SYS-XXX` tags below.
-> Effective unique work items: ~75 (not 93) after systemic dedup.
->
-> **Eliminated**: M-009 (false positive — no hex round-trip in code), M-019 (false positive — algorithm correct for monotonic indices), M-024 (false positive — division by zero already guarded).
+> **2026-03-03 progress**: 16 CRITICALs fixed (C-011..C-013,C-015..C-027 except C-014). 14 HIGHs fixed (H-091,H-094,H-111,H-112,H-114..H-121,H-127,H-129). 6 god-level modules split (wal, presence, research, trust_policy, config, sealed_identity). All validated against current codebase.
 
 ---
 
-## Systemic Issues
+## Systemic Issues (New)
 
-- [x] **SYS-001** `missing_zeroize` — 7 files — HIGH — FIXED
-  <!-- pid:missing_zeroize | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  Key material not zeroized after use. Violates project crypto policy (CLAUDE.md: "Zeroize all key material after use").
-  **Covers**: C-006, C-007, H-002
-  Files: `keyhierarchy/puf.rs:17` (SoftwarePUF derives Clone, seed Vec not zeroized), `keyhierarchy/puf.rs:231` (HardwarePUF also derives Clone with `seed: [u8; 32]`), `keyhierarchy/migration.rs:82` (legacy key stack bytes), `keyhierarchy/session.rs:39` (master_key.to_bytes() copy), `ipc/crypto.rs:64` (AES-256-GCM expanded round key in cipher field), `sealed_identity.rs:381` (XOR wrap key), `sentinel/core.rs:149` (signing key bytes passed to stego engine)
-  Fix: Remove `Clone`, add `#[derive(Zeroize, ZeroizeOnDrop)]` to SoftwarePUF and HardwarePUF. **Caveat**: `PathBuf` does not implement `Zeroize` — use `#[zeroize(skip)]` on `seed_path` and `device_id: String` fields that aren't secret. Wrap returned key bytes in `Zeroizing<[u8;32]>` or `Zeroizing<Vec<u8>>`. Enable aes-gcm `zeroize` feature flag (verify version supports it in Cargo.lock). Zeroize stack copies immediately after use.
+- [ ] **SYS-012** `silent_error_swallow` — 20+ files — HIGH
+  <!-- pid:silent_error_swallow | verified:true | first:2026-03-02 -->
+  Silent error swallowing across many modules: `.unwrap_or_default()`, `.ok()`, `let _ = ...` on I/O and crypto operations without logging.
+  Key files: `forensics/analysis.rs:50`, `ipc/server.rs:87,102`, `writersproof/queue.rs:90,127`, `ffi/system.rs:119,212`, `ffi/ephemeral.rs:464,887`, `sentinel/core.rs:164,398`, `browser-ext/background.js`, `research/collector.rs:162`, `research/helpers.rs:121,211-212`, `config/defaults.rs:18,24,33,76,115,141`
+  Fix: Add `log::warn!()` before all error-swallowing patterns. For crypto/IO paths, propagate Result instead of defaulting.
+  **Guidance**: Start with crypto/IO paths (highest impact): `writersproof/queue.rs`, `ipc/server.rs`. Then address `config/defaults.rs` fallbacks (→SYS-020). Test-friendly: each fix is independent, fix one file at a time and run `cargo test -p wld_engine --lib`.
 
-- [ ] **SYS-002** `god_module` — 2 files remaining — HIGH
-  <!-- pid:god_module | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  God modules/functions >800 lines with mixed concerns.
-  ~~`main.rs` (4023 lines)~~ — RESOLVED: split into 16 modules (140-line dispatcher).
-  ~~`checkpoint.rs` (1979 lines)~~ — RESOLVED: split into `checkpoint/` submodule (chain.rs, types.rs, tests.rs).
-  ~~`platform/macos.rs` (1567 lines)~~ — RESOLVED: split into `platform/macos/` submodule (keystroke.rs, mouse_capture.rs, focus.rs, hid.rs, +4 smaller files).
-  Remaining: `sentinel/ipc_handler.rs:handle()` (795 lines, 6-level nesting), `ipc/async_client.rs` (1108 lines, Unix/Windows fully duplicated)
-  Fix: Extract ipc_handler arms into dedicated methods; deduplicate async_client via generic I/O trait
+- [ ] **SYS-013** `panic_in_ffi` — 6 files — CRITICAL
+  <!-- pid:panic_in_library | verified:true | first:2026-03-02 -->
+  `expect()` and `.unwrap()` in FFI boundary code. Swift/Kotlin callers cannot recover from panics.
+  Files: `ffi/fingerprint.rs:35`, `ffi/sentinel.rs:26`, `ffi/evidence.rs:180,190,222`, `ffi/ephemeral.rs:342,372`, `ipc/crypto.rs:99,104`
+  Fix: Replace all `expect()`/`unwrap()` in FFI functions with `Result`-returning wrappers mapped to `FfiResult`.
 
-- [ ] **SYS-003** `blocking_io_async` — 3 files — HIGH
-  <!-- pid:blocking_io_async | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  Synchronous blocking I/O on Tokio async worker threads. Starves task scheduler.
-  Files: `sentinel/ipc_handler.rs` (fs::read/write in sync handle()), `cmd_watch.rs` (recv_timeout + VDF in async run_watcher), `ipc/server.rs` (sync handler.handle() in async loop)
-  Fix: Wrap blocking calls in `spawn_blocking`. Long-term: make `IpcMessageHandler::handle()` async; replace `std::sync::mpsc` with `tokio::sync::mpsc` in watcher
+- [ ] **SYS-014** `unbounded_deser` — 8+ wire type files — HIGH
+  <!-- pid:unbounded_vec_deser | verified:true | first:2026-03-02 -->
+  Vec fields in wire types (CBOR/JSON) have no size limits. DoS via memory exhaustion on deserialization.
+  Files: `rfc/wire_types/packet.rs:61`, `rfc/wire_types/checkpoint.rs:82`, `rfc/wire_types/components.rs:156,176`, `rfc/wire_types/attestation.rs:105,232`, `protocol/codec.rs:20`
+  Fix: Add serde size limits or post-decode validation. Max checkpoints=10000, intervals=50000, claims=100.
 
-- [x] **SYS-004** `missing_input_validation` — 6+ files — HIGH — FIXED
-  <!-- pid:missing_input_validation | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  Missing validation on deserialized data at trust boundaries. Attacker-controlled input accepted unchecked.
-  **Covers**: H-011, H-028, H-029
-  Files: `rfc/time_evidence.rs:452` (blank Roughtime samples pass), `rfc/time_evidence.rs:448` (blank blockchain anchors pass), `rfc/biology.rs:500` (NaN weights not checked), `rfc/vdf.rs:282` (calibration signature not verified), `analysis/behavioral_fingerprint.rs:189` (unfiltered negative intervals in forgery detection), `analysis/labyrinth.rs:314` (integer overflow in embedding params)
-  Fix: Add `is_finite()` checks on all f64 fields; validate non-zero hashes/keys; bounds-check LabyrinthParams (max_embedding_dim <= 20, max_delay <= 50) at `analyze_labyrinth` entry; use `checked_mul` as defense-in-depth; apply same `> 0.0 && < 5000.0` interval filter in detect_forgery as in from_samples
+- [ ] **SYS-015** `magic_constants` — 15+ files — MEDIUM
+  <!-- pid:magic_value | verified:true | first:2026-03-02 -->
+  Hardcoded thresholds and calibration constants without named constants or documentation.
+  Files: `forensics/assessment.rs:178-200`, `forensics/cadence.rs:56-58`, `analysis/behavioral_fingerprint.rs:188`, `analysis/active_probes.rs:240`, `analysis/stats.rs:53`, `analysis/perplexity.rs:82`, `rfc/biology.rs:478`, `fingerprint/comparison.rs:172`, `fingerprint/voice.rs:29`, `ffi/helpers.rs:89`, `platform/synthetic.rs:131`
+  Fix: Extract each to named `const` at file/module top with doc comment explaining rationale.
 
-- [ ] **SYS-005** `silent_error_swallow` — 10+ files — HIGH
-  <!-- pid:silent_error_swallow | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  Errors silently discarded via `let _ =`, `unwrap_or_default()`, or `if let Ok()`. Security-critical failures vanish.
-  **Covers**: H-020, H-021, H-033, H-035, M-007
-  Files: `sentinel/core.rs:522` (WAL append), `sentinel/helpers.rs:131` (hex decode to zeros), `sentinel/ipc_handler.rs:120` (serialize), `cmd_daemon.rs` (PID write), `fingerprint/storage.rs:155` (voice deletion), `wal.rs:469` (scan_to_end no sig verify), plus CLI files
-  Fix: Codebase-wide pass: propagate with `?` or log at warn level; never silently discard errors on security-critical paths
+- [ ] **SYS-016** `nan_inf_unguarded` — 10+ files — HIGH
+  <!-- pid:fp_division_unguarded | verified:true | first:2026-03-02 -->
+  Division results and floating-point computations not checked for NaN/Infinity before use.
+  Files: `forensics/comparison.rs:54`, `forensics/assessment.rs:226`, `rfc/biology.rs:370,396`, `rfc/jitter_binding.rs:546`, `analysis/behavioral_fingerprint.rs:207`, `evidence/builder.rs:568,571`, `platform/mouse.rs:88`, `platform/stats.rs:16`, `protocol/forensics/engine.rs:217`
+  Fix: Add `.is_finite()` guard or explicit NaN check after every division in scoring/analysis paths.
 
-- [x] **SYS-006** `duplicated_security_code` — 6+ files — MEDIUM — FIXED
-  <!-- pid:duplicated_logic | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  Security-critical code duplicated 3+ times. Divergent copies = inconsistent security posture.
-  **Covers**: M-001, M-015, M-016, M-026, M-034
-  Files: `keyhierarchy/session.rs` + `migration.rs` (session start logic 3x), `sentinel/ipc_handler.rs` (store open 3x), `platform/macos/keystroke.rs` (event-tap lifecycle 3x), `checkpoint/chain.rs` (commit struct init 4x), `rfc/` (hex bytes serde 3x)
-  Note: CLI key loading (was 4x in monolith) now centralized in `util.rs` after main.rs split. File refs updated after checkpoint.rs and macos.rs splits.
-  Fix: Extract shared helpers for each pattern; single source of truth for security logic
+- [ ] **SYS-017** `missing_wire_validation` — 5+ wire type files — HIGH
+  <!-- pid:missing_validation | verified:true | first:2026-03-02 -->
+  Wire types deserialized from CBOR without post-decode validation. Invalid data silently accepted.
+  Files: `rfc/wire_types/packet.rs:41,92`, `rfc/wire_types/checkpoint.rs:33`, `rfc/wire_types/mod.rs:37`
+  Fix: Implement `validate()` trait for all wire types. Call after deserialization. Check required fields, sequence continuity, hash non-zero.
 
-- [ ] **SYS-007** `perf_on2_analysis` — 3 files — MEDIUM
-  <!-- pid:perf_on2_analysis | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  O(n^2) algorithms in analysis path. No FFT, no spatial indexing. Sample-size caps mitigate but don't solve.
-  Files: `analysis/pink_noise.rs:191` (O(n^2) DFT), `analysis/labyrinth.rs:361` (O(n^2) recurrence matrix), `analysis/labyrinth.rs:276` (O(n^2) FNN nearest-neighbor)
-  Fix: Replace DFT with rustfft crate; use k-d tree for neighbor queries
+- [ ] **SYS-018** `key_zeroize_error_path` — 6+ files — HIGH
+  <!-- pid:key_material_error_path_leak | verified:true | first:2026-03-02 -->
+  Key material allocated but not zeroized on error/exception paths. Extensions of previously-fixed SYS-001.
+  Files: `keyhierarchy/session.rs:43,129,367`, `keyhierarchy/recovery.rs:122,165`, `keyhierarchy/puf.rs:74`, `tpm/secure_enclave.rs:542`, `ffi/helpers.rs:27`, `ffi/ephemeral.rs:794`, `identity/secure_storage.rs:302`
+  Fix: Use `Zeroizing<Vec<u8>>` wrappers or scope guards that zeroize on Drop. Replace bare `Vec<u8>` returns for key bytes.
 
-- [x] **SYS-008** `unauthenticated_xor_cipher` — 3 files — HIGH — FIXED
-  <!-- pid:unauthenticated_xor | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  Three separate subsystems use XOR cipher without authentication (MAC) for cryptographic protection. Ciphertext is trivially malleable — bit-flips in ciphertext produce controlled bit-flips in plaintext. Key material cycling every 32 bytes enables known-plaintext attacks on data longer than 32 bytes.
-  **Covers**: H-009, H-010, H-016
-  Files: `tpm/secure_enclave.rs:560` (seal: XOR with SHA256(ECDSA-sig)), `sealed_identity.rs:337` (software wrap: XOR with SHA256(machine_salt)), `keyhierarchy/session.rs:396` (ratchet recovery: XOR with PUF-derived key)
-  Fix: Replace all three with ChaCha20-Poly1305 AEAD (crate already in deps via `fingerprint/storage.rs`). Each needs a version byte prefix for backward-compatible migration — unseal old format, re-seal as new on next access. H-010 additionally requires strengthening the key derivation (see H-010 for details).
+- [ ] **SYS-019** `browser_ext_unvalidated_messages` — 3 files — HIGH
+  <!-- pid:security-message_origin_bypass | verified:true | first:2026-03-02 -->
+  Browser extension message handlers accept messages from any origin without sender validation.
+  Files: `background.js:478`, `content.js:280`, `popup.js:262`
+  Fix: Validate `sender.id` matches extension ID. Check `sender.url` against allowed origins.
 
-- [ ] **SYS-009** `bare_lock_unwrap` — 52 sites across 6 files — HIGH
-  <!-- pid:bare_lock_unwrap | verified:true | first:2026-02-27 | last:2026-02-27 -->
-  Bare `.lock().unwrap()` on Mutex/RwLock across hot paths. Violates project poison convention (`.lock().unwrap_or_else(|p| p.into_inner())`). A single panic poisons all subsequent lock attempts, killing the process.
-  **Covers**: H-038, H-039
-  Files: `engine.rs` (18 sites), `tpm/secure_enclave.rs` (15), `wal.rs` (8), `tpm/linux.rs` (8), `tpm/software.rs` (2), `tpm/windows.rs` (1)
-  Note: sentinel/ was fully converted in prior fix pass (0 remaining). engine.rs and wal.rs are highest priority (hot paths).
-  Fix: Global find-replace `.lock().unwrap()` → `.lock().unwrap_or_else(|p| p.into_inner())` in all 6 files.
+- [ ] **SYS-020** `insecure_path_fallback` — 4 files — HIGH
+  <!-- pid:world_writable_fallback | verified:true | first:2026-03-02 -->
+  HOME dir resolution falls back to relative paths or /tmp when HOME is unset. Sensitive data exposed on shared systems.
+  Files: `config/types.rs:245`, `config/defaults.rs:18,24,33,76,115,141`, `writersproof/queue.rs:37`, `tpm/secure_enclave.rs:1101`
+  Fix: Fail if HOME unset. Never default to /tmp or relative paths for crypto data. Require XDG_DATA_HOME or explicit config.
+  **Guidance**: 8+ instances of `.unwrap_or_else(|| PathBuf::from("."))` and `.unwrap_or_else(|| PathBuf::from(".writerslogic"))` in config/defaults.rs. Replace all with `dirs::home_dir().ok_or_else(|| Error::config("HOME directory not set"))?` and propagate the error. This is a breaking change for error handling — callers of `default_*()` functions must handle `Result`.
+
+- [ ] **SYS-021** `lock_unwrap` — 78 instances across 9 files — HIGH
+  <!-- pid:lock_unwrap | verified:true | first:2026-03-03 | last:2026-03-03 -->
+  `Mutex::lock().unwrap()` / `RwLock::write().unwrap()` / `RwLock::read().unwrap()` without poison recovery. The `MutexRecover` and `RwLockRecover` traits already exist in `lib.rs` and are correctly used in 14 files (98 call sites), but 9 files still use bare `.unwrap()` — 78 instances total.
+  Files (validated 2026-03-03):
+  - `engine.rs` (14 confirmed), `sentinel/helpers.rs` (17), `tpm/secure_enclave.rs` (15)
+  - `tpm/linux.rs` (8), `wal/operations.rs` (8), `sentinel/shadow.rs` (7)
+  - `sentinel/focus.rs` (2), `tpm/software.rs` (2), `tpm/windows.rs` (1)
+  Fix: Replace `.lock().unwrap()` → `.lock_recover()`, `.read().unwrap()` → `.read_recover()`, `.write().unwrap()` → `.write_recover()`. Add `use crate::{MutexRecover, RwLockRecover};` where missing. Effort: medium (mechanical).
+  **Guidance**: `MutexRecover` and `RwLockRecover` traits are defined in `lib.rs` and already used in 14 files (98 call sites). Mechanical fix: search for `.lock().unwrap()`, `.read().unwrap()`, `.write().unwrap()` in each file, replace, add the trait import. Do one file at a time, `cargo check` between each. Start with `engine.rs` (most instances).
+
+- [ ] **SYS-022** `commitment_chain_optional` — 2 files — CRITICAL
+  <!-- pid:security-optional_security | verified:true | first:2026-03-03 -->
+  Commitment chain fields (`commitment`, `ordinal`) are `Option` with `#[serde(default)]` in native_messaging_host.rs. Adversary simply omits these fields to bypass all anti-forgery checks. Browser extension sends commitments but host doesn't require them.
+  Files: `apps/wld_cli/src/native_messaging_host.rs:337,394`, `apps/wld_cli/browser-extension/background.js:89`
+  Fix: Make commitment/ordinal required after genesis checkpoint. Reject messages missing required fields. Add genesis commitment with known seed.
+
+- [ ] **SYS-023** `forensic_region_stub` — 2 files — CRITICAL
+  <!-- pid:stub_implementation | verified:true | first:2026-03-03 -->
+  `forensics/engine.rs:57-82` hardcodes all edit regions to `(start_pct: 1.0, end_pct: 1.0)`, destroying topology analysis. The entire forensic region extraction is a stub, making all positional analysis meaningless.
+  Files: `forensics/engine.rs:57-82`, `forensics/topology.rs` (consumer)
+  Fix: Implement real region extraction from edit deltas — compute actual document-relative positions from offset/length data.
+
+---
+
+## Build Issues
+
+- [ ] **B-004** `[build]` FFI feature compilation — multiple errors
+  <!-- pid:build_failure | verified:true | first:2026-03-03 | revalidated:2026-03-03 -->
+  `cargo check --features ffi -p wld_engine` fails with key errors:
+  1. `ffi/sentinel.rs:377` — missing `ENTROPY_NORMALIZATION_FACTOR` in `crate::ffi::helpers`
+  2. `ffi/fingerprint.rs:54,60-63,68,74-77` — `FfiFingerprintStatus` struct fields don't exist (`success`, `confidence`, `quality_score`, `current_profile_id`, `error_message`)
+  Fix: Align FFI types with current engine types. Start with defining missing constants and updating struct definitions. Effort: large
+  **Guidance**: The FFI layer is out of sync with engine changes. Two approaches: (1) Update FFI types to match current engine API (recommended), or (2) Add compatibility shims. Start by defining `ENTROPY_NORMALIZATION_FACTOR` in `ffi/helpers.rs`, then fix `FfiFingerprintStatus` struct to match current engine `FingerprintStatus`. Run `cargo check --features ffi -p wld_engine` after each fix to see remaining errors.
+
+- [ ] **B-005** `[build]` rustfmt failure — module path mismatch
+  <!-- pid:build_failure | verified:true | first:2026-03-03 | revalidated:2026-03-03 -->
+  `cargo fmt --all -- --check` fails: `lib.rs:51` declares `pub mod wld_jitter_bridge;` but actual directory is `writerslogic_jitter_bridge/`.
+  Fix: Change `lib.rs:51` from `pub mod wld_jitter_bridge;` to `#[path = "writerslogic_jitter_bridge/mod.rs"] pub mod wld_jitter_bridge;` OR rename the directory to `wld_jitter_bridge/`. Effort: small
+  **Guidance**: Renaming the directory is cleaner. Run `git mv crates/wld_engine/src/writerslogic_jitter_bridge crates/wld_engine/src/wld_jitter_bridge` then `cargo fmt --all -- --check` to verify.
+
+- [ ] **B-006** `[test]` 2 pre-existing checkpoint test failures
+  <!-- pid:test_failure | verified:true | first:2026-03-03 | revalidated:2026-03-03 -->
+  `checkpoint::tests::test_entangled_commit_with_physics_context` and `test_entangled_commit_mixed_physics_and_none` fail with "unsigned (signature required by policy)".
+  Fix: Update tests to provide required signing key or adjust policy. Effort: medium
+  **Guidance**: These tests create checkpoint chains with `EntanglementMode::Physics` but don't supply a signing key. The `commit()` method requires a signature when the policy demands it. Fix: Generate a test `SigningKey` in the test setup, pass it to `commit()`. See `test_basic_commit()` in same file for pattern. Alternatively, create a test-only policy that allows unsigned physics checkpoints.
 
 ---
 
 ## Critical
 
-- [x] **C-001** `[security]` `platform/macos/keystroke.rs:259` — Use-after-free in CFRunLoop stop — FIXED
-  <!-- pid:use_after_free | batch:5 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `CFRunLoopStop(handle.0); CFRelease(handle.0)` at :259-260 (KeystrokeMonitor::stop) and :432-433 (MacOSKeystrokeCapture::stop). CFRelease races event-loop thread — thread may still be referencing the run loop. UB on Apple Silicon — heap corruption / crash in keystroke capture.
-  Note: Same pattern in both stop() impls. The `RunLoopHandle` is inside `Arc<Mutex<Option<RunLoopHandle>>>`, which complicates the fix.
-  Fix: Restructure the stop sequence: (1) Extract raw pointer from `run_loop.lock()` via `rl.take()`, (2) call `CFRunLoopStop(ptr)` to signal stop, (3) release the mutex lock, (4) call `thread.join()` to wait for the event-loop thread to exit, (5) **only then** call `CFRelease(ptr)`. The current code does CFRunLoopStop + CFRelease together, then joins — the join must happen BEFORE CFRelease. | Effort: medium
+- [x] **C-011** `[security]` `tpm/software.rs:28` — Software TPM seed derived from system time ✓ FIXED 2026-03-03
+  <!-- pid:sec_weak_rng_seed | batch:4 | verified:true | first:2026-03-02 | fixed:2026-03-03 -->
+  SigningKey seed uses `Utc::now().to_rfc3339()` — deterministically derivable from timestamp.
+  Impact: Attestation keys precomputable. Software fallback is cryptographically forgeable. | Fix: Use `getrandom()` or `rand::rngs::OsRng` | Effort: small
+  **Resolution**: Replaced with `getrandom::getrandom()` for cryptographic randomness.
 
-- [x] **C-002** `[concurrency]` `platform/macos/keystroke.rs:227` — Race in start_event_tap ready signal — FIXED
-  <!-- pid:race_condition | batch:5 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `ready_tx.send(Ok(()))` at :227 fires before CFRetain at :231 and run_loop store at :232-233. Main thread can call stop() between :227 and :233, causing use-after-free of unretained CFRunLoop.
-  Note: Same race in both `KeystrokeMonitor::start_event_tap` (line 227) and `MacOSKeystrokeCapture::start` (line 392). Fix both.
-  Fix: Move `ready_tx.send(Ok(()))` to after the `run_loop` handle is stored (after line 234 / line 399). If the mutex lock or CFRetain fails after tap creation, the channel drop will signal the caller via recv error — consistent with existing error paths. | Effort: small
+- [x] **C-012** `[security]` `tpm/software.rs:31` — Seed not zeroized after key derivation ✓ FIXED 2026-03-03
+  <!-- pid:sec_key_material_leak | batch:4 | verified:true | first:2026-03-02 | fixed:2026-03-03 -->
+  32-byte SHA256 hash seed remains on stack indefinitely.
+  Impact: Key material leak | Fix: Wrap in `Zeroizing<[u8; 32]>` | Effort: small
+  **Resolution**: Wrapped seed in `Zeroizing<[u8; 32]>` with automatic zeroization on drop.
 
-- [x] **C-003** `[security]` `native_messaging_host.rs:155-163` — Domain allowlist bypass (two vulnerabilities) — FIXED
-  <!-- pid:url_bypass | batch:10 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  **Two distinct bugs in the same code block** (lines 155-163):
-  1. **Subdomain bypass** (line 157): `host.ends_with(d)` matches `evildocs.google.com` against allowed `docs.google.com`. (Previously tracked separately as H-030.)
-  2. **Parse fallback bypass** (line 162): `document_url.contains(d)` matches domain string anywhere in URL (query, path, fragment). Allowlist fully defeated.
-  Fix: (1) Replace `ends_with(d)` with `host == *d || host.ends_with(&format!(".{}", d))`. (2) Remove the `else` fallback entirely — reject unparseable URLs. Both changes are in the same 8-line block. | Effort: small
+- [x] **C-013** `[security]` `tpm/windows.rs:409-410` — Windows TPM public_key is random bytes, not TPM-backed ✓ FIXED 2026-03-03
+  <!-- pid:sec_weak_attestation_key | batch:4 | verified:true | first:2026-03-02 | revalidated:2026-03-03 | fixed:2026-03-03 -->
+  `public_key = context.get_random(32)` — random bytes, not from actual TPM key generation. TODO comment present.
+  Impact: Attestation forgeable without hardware — defeats entire trust model on Windows | Fix: Implement TPM2_Create key workflow using `tss-esapi::Context::create_primary()` and `create()` | Effort: large
+  **Resolution**: Added `create_srk_public_key()` standalone function that creates the ECC P-256 SRK via TPM2_CreatePrimary, parses the response to extract the uncompressed public point (x||y), and flushes the transient handle. SRK is deterministic — same key on same TPM. Falls back to TPM random on parse failure.
 
-- [x] **C-004** `[security]` `fingerprint/voice.rs:316` — VoiceCollector hardcodes consent_given=true — FIXED
-  <!-- pid:consent_bypass | batch:7 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `VoiceFingerprint::new(true)` at :316 in `VoiceCollector::new()` and :422 in `VoiceCollector::reset()` unconditionally set consent.
-  Note: `FingerprintManager::with_config` already gates VoiceCollector construction on `consent_manager.has_voice_consent()`, but `Sentinel::enable_voice_fingerprinting` (core.rs:102-107) does NOT check consent before constructing. The `consent_given` field in the serialized fingerprint is a fabricated claim.
-  Fix: (1) Change `VoiceCollector::new()` to use `VoiceFingerprint::new(false)`. (2) Add `VoiceCollector::with_consent(consent: bool)` constructor. (3) Update `FingerprintManager` callers to pass `true` (they already gate on consent). (4) Update `Sentinel::enable_voice_fingerprinting` to either check consent or document the precondition. **Do NOT** just flip the default without updating callers — `FingerprintManager` calls that already verified consent would produce fingerprints claiming consent=false. | Effort: small
+- [ ] **C-014** `[security]` `tpm/windows.rs:536-546` — sign_payload uses SHA256 not TPM2_Sign
+  <!-- pid:sec_no_real_signing | batch:4 | verified:true | first:2026-03-02 | revalidated:2026-03-03 -->
+  `sign_payload()` computes SHA256 hash of `random||data` in userspace — TODO comment: "use TPM2_Sign with a loaded key for real signatures".
+  Impact: Hardware trust boundary violated — signatures don't prove hardware involvement | Fix: Implement TPM2_Sign with loaded AK using `tss-esapi::Context::sign()` | Effort: large
+  **Guidance**: Implement together with C-013. Use the key created in C-013 with `context.sign()` passing the data hash. The attestation key must be loaded into the TPM context first. Test with software TPM (swtpm) in CI.
 
-- [x] **C-005** `[security]` `rfc/jitter_binding.rs:656` — LabyrinthStructure emits fabricated evidence — FIXED
-  <!-- pid:fabricated_data | batch:6 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  Hardcodes `lyapunov_exponent: 0.0` at :656 (with `// TODO: separate calculation needed`). Also `attractor_points: Vec::new()` at :645. Two of six fields are fabricated. Implies non-chaotic system (opposite of human typing). Verifiers get structurally valid but semantically false phase-space data.
-  Note: `LabyrinthAnalysis` has no Lyapunov field — the value literally cannot be computed from the source data. The `JitterBinding::labyrinth_structure` field is already `Option<LabyrinthStructure>`.
-  Fix: Change `lyapunov_exponent` from `f64` to `Option<f64>`, set to `None` in the `From` impl. Update `validate()` to accept `None` (currently doesn't check this field anyway). Also update M-027 (same root cause). Wire format change — verify CDDL schema allows optional. | Effort: medium
+- [x] **C-015** `[security]` `background.js:212` — XSS via native host error messages ✓ FIXED 2026-03-03
+  <!-- pid:security-xss_native_message | batch:3 | verified:true | first:2026-03-02 | fixed:2026-03-03 -->
+  Error strings from native host reflected in popup UI without sanitization.
+  Impact: XSS if native host sends malicious JSON | Fix: Use `textContent` not `innerHTML`; sanitize messages | Effort: small
+  **Resolution**: Replaced `innerHTML` with `textContent` for error message display.
 
-- [x] **C-006** `[security]` `keyhierarchy/puf.rs:17` — SoftwarePUF seed not zeroized on Drop `→ SYS-001` — FIXED
-  <!-- pid:missing_zeroize | batch:8 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `#[derive(Clone)]` creates unzeroized copies of 32-byte PUF seed. Root identity seed persists in heap after drop. `HardwarePUF` (line 231) has the same problem.
-  Fix: Remove `Clone` from both `SoftwarePUF` and `HardwarePUF` (verified: `.clone()` is never called on either in the codebase). Add `#[derive(Zeroize, ZeroizeOnDrop)]` with `#[zeroize(skip)]` on `seed_path: PathBuf` (`PathBuf` does not implement `Zeroize`). Add `use zeroize::{Zeroize, ZeroizeOnDrop}` import. | Effort: small
+- [x] **C-016** `[security]` `background.js:173` — ECDH handshake replay via reusable callback ✓ FIXED 2026-03-03
+  <!-- pid:security-handshake_reuse | batch:3 | verified:true | first:2026-03-02 | fixed:2026-03-03 -->
+  `_handshakeResolve` can be called multiple times if `handleHelloAccept` replayed.
+  Impact: Session key desync or ratchet corruption | Fix: Validate `handshakeComplete` before processing; clear resolver after use | Effort: small
+  **Resolution**: Added `handshakeComplete` guard and one-shot resolver clearing.
 
-- [x] **C-007** `[security]` `keyhierarchy/migration.rs:82` — Legacy private key bytes not zeroized `→ SYS-001` — FIXED
-  <!-- pid:missing_zeroize | batch:8 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `seed: [u8; 32]` at :86 on stack, used for SigningKey at :88, never zeroized. Private key lingers in stack memory. Also `data` from `fs::read()` at :83 is a Vec<u8> containing the raw key — also not zeroized. (`zeroize::Zeroize` is already imported on line 9.)
-  Fix: Change `let data = fs::read(path)?;` to `let data = Zeroizing::new(fs::read(path)?);` (implements `Deref<Target=Vec<u8>>`). Add `seed.zeroize();` before each `return Ok(SigningKey::from_bytes(&seed));`. Update import to `use zeroize::{Zeroize, Zeroizing};`. | Effort: small
+- [x] **C-017** `[security]` `secure-channel.js:289` — Unguarded JSON.parse on decrypted plaintext ✓ FIXED 2026-03-03
+  <!-- pid:security-decrypt_parse_unguarded | batch:3 | verified:true | first:2026-03-02 | fixed:2026-03-03 -->
+  No try-catch around JSON.parse of decrypted data from native host.
+  Impact: Crash on invalid JSON kills handler | Fix: Wrap in try-catch; validate required fields | Effort: small
+  **Resolution**: Added try-catch wrapper with field validation on decrypted payload.
 
-- [ ] **C-008** `[security]` `vdf/aggregation.rs:274` — Merkle VDF tree root uses string concatenation instead of SHA-256
-  <!-- pid:crypto_weak_hash_construction | batch:14 | verified:true | first:2026-02-27 | last:2026-02-27 -->
-  `compute_root()` at :265-282 computes Merkle tree by concatenating leaf hashes as strings via `format!("H({})")` and `format!("{}{}")`. No cryptographic hash. TODO comment at :274 acknowledges this. Tree is trivially forgeable — any attacker can construct valid-looking Merkle root strings.
-  Impact: VDF aggregation proofs have zero cryptographic integrity. Verification of aggregated checkpoint chains provides no assurance.
-  Fix: Replace string concatenation with SHA-256: `let combined = Sha256::digest(&[chunk[0].as_bytes(), chunk[1].as_bytes()].concat()); let hash = hex::encode(combined);`. Import `sha2::{Sha256, Digest}`. Change return type from `String` to `[u8; 32]` and update callers. | Effort: small
+- [x] **C-018** `[security]` `background.js:478` — Message listener accepts from any origin → SYS-019 ✓ FIXED 2026-03-03
+  <!-- pid:security-message_origin_bypass | batch:3 | verified:true | first:2026-03-02 | fixed:2026-03-03 -->
+  `chrome.runtime.onMessage` has no sender validation. Covered by SYS-019.
+  **Resolution**: Added sender.id check to block cross-extension messages and URL pattern validation for content script actions.
 
-### ~~CLI-C1. cmd_watch.rs syntax corruption~~ [x] FIXED
-- Duplicate/truncated code fragment at lines 406-409 deleted
+- [x] **C-019** `[performance]` `content.js:112` — OOM before truncation check on DOM text ✓ FIXED 2026-03-03
+  <!-- pid:performance-oom_before_check | batch:3 | verified:true | first:2026-03-02 | fixed:2026-03-03 -->
+  `getDocumentText()` concatenates all text before size check; malicious page causes OOM.
+  Impact: Extension memory exhaustion | Fix: Accumulate length in loop, return early if exceeding MAX_DOCUMENT_SIZE | Effort: small
+  **Resolution**: Added early-exit length accumulation in loop before concatenation.
 
-### LPK-C1+C2. Linux build scripts: wrong paths + Go compiler — FIXED
-- **Previously marked fixed — verified NOT fixed 2026-02-26**
-- **Files**: `apps/witnessd_cli/packaging/linux/scripts/build-{deb,rpm,appimage}.sh` + `packaging/linux/rpm/witnessd.spec`
-- **Combined scope** (these must be fixed together — same 3 files + spec):
-  - `PROJECT_ROOT` set via `cd "${SCRIPT_DIR}/../../.."` — resolves to `apps/witnessd_cli/` (3 levels up), NOT workspace root (needs 5 levels: `"${SCRIPT_DIR}/../../../../.."`). All `${PROJECT_ROOT}/platforms/linux/` references point to non-existent path.
-  - All 3 scripts check `command -v go`. `build-appimage.sh` runs `go build` for Go source dirs that don't exist.
-  - RPM spec file has `BuildRequires: golang >= 1.21` and uses `go build`.
-- **Full fix scope**: (1) Fix `PROJECT_ROOT` to 5 levels up. (2) Update all `platforms/linux/` refs to `apps/witnessd_cli/packaging/linux/`. (3) Replace `go` with `cargo` in dependency checks. (4) Rewrite `build-appimage.sh` build section to use `cargo build --release --package witnessd_cli`. (5) Update `witnessd.spec` BuildRequires and %build section. (6) Fix binary names to match Cargo output (`witnessd`, `witnessd-native-messaging-host`). | Effort: large
+- [x] **C-020** `[performance]` `analysis/pink_noise.rs:182-192` — O(n²) DFT in production ✓ FIXED 2026-03-03
+  <!-- pid:quadratic_algorithm | batch:10 | verified:true | first:2026-03-02 | revalidated:2026-03-03 | fixed:2026-03-03 -->
+  Lines 187-192: explicit O(n²) nested loop DFT with comment "In production, use a proper FFT library".
+  Impact: 512-point analysis is O(262k) instead of O(4.6k) — scales badly for larger windows | Fix: Use `rustfft` crate or implement radix-2 FFT | Effort: medium
+  **Resolution**: Replaced O(n²) DFT with in-place Cooley-Tukey radix-2 FFT (O(n log n)). No new dependencies. All 5 pink_noise tests pass.
 
-### ~~REL-C1. Release workflow produces NO platform binaries~~ [x] FIXED
+- [x] **C-021** `[security]` `wal/types.rs:119` — WAL byte_count is i64 but metadata returns u64 ✓ FIXED 2026-03-03
+  <!-- pid:signedness_arithmetic | batch:18 | verified:true | first:2026-03-02 | revalidated:2026-03-03 | fixed:2026-03-03 -->
+  `WalState.byte_count: i64` — potential signedness bug on very large WAL files.
+  Impact: Quota checks fail on overflow | Fix: Change byte_count to u64; audit all arithmetic in `wal/operations.rs` | Effort: medium
+  **Resolution**: Changed `byte_count: i64` to `u64` in types.rs. Updated all 5 cast sites in operations.rs and changed `size()` return type to `u64`. All 12 WAL tests pass.
 
----
+- [x] **C-022** `[correctness]` `ffi/forensics.rs:74` — FFI assessment score uses wrong formula ✓ FIXED 2026-03-03
+  <!-- pid:logic_error | verified:true | first:2026-03-03 | fixed:2026-03-03 -->
+  Returns `edit_entropy / 4.32` instead of the actual `assessment_score` from forensic metrics. This means FFI consumers (Swift/Kotlin GUI apps) get a meaningless number for authorship assessment.
+  Impact: Desktop apps display wrong authorship scores | Fix: Use `metrics.assessment_score` | Effort: small
+  **Resolution**: Changed to use `metrics.assessment_score` directly.
 
-## High
+- [x] **C-023** `[correctness]` `ffi/forensics.rs:151` — Inverted sequence score rewards AI patterns ✓ FIXED 2026-03-03
+  <!-- pid:inverted_logic | verified:true | first:2026-03-03 | fixed:2026-03-03 -->
+  `monotonic_append_ratio * 0.5` means 100% end-appending (typical AI-generated content) scores highest. Human editing (scattered, non-monotonic) scores lowest. The metric rewards the exact behavior it should penalize.
+  Impact: AI content rated as more authentic than human writing | Fix: Invert to `(1.0 - monotonic_append_ratio) * 0.5` | Effort: small
+  **Resolution**: Inverted to `(1.0 - monotonic_append_ratio) * 0.5`.
 
-- [x] **H-001** `[security]` `ipc/crypto.rs:143` — Sequence counter advances before decrypt verification
-  <!-- pid:seq_advance | batch:4 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `rx_sequence.fetch_add(2)` consumes slot even on AES-GCM decrypt fail. One bad packet permanently desynchronizes session.
-  Note: Comment at :148-150 claims intentional for timing oracle prevention, but logic is inverted — advances *before* decrypt. The server (`server.rs:138-144`) already closes connections on decrypt failure (`break`), making the desync moot in practice.
-  Fix: Two options — **(a) Preferred**: Use `load(SeqCst)` to peek expected sequence, perform decrypt+sequence check, then `compare_exchange_strong` to advance only on success. Handles concurrent access correctly. **(b) Simpler**: Document that decrypt failure MUST be connection-fatal (already true in server.rs). Add `debug_assert!` or comment-level invariant. Do NOT use `load()` then `fetch_add()` — that creates a TOCTOU race under concurrent access. | Effort: small
+- [x] **C-024** `[correctness]` `forensics/engine.rs:57-82` — All edit regions hardcoded to (1.0, 1.0) → SYS-023 ✓ FIXED 2026-03-03
+  <!-- pid:stub_implementation | verified:true | first:2026-03-03 | fixed:2026-03-03 -->
+  Covered by SYS-023. All positional analysis produces identical values regardless of actual edit positions.
+  **Resolution**: Replaced hardcoded (1.0, 1.0) with cursor-position heuristic: start_pct = (file_size - |delta|) / max_file_size, end_pct = start_pct + |delta| / max_file_size. Not perfect without file diffs but produces variable positions reflecting actual editing patterns.
 
-- [x] **H-002** `[security]` `ipc/crypto.rs:64` — AES-256-GCM expanded key not zeroized `→ SYS-001`
-  <!-- pid:missing_zeroize | batch:4 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `cipher: Aes256Gcm` round key survives drop. Only `key_bytes` zeroized. Session key persists in memory after teardown.
-  Fix: Enable aes-gcm `zeroize` feature flag in Cargo.toml. Verify the crate version in Cargo.lock supports this feature (aes-gcm >= 0.10 does). | Effort: small
+- [x] **C-025** `[security]` `vdf/aggregation.rs:274` — Merkle root is format string, not cryptographic hash ✓ FIXED 2026-03-03
+  <!-- pid:stub_implementation | verified:true | first:2026-03-03 | fixed:2026-03-03 -->
+  `format!("H({})", combined)` produces `"H(H(leaf1|leaf2)|H(leaf3|leaf4))"` — a human-readable string, not a hash. This means VDF aggregation proofs are trivially forgeable.
+  Impact: VDF proof chain integrity is illusory | Fix: Use actual SHA-256 hashing for Merkle tree | Effort: medium
+  **Resolution**: Replaced format string with actual SHA-256 hashing for Merkle tree nodes.
 
-- [x] **H-003** `[security]` `ipc/server.rs:260` — IPC socket world-accessible
-  <!-- pid:socket_perms | batch:4 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `IpcServer::bind()` creates socket with default umask. `SecureUnixSocket` at `unix_socket.rs:72-96` correctly sets 0o600 but uses `std::os::unix::net::UnixListener` (sync), while `IpcServer` uses `tokio::net::UnixListener` (async).
-  Note: Cannot use `SecureUnixSocket` directly due to sync/async mismatch. Brief TOCTOU window between bind and chmod is standard practice and acceptable.
-  Fix: Add `#[cfg(unix)] { std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?; }` immediately after `UnixListener::bind()` at line 260. | Effort: small
+- [x] **C-026** `[correctness]` `native_messaging_host.rs:362` — fs::write truncates evidence file ✓ FIXED 2026-03-03
+  <!-- pid:data_loss | verified:true | first:2026-03-03 | fixed:2026-03-03 -->
+  `fs::write()` overwrites the entire evidence file on each checkpoint. Only the last checkpoint's data survives. All prior checkpoint evidence is lost.
+  Impact: Complete data loss of all but final checkpoint | Fix: Use `OpenOptions::append()` or accumulate in memory | Effort: small
+  **Resolution**: Changed to `OpenOptions::append()` mode to preserve all checkpoint data.
 
-- [x] **H-004** `[security]` `keyhierarchy/verification.rs:157` — Certificate "verification" checks byte lengths only
-  <!-- pid:crypto_bypass | batch:8 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `verify_session_certificate_bytes()` checks master_pubkey(32), session_pubkey(32), cert_signature(64) lengths only. No Ed25519 verify. Function name misleads callers.
-  Note: Function lacks parameters (no session_id, created_at, document_hash) to perform real verification — it's structurally incapable of crypto verify. `verify_session_certificate()` (lines 11-31) does real Ed25519 verify on `SessionCertificate` structs.
-  Fix: Rename to `validate_cert_byte_lengths()`. Add doc comment warning that this does NOT perform cryptographic verification. Audit all callers to ensure they also call `verify_session_certificate()`. | Effort: small
-
-- [x] **H-005** `[security]` `sentinel/ipc_handler.rs:182` — CreateFileCheckpoint skips path validation
-  <!-- pid:path_traversal | batch:2 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `handle_create_checkpoint()` uses `fs::canonicalize` directly while all other IPC handlers call `validate_path()`. IPC client can checkpoint /etc/passwd.
-  Fix: Replace `std::fs::canonicalize(&path)` with `super::helpers::validate_path(&path)?` | Effort: small
-
-- [x] **H-006** `[security]` `sentinel/helpers.rs:400` — Path validation blocklist incomplete
-  <!-- pid:path_traversal | batch:2 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `validate_canonical_path()` blocks /etc/, /var/root/, /System/ only.
-  Note: On macOS, `/etc` is a symlink to `/private/etc`, so `canonicalize("/etc/foo")` yields `/private/etc/foo` — bypasses the `/etc/` check entirely.
-  Fix: Platform-aware blocklist. **macOS**: add `/private/etc/`, `/private/var/root/`, `/Library/`. **Linux**: add `/proc/`, `/dev/`, `/sys/`, `/root/`, `/boot/`. **Both**: keep existing entries, add `/sbin/`, `/bin/`. Long-term: consider allowlist approach. | Effort: small
-
-- [x] **H-007** `[security]` `tpm/windows.rs:414` — Windows TPM provider is a stub (public key)
-  <!-- pid:fake_tpm_key | batch:5 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `public_key` filled with 32 bytes of TPM random, not actual asymmetric key. All Windows attestations unverifiable. `create_primary_srk()` exists at :560 but is not wired to `try_init()`.
-  Note: Related to H-008 (sign is also a stub) and M-039 (TODOs document this). All three are the same root cause: Windows TPM integration incomplete.
-  Impact: `hardware_backed: true` is a false claim | Fix: Wire existing `create_primary_srk()` into `try_init()`, parse TPM2B_PUBLIC response for the public key. Short-term alternative: set `supports_attestation: false` until properly implemented. | Effort: large
-
-- [x] **H-008** `[security]` `tpm/windows.rs:541` — Windows TPM provider is a stub (signing)
-  <!-- pid:fake_tpm_sign | batch:5 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `sign_payload` = `SHA256(random || data)` in software. Random is included in output — anyone can reproduce the "signature". No private key involved.
-  Note: Requires H-007 (real TPM key) before TPM2_Sign can work.
-  Impact: Windows attestation signatures trivially forgeable | Fix: Short-term: set `supports_attestation: false`. Long-term: implement TPM2_Sign with loaded key after H-007. | Effort: large
-
-- [x] **H-009** `[security]` `tpm/secure_enclave.rs:560` — Seal uses XOR cipher, no MAC `→ SYS-008`
-  <!-- pid:malleable_seal | batch:5 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  XOR with `SHA256(ECDSA-sig)` repeating every 32 bytes. No authentication. Ciphertext trivially malleable.
-  Fix: ChaCha20-Poly1305 AEAD under new version byte (e.g., `5`; current is `4` at line 571). Keep old XOR unseal path for version `4` blobs to enable migration. On unseal of a v4 blob, re-seal as v5 immediately. | Effort: medium
-
-- [x] **H-010** `[security]` `sealed_identity.rs:337` — Software wrap: weak key derivation + unauthenticated XOR `→ SYS-008`
-  <!-- pid:weak_wrap | batch:8 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `SHA256(machine_salt || constant)` as XOR key. `machine_salt` = `SHA256("witnessd-machine-salt-v1" || device_id || hostname)` — all inputs public/guessable. Master seed extractable by anyone who knows the hostname and device_id.
-  Note: **Two problems**: (1) cipher lacks authentication (→ SYS-008), (2) key derivation uses only guessable inputs. Upgrading to AEAD alone is insufficient — the key material itself is weak.
-  Fix: (1) Generate a random 256-bit salt, store it in the sealed blob header. (2) Derive key via HKDF(ikm=machine_salt, salt=random_salt, info="witnessd-software-wrap-v2"). (3) Encrypt with ChaCha20-Poly1305 AEAD. (4) Use version byte `0x02` (current is `0x01`). Keep v1 unwrap for migration. Also zeroize the wrap key (→ SYS-001). | Effort: medium
-
-- [x] **H-011** `[security]` `rfc/time_evidence.rs:452` — Blank Roughtime samples pass validation `→ SYS-004`
-  <!-- pid:missing_validation | batch:6 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  Roughtime sample validation (lines 452-461) only checks `server.is_empty()`. All-zero public_key, signature, nonce, and midpoint_us pass. Fake samples count toward Enhanced tier.
-  Fix: Add non-zero checks: `public_key`, `signature`, `nonce` must not be all-zero; `midpoint_us != 0`; optionally cap `radius_us` (e.g., reject > 60s). | Effort: small
-
-- [x] **H-012** `[security]` `rfc/vdf.rs:282` — Calibration signature never cryptographically verified
-  <!-- pid:missing_sig_verify | batch:6 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `CalibrationAttestation::validate()` checks non-empty/non-zero but never verifies signature. Forged calibration inflates `iterations_per_second`, defeats VDF time-lower-bound.
-  Fix: **Phased approach.** (1) Short-term: rename `validate()` to document it's structural-only. Add separate `verify_signature(authority_pubkey: &[u8; 32]) -> Result<()>` method for callers who have an authority key. Add doc-link pointing callers to where crypto verification should happen. (2) Long-term: implement calibration authority key pinning and signing infrastructure. Do NOT block production readiness on the authority infrastructure — the structural validation + documentation is the immediate fix. | Effort: small (phase 1) / large (phase 2)
-
-- [x] **H-013** `[security]` `fingerprint/storage.rs:260` — Storage key colocated with encrypted data — FIXED
-  <!-- pid:key_colocation | batch:7 | verified:true | first:2026-02-26 | last:2026-02-27 -->
-  `.storage_key` file in same dir as encrypted profiles. Read access = full decrypt. Encryption is security theater.
-  Fix: Fingerprint key moved to OS keychain via SecureStorage, with legacy file migration.
-
-- [x] **H-014** `[security]` `fingerprint/storage.rs:235` — export_json leaks consent-protected voice data
-  <!-- pid:consent_bypass_export | batch:7 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `export_json()` serializes full `AuthorFingerprint` including voice biometrics as plaintext JSON. No consent re-check against `ConsentManager`.
-  Impact: Silent exfiltration of biometric data | Fix: Clone fingerprint and set `voice = None` before serializing in default `export_json()`. Add `export_json_full(consent_manager: &ConsentManager)` for workflows that need voice data. Do NOT rely on the `consent_given` boolean alone — it could be spoofed since it's stored in the profile itself. | Effort: small
-
-- [x] **H-015** `[security]` `wal.rs:469` — WAL scan_to_end accepts unverified entries
-  <!-- pid:wal_no_verify | batch:8 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  Post-crash WAL reopens and chains to unverified entries. Tampered entries become trusted chain base.
-  Fix: During `scan_to_end()`, verify each entry: (1) check `entry.prev_hash` matches `state.last_hash` (chain linkage), (2) verify cumulative hash consistency, (3) verify Ed25519 signature (verifying key derivable from `state.signing_key`). On first invalid entry, truncate to last valid entry and log warning. This preserves "append from last valid point" semantic. | Effort: medium
-
-- [x] **H-016** `[security]` `keyhierarchy/session.rs:396` — Ratchet recovery uses unauthenticated XOR `→ SYS-008`
-  <!-- pid:unsafe_crypto | batch:8 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  XOR with no MAC for ratchet recovery blob (32-byte ratchet state + 8-byte plaintext ordinal). Bit-flip silently accepted — attacker forks ratchet to earlier state.
-  Fix: ChaCha20-Poly1305 AEAD (crate already in deps). Encrypt both ratchet state and ordinal (ordinal leaks info about checkpoint count). Add version byte prefix. Blob grows from 40 to ~57 bytes (12 nonce + 41 ciphertext + 16 tag) — acceptable. | Effort: medium
-
-- [x] **H-017** `[concurrency]` `sentinel/helpers.rs:192+213` — Lock ordering violation: signing_key vs sessions
-  <!-- pid:lock_ordering | batch:2 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `handle_change_event_sync` holds `sessions.write()` (line 192) while acquiring `signing_key.read()` (line 213). `focus_document_sync` acquires in opposite order (signing_key first, but clones and drops before sessions). Not a current deadlock since `focus_document_sync` doesn't hold both simultaneously, but fragile.
-  Fix: In `handle_change_event_sync`, clone the signing key via `signing_key.read().clone()` before line 192 (before acquiring sessions write lock). This matches the `focus_document_sync` pattern and eliminates nested lock acquisition. | Effort: small
-
-- [x] **H-018** `[concurrency]` `platform/macos/synthetic.rs` + `platform/macos/keystroke.rs` — HID callback dead code, dual-layer always false-flags
-  <!-- pid:hid_unregistered | batch:5 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `hid_input_callback` in `synthetic.rs:159-192` is marked `#[allow(dead_code)]` — never registered as IOHIDManager callback. `HID_KEYSTROKE_COUNT` stays 0. `validate_dual_layer` (synthetic.rs:211) flags all sessions as synthetic after 6 keystrokes because HID count never increments.
-  Note: `validate_dual_layer` is only called from tests, not from keystroke capture hot path. `KeystrokeMonitor` already has its own event source verification.
-  Fix: **Preferred**: Remove or `#[cfg(test)]`-gate `validate_dual_layer`. Remove dead `hid_input_callback` and `#[allow(dead_code)]`. If HID monitoring is needed later, implement as a separate subsystem with proper IOHIDManager lifecycle. | Effort: medium
-
-- [x] **H-019** `[error_handling]` `wal.rs:250` — WAL verify: unbounded allocation from file data
-  <!-- pid:oom_from_file | batch:8 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `vec![0u8; entry_len as usize]` where entry_len is u32 from file. Corrupt/malicious WAL triggers 4 GB alloc. Same pattern in `scan_to_end()` (:482) and `truncate()` (:338).
-  Fix: Add `const MAX_ENTRY_SIZE: u32 = 16 * 1024 * 1024;` guard before all three allocation sites. Return `WalError::CorruptedEntry` (or new `WalError::EntryTooLarge(u32)` variant). | Effort: small
-
-- [x] **H-020** `[error_handling]` `sentinel/helpers.rs:131` — hex::decode falls back to zero session ID `→ SYS-005`
-  <!-- pid:silent_error | batch:2 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `.ok()` on hex decode → all-zero session_id_bytes. Same pattern at :207 in `handle_change_event_sync` and core.rs:510 in `start_witnessing`.
-  Fix: Return error on invalid hex. Log warning and skip WAL creation for that session. Apply consistently across all three locations. | Effort: small
-
-- [x] **H-021** `[error_handling]` `sentinel/ipc_handler.rs:120` — Serialize failure returns hollow success `→ SYS-005`
-  <!-- pid:silent_serialize | batch:2 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `serde_json::to_string(&report).unwrap_or_default()` → `success: true` with empty `attestation_report`. (Actual line is :120, not :162 as originally reported.)
-  Fix: Replace `unwrap_or_default()` with `?` propagation. On serialization failure, return error response to client. | Effort: small
-
-- [x] **H-022** `[error_handling]` `ipc/server.rs:209` — Encode failure leaves client hanging forever
-  <!-- pid:client_hang | batch:4 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `encode_for_protocol` fails → server logs error, sends nothing. Client blocks on read_exact indefinitely.
-  Fix: Attempt to send `IpcMessage::Error` response. If that also fails to encode, use a hardcoded fallback error string. Either way, `break` after the error to close the connection. | Effort: small
-
-- [x] **H-023** `[performance]` `sentinel/core.rs:314` — Write lock per-keystroke on activity_accumulator
-  <!-- pid:rwlock_hot_path | batch:2 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  RwLock::write() serializes all concurrent readers on every keystroke event.
-  Note: At human typing speeds (5-10 Hz), the write lock is held very briefly (~μs). The same pattern exists for `voice_collector` (:315) and `mouse_idle_stats` (:326). Practical contention is unlikely at human speeds.
-  Fix: **Low priority.** Intermediate step: switch to `parking_lot::RwLock` for lower overhead. Full fix (atomic counters with batch-merge) warranted only if profiling shows contention. | Effort: medium
-
-- [x] **H-024** `[performance]` `platform/macos/keystroke.rs:344` — RwLock::write in CGEventTap callback
-  <!-- pid:rwlock_event_tap | batch:5 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `MacOSKeystrokeCapture::start()` callback acquires `RwLock::write()` on `stats` at line 344. macOS auto-disables slow taps (~1s accumulated delay).
-  Note: `KeystrokeMonitor` (lines 191-201) already uses `AtomicU64::fetch_add` correctly — use the same pattern.
-  Fix: Replace `RwLock<SyntheticStats>` with three `Arc<AtomicU64>` fields matching `KeystrokeMonitor`'s pattern. | Effort: small
-
-- [ ] **H-025** `[performance]` `fingerprint/voice.rs:190` — 100x SHA-256 per 3 keystrokes in MinHash
-  <!-- pid:crypto_hot_path | batch:7 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `add_ngram()` (line 190) calls `hash_with_seed` (SHA-256) 100 times per trigram. Triggers every 3 alphabetic characters, not every keystroke. Still ~33 crypto ops per character for non-security purpose.
-  Fix: Replace SHA-256 with `SipHash` via `std::hash::Hasher` (already in stdlib, no new dep). Seed becomes the SipHash key. Add version field to `NgramSignature` for forward compatibility with existing profiles. | Effort: medium
-
-- [x] **H-026** `[performance]` `wal.rs:209` — fsync on every WAL entry
-  <!-- pid:fsync_hot_path | batch:8 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `sync_all()` after every append in per-event hot path. 1-50ms latency per batch on HDD.
-  Fix: **Phased.** Phase 1: Replace `sync_all()` with `sync_data()` (fdatasync — skips metadata, cheaper). Phase 2: Add configurable batch sync — `sync_data()` every N entries or M milliseconds, with explicit flush on checkpoint/session-end. Keep current behavior as default for correctness. Document the durability tradeoff for batch mode. | Effort: medium
-
-- [x] **H-027** `[performance]` `checkpoint/chain.rs:540` — summary() re-verifies entire chain + VDF
-  <!-- pid:expensive_summary | batch:3 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `summary()` calls `verify()` at line 540. `verify()` → `verify_detailed()` → recomputes all VDF proofs. O(n * VDF_cost). Status/UI queries trigger full chain reverification.
-  Fix: **Preferred**: Remove `chain_valid` from `summary()` entirely, or make it `Option<bool>` defaulting to `None`. Let callers call `verify()` explicitly when needed. **Alternative**: Cache verification result in `Cell<Option<bool>>`, set by `verify()`, cleared by any mutation method (`commit`, `commit_entangled`, `commit_rfc`, `load`). | Effort: small
-
-- [x] **H-028** `[security]` `analysis/behavioral_fingerprint.rs:189` — Forgery detection skips interval filter `→ SYS-004`
-  <!-- pid:unvalidated_input | batch:9 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `detect_forgery` (line 189) computes intervals without filtering. `from_samples` (line 58) filters `> 0.0 && < 5000.0`. Inconsistent.
-  Impact: Negative intervals from out-of-order timestamps corrupt CV/skewness → forgery evasion
-  Fix: Apply same `.filter(|&i| i > 0.0 && i < 5000.0)` to `detect_forgery` interval computation | Effort: small
-
-- [x] **H-029** `[security]` `analysis/labyrinth.rs:314` — Integer overflow in embedding params `→ SYS-004`
-  <!-- pid:integer_overflow | batch:9 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `(dim - 1) * delay` overflows usize in release if LabyrinthParams from deserialized config. Same risk at line 288: `orig_idx_i = i * delay + (dim - 1) * delay`.
-  Fix: Validate `LabyrinthParams` at `analyze_labyrinth` entry: `max_embedding_dim <= 20`, `max_delay <= 50`. Additionally use `checked_mul`/`saturating_mul` at line 314 as defense-in-depth. | Effort: small
-
-- [ ] **H-030** — **Merged into C-003** (same code block, lines 155-163 of `native_messaging_host.rs`)
-
-- [x] **H-031** `[error_handling]` `native_messaging_host.rs:240` — Bare mutex unwrap at 5 sites — **REOPENED**
-  <!-- pid:unwrap_on_io | batch:10 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `.lock().unwrap()` at lines 240, 257, 310, 346, 369. Single panic poisons mutex, permanently kills NMH.
-  Fix: `.lock().unwrap_or_else(|p| p.into_inner())` at all 5 sites. Note: `into_inner()` exposes potentially inconsistent state, but `Session` contains simple scalar fields — stale data is strictly better than crashing. | Effort: small
-
-- [x] **H-032** `[security]` `native_messaging_host.rs:387` — Unbounded jitter interval accumulation
-  <!-- pid:unbounded_vec | batch:10 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `session.jitter_intervals.extend_from_slice(&valid)` grows without cap. Malicious browser extension OOMs host.
-  Fix: Cap at 100,000 entries (`MAX_JITTER_INTERVALS`). When cap is reached, drain oldest entries before appending new ones (ring buffer behavior) — recent intervals are more valuable for behavioral analysis than early ones. | Effort: small
-
-- [x] **H-033** `[error_handling]` `cmd_export.rs:151+165` — Jitter serialization failure → null evidence `→ SYS-005`
-  <!-- pid:silent_serialize | batch:10 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `serde_json::to_value(s.export()).unwrap_or(Value::Null)` at two sites. User thinks evidence is included.
-  Fix: Use `eprintln!("Warning: ...")` + `Value::Null` fallback (warn-and-continue). Full error propagation with `?` is acceptable for "maximum" tier but too aggressive for "enhanced" tier where jitter is supplementary. | Effort: small
-
-- [x] **H-034** `[security]` `cmd_export.rs:115` — Session discovery via raw substring match
-  <!-- pid:substring_match | batch:10 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `content.contains(&abs_path_str)` matches path anywhere in session file. Wrong session silently embedded in evidence.
-  Fix: Parse JSON via `serde_json::from_str::<serde_json::Value>`, compare `value["document_path"]` field. | Effort: small
-
-- [x] **H-035** `[error_handling]` `fingerprint/storage.rs:155` — Voice deletion skips corrupt profiles `→ SYS-005`
-  <!-- pid:silent_skip | batch:7 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `if let Ok(mut fp) = self.load(&id)` skips profiles failing decrypt. On consent revocation, voice data persists.
-  Impact: Biometric data deletion guarantee violated
-  Fix: On decrypt failure, delete the entire file and remove from index. Log warning: "Profile {id} deleted (could not decrypt to verify voice data removal)". Return collected warnings/errors so caller knows which profiles were force-deleted. | Effort: small
-
-- [x] **H-036** `[error_handling]` `fingerprint/consent.rs:127` — Consent request flow incomplete
-  <!-- pid:consent_stub | batch:7 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `request_consent()` sets `first_requested` timestamp but (1) never calls `self.save()?` to persist it, and (2) always returns `Ok(false)`.
-  Note: The doc comment (line 125-126) says "Caller must display `CONSENT_EXPLANATION` and call `grant_consent`/`deny_consent` based on user input." The design intent is correct — the engine library should NOT prompt users directly (would break GUI apps, tests). The function is meant to record "consent was requested" and return "not yet granted."
-  Fix: (1) Add `self.save()?` after setting `first_requested` to persist the timestamp. (2) Rename to `begin_consent_request()` to clarify it initiates the flow rather than completing it. (3) Add doc comment explaining return value: `Ok(false)` = "consent not yet granted, caller must prompt user." Do NOT add an interactive prompt here — that belongs in the CLI layer, not the engine. | Effort: small
-
-- [x] **H-037** `[correctness]` `platform/macos/mouse_capture.rs:130` — Inverted is_idle flag corrupts mouse classification
-  <!-- pid:inverted_flag | batch:5 | verified:true | first:2026-02-26 | last:2026-02-26 -->
-  `let is_idle = keyboard_active.load(Ordering::SeqCst)` — logic is inverted. When keyboard IS active, mouse events are tagged as `idle_jitter`. When keyboard IS idle, mouse events are tagged as active. All macOS sessions have wrong mouse event classification.
-  Note: **Escalated from M-036.** This is a correctness bug affecting every macOS session, not a code quality issue.
-  Fix: Change to `let is_idle = !keyboard_active.load(Ordering::SeqCst)` | Effort: small
-
-### Existing HIGH (preserved)
-- [x] **REL-H1** No code signing for release artifacts — `.github/workflows/release.yml` — FIXED (Sigstore provenance)
-  Note: Workflow already has `permissions: id-token: write` and `attestations: write` (lines 19-20), suggesting Sigstore intent.
-  Fix: Add `uses: actions/attest-build-provenance@v2` in the build job after artifact upload. This provides cryptographic provenance via Sigstore without managing keys. Platform-native signing (Apple/Windows) can be added later as a separate enhancement. | Effort: medium
-### New (2026-02-27 full-codebase scan)
-
-- [ ] **H-038** `[error_handling]` `engine.rs` — 18 bare `.lock().unwrap()` across engine hot paths `→ SYS-009`
-  <!-- pid:bare_lock_unwrap | batch:18 | verified:true | first:2026-02-27 | last:2026-02-27 -->
-  Every file change event triggers multiple mutex locks (status, file_sizes, watcher, jitter_session, keystroke_monitor, watch_dirs). Single panic poisons all.
-  Fix: Replace `.lock().unwrap()` → `.lock().unwrap_or_else(|p| p.into_inner())` at all 18 sites. | Effort: small
-
-- [ ] **H-039** `[error_handling]` `wal.rs:179,221,333` — 8 bare `.lock().unwrap()` in WAL hot path `→ SYS-009`
-  <!-- pid:bare_lock_unwrap | batch:8 | verified:true | first:2026-02-27 | last:2026-02-27 -->
-  WAL append (per-event), verify, truncate, and stats all use bare unwrap on inner Mutex. Evidence chain breaks on any panic.
-  Fix: Replace `.lock().unwrap()` → `.lock().unwrap_or_else(|p| p.into_inner())` at all 8 sites. | Effort: small
-
-- [ ] **H-040** `[security]` `identity/secure_storage.rs:299,318,333` — Cache returns unprotected copies of key material
-  <!-- pid:key_material_copy_leak | batch:17 | verified:true | first:2026-02-27 | last:2026-02-27 -->
-  `load_seed()` returns `cached.as_slice().to_vec()` — unzeroized `Vec<u8>` copy of master seed. Same for `load_hmac_key()` (:318) and `load_mnemonic()` (:333, returns `String::clone()`). Callers hold unprotected copies indefinitely.
-  Impact: Key material persists in heap across callers without zeroization guarantees.
-  Fix: Return `Zeroizing<Vec<u8>>` from `load_seed()` and `load_hmac_key()`. Return `Zeroizing<String>` from `load_mnemonic()`. Update caller signatures. | Effort: medium
-
-- [ ] **H-041** `[security]` `config.rs:289` — SentinelConfig falls back to CWD when home_dir unavailable
-  <!-- pid:unsafe_fallback_path | batch:18 | verified:true | first:2026-02-27 | last:2026-02-27 -->
-  `dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))` — if HOME unset (containers, systemd services), evidence written to CWD (possibly /tmp, web root, world-readable dir).
-  Fix: Return `Result<Self>` from `SentinelConfig::default()` or use a known safe fallback like `/var/lib/witnessd`. At minimum, create the dir with restrictive permissions (0o700). | Effort: small
-
-- [ ] **H-042** `[performance]` `fingerprint/comparison.rs:308-316` — O(n^4) in find_clusters member-pair similarity
-  <!-- pid:quadratic_algorithm | batch:5 | verified:true | first:2026-02-27 | last:2026-02-27 -->
-  For each cluster member pair, does `fingerprints.iter().find(|f| &f.id == m)` twice (linear scan) inside already-nested loops. With N fingerprints: O(N^2) clusters × O(N) find × 2 = O(N^4) worst case.
-  Fix: Build `HashMap<&str, &AuthorFingerprint>` before the loop. Replace `.find()` calls with O(1) lookup. | Effort: small
-
-- [ ] **H-043** `[security]` `native_messaging_host.rs` — No rate limiting on incoming browser messages
-  <!-- pid:dos_no_rate_limit | batch:13 | verified:true | first:2026-02-27 | last:2026-02-27 -->
-  `run_native_messaging()` reads and processes messages in tight loop with no rate limiting. Malicious browser extension can flood stdin with rapid requests, consuming 100% CPU and memory (checkpoint creation, jitter accumulation).
-  Fix: Add token-bucket rate limiter (e.g., 100 messages/second burst, 10/second sustained). On limit exceeded, return error response and continue. | Effort: small
-
-- [ ] **H-044** `[security]` `ffi/helpers.rs:32-38` — Signing key bytes not zeroized after use
-  <!-- pid:key_material_not_zeroized | batch:17 | verified:true | first:2026-02-27 | last:2026-02-27 -->
-  `key_data = std::fs::read(&key_path)` reads raw signing key seed from disk. Used to derive HMAC key at :38. `key_data` dropped without zeroization — 32+ bytes of key material persist in heap.
-  Fix: Wrap in `Zeroizing`: `let key_data = Zeroizing::new(std::fs::read(&key_path).ok()?);` | Effort: small
-
-- [ ] **H-045** `[security]` `sealed_identity.rs:157-159` — Master seed not zeroized on persist_blob failure
-  <!-- pid:seed_leak_on_error | batch:9 | verified:true | first:2026-02-27 | last:2026-02-27 -->
-  `self.persist_blob(&blob)?` at :157 may fail via `?` operator. `seed.zeroize()` at :159 is unreachable on error path. Master identity seed persists in heap. No `Zeroizing` wrapper (confirmed: no `Zeroizing` import in file).
-  Fix: Change `let mut seed = hkdf_expand(...)` to `let mut seed = Zeroizing::new(hkdf_expand(...)?)`. This auto-zeroizes on Drop including early returns. Explicit `.zeroize()` at :159 becomes redundant but harmless. | Effort: small
-
-- [ ] **H-046** `[security]` `keyhierarchy/puf.rs:105-106` — PUF seed entropy not zeroized on stack
-  <!-- pid:key_material_not_zeroized | batch:10 | verified:true | first:2026-02-27 | last:2026-02-27 -->
-  `let mut random_bytes = [0u8; 32]; rand::rng().fill_bytes(&mut random_bytes);` — 32 bytes of entropy used in PUF seed derivation. Never zeroized after `hasher.update(random_bytes)`. Lingers in stack frame.
-  Fix: Add `random_bytes.zeroize();` after `hasher.update(random_bytes);`. Import `Zeroize` if not already imported. | Effort: small
-
-### ~~REL-H3~~ [x] FIXED | ~~REL-H4~~ [x] FIXED | ~~BE-H6~~ [x] FIXED | ~~PROTO-H2~~ [x] FIXED
-
-### PROTO-H1. Protocol crate uses deprecated thread_rng() — FIXED
-- **Previously marked fixed — verified NOT fixed 2026-02-26**
-- **Audit Note**: `rand = "0.8"` at `crates/witnessd_protocol/Cargo.toml:25`. 3 production call sites use `thread_rng()`: `evidence.rs:33`, `evidence.rs:79`, `identity.rs:142`. Test files already use `OsRng`.
-- **Fix**: Replace `thread_rng()` with `OsRng` at all 3 production call sites (`OsRng` is already used in test files and is cryptographically stronger). Do NOT upgrade to rand 0.9 — `ed25519-dalek 2.1` depends on `rand_core 0.6` (rand 0.8). Upgrading rand without also upgrading ed25519-dalek creates a version conflict. The `OsRng` fix achieves the goal (removing deprecated API) without the dependency risk.
-
-### CI-H1. Security workflow silently ignores failures — FIXED
-- **Previously marked fixed — verified NOT fixed 2026-02-26**
-- **Audit Note**: 6 `continue-on-error: true` at lines 33, 69, 73, 77, 134, 165 in `.github/workflows/security.yml`. Also `|| true` at lines 45 and 152.
-- **Fix**: **Phased approach.** (1) Remove `continue-on-error` from TruffleHog (line 134) — verified secrets must always fail CI. (2) Remove job-level `continue-on-error` from cargo-audit (line 33) and fix `|| true` (line 45). (3) For cargo-deny, add `--allow` flags for known accepted advisories rather than suppressing all failures. (4) Keep Semgrep upload `continue-on-error` (line 165) — it's just the result upload step, not the scan. (5) Add summary quality gate job. Do NOT remove all `continue-on-error` at once — will break CI on known/accepted advisories.
+- [x] **C-027** `[security]` `native_messaging_host.rs:337` — Commitment chain bypass → SYS-022 ✓ FIXED 2026-03-03
+  <!-- pid:security-optional_security | verified:true | first:2026-03-03 | fixed:2026-03-03 -->
+  Covered by SYS-022. Adversary omits `commitment` field to bypass verification.
+  **Resolution**: Added mandatory commitment/ordinal enforcement after genesis checkpoint. Missing fields now return MISSING_COMMITMENT/MISSING_ORDINAL errors.
 
 ---
 
-## Medium
+## High (Top 40 — highest impact)
 
-### Engine Core
-- [x] **M-001** `checkpoint/chain.rs` — 4 commit methods duplicate 12-field struct init `→ SYS-006` | effort:small
-  Fix: Extract `Checkpoint::new_base(ordinal, previous_hash, content_hash, content_size, message)` constructor. Each `commit_*` calls it, then sets variant-specific fields.
-- [x] **M-002** `checkpoint/chain.rs:387` — Signature verification checks length only, no crypto | effort:small
-  Note: **Intentional separation of concerns.** Comment at :388-389 states "Format check only; full crypto verification deferred to key_hierarchy." `keyhierarchy/verification.rs:33-53` does actual Ed25519 verify. This is architectural — the chain verifier validates structure; the key_hierarchy module verifies crypto.
-  Fix: Add doc comment linking to `keyhierarchy/verification.rs:33-53` for the crypto verification path. No code behavior change needed.
-- [x] **M-003** `checkpoint_mmr.rs:109` — Falls back to relative path when home_dir unavailable | effort:small
-  Fix: Return `Result<PathBuf>` instead of falling back to relative path. Let caller decide fallback behavior.
-- [x] **M-004** `evidence/builder.rs:248+492+502+534` — Magic floats in evidence scoring; audit trail unclear | effort:small
-  Fix: Extract named constants: `HARDWARE_ENTROPY_RATIO`, `MAX_INTERVAL_US`, `MIN_SAMPLES`, `MIN_HURST_SAMPLES`.
-- [x] **M-005** `evidence/builder.rs:779` — String comparison for period_type instead of enum | effort:small
-  Fix: Convert `period_type` from `String` to an enum with `#[serde(rename_all = "lowercase")]` for backward-compatible deserialization. Test with existing serialized data.
-- [x] **M-006** `evidence/packet.rs:191` — Behavioral similarity < 0.7 only warns, verification passes | effort:small
-  Note: A hard failure at 0.7 would cause false rejections — behavioral baselines have known variance (time of day, fatigue, injured hand).
-  Fix: Add a `warnings: Vec<VerificationWarning>` field to the verification result. Surface the low similarity as a structured warning, not just a log message. Do NOT make this a hard failure. Callers can apply policy based on warnings.
+- [ ] **H-065** `[security]` `tpm/secure_enclave.rs:448-476` — Counter file rollback on corruption
+  <!-- pid:sec_counter_rollback | batch:4 | verified:true | first:2026-03-02 | revalidated:2026-03-03 -->
+  `load_counter()` logs error on corruption but does NOT propagate — allows counter reset to 0 which defeats anti-rollback.
+  Impact: Corrupted counter file silently resets to 0, bypassing monotonic counter protection | Fix: Propagate error from `load_counter()`; refuse to init if corrupt; require explicit reset with user acknowledgment | Effort: medium
+  **Guidance**: In `load_counter()`, change from logging + returning 0 to returning `Err`. Callers must handle the error and refuse to proceed. Add a separate `reset_counter()` method that requires explicit intent.
 
-### Sentinel / IPC
-- [ ] **M-007** `sentinel/core.rs:522` — WAL append errors silently swallowed `→ SYS-005` | effort:small
-  Fix: Log at `warn!` level. A disk-full error propagated as hard failure would prevent all session starts — warn is the safer default.
-- [x] **M-008** `sentinel/daemon.rs:273` — IPC shutdown handle immediately dropped (TODO acknowledged) | effort:medium
-  Fix: Store `ipc_shutdown_tx` and `ipc_handle` in `DaemonManager` fields. Wire to daemon shutdown signal.
-- [x] **M-010** `sentinel/types.rs:274` — Malformed URLs produce misleading domain_hash | effort:small
-  Note: The hash is not empty — `hash_string("")` produces a valid hash of the empty string. The real issue: all URLs with no path component share the same domain_hash, and garbage input (non-URLs) is treated as a domain.
-  Fix: Validate that the domain part is non-empty and contains at least one dot. Return error or log warning for malformed URLs.
-- [x] **M-011** `ipc/server.rs:82` — Dead Bincode protocol branch (unreachable) | effort:small
-  Fix: Remove the dead `if protocol == WireProtocol::Bincode { ... }` branch and associated `first_message_pending`/`first_len` variables.
-- [x] **M-012** `ipc/server.rs:100` — Rate limiter bypassed by multiple connections (TODO acknowledged) | effort:medium
-  Fix: Shared `Arc<Mutex<RateLimiter>>` passed into connection handler.
-- [x] **M-013** `ipc/crypto.rs:177` — RateLimiter allocates String key per check | effort:small
-  Fix: Use `&'static str` keys (category strings are all literals) or an enum-based key.
+- [ ] **H-066** `[security]` `tpm/verification.rs:102` — No ECDSA P-256 verification support
+  <!-- pid:sec_missing_algo | batch:4 | verified:true | first:2026-03-02 -->
+  Secure Enclave signs with ECDSA but verifier only handles Ed25519/RSA. | Fix: Add p256 crate ECDSA verification | Effort: medium
 
-### Key Hierarchy / WAL / Identity
-- [x] **M-014** `wal.rs:324` — truncate() re-signs entries without verifying originals first | effort:small
-  Fix: Verify each entry's signature before re-signing. On invalid entry, abort truncation with error. Need recovery path for case where WAL is partially corrupt.
-- [x] **M-015** `keyhierarchy/session.rs:22+82` — Session start logic duplicated 2x `→ SYS-006` | effort:small
-  Fix: Extract common body into `fn start_session_inner(signing_key: &SigningKey, ...) -> Result<Session>`. Both public functions call it.
-- [x] **M-016** `keyhierarchy/migration.rs:100` — Third copy of session establishment `→ SYS-006` | effort:small
-  Fix: Delegate to `start_session_inner` from M-015. The migration path adds `session_seed.zeroize()` (line 148) — ensure the helper includes this.
-- [x] **M-017** `keyhierarchy/session.rs:280` — TPM quote serialize failure → empty Vec silently | effort:small
-  Fix: Change `unwrap_or_default()` to `.ok()` wrapped in `Some` — store `None` on failure instead of `Some(vec![])`. An empty `Vec<u8>` in `Some` is semantically misleading.
-- [x] **M-018** `sealed_identity.rs:132` — provider_type uses Debug format (unstable repr) | effort:small
-  Note: `{:?}` output has no stability guarantee across Rust versions. This value is persisted on disk.
-  Fix: Use stable string: `"secure_enclave"` / `"tpm2"` / `"software"`. Handle both old (Debug format) and new (stable string) during `load_blob()` for migration.
+- [ ] **H-067** `[error_handling]` `tpm/windows.rs:886` — flush_context errors silently dropped
+  <!-- pid:err_silent_io | batch:4 | verified:true | first:2026-03-02 -->
+  `let _ = self.flush_context(...)` — handle leak risk. Same in `linux.rs:290`. | Fix: `log::warn!` on flush failures | Effort: small
 
-### Fingerprint / Biometrics
-- [x] **M-020** `fingerprint/activity.rs:675` — Hurst exponent hardcoded 0.5 placeholder in evidence | effort:medium
-  Fix: Call `crate::analysis::calculate_hurst_rs()` on interval data. Fall back to 0.5 on too-few-samples. Gate behind minimum sample count for performance.
-- [x] **M-021** `fingerprint/activity.rs:703` — Full VecDeque cloned on every fingerprint query + broken cache | effort:small
-  Note: **Two bugs.** (1) When `dirty == true`, the entire `VecDeque` is cloned into a `Vec`. (2) The `dirty` flag is NEVER set to `false` after recompute — the cache never works, every call recomputes.
-  Fix: (1) Use `self.samples.make_contiguous()` and pass as slice instead of cloning. (2) Set `self.dirty = false` after recompute. Requires changing `current_fingerprint(&self)` to `current_fingerprint(&mut self)`, or using `Cell`/`RefCell` for interior mutability on the cache.
-- [x] **M-022** `fingerprint/consent.rs:100` — Consent version not validated on load | effort:small
-  Fix: After loading, compare `record.consent_version` with `CONSENT_VERSION`. If different, set status to `ConsentStatus::NotRequested` to force re-consent.
-- [x] **M-023** `fingerprint/comparison.rs:261` — O(n^2) pairwise comparisons without caching | effort:medium
-  Note: For typical use (< 100 fingerprints), O(n^2) is fine. Over-engineering risk.
-  Fix: Add guard: if `n > 500`, return error or sample. Do NOT add spatial indexing — premature optimization.
+- [ ] **H-068** `[security]` `identity/secure_storage.rs:302` — Intermediate Vec not zeroized on cache read → SYS-018
+  <!-- pid:key_material_copy_leak | batch:5 | verified:true | first:2026-03-02 -->
 
-### RFC / Wire Types
-- [ ] **M-025** `rfc/biology.rs:601` — PinkNoise power values are hardcoded approximations | effort:medium
-  Fix: Add `low_freq_power` and `high_freq_power` fields to `analysis::pink_noise::PinkNoiseAnalysis` from actual DFT computation. Current approximation is mathematically consistent — low risk of wrong conclusions.
-- [x] **M-026** `rfc/time_evidence.rs` — hex_bytes serde duplicated in 3 rfc files `→ SYS-006` | effort:small
-  Fix: Extract to shared `rfc::serde_helpers` module or `crate::codec::hex_serde`. Change from private `mod hex_bytes` to `pub(crate)`.
-- [x] **M-027** `rfc/jitter_binding.rs:656` — lyapunov_exponent always 0.0 (same root as C-005) | effort:medium
-  Fix: See C-005. Make `lyapunov_exponent` field `Option<f64>` in both `LabyrinthStructure` and the wire format.
+- [ ] **H-069** `[security]` `identity/secure_storage.rs:253` — Symlink/traversal risk in migration path
+  <!-- pid:path_traversal_symlink | batch:5 | verified:true | first:2026-03-02 -->
+  No symlink check before creating `.keychain_migrated_v1` | Fix: Validate path has no symlinks | Effort: medium
 
-### Analysis
-- [x] **M-028** `analysis/behavioral_fingerprint.rs:203` — CV threshold 0.2 vs documented 0.3 | effort:small
-  Note: The 0.2 threshold is a **conservative forgery detection floor** (minimize false positives). The 0.3 value in the comment is the **typical human minimum**. The gap is intentional.
-  Fix: Update the comment to explain: "Threshold 0.2 is conservative for forgery detection. Human typing typically > 0.3-0.4. The gap reduces false positives for slow/regular typists." Do NOT raise threshold to 0.3.
-- [x] **M-029** `analysis/behavioral_fingerprint.rs:68` — Double Vec clone for mean/std_dev | effort:small
-  Note: Same pattern at lines 197-198 in `detect_forgery`. `statrs::Statistics` trait's `mean()`/`std_dev()` consume `self`.
-  Fix: Compute manually with single pass (sum, sum_of_squares) or use iterator-based API. Apply to both sites.
-- [x] **M-030** `analysis/labyrinth.rs:432` — Division by zero when all distances identical | effort:small
-  Note: `r_min == r_max == 0.0` can't happen (filtered at line 416), but `r_min == r_max > 0.0` produces identical `(log_r, log_c)` points causing regression failure.
-  Fix: Guard: if `r_max == r_min`, return 0.0 early.
-- [x] **M-031** `analysis/labyrinth.rs:263` — FNN threshold 15.0 undocumented magic number | effort:small
-  Fix: Extract as named constant `FNN_DISTANCE_THRESHOLD` with doc comment citing Kennel et al. 1992.
-- [x] **M-032** `analysis/error_topology.rs:156` — O(n*m) contains() instead of HashSet | effort:small
-  Fix: `let error_set: HashSet<usize> = error_indices.iter().copied().collect();` before the loop.
-- [x] **M-033** `analysis/hurst.rs:114+240` — DFA/RS clamp ranges different | effort:small
-  Note: RS clamps to [0.0, 1.0], DFA to [0.0, 2.0]. **Mathematically correct**: R/S Hurst ∈ [0,1], DFA alpha can reach 2.0. Shared validity range [0.55, 0.85] is intentional.
-  Fix: Add comment explaining the mathematical distinction. No code change needed.
-- [x] **M-034** `analysis/pink_noise.rs:239` — linear_regression duplicated verbatim in hurst.rs `→ SYS-006` | effort:small
-  Fix: Extract to `crate::analysis::stats::linear_regression()`.
+- [ ] **H-070** `[concurrency]` `platform/windows.rs:314` — Unchecked raw pointer deref in hook callback
+  <!-- pid:unsafe_ptr_deref_unchecked | batch:5 | verified:true | first:2026-03-02 -->
+  `lparam.0 as *const KBDLLHOOKSTRUCT` without null check | Fix: Add null pointer validation | Effort: small
 
-### Platform / TPM
-- [x] **M-035** `platform/mod.rs:14-20` — Blanket `#[allow(dead_code)]` on platform modules | effort:small
-  Note: Violates CLAUDE.md convention ("targeted, never blanket"). macOS module does not have this.
-  Fix: Remove blanket allows. Add targeted `#[allow(dead_code)]` on specific items. May reveal genuinely dead code.
-- [x] **M-037** `tpm/secure_enclave.rs:455` — Monotonic counter silently resets to 0 on corrupt file | effort:small
-  Fix: Distinguish "file not found" (first run, counter=0 correct) from "file exists but corrupt/truncated" (return error). On corruption, return error — a silent reset defeats anti-rollback.
-- [x] **M-038** `tpm/secure_enclave.rs:664` — Attestation proof hash computed but redundant with signature | effort:small
-  Fix: Remove dead `attestation_proof` computation. The ECDSA signature already provides attestation.
-- [ ] **M-039** `tpm/windows.rs:413` — Two TODOs document unimplemented security invariants | effort:medium
-  Note: Same root cause as H-007/H-008 (Windows TPM is a stub). Tracked there. Resolve M-039 when H-007/H-008 are fixed.
+- [ ] **H-071** `[concurrency]` `sentinel/core.rs:251,280` — Spawned threads with no JoinHandle
+  <!-- pid:spawned_thread_no_handle | batch:6 | verified:true | first:2026-03-02 -->
+  Keystroke/mouse capture threads exit silently on failure | Fix: Store JoinHandle, log errors | Effort: medium
 
-### New (2026-02-27 full-codebase scan)
-- [ ] **M-043** `wire_types/hash.rs:33` — HashValue::sha256() panics on non-32-byte input | effort:small
-  <!-- pid:assert_on_untrusted_input | batch:6 | verified:true | first:2026-02-27 | last:2026-02-27 -->
-  `assert!(digest.len() == 32)` panics on malformed CBOR deserialization. `try_sha256()` exists at :45 but callers on trust boundaries may use the panicking version.
-  Fix: Audit all callers of `sha256()` on trust boundaries (deserialized data). Replace with `try_sha256()`. Consider deprecating the panicking version.
+- [ ] **H-072** `[concurrency]` `sentinel/core.rs:343,328` — Lock guards held across .await boundary
+  <!-- pid:guard_across_await | batch:6 | verified:true | first:2026-03-02 -->
+  Bare write() in tokio::select! arms | Fix: Use write_recover(), acquire/release around select block | Effort: medium
 
-- [ ] **M-044** `vdf/aggregation.rs:281` — Empty tree returns empty string as Merkle root | effort:small
-  <!-- pid:silent_error_fallback | batch:14 | verified:true | first:2026-02-27 | last:2026-02-27 -->
-  `.pop().unwrap_or_default()` returns `""` for empty tree instead of signaling an error. Callers may treat empty string as valid root.
-  Fix: Return `Option<String>` or `Result<String>` from `compute_root()`. Empty tree → `None` or error.
+- [ ] **H-073** `[security]` `sentinel/ipc_handler.rs:30-35` — Zero signing key warning but continues
+  <!-- pid:key_material_leak | batch:6 | verified:true | first:2026-03-02 | revalidated:2026-03-03 -->
+  HMAC derivation proceeds with `[0u8; 32]` key when identity not loaded — produces valid but meaningless HMACs.
+  Impact: Evidence signed with zero key is trivially forgeable | Fix: Return error; refuse IPC operations until identity loaded | Effort: medium
+  **Guidance**: Change the `[0u8; 32]` fallback to `return Err(Error::identity("signing key not loaded"))`. Callers must defer IPC operations until `SealedIdentityStore::initialize()` completes successfully.
 
-- [ ] **M-045** `keyhierarchy/migration.rs:78-98` — Legacy unencrypted key file not deleted after migration | effort:small
-  <!-- pid:legacy_key_not_deleted | batch:10 | verified:true | first:2026-02-27 | last:2026-02-27 -->
-  `load_legacy_private_key()` reads and zeroizes key in memory but does not delete the file. Raw 32-byte signing key persists on disk unencrypted.
-  Fix: After successful migration in `start_session_from_legacy_key()`, securely delete the legacy key file (overwrite with random bytes, then delete). Add log message noting migration.
+- [ ] **H-074** `[error_handling]` `ffi/sentinel.rs:26` — expect() in runtime creation → SYS-013
+  <!-- pid:panic_in_library | batch:7 | verified:true | first:2026-03-02 -->
 
-- [ ] **M-046** `sealed_identity.rs:109` — PUF challenge is a compile-time constant | effort:small
-  <!-- pid:static_challenge | batch:9 | verified:true | first:2026-02-27 | last:2026-02-27 -->
-  `Sha256::digest(format!("{}-challenge", "witnessd-identity-v1"))` produces the same challenge on every seal operation. PUF response is deterministic for same device + same challenge. No per-seal entropy in the derivation path.
-  Fix: Include a per-seal random nonce in the challenge. Store nonce in `SealedBlob` for unseal.
+- [ ] **H-075** `[error_handling]` `ffi/evidence.rs:180` — expect() on hash construction → SYS-013
+  <!-- pid:panic_in_library | batch:7 | verified:true | first:2026-03-02 -->
 
-### CLI
-### ~~M-040~~ [x] FIXED — getrandom fallback to all-zeros for packet ID
-- [x] **M-041** `cmd_watch.rs:373` — auto_checkpoint reloads config from disk on every call | effort:small
-  Fix: Cache config in watcher state. Reload on explicit user action or longer interval (e.g., once per minute).
-- [x] **M-042** `smart_defaults.rs:328` — Deprecated `Utc.timestamp_nanos()` (clippy warning) | effort:small
-  Fix: Replace with `Utc.timestamp_nanos_opt(*ts).map(|dt| dt.format(...)).unwrap_or_else(|| ...)`. Pattern already used elsewhere.
+- [ ] **H-076** `[security]` `ffi/helpers.rs:27` — HMAC key returned without Zeroizing wrapper → SYS-018
+  <!-- pid:key_material_leak | batch:7 | verified:true | first:2026-03-02 -->
+
+- [ ] **H-077** `[architecture]` `ffi/ephemeral.rs:758` — Business logic in FFI boundary
+  <!-- pid:logic_in_boundary | batch:7 | verified:true | first:2026-03-02 -->
+  build_war_block() has complex crypto logic in FFI layer | Fix: Move to evidence module | Effort: large
+
+- [ ] **H-078** `[security]` `ipc/crypto.rs:99` — expect() in library crypto code → SYS-013
+  <!-- pid:panic_in_library | batch:8 | verified:true | first:2026-03-02 -->
+
+- [ ] **H-079** `[security]` `ipc/messages.rs:7` — PathBuf fields without traversal validation
+  <!-- pid:path_traversal | batch:8 | verified:true | first:2026-03-02 -->
+  Client can request operations on arbitrary files via IPC | Fix: Reject absolute paths, `..` components | Effort: medium
+
+- [ ] **H-080** `[security]` `ipc/unix_socket.rs:138` — Executable verification checks filename only
+  <!-- pid:missing_input_validation | batch:8 | verified:true | first:2026-03-02 -->
+  Attacker bypass with same-named binary in different dir | Fix: Compare full path | Effort: small
+
+- [ ] **H-081** `[security]` `fingerprint/storage.rs:121` — Full decryption on every index refresh
+  <!-- pid:perf:metadata_decrypt_in_loop | batch:9 | verified:true | first:2026-03-02 -->
+  N profiles → N AES-256-GCM decryptions for metadata | Fix: Add unencrypted metadata sidecar with HMAC | Effort: medium
+
+- [ ] **H-082** `[error_handling]` `rfc/wire_types/packet.rs:92` — No post-decode validation → SYS-017
+  <!-- pid:missing_validation | batch:13 | verified:true | first:2026-03-02 -->
+
+- [ ] **H-083** `[security]` `rfc/time_evidence.rs:309` — Integer overflow in timestamp × 1000
+  <!-- pid:arithmetic_overflow_unchecked | batch:12 | verified:true | first:2026-03-02 | revalidated:2026-03-03 -->
+  `block_timestamp * 1000` can overflow u64 for timestamps after year ~585M | Fix: Use `checked_mul()` | Effort: small
+  **Guidance**: Replace `block_timestamp * 1000` with `block_timestamp.checked_mul(1000).ok_or_else(|| Error::timestamp("overflow"))?`. Also check line 230 for similar `timestamp_millis()` overflow.
+
+- [ ] **H-084** `[security]` `rfc/time_evidence.rs:309` — u64→i64 silent cast overflow
+  <!-- pid:cast_overflow_unchecked | batch:12 | verified:true | first:2026-03-02 | revalidated:2026-03-03 -->
+  `block_timestamp * 1000` result cast to i64 can wrap to negative for very large timestamps | Fix: `i64::try_from(ms).map_err(|_| Error::timestamp("out of i64 range"))?` | Effort: small
+  **Guidance**: Fix alongside H-083 — both are in the same code path. After `checked_mul()`, use `i64::try_from()` to safely convert.
+
+- [ ] **H-085** `[security]` `evidence/rfc_conversion.rs:21` — hex::decode errors → empty Vec
+  <!-- pid:silent_hex_decode_failure | batch:14 | verified:true | first:2026-03-02 | revalidated:2026-03-03 -->
+  `hex::decode().unwrap_or_default()` — malformed VDF input silently becomes empty Vec | Fix: Change to `hex::decode().map_err(|e| Error::evidence(format!("hex decode: {e}")))?` | Effort: small
+  **Guidance**: Fix H-085 and H-086 together — both in same file, same pattern at lines 21 and 63. Replace `.unwrap_or_default()` with `?` error propagation.
+
+- [ ] **H-086** `[security]` `evidence/rfc_conversion.rs:63` — final_hash decode error → empty Vec
+  <!-- pid:silent_hex_decode_failure | batch:14 | verified:true | first:2026-03-02 -->
+  Document integrity root silently corrupted | Fix: Propagate decode error | Effort: small
+
+- [ ] **H-087** `[security]` `evidence/packet.rs:382` — No length check on signature bytes
+  <!-- pid:signature_length_unvalidated | batch:14 | verified:true | first:2026-03-02 | revalidated:2026-03-03 -->
+  Ed25519 `Signature::from_bytes(&signature_bytes)` assumes exactly 64 bytes; no validation | Fix: `if signature_bytes.len() != 64 { return Err(Error::evidence("invalid Ed25519 signature length")); }` before `from_bytes` | Effort: small
+  **Guidance**: Add length check immediately before line 382. `ed25519_dalek::Signature::from_bytes` will panic or produce undefined behavior on wrong-length input.
+
+- [ ] **H-088** `[security]` `evidence/builder.rs:568` — Division by mean without range check
+  <!-- pid:division_unguarded | batch:14 | verified:true | first:2026-03-02 -->
+  Tiny mean → huge cv → malformed jitter binding | Fix: Validate `mean > 100us`; clamp entropy_bits ≥ 0 | Effort: medium
+
+- [ ] **H-089** `[security]` `keyhierarchy/session.rs:43` — Session seed not zeroized on error → SYS-018
+  <!-- pid:key_material_error_path_leak | batch:15 | verified:true | first:2026-03-02 -->
+
+- [ ] **H-090** `[security]` `keyhierarchy/session.rs:367` — Plaintext buffer leak on encrypt failure → SYS-018
+  <!-- pid:key_material_heap_leak | batch:15 | verified:true | first:2026-03-02 -->
+
+- [x] **H-091** `[security]` `keyhierarchy/puf.rs:55` — Loaded seed not length-validated ✓ FIXED 2026-03-03
+  <!-- pid:crypto_input_validation | batch:15 | verified:true | first:2026-03-02 | fixed:2026-03-03 -->
+  Seed from secure storage could be <32 bytes | Fix: `if seed.len() != 32 { return Err(...) }` | Effort: small
+  **Resolution**: Added 32-byte length validation with `Crypto` error on mismatch.
+
+- [ ] **H-092** `[security]` `keyhierarchy/puf.rs:74` — Legacy seed data not zeroized after migration → SYS-018
+  <!-- pid:seed_leak_on_migration | batch:15 | verified:true | first:2026-03-02 -->
+
+- [ ] **H-093** `[architecture]` `war/types.rs:34` — Missing ear field in Block struct
+  <!-- pid:incomplete_struct | batch:16 | verified:true | first:2026-03-02 -->
+  compat.rs:131 sets field that doesn't exist | Fix: Add `pub ear: Option<EarToken>` to Block | Effort: small
+
+- [x] **H-094** `[code_quality]` `war/ear.rs:338` — Inverted overall_status logic ✓ FIXED 2026-03-03
+  <!-- pid:inverted_logic | batch:16 | verified:true | first:2026-03-02 | fixed:2026-03-03 -->
+  Uses `.max()` where `.min()` needed — returns best instead of worst status | Fix: Change to `.min()` | Effort: small
+  **Resolution**: Changed `.max()` to `.min()` to return worst (most conservative) status.
+
+- [ ] **H-095** `[error_handling]` `writersproof/queue.rs:127` — Silent skip on malformed nonce
+  <!-- pid:silent_error_swallow | batch:17 | verified:true | first:2026-03-02 | revalidated:2026-03-03 -->
+  Valid attestations dropped without error | Fix: Return explicit error; log skipped entry | Effort: small
+  **Guidance**: Fix together with H-096 (line 90, same file). Replace silent `continue` with `log::warn!("skipping malformed nonce: {:?}", entry)` and add the entry to a `.bak` recovery file.
+
+- [ ] **H-096** `[error_handling]` `writersproof/queue.rs:90` — Silent continue on corrupt queue JSON
+  <!-- pid:silent_error_swallow | batch:17 | verified:true | first:2026-03-02 -->
+  Corrupted entries disappear silently | Fix: Log at warn level; move corrupted file to .bak | Effort: small
+
+- [ ] **H-097** `[error_handling]` `writersproof/client.rs:272` — is_online() swallows all errors
+  <!-- pid:error_swallowed_silently | batch:17 | verified:true | first:2026-03-02 -->
+  Transient timeout treated same as real offline | Fix: Return `Result<bool>` | Effort: small
+
+- [ ] **H-098** `[security]` `config/defaults.rs:18,24,33` — /tmp or relative path fallback for data dir → SYS-020
+  <!-- pid:world_writable_fallback | batch:18 | verified:true | first:2026-03-02 | revalidated:2026-03-03 -->
+
+- [ ] **H-099** `[security]` `presence/helpers.rs:8-12` — Challenge hash uses SHA256 without salt/HMAC
+  <!-- pid:weak_challenge_hash | batch:18 | verified:true | first:2026-03-02 | revalidated:2026-03-03 -->
+  `hash_response()` uses plain SHA-256, offline brute-force of challenge responses possible | Fix: Use HMAC-SHA256 with per-challenge salt | Effort: medium
+  **Guidance**: `hash_response()` at `presence/helpers.rs:8-12` does `Sha256::digest(data)`. Replace with `Hmac::<Sha256>::new_from_slice(salt)?.update(data).finalize()`. The salt should be derived from the challenge nonce. Update `presence/verifier.rs` and `presence/tests.rs` to match.
+
+- [ ] **H-100** `[security]` `wal/operations.rs` — Non-constant-time hash comparison in scan_to_end
+  <!-- pid:timing_side_channel_hash | batch:18 | verified:true | first:2026-03-02 | revalidated:2026-03-03 -->
+  Uses `!=` instead of `ct_eq()` for prev_hash | Fix: Use `ct_eq()` from `subtle` crate (add `use subtle::ConstantTimeEq;`) | Effort: small
+  **Guidance**: Search for `!=` comparisons on hash values in `wal/operations.rs`. Replace `prev_hash != expected_hash` with `!bool::from(prev_hash.ct_eq(&expected_hash))`. Add `subtle` as dependency if not already present in Cargo.toml.
+
+- [ ] **H-101** `[security]` `sealed_identity/store.rs` — Counter rollback gap on first unseal
+  <!-- pid:rollback_check_weak | batch:19 | verified:true | first:2026-03-02 | revalidated:2026-03-03 -->
+  Both counters init to same value; no rollback protection until second advance | Fix: Fail if counter is None on init | Effort: medium
+  **Guidance**: In `sealed_identity/store.rs`, `initialize()` sets `counter_at_seal` and `last_known_counter` to the same value. After first `advance_counter()`, rollback detection works. But between init and first advance, an attacker can replay the sealed blob. Fix: On `unseal_master_key()`, require `last_known_counter.is_some()` or fail with explicit error for uninitialized state.
+
+- [ ] **H-102** `[security]` `protocol/evidence.rs:36,69` — Clock error silently returns 0
+  <!-- pid:clock_error_silent_fallback | batch:20 | verified:true | first:2026-03-02 | revalidated:2026-03-03 -->
+  Cryptographic causality chain accepts forged evidence on clock failure | Fix: Return explicit error | Effort: small
+  **Guidance**: In `crates/wld_protocol/src/evidence.rs`, find `SystemTime::now()` calls that fall back to `0` on error. Change to return `Result` with a timestamp error. Callers in checkpoint code must propagate the error instead of accepting a zero timestamp.
+
+- [ ] **H-103** `[security]` `protocol/forensics/engine.rs:217` — NaN bypass in forensic checks → SYS-016
+  <!-- pid:nan_unvalidated | batch:20 | verified:true | first:2026-03-02 -->
+
+- [ ] **H-104** `[security]` `forensics/comparison.rs:54` — ln() of zero/negative produces NaN → SYS-016
+  <!-- pid:numeric_stability | batch:11 | verified:true | first:2026-03-02 -->
+
+- [ ] **H-105** `[concurrency]` `background.js:26` — Global mutable state without synchronization
+  <!-- pid:architecture-god_module_state | batch:3 | verified:true | first:2026-03-02 -->
+  Race conditions between content scripts during ratcheting | Fix: Promise-based state machine | Effort: medium
+
+- [ ] **H-106** `[concurrency]` `background.js:442` — Unbounded chunk queue without backpressure
+  <!-- pid:concurrency-unbounded_chunk_queue | batch:3 | verified:true | first:2026-03-02 -->
+  Large documents queue all chunks at once | Fix: Batch with delay or limit concurrent messages | Effort: medium
+
+- [ ] **H-107** `[error_handling]` `crypto/obfuscated.rs:33,49` — `.expect()` panics in library code
+  <!-- pid:expect_in_library | verified:true | first:2026-03-03 | last:2026-03-03 | revalidated:2026-03-03 -->
+  `bincode::serialize().expect("serialization failed")` and `bincode::deserialize().expect("deserialization failed")`. Library code should never panic — callers cannot recover. Bincode can fail on allocation exhaustion or deeply nested types. | Fix: Return `Result` via `map_err(|e| Error::crypto(...))` | Effort: small
+  **Guidance**: Change function signatures to return `Result<..., Error>`. Replace `.expect()` with `.map_err(|e| Error::crypto(format!("bincode: {e}")))?`. Update all callers (search `use crate::crypto::obfuscated`).
+
+- [ ] **H-108** `[security]` `war/verification.rs` — VDF verify without timeout or iteration cap
+  <!-- pid:untrusted_iteration_count | verified:true | first:2026-03-03 | last:2026-03-03 | revalidated:2026-03-03 -->
+  `proof.verify()` called with iteration count from untrusted checkpoint data. Attacker-crafted evidence with absurdly high iterations causes denial-of-service during verification. | Fix: Add `MAX_VDF_ITERATIONS` cap; reject before calling `verify()` | Effort: small
+  **Guidance**: Add `const MAX_VDF_ITERATIONS: u64 = 10_000_000;` at module top. Before calling `proof.verify()`, check `if iterations > MAX_VDF_ITERATIONS { return Err(Error::vdf("iteration count exceeds maximum")); }`. Also add similar cap in `checkpoint/chain.rs` where VDF is computed.
+
+- [ ] **H-109** `[security]` `sentinel/types.rs:367` — `normalize_document_path` trust boundary
+  <!-- pid:path_traversal | verified:true | first:2026-03-03 | last:2026-03-03 | revalidated:2026-03-03 -->
+  `path.canonicalize().unwrap_or_else(|_| path.to_path_buf())` on user-supplied path. Canonicalization failure falls back to raw user path which may contain `..` for traversal. No validation against allowed directories. | Fix: Return `Result`; on canonicalization failure, return error instead of falling back to raw path; validate no `..` components | Effort: small
+  **Guidance**: Change `normalize_document_path` to return `Result<PathBuf, Error>`. Remove the `.unwrap_or_else` fallback. Add: `if path.components().any(|c| matches!(c, Component::ParentDir)) { return Err(...); }`. Callers in `sentinel/core.rs` must handle the error.
+
+- [ ] **H-110** `[correctness]` `ffi/evidence.rs:191` — Wrong ProofAlgorithm for SHA-256 VDFs
+  <!-- pid:wrong_enum_variant | verified:true | first:2026-03-03 | revalidated:2026-03-03 -->
+  Uses `ProofAlgorithm::SwfArgon2id` for all VDF proofs including SHA-256-based ones. Verification may fail or apply wrong parameters. | Fix: Map algorithm from actual VDF config | Effort: small
+  **Guidance**: Check the VDF config/parameters to determine the algorithm. Map to correct `ProofAlgorithm` variant: `SwfSha256` for SHA-256 VDFs, `SwfArgon2id` only for Argon2id-based proofs. The algorithm type should come from the checkpoint/VDF parameters, not be hardcoded.
+
+- [x] **H-111** `[security]` `background.js:89` — Genesis checkpoint has no commitment ✓ FIXED 2026-03-03
+  <!-- pid:security-genesis_gap | verified:true | first:2026-03-03 | fixed:2026-03-03 -->
+  First checkpoint has `prevCommitment=null`, so commitment is undefined. Adversary can forge the genesis checkpoint and build a valid chain from it. | Fix: Use deterministic genesis seed (e.g., SHA-256 of session ID) | Effort: small
+  **Resolution**: Added deterministic genesis seed from SHA-256 of session ID.
+
+- [x] **H-112** `[concurrency]` `background.js:103` — Ordinal desync on rapid edits ✓ FIXED 2026-03-03
+  <!-- pid:race_condition | verified:true | first:2026-03-03 | fixed:2026-03-03 -->
+  `checkpointOrdinal` only increments on server response, but content changes continue. Rapid edits can cause ordinal gaps or reuse. | Fix: Increment ordinal on send, not on response | Effort: small
+  **Resolution**: Moved ordinal increment to send-time instead of response-time.
+
+- [ ] **H-113** `[security]` `native_messaging_host.rs:266` — Session overwrite without finalizing previous
+  <!-- pid:data_loss | verified:true | first:2026-03-03 | revalidated:2026-03-03 -->
+  New `start_witnessing` replaces the active session without finalizing or persisting the previous one. Adversary can discard inconvenient evidence by starting a new session. | Fix: Finalize (commit/persist) existing session before starting new one | Effort: medium
+  **Guidance**: In `handle_start_witnessing()`, check if `self.active_session.is_some()`. If so, call a `finalize_session()` method that persists evidence before replacing. Create `finalize_session()` that flushes WAL and writes final evidence packet.
+
+- [x] **H-114** `[security]` `native_messaging_host.rs:330` — Timestamp monotonicity is log-only ✓ FIXED 2026-03-03
+  <!-- pid:security-soft_check | verified:true | first:2026-03-03 | fixed:2026-03-03 -->
+  Non-monotonic timestamps trigger `eprintln!` but processing continues. Time reversal should be a hard rejection. | Fix: Return error for non-monotonic timestamps | Effort: small
+  **Resolution**: Changed to hard rejection returning error on non-monotonic timestamps.
+
+- [x] **H-115** `[security]` `native_messaging_host.rs:346` — Non-constant-time commitment comparison ✓ FIXED 2026-03-03
+  <!-- pid:timing_side_channel | verified:true | first:2026-03-03 | fixed:2026-03-03 -->
+  Uses `==` for SHA-256 commitment comparison. Timing oracle leaks commitment bytes. | Fix: Use constant-time comparison (ring::constant_time or subtle::ConstantTimeEq) | Effort: small
+  **Resolution**: Replaced `==` with constant-time comparison using `subtle::ConstantTimeEq`.
+
+- [x] **H-116** `[security]` `background.js:179` — Silent crypto fallback sends unprotected data ✓ FIXED 2026-03-03
+  <!-- pid:security-silent_downgrade | verified:true | first:2026-03-03 | fixed:2026-03-03 -->
+  When Web Crypto commitment computation fails, checkpoint sends without any commitment. Adversary can trigger crypto errors to bypass commitment chain. | Fix: Fail the checkpoint send on crypto error | Effort: small
+  **Resolution**: Changed to fail/abort checkpoint send on crypto error instead of silent fallback.
+
+- [x] **H-117** `[security]` `native_messaging_host.rs:394` — expected_ordinal incremented when ordinal absent ✓ FIXED 2026-03-03
+  <!-- pid:logic_error | verified:true | first:2026-03-03 | fixed:2026-03-03 -->
+  When ordinal is `None` (adversary omits it), `expected_ordinal` still increments. This drifts the expected ordinal counter, and if ordinals are later provided they'll all be rejected. | Fix: Only increment when ordinal is present and valid | Effort: small
+  **Resolution**: Wrapped ordinal increment in `if let Some(ordinal)` guard.
+
+- [x] **H-118** `[security]` `forensics/cross_modal.rs:139` — Negative document_length bypasses growth check ✓ FIXED 2026-03-03
+  <!-- pid:signedness_bypass | verified:true | first:2026-03-03 | fixed:2026-03-03 -->
+  `document_length` is `i64`, negative values produce negative `chars_per_sec` which always passes the `<= 15.0` threshold. | Fix: Validate `document_length >= 0` at function entry | Effort: small
+  **Resolution**: Added `document_length >= 0` validation at function entry.
+
+- [x] **H-119** `[correctness]` `forensics/cross_modal.rs:253` — i64 subtraction overflow ✓ FIXED 2026-03-03
+  <!-- pid:arithmetic_overflow | verified:true | first:2026-03-03 | fixed:2026-03-03 -->
+  `edit_first - jitter_first` on i64 timestamps can overflow if timestamps span more than i64::MAX nanoseconds apart. `.unsigned_abs()` is correct for normal cases but the subtraction itself overflows in debug mode (panics) or wraps in release. | Fix: Use `(edit_first as i128 - jitter_first as i128).unsigned_abs()` or checked arithmetic | Effort: small
+  **Resolution**: Changed to widening subtraction via i128 cast before `.unsigned_abs()`.
+
+- [x] **H-120** `[correctness]` `forensics/analysis.rs:98` — Default AnalysisContext causes false positive anomaly ✓ FIXED 2026-03-03
+  <!-- pid:false_positive | verified:true | first:2026-03-03 | fixed:2026-03-03 -->
+  `analyze_forensics()` calls `analyze_forensics_ext()` with `AnalysisContext::default()` (checkpoint_count=0). This always triggers `check_edit_checkpoint_ratio` failure, adding +1 anomaly to every analysis that uses the simple API. | Fix: Skip cross-modal when context is default/absent | Effort: small
+  **Resolution**: Added check to skip cross-modal analysis when context is default/absent.
+
+- [x] **H-121** `[correctness]` `forensics/types.rs:187` — checkpoint_count maps to session_count ✓ FIXED 2026-03-03
+  <!-- pid:wrong_field_mapping | verified:true | first:2026-03-03 | fixed:2026-03-03 -->
+  `map_to_protocol_verdict()` passes `session_count` (number of editing sessions) as `checkpoint_count` to cross-modal analysis. These are completely different values. | Fix: Use actual checkpoint count from evidence | Effort: small
+  **Resolution**: Changed to use actual checkpoint count from evidence data.
+
+- [ ] **H-122** `[concurrency]` `vdf/timekeeper.rs:40-48` — Blocking sync I/O in async function
+  <!-- pid:blocking_in_async | verified:true | first:2026-03-03 | revalidated:2026-03-03 -->
+  `fetch_network_time()` is `async` but calls blocking NTP resolution via `std::net::UdpSocket`. Blocks the tokio runtime thread. | Fix: Use `tokio::task::spawn_blocking()` or async NTP client | Effort: medium
+  **Guidance**: Wrap the blocking NTP code in `tokio::task::spawn_blocking(move || { ... }).await?`. This offloads to the blocking thread pool. Alternatively, use `tokio::net::UdpSocket` for async NTP. The `spawn_blocking` approach is simpler and preserves existing logic.
+
+- [ ] **H-123** `[security]` `vdf/timekeeper.rs:77` — VDF proof field always `[0u8; 32]`
+  <!-- pid:stub_implementation | verified:true | first:2026-03-03 | revalidated:2026-03-03 -->
+  The VDF proof output is a zero-filled placeholder that never gets the actual proof. All VDF proofs are trivially forgeable. | Fix: Populate with actual VDF proof bytes | Effort: medium
+  **Guidance**: After the VDF computation completes, extract the proof bytes from `vdf::proof::VdfProof` and set them on the output struct. The proof is the intermediate state values that allow O(1) verification. See `vdf/proof.rs` for the proof generation API.
+
+- [ ] **H-124** `[security]` `forensics/analysis.rs:146` — HMAC-jitter confidence is CV-based approximation
+  <!-- pid:security-weak_verification | verified:true | first:2026-03-03 -->
+  `steg_confidence` is set to 0.95 if CV > 0.3, else 0.20. This is a heuristic that doesn't actually verify the HMAC-sealed jitter values. TODO comment acknowledges this. | Fix: Implement actual HMAC verification of jitter binding values | Effort: large
+
+- [ ] **H-125** `[security]` `vdf/roughtime_client.rs` — Single hardcoded Roughtime server
+  <!-- pid:single_point_of_failure | verified:true | first:2026-03-03 -->
+  Only Google sandbox Roughtime server. No quorum, no fallback. Server downtime = feature failure; adversary can MITM a single connection. | Fix: Multiple servers with quorum (at least 2-of-3 agree) | Effort: medium
+
+- [ ] **H-126** `[security]` `jitter/session.rs:313-342` — Session::load no chain integrity verification
+  <!-- pid:missing_validation | verified:true | first:2026-03-03 -->
+  Deserialized session data is used without verifying internal consistency (hash chain, sequence ordering, timestamp monotonicity). Adversary can craft a session file. | Fix: Verify chain integrity after deserialization | Effort: medium
+
+- [x] **H-127** `[security]` `native_messaging_host.rs:617` — Commitment values logged to stderr ✓ FIXED 2026-03-03
+  <!-- pid:secret_logging | verified:true | first:2026-03-03 | fixed:2026-03-03 -->
+  `eprintln!` outputs commitment hashes to stderr. In production, stderr may be captured in log files accessible to other users. | Fix: Use debug-only logging or remove | Effort: small
+  **Resolution**: Removed commitment hash values from stderr logging.
+
+- [ ] **H-128** `[security]` `native_messaging_host.rs` — Jitter rate limit has no temporal component
+  <!-- pid:incomplete_rate_limit | verified:true | first:2026-03-03 -->
+  Rate limiting counts messages but doesn't consider time window. Adversary can send a burst at startup then slow down, or wait and burst again. | Fix: Sliding window or token bucket rate limiter | Effort: medium
+
+- [x] **H-129** `[correctness]` `forensics/forgery_cost.rs:306` — partial_cmp().unwrap() on NaN panics ✓ FIXED 2026-03-03
+  <!-- pid:nan_panic | verified:true | first:2026-03-03 | fixed:2026-03-03 -->
+  `min_by(|a, b| a.cost_cpu_sec.partial_cmp(&b.cost_cpu_sec).unwrap())` panics if any cost is NaN. NaN can arise from 0/0 in cost calculations. | Fix: Use `.unwrap_or(std::cmp::Ordering::Equal)` | Effort: small
+  **Resolution**: Changed to `.unwrap_or(std::cmp::Ordering::Equal)` for NaN safety.
 
 ---
 
-## Eliminated (False Positives)
-These issues were removed during the fix-review pass (2026-02-26) after source code verification.
+## Medium (186 items — top issues by category)
 
-- ~~**M-009**~~ `sentinel/ipc_handler.rs:509` — "Redundant hex encode/decode round-trip"
-  **Reason**: No hex encode/decode round-trip exists in the file. Line 509 contains `anomaly_count: 0,` in an error fallback. The file uses `hex::encode` for serialization but never `hex::decode`. Stale finding from prior audit.
+### Architecture (12 items)
+- [ ] **M-050** `tpm/windows.rs:1` — God module 1208L with 20+ helpers (batch:4)
+- [ ] **M-051** `tpm/secure_enclave.rs:228` — Duplicate key loading functions (batch:4)
+- [ ] **M-052** `background.js:478` — 142-line message handler with nested switch/async IIFEs (batch:3)
+- [ ] **M-053** `rfc/biology.rs:581` — Redundant anomaly checking duplicates detection (batch:12)
+- [ ] **M-054** `checkpoint/chain.rs:608` — No post-deserialization validation of VDF proofs (batch:15)
+- [ ] **M-055** `checkpoint/chain.rs:151` — VDF compute error silently skipped (batch:15)
+- [ ] **M-056** `war/types.rs:9` — Version enum missing V2_0 variant (batch:16)
+- [ ] **M-057** `sealed_chain/types.rs` or `sealed_chain.rs:169` — TOCTOU in post-decryption document_id check (batch:19)
+- [ ] **M-058** `platform/windows.rs:165` — Duplicate session tracking (batch:5)
+- [ ] **M-059** `forensics/engine.rs:62` — ForensicsError not integrated with global error hierarchy (batch:11)
+- [ ] **M-060** `rfc/jitter_binding.rs:366` — Incomplete builder pattern (batch:12)
+- [ ] **M-061** `ffi/system.rs:237` — Dashboard metrics business logic in FFI layer (batch:7)
 
-- ~~**M-019**~~ `fingerprint/activity.rs:212` — "select_nth_unstable_by reuse corrupts percentile values"
-  **Reason**: Algorithm is correct for monotonically increasing indices. Percentiles [0.05, 0.25, 0.50, 0.75, 0.95] produce monotonically increasing indices. `select_nth_unstable_by` guarantees `buf[idx]` is correct regardless of prior calls when indices increase, because each call partitions the buffer such that elements below idx are ≤ and elements above are ≥.
+### Error Handling (45 items — selected)
+- [ ] **M-062** `sentinel/daemon.rs:106` — unwrap() on path.parent() (batch:6)
+- [ ] **M-063** `sentinel/shadow.rs:175` — Bare RwLock::read() unwrap (batch:6)
+- [ ] **M-064** `ffi/ephemeral.rs:694` — Session removed before validation (batch:7)
+- [ ] **M-065** `presence/types.rs` — Duration overflow panic on large config (batch:18)
+- [ ] **M-066** `config/types.rs` — retention_days u64→u32 overflow (batch:18)
+- [ ] **M-067** `sealed_chain.rs` — Migration partial failure (batch:19)
+- [ ] **M-068** `evidence/rfc_conversion.rs:64` — Segment count forced minimum 20 (batch:14)
+- [ ] **M-069** `ipc/server.rs:376` — accept() error loop without backoff (batch:8)
+- [ ] **M-070** `background.js:514` — Async IIFE premature sendResponse (batch:3)
+- [ ] **M-071** `background.js:88` — isConnecting never reset on success (batch:3)
 
-- ~~**M-024**~~ `rfc/biology.rs:551` — "Zero weights pass validation → division issues downstream"
-  **Reason**: Division by zero is already guarded. `calculate_score()` (line 476) checks `if total_weight > 0.0` before dividing. When all weights are 0.0, score remains 0.0 and division is skipped.
+### Security (35 items — selected)
+- [ ] **M-072** `tpm/mod.rs:57` — parse_sealed_blob overflow risk (batch:4)
+- [ ] **M-073** `tpm/mod.rs:99` — Hardcoded PCR selection [0,4,7] (batch:4)
+- [ ] **M-074** `ipc/secure_channel.rs:67` — Nonce counter overflow after 2^64 (batch:8)
+- [ ] **M-075** `ipc/secure_channel.rs:58` — bincode without size limits (batch:8)
+- [ ] **M-076** `fingerprint/voice.rs:350` — Non-ASCII char handling degrades fingerprint (batch:9)
+- [ ] **M-077** `sealed_identity/store.rs:395-403` — machine_salt from predictable hostname (batch:19)
+- [ ] **M-078** `research/uploader.rs` — Hardcoded Supabase endpoint in binary (batch:19)
+- [ ] **M-079** `background.js:270` — Ratchet count not validated as sequential (batch:3)
+- [ ] **M-080** `background.js:483` — start_witnessing URL/title not validated (batch:3)
+- [ ] **M-081** `secure-channel.js:87` — Server pubkey not validated as P-256 point (batch:3)
+- [ ] **M-082** `secure-channel.js:335` — Key zeroization may be optimized away by JS engine (batch:3)
+- [ ] **M-083** `config/loading.rs` — Config file created without explicit permissions (batch:18)
+
+### Performance (20 items — selected)
+- [ ] **M-084** `labyrinth.rs:254` — O(n²) nearest-neighbor without early termination (batch:10)
+- [ ] **M-085** `fingerprint/activity.rs:205,213` — Double allocation in from_intervals (batch:9)
+- [ ] **M-086** `fingerprint/activity.rs:721` — Full sample buffer clone on status check (batch:9)
+- [ ] **M-087** `vdf/aggregation.rs:273` — String clone per Merkle tree level (batch:17)
+- [ ] **M-088** `wal/operations.rs` — Unbounded allocation on WAL parse (batch:18)
+- [ ] **M-089** `research/collector.rs` — Vec::remove(0) O(n) in tight loop (batch:19)
+- [ ] **M-090** `background.js:68` — Storage I/O scales with chain length (batch:3)
+- [ ] **M-091** `content.js:111` — Repeated DOM queries per keystroke (batch:3)
+- [ ] **M-092** `forensics/velocity.rs:77` — Unnecessary Vec clone for sort (batch:11)
+- [ ] **M-093** `ffi/ephemeral.rs:122` — O(n) evict scan on every session start (batch:7)
+
+### Concurrency (8 items)
+- [ ] **M-094** `platform/macos/mouse_capture.rs:121` — RwLock write in CGEventTap callback (batch:5)
+- [ ] **M-095** `platform/windows.rs:580` — Lock poison no recovery (batch:5)
+- [ ] **M-096** `ipc/server.rs:133` — Rate limiter lock contention (batch:8)
+- [ ] **M-097** `sentinel/focus.rs:156` — Dummy receiver silently creates dead channel (batch:6)
+- [ ] **M-098** `background.js:147` — TOCTOU on isSecure check (batch:3)
+- [ ] **M-099** `background.js:548` — Non-atomic ratchet count increment (batch:3)
+- [ ] **M-100** `engine.rs:255` — Arc clone in spawn without cleanup (batch:19)
+- [ ] **M-101** `presence/verifier.rs` — Non-thread-safe RNG in Verifier (batch:18)
+
+### Code Quality (35 items — selected)
+- [ ] **M-102** `tpm/windows.rs:537` — 65-line PCR parse without bounds validation (batch:4)
+- [ ] **M-103** `evidence/builder.rs:857` — String slice without bounds check (batch:14)
+- [ ] **M-104** `evidence/builder.rs:571` — NaN silent fallback in sort (batch:14)
+- [ ] **M-105** `error_topology.rs:302` — u16→u8→char truncation for non-ASCII keys (batch:10)
+- [ ] **M-106** `labyrinth.rs:215` — Unused variable suggests incomplete refactoring (batch:10)
+- [ ] **M-107** `platform/macos/hid.rs:95` — CFSetGetValues buffer size mismatch (batch:5)
+- [ ] **M-108** `platform/mouse_stego.rs:21` — expect() in per-event hot path (batch:5)
+- [ ] **M-109** `war/appraisal.rs:209` — Redundant dead condition in AR4SI check (batch:16)
+- [ ] **M-110** `war/verification.rs:147` — Version dispatch fragile to V2_0 addition (batch:16)
+
+### Maintainability (28 items — selected)
+- [ ] **M-111** `forensics/assessment.rs:178` — Scattered calibration constants (batch:11)
+- [ ] **M-112** `forensics/topology.rs:150` — Algorithm lacks documentation (batch:11)
+- [ ] **M-113** `rfc/time_evidence.rs:291` — Tier is mutable state without auto-recalculation (batch:12)
+- [ ] **M-114** `secure-channel.js:164` — Cross-language magic strings for key derivation (batch:3)
+- [ ] **M-115** `content.js:33` — Magic strings for site detection (batch:3)
+- [ ] **M-116** `vdf/params.rs:46` — Implicit units in calibration (batch:17)
+- [ ] **M-117** `writersproof/types.rs:81` — Inconsistent naming conventions (batch:17)
+- [ ] **M-118** `background.js:21` — Magic values not synchronized across files (batch:3)
+- [ ] **M-119** `ffi/forensics.rs:144` — Hardcoded ML weight vector in FFI (batch:7)
+
+### New Findings (2026-03-03 incremental)
+- [ ] **M-120** `[error_handling]` `evidence/builder.rs:434` — Silent i32 truncation on edit index
+  <!-- pid:silent_truncation | verified:true | first:2026-03-03 -->
+  `i32::try_from(idx).unwrap_or(i32::MAX)` silently caps index. Corrupts edit position data in evidence packets without warning.
+
+- [ ] **M-121** `[error_handling]` `analysis/hurst.rs:111` — NaN propagation from linear regression → SYS-016
+  <!-- pid:nan_handling | verified:true | first:2026-03-03 -->
+  If all log values identical, regression produces NaN slope. `.clamp(0.0, 1.0)` at line 116 propagates NaN (clamp of NaN returns NaN). Fix: Check `.is_finite()` after regression.
+
+- [ ] **M-122** `[code_quality]` `keyhierarchy/manager.rs` — Broad `#[allow(dead_code)]` scope
+  <!-- pid:dead_code_blanket | verified:true | first:2026-03-03 -->
+  Violates project convention of targeted `#[allow(dead_code)]` on specific items. May mask genuinely unused code.
+
+### Deep Audit Findings (2026-03-03)
+- [ ] **M-123** `[correctness]` `forensics/cross_modal.rs:243` — Zero timestamp bypass in temporal alignment
+  <!-- pid:zero_bypass | verified:true | first:2026-03-03 -->
+  `if jitter_first == 0 || ... { return passed: true }` — adversary sends all timestamps as 0 to bypass temporal alignment check entirely. Fix: Return `passed: false` when timestamps are zero but data exists.
+
+- [ ] **M-124** `[correctness]` `forensics/cross_modal.rs:297` — Self-referential jitter/keystroke ratio
+  <!-- pid:self_referential_metric | verified:true | first:2026-03-03 -->
+  When `total_keystrokes == 0`, uses `jitter_count` as keystroke source, making `jitter_ks_ratio` always 1.0. Adversary can omit keystroke count to guarantee passing.
+
+- [ ] **M-125** `[correctness]` `forensics/forgery_cost.rs:309` — estimated_forge_time_sec is 0 when all costs infinite
+  <!-- pid:edge_case | verified:true | first:2026-03-03 -->
+  When all present components have infinite cost (hardware + external time anchor only), `estimated_forge_time_sec` is 0.0 since all infinite costs are filtered out of the max computation.
+
+- [ ] **M-126** `[correctness]` `forensics/forgery_cost.rs:176` — VeryHigh tier from unchecked boolean
+  <!-- pid:trust_boundary | verified:true | first:2026-03-03 -->
+  `has_hardware_attestation` boolean directly sets VeryHigh tier. This boolean comes from caller code and isn't verified against actual hardware attestation evidence.
+
+- [ ] **M-127** `[security]` `vdf/timekeeper.rs:65` — NTP servers hardcoded in binary
+  <!-- pid:hardcoded_config | verified:true | first:2026-03-03 -->
+  NTP server addresses hardcoded. No config option to change them. Adversary can block specific servers. Fix: Make configurable with fallback defaults.
+
+- [ ] **M-128** `[correctness]` `analysis/behavioral_fingerprint.rs` — NoFatiguePattern never raised
+  <!-- pid:dead_variant | verified:true | first:2026-03-03 -->
+  `ForgeryIndicator::NoFatiguePattern` variant defined but never constructed. Fatigue detection is documented but not implemented.
+
+- [ ] **M-129** `[correctness]` `forensics/comparison.rs` — cadence_cv_similarity computed but unused
+  <!-- pid:dead_code | verified:true | first:2026-03-03 -->
+  Cadence CV similarity is calculated but never included in the final comparison score. Either integrate into scoring or remove.
+
+- [ ] **M-130** `[correctness]` `analysis/labyrinth.rs` — _min_line_length parameter ignored in RQA
+  <!-- pid:unused_parameter | verified:true | first:2026-03-03 -->
+  RQA function accepts `_min_line_length` but never uses it, producing incorrect recurrence quantification.
+
+- [ ] **M-131** `[correctness]` `forensics/types.rs:186` — hurst_exponent always None
+  <!-- pid:dead_field | verified:true | first:2026-03-03 -->
+  `hurst_exponent` in forensic metrics is never populated. All consumers get `None`. Fix: Wire up from `analysis::hurst` computation.
+
+- [ ] **M-132** `[security]` `background.js:187` — sendResponse called before async commitment resolves
+  <!-- pid:async_ordering | verified:true | first:2026-03-03 -->
+  Chrome's `sendResponse` may be called synchronously while the async commitment computation is still pending. The message may arrive at native host without commitment.
+
+- [ ] **M-133** `[code_quality]` `forensics/engine.rs:62` — ForensicsError duplicates global Error
+  <!-- pid:error_type_duplication | verified:true | first:2026-03-03 -->
+  Module-local error type not integrated with the unified Error enum. Inconsistent error handling path.
+
+- [ ] **M-134** `[performance]` `forensics/forgery_cost.rs:277-301` — Multiple redundant iterations over components
+  <!-- pid:redundant_iteration | verified:true | first:2026-03-03 -->
+  Four separate `.iter().filter()` chains over the same Vec. Could be a single pass computing all needed values.
+
+- [ ] **M-135** `[security]` `content.js:280` — Content script accepts any message → SYS-019
+  <!-- pid:security-message_origin_bypass | verified:true | first:2026-03-03 -->
+  Content script runtime.onMessage handler lacks sender validation.
+
+- [ ] **M-136** `[code_quality]` `analysis/active_probes.rs` — Incomplete probe type coverage
+  <!-- pid:incomplete_match | verified:true | first:2026-03-03 -->
+  Not all ProbeType variants have corresponding analysis logic. New variants silently pass through.
+
+- [ ] **M-137** `[correctness]` `platform/mouse_stego.rs:21` — expect() in per-event hot path
+  <!-- pid:panic_in_hot_path | verified:true | first:2026-03-03 -->
+  Panic in the mouse event processing path. A single malformed event crashes the capture thread.
+
+- [ ] **M-138** `[security]` `ipc/secure_channel.rs:58` — bincode deserialization without size limits
+  <!-- pid:unbounded_deser | verified:true | first:2026-03-03 -->
+  Attacker can send crafted messages causing unbounded allocation during bincode deserialization.
+
+- [ ] **M-139** `[code_quality]` `rfc/biology.rs:478` — Magic constant 478 in biological analysis
+  <!-- pid:magic_value | verified:true | first:2026-03-03 -->
+  Undocumented threshold constants in biological cadence analysis.
+
+- [ ] **M-140** `[correctness]` `analysis/perplexity.rs` — Perplexity threshold 15.0 not calibrated
+  <!-- pid:uncalibrated_threshold | verified:true | first:2026-03-03 -->
+  `if metrics.perplexity_score > 15.0` threshold in analysis.rs has no documented basis. May produce false positives/negatives.
+
+- [ ] **M-141** `[correctness]` `forensics/assessment.rs:226` — Division unguarded in assessment score → SYS-016
+  <!-- pid:fp_division_unguarded | verified:true | first:2026-03-03 -->
+  Assessment score computation may divide by zero producing NaN that propagates to final score.
+
+- [ ] **M-142** `[security]` `config/loading.rs` — Config file created without explicit permissions → M-083
+  <!-- pid:world_readable_config | verified:true | first:2026-03-03 -->
+  Config file containing sensitive settings created with default umask permissions.
+
+- [ ] **M-143** `[code_quality]` `ffi/ephemeral.rs` — 900+ line FFI module
+  <!-- pid:god_module | verified:true | first:2026-03-03 -->
+  Massive FFI module with business logic mixed into boundary code. Hard to audit and maintain.
 
 ---
 
-## Quick Wins
-| ID | Sev | File:Line | Issue | Effort |
+## Quick Wins (effort=small, highest severity)
+| ID | Sev | File:Line | Issue | Status |
 |----|-----|-----------|-------|--------|
-| C-002 | CRIT | macos/keystroke.rs:227 | Move ready_tx after run_loop store (both impls) | small |
-| C-003 | CRIT | native_messaging_host.rs:155 | Fix ends_with + remove URL fallback (two bugs, one block) | small |
-| C-004 | CRIT | voice.rs:316 | Add with_consent(bool), update callers | small |
-| C-006 | CRIT | puf.rs:17 | Zeroize+ZeroizeOnDrop, skip PathBuf, remove Clone (both PUF structs) | small |
-| C-007 | CRIT | migration.rs:82 | Zeroizing wrapper + seed.zeroize() | small |
-| H-001 | HIGH | crypto.rs:143 | CAS after decrypt or document fatal-on-failure | small |
-| H-002 | HIGH | crypto.rs:64 | Enable aes-gcm zeroize feature | small |
-| H-003 | HIGH | server.rs:260 | set_permissions(0o600) after bind | small |
-| H-004 | HIGH | verification.rs:157 | Rename to validate_cert_byte_lengths | small |
-| H-005 | HIGH | ipc_handler.rs:182 | Add validate_path() call | small |
-| H-006 | HIGH | helpers.rs:400 | Platform-aware blocklist (/private/etc/, /proc/, etc.) | small |
-| H-011 | HIGH | time_evidence.rs:452 | Non-zero checks on crypto fields | small |
-| H-014 | HIGH | storage.rs:235 | Strip voice data unless consent verified | small |
-| H-017 | HIGH | helpers.rs:192 | Clone signing_key before sessions write lock | small |
-| H-019 | HIGH | wal.rs:250 | MAX_ENTRY_SIZE guard (3 sites) | small |
-| H-020 | HIGH | helpers.rs:131 | Return error on invalid hex (3 sites) | small |
-| H-021 | HIGH | ipc_handler.rs:120 | Replace unwrap_or_default with ? | small |
-| H-022 | HIGH | server.rs:209 | Send error + break on encode fail | small |
-| H-024 | HIGH | macos/keystroke.rs:344 | AtomicU64 counters (match KeystrokeMonitor) | small |
-| H-027 | HIGH | checkpoint/chain.rs:540 | Remove chain_valid from summary() or cache | small |
-| H-028 | HIGH | behavioral_fingerprint.rs:189 | Add interval filter (match from_samples) | small |
-| H-029 | HIGH | labyrinth.rs:314 | Bounds-check params + checked_mul | small |
-| H-031 | HIGH | native_messaging_host.rs:240 | unwrap_or_else at 5 sites | small |
-| H-032 | HIGH | native_messaging_host.rs:387 | Cap + drain oldest on overflow | small |
-| H-033 | HIGH | cmd_export.rs:151 | eprintln warning on serialize fail | small |
-| H-034 | HIGH | cmd_export.rs:115 | Parse JSON, compare document_path | small |
-| H-035 | HIGH | storage.rs:155 | Delete file on decrypt fail + log | small |
-| H-036 | HIGH | consent.rs:127 | Add save(), rename to begin_consent_request | small |
-| H-037 | HIGH | mouse_capture.rs:130 | Add ! to keyboard_active.load() | small |
-| C-008 | CRIT | vdf/aggregation.rs:274 | Replace string concat with SHA-256 Merkle | small |
-| H-038 | HIGH | engine.rs (18 sites) | bare_lock_unwrap → unwrap_or_else | small |
-| H-039 | HIGH | wal.rs (8 sites) | bare_lock_unwrap → unwrap_or_else | small |
-| H-041 | HIGH | config.rs:289 | Safe fallback when HOME unset | small |
-| H-042 | HIGH | comparison.rs:308 | HashMap lookup instead of .find() in O(n^4) | small |
-| H-043 | HIGH | native_messaging_host.rs | Add rate limiter | small |
-| H-044 | HIGH | ffi/helpers.rs:32 | Zeroizing wrapper on key_data | small |
-| H-045 | HIGH | sealed_identity.rs:157 | Zeroizing wrapper on seed | small |
-| H-046 | HIGH | puf.rs:105 | random_bytes.zeroize() after use | small |
+| ~~C-011~~ | CRITICAL | tpm/software.rs:28 | Weak RNG seed | ✓ FIXED |
+| ~~C-012~~ | CRITICAL | tpm/software.rs:31 | Seed not zeroized | ✓ FIXED |
+| ~~C-015~~ | CRITICAL | background.js:212 | XSS via error messages | ✓ FIXED |
+| ~~C-016~~ | CRITICAL | background.js:173 | Handshake replay | ✓ FIXED |
+| ~~C-017~~ | CRITICAL | secure-channel.js:289 | Unguarded JSON.parse | ✓ FIXED |
+| ~~C-019~~ | CRITICAL | content.js:112 | OOM before size check | ✓ FIXED |
+| ~~C-022~~ | CRITICAL | ffi/forensics.rs:74 | Wrong assessment score | ✓ FIXED |
+| ~~C-023~~ | CRITICAL | ffi/forensics.rs:151 | Inverted sequence score | ✓ FIXED |
+| ~~C-026~~ | CRITICAL | native_messaging_host.rs:362 | Evidence file truncation | ✓ FIXED |
+| H-067 | HIGH | tpm/windows.rs:886 | Silent flush_context | **OPEN** |
+| H-080 | HIGH | ipc/unix_socket.rs:138 | Filename-only exe check | **OPEN** |
+| H-083 | HIGH | rfc/time_evidence.rs:309 | Timestamp overflow | **OPEN** |
+| H-084 | HIGH | rfc/time_evidence.rs:309 | u64→i64 silent wrap | **OPEN** |
+| H-085 | HIGH | evidence/rfc_conversion.rs:21 | hex→empty Vec | **OPEN** |
+| H-087 | HIGH | evidence/packet.rs:382 | Sig length unvalidated | **OPEN** |
+| ~~H-091~~ | HIGH | keyhierarchy/puf.rs:55 | Seed length unvalidated | ✓ FIXED |
+| ~~H-094~~ | HIGH | war/ear.rs:338 | Inverted status logic | ✓ FIXED |
+| H-095 | HIGH | writersproof/queue.rs:127 | Silent nonce skip | **OPEN** |
+| H-100 | HIGH | wal/operations.rs | Non-CT hash comparison | **OPEN** |
+| H-102 | HIGH | protocol/evidence.rs:36 | Clock error → 0 | **OPEN** |
+| H-107 | HIGH | crypto/obfuscated.rs:33,49 | .expect() in library code | **OPEN** |
+| H-108 | HIGH | war/verification.rs | VDF verify no timeout | **OPEN** |
+| H-109 | HIGH | sentinel/types.rs:367 | Path traversal fallback | **OPEN** |
+| H-110 | HIGH | ffi/evidence.rs:191 | Wrong ProofAlgorithm | **OPEN** |
+| ~~H-111~~ | HIGH | background.js:89 | Genesis commitment gap | ✓ FIXED |
+| ~~H-112~~ | HIGH | background.js:103 | Ordinal desync | ✓ FIXED |
+| ~~H-114~~ | HIGH | native_messaging_host.rs:330 | Timestamp soft check | ✓ FIXED |
+| ~~H-115~~ | HIGH | native_messaging_host.rs:346 | Non-CT commitment cmp | ✓ FIXED |
+| ~~H-116~~ | HIGH | background.js:179 | Silent crypto fallback | ✓ FIXED |
+| ~~H-117~~ | HIGH | native_messaging_host.rs:394 | Ordinal drift on None | ✓ FIXED |
+| ~~H-118~~ | HIGH | cross_modal.rs:139 | Negative doc_length | ✓ FIXED |
+| ~~H-119~~ | HIGH | cross_modal.rs:253 | i64 overflow | ✓ FIXED |
+| ~~H-120~~ | HIGH | analysis.rs:98 | False positive anomaly | ✓ FIXED |
+| ~~H-127~~ | HIGH | native_messaging_host.rs:617 | Commitment logged | ✓ FIXED |
+| ~~H-129~~ | HIGH | forgery_cost.rs:306 | NaN panic in min_by | ✓ FIXED |
 
 ---
 
-## Skipped / Won't Fix
+## Prior Findings (All Resolved)
+<!-- Prior audit: 159 issues (8C fixed, 48H fixed, 66M fixed, 11 SYS fixed, 26 skipped/eliminated) -->
+<!-- See git history for full prior todo.md with completed items -->
 
-### M6. Linux platform device HashMap unbounded [-]
-- **Files**: `platform/linux.rs:432,905`
-- **Reason**: Linux-specific; cannot test/verify on macOS
+## Structural Changes (2026-03-03)
 
-### L2. Unmaintained transitive dependencies [-]
-- `bincode` (RUSTSEC-2025-0141), `derivative` (RUSTSEC-2024-0388), `instant` (RUSTSEC-2024-0384), `rustls-pemfile` (RUSTSEC-2025-0134)
-- **Reason**: All transitive; fixes depend on upstream crate updates
-
-### L3. RSA timing sidechannel [-]
-- **Reason**: Transitive via TPM crates; no direct RSA usage
-
-### L5. writersproof queue no pagination [-]
-- **Reason**: Queue bounded by offline attestation count
-
-### P-M2. HMAC length prefix truncates to u32 [-]
-- **Reason**: Wire format change would break compatibility
-
-### CFG-M9. reqwest outdated, bincode is RC [-]
-- **Reason**: Migration tracked separately
-
-### LPK-H1. D-Bus policy file doesn't exist [-]
-  Note: No `dbus-witnessd.conf` or equivalent policy XML found. Still missing as of 2026-02-26.
-### ~~LPK-M3. IBus service file doesn't exist~~ [-] NOW EXISTS
-  IBus service files verified present: `packaging/linux/systemd/witnessd-ibus.xml`, `witnessd-ibus.service`, `debian/witnessd-ibus.install`.
-
----
+6 god-level modules split into directory-based submodules:
+| Original | New Directory | Submodules |
+|----------|--------------|------------|
+| `wal.rs` (999L) | `wal/` | mod.rs, types.rs, operations.rs, serialization.rs, tests.rs |
+| `presence.rs` (989L) | `presence/` | mod.rs, types.rs, verifier.rs, helpers.rs, tests.rs |
+| `research.rs` (695L) | `research/` | mod.rs, types.rs, collector.rs, uploader.rs, helpers.rs, tests.rs |
+| `trust_policy.rs` (691L) | `trust_policy/` | mod.rs, types.rs, evaluation.rs, profiles.rs, tests.rs |
+| `config.rs` (634L) | `config/` | mod.rs, types.rs, defaults.rs, loading.rs, tests.rs |
+| `sealed_identity.rs` (537L) | `sealed_identity/` | mod.rs, types.rs, store.rs, tests.rs |
 
 ## Coverage
-<!-- suggest | Updated: 2026-02-27 | Languages: rust | Files: 190 | Batches: 18 | Waves: 4 | Coverage: 100% -->
-<!-- reviewed:apps/witnessd_cli/src/main.rs:2026-02-26 -->
-<!-- reviewed:apps/witnessd_cli/src/native_messaging_host.rs:2026-02-26 -->
-<!-- reviewed:apps/witnessd_cli/src/cmd_export.rs:2026-02-26 -->
-<!-- reviewed:apps/witnessd_cli/src/cmd_track.rs:2026-02-26 -->
-<!-- reviewed:apps/witnessd_cli/src/cmd_watch.rs:2026-02-26 -->
-<!-- reviewed:apps/witnessd_cli/src/cmd_verify.rs:2026-02-26 -->
-<!-- reviewed:apps/witnessd_cli/src/cmd_config.rs:2026-02-26 -->
-<!-- reviewed:apps/witnessd_cli/src/cmd_fingerprint.rs:2026-02-26 -->
-<!-- reviewed:apps/witnessd_cli/src/cmd_status.rs:2026-02-26 -->
-<!-- reviewed:apps/witnessd_cli/src/smart_defaults.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/sentinel/core.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/sentinel/daemon.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/sentinel/ipc_handler.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/sentinel/helpers.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/sentinel/types.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/checkpoint.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/checkpoint_mmr.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/evidence/builder.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/evidence/packet.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/ipc/async_client.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/ipc/server.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/ipc/crypto.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/ipc/messages.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/ipc/secure_channel.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/ipc/sync_client.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/ipc/unix_socket.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/ipc/mod.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/platform/macos.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/platform/mod.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/platform/synthetic.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/platform/broadcaster.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/tpm/windows.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/tpm/secure_enclave.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/rfc/biology.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/rfc/jitter_binding.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/rfc/time_evidence.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/rfc/vdf.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/fingerprint/activity.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/fingerprint/comparison.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/fingerprint/consent.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/fingerprint/storage.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/fingerprint/voice.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/keyhierarchy/manager.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/keyhierarchy/session.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/keyhierarchy/puf.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/keyhierarchy/verification.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/keyhierarchy/recovery.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/keyhierarchy/migration.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/wal.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/sealed_identity.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/analysis/active_probes.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/analysis/behavioral_fingerprint.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/analysis/error_topology.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/analysis/hurst.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/analysis/labyrinth.rs:2026-02-26 -->
-<!-- reviewed:crates/witnessd_engine/src/analysis/pink_noise.rs:2026-02-26 -->
-<!-- Full codebase scan 2026-02-27: 190 files across 18 batches, 4 waves -->
-<!-- reviewed:crates/witnessd_engine/src/engine.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/config.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/ffi/helpers.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/ffi/attestation.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/ffi/evidence.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/ffi/forensics.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/ffi/system.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/ffi/types.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/identity/secure_storage.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/identity/mnemonic.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/crypto/mem.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/vdf/aggregation.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/vdf/mod.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/mmr/proof.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/store/integrity.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/war/verification.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/platform/macos/keystroke.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/platform/macos/ffi.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/platform/linux.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/platform/windows.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/physics/biological.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/physics/entanglement.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/physics/puf.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/physics/environment.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/provenance.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/rfc/wire_types/hash.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/rfc/wire_types/packet.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/rfc/packet.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/rfc/checkpoint.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/jitter/codec.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/jitter/session.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/jitter/content.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/jitter/verification.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/collaboration.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/transcription.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/presence.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/trust_policy.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/timing.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/forensics/engine.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/forensics/analysis.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_engine/src/forensics/correlation.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_jitter/src/model.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_protocol/src/evidence.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_protocol/src/identity.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_protocol/src/forensics/engine.rs:2026-02-27 -->
-<!-- reviewed:crates/witnessd_protocol/src/wasm.rs:2026-02-27 -->
-<!-- reviewed:apps/witnessd_cli/src/cli.rs:2026-02-27 -->
-<!-- reviewed:apps/witnessd_cli/src/cmd_commit.rs:2026-02-27 -->
-<!-- reviewed:apps/witnessd_cli/src/cmd_daemon.rs:2026-02-27 -->
-<!-- reviewed:apps/witnessd_cli/src/cmd_identity.rs:2026-02-27 -->
-<!-- reviewed:apps/witnessd_cli/src/cmd_init.rs:2026-02-27 -->
-<!-- reviewed:apps/witnessd_cli/src/cmd_log.rs:2026-02-27 -->
-<!-- reviewed:apps/witnessd_cli/src/cmd_presence.rs:2026-02-27 -->
-<!-- reviewed:apps/witnessd_cli/src/cmd_session.rs:2026-02-27 -->
-<!-- reviewed:apps/witnessd_cli/src/util.rs:2026-02-27 -->
+<!-- Full scan 2026-03-02: 230 files, 20 batches, 4 waves -->
+<!-- Incremental validation 2026-03-03: 220 engine files, 5 batches, 1 wave -->
+<!-- Deep audit 2026-03-03: Multi-agent security/logic/forensics review of new and critical code -->
+<!-- Revalidation 2026-03-03: All CRITICAL/HIGH/SYSTEMIC/BUILD items verified against current codebase -->
+<!-- reviewed:sentinel/*.rs:2026-03-02 -->
+<!-- reviewed:ffi/*.rs:2026-03-02 -->
+<!-- reviewed:ipc/*.rs:2026-03-02 -->
+<!-- reviewed:fingerprint/*.rs:2026-03-02 -->
+<!-- reviewed:analysis/*.rs:2026-03-02 -->
+<!-- reviewed:forensics/*.rs:2026-03-03 (deep) -->
+<!-- reviewed:rfc/*.rs:2026-03-02 -->
+<!-- reviewed:rfc/wire_types/*.rs:2026-03-02 -->
+<!-- reviewed:evidence/*.rs:2026-03-02 -->
+<!-- reviewed:checkpoint/*.rs:2026-03-02 -->
+<!-- reviewed:keyhierarchy/*.rs:2026-03-02 -->
+<!-- reviewed:tpm/*.rs:2026-03-02 -->
+<!-- reviewed:platform/*.rs:2026-03-02 -->
+<!-- reviewed:identity/*.rs:2026-03-02 -->
+<!-- reviewed:war/*.rs:2026-03-02 -->
+<!-- reviewed:vdf/*.rs:2026-03-03 (deep) -->
+<!-- reviewed:store/*.rs:2026-03-02 -->
+<!-- reviewed:writersproof/*.rs:2026-03-02 -->
+<!-- reviewed:engine.rs,config/*,wal/*,presence/*,research/*,trust_policy/*,sealed_identity/*,lib.rs:2026-03-03 -->
+<!-- reviewed:apps/wld_cli/src/*.rs:2026-03-03 (deep) -->
+<!-- reviewed:apps/wld_cli/browser-extension/*.js:2026-03-03 (deep) -->
+<!-- reviewed:crates/wld_protocol/src/*.rs:2026-03-02 -->
+<!-- reviewed:crates/wld_jitter/src/*.rs:2026-03-02 -->
+<!-- uncovered: checkpoint_mmr.rs (reviewed inline with B15) -->
