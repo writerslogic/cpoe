@@ -224,8 +224,8 @@ impl Sentinel {
         let idle_timeout = Duration::from_secs(config.idle_timeout_secs);
         let wal_dir = config.wal_dir.clone();
 
-        let mut focus_rx = focus_monitor.focus_events();
-        let mut change_rx = focus_monitor.change_events();
+        let mut focus_rx = focus_monitor.focus_events()?;
+        let mut change_rx = focus_monitor.change_events()?;
 
         let (keystroke_tx, mut keystroke_rx) =
             tokio::sync::mpsc::channel::<crate::platform::KeystrokeEvent>(1000);

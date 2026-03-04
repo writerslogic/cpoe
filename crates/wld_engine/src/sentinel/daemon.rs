@@ -98,7 +98,16 @@ impl DaemonManager {
 
     /// Write current process PID to the PID file.
     pub fn write_pid(&self) -> Result<()> {
-        fs::create_dir_all(self.pid_file.parent().unwrap())?;
+        let parent = self.pid_file.parent().ok_or_else(|| {
+            SentinelError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "PID file path has no parent directory: {}",
+                    self.pid_file.display()
+                ),
+            ))
+        })?;
+        fs::create_dir_all(parent)?;
         fs::write(&self.pid_file, std::process::id().to_string())?;
         Ok(())
     }

@@ -16,8 +16,8 @@ pub trait SentinelFocusTracker: Send + Sync {
     fn stop(&self) -> Result<()>;
     fn active_window(&self) -> Option<WindowInfo>;
     fn available(&self) -> (bool, String);
-    fn focus_events(&self) -> mpsc::Receiver<FocusEvent>;
-    fn change_events(&self) -> mpsc::Receiver<ChangeEvent>;
+    fn focus_events(&self) -> Result<mpsc::Receiver<FocusEvent>>;
+    fn change_events(&self) -> Result<mpsc::Receiver<ChangeEvent>>;
 }
 
 /// Provider for active window information. Implemented per-platform.
@@ -152,19 +152,17 @@ impl<P: WindowProvider + ?Sized> SentinelFocusTracker for PollingSentinelFocusTr
         (true, "Polling monitor available".to_string())
     }
 
-    fn focus_events(&self) -> mpsc::Receiver<FocusEvent> {
-        self.focus_rx.lock_recover().take().unwrap_or_else(|| {
-            log::error!("Focus receiver already consumed - returning dummy receiver");
-            let (_tx, rx) = mpsc::channel(1);
-            rx
-        })
+    fn focus_events(&self) -> Result<mpsc::Receiver<FocusEvent>> {
+        self.focus_rx
+            .lock_recover()
+            .take()
+            .ok_or_else(|| SentinelError::Channel("focus receiver already consumed".to_string()))
     }
 
-    fn change_events(&self) -> mpsc::Receiver<ChangeEvent> {
-        self.change_rx.lock_recover().take().unwrap_or_else(|| {
-            log::error!("Change receiver already consumed - returning dummy receiver");
-            let (_tx, rx) = mpsc::channel(1);
-            rx
-        })
+    fn change_events(&self) -> Result<mpsc::Receiver<ChangeEvent>> {
+        self.change_rx
+            .lock_recover()
+            .take()
+            .ok_or_else(|| SentinelError::Channel("change receiver already consumed".to_string()))
     }
 }
