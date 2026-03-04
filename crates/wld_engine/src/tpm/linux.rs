@@ -283,9 +283,13 @@ impl Provider for LinuxTpmProvider {
         sealed.extend_from_slice(&(priv_bytes.len() as u32).to_be_bytes());
         sealed.extend_from_slice(&priv_bytes);
 
-        let _ = state.context.flush_context(srk.key_handle.into());
+        if let Err(e) = state.context.flush_context(srk.key_handle.into()) {
+            log::warn!("Failed to flush SRK context after seal: {e}");
+        }
         let session_handle: SessionHandle = session.into();
-        let _ = state.context.flush_context(session_handle.into());
+        if let Err(e) = state.context.flush_context(session_handle.into()) {
+            log::warn!("Failed to flush session context after seal: {e}");
+        }
 
         Ok(sealed)
     }
@@ -336,10 +340,16 @@ impl Provider for LinuxTpmProvider {
         // Clear sessions
         state.context.clear_sessions();
 
-        let _ = state.context.flush_context(load_handle.into());
-        let _ = state.context.flush_context(srk.key_handle.into());
+        if let Err(e) = state.context.flush_context(load_handle.into()) {
+            log::warn!("Failed to flush object context after unseal: {e}");
+        }
+        if let Err(e) = state.context.flush_context(srk.key_handle.into()) {
+            log::warn!("Failed to flush SRK context after unseal: {e}");
+        }
         let session_handle: SessionHandle = session.into();
-        let _ = state.context.flush_context(session_handle.into());
+        if let Err(e) = state.context.flush_context(session_handle.into()) {
+            log::warn!("Failed to flush session context after unseal: {e}");
+        }
 
         Ok(unsealed.value().to_vec())
     }
