@@ -274,6 +274,9 @@ pub fn verify_hash_chain(seal: &Seal, evidence: &Packet, version: Version) -> Ch
     }
 }
 
+/// Maximum VDF iterations accepted during verification (1 hour at default rate).
+const MAX_VERIFICATION_ITERATIONS: u64 = 3_600_000_000;
+
 pub fn verify_vdf_proofs(evidence: &Packet) -> CheckResult {
     let mut verified = 0;
     let mut total = 0;
@@ -283,6 +286,15 @@ pub fn verify_vdf_proofs(evidence: &Packet) -> CheckResult {
             (&cp.vdf_input, &cp.vdf_output, cp.vdf_iterations)
         {
             total += 1;
+            if iterations > MAX_VERIFICATION_ITERATIONS {
+                return CheckResult {
+                    name: "vdf_proofs".to_string(),
+                    passed: false,
+                    message: format!(
+                        "VDF iterations at checkpoint {i} exceed maximum: {iterations} > {MAX_VERIFICATION_ITERATIONS}"
+                    ),
+                };
+            }
             let input = match hex::decode(input_hex) {
                 Ok(b) if b.len() == 32 => {
                     let mut arr = [0u8; 32];
