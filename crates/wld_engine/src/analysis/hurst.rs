@@ -110,6 +110,12 @@ pub fn calculate_hurst_rs(data: &[f64]) -> Result<HurstAnalysis, String> {
     // Linear regression: log(R/S) = H * log(n) + c
     let (slope, _intercept, r_squared, std_error) = linear_regression(&log_n_vec, &log_rs_vec)?;
 
+    // NaN/Inf from degenerate inputs (all-zero series, constant windows) would
+    // bypass clamp and propagate silently. Fall back to random-walk default.
+    if !slope.is_finite() || !r_squared.is_finite() || !std_error.is_finite() {
+        return Err("Degenerate regression output (NaN/Inf)".to_string());
+    }
+
     // R/S Hurst exponent is bounded [0, 1] by definition of rescaled range.
     // The shared biological validity range [0.55, 0.85] is enforced in
     // `is_biologically_plausible()` and `is_valid` below.
@@ -232,6 +238,10 @@ pub fn calculate_hurst_dfa(data: &[f64]) -> Result<HurstAnalysis, String> {
     }
 
     let (slope, _intercept, r_squared, std_error) = linear_regression(&log_scales, &log_fluct)?;
+
+    if !slope.is_finite() || !r_squared.is_finite() || !std_error.is_finite() {
+        return Err("Degenerate regression output (NaN/Inf)".to_string());
+    }
 
     // DFA alpha can reach 2.0 for strongly non-stationary signals
     // (Brownian motion ≈ 1.5, ballistic ≈ 2.0), so the upper bound is wider

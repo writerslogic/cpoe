@@ -568,7 +568,7 @@ impl Builder {
         let cv = if mean > 0.0 { std_dev / mean } else { 0.0 };
 
         // O(n) percentile selection via `select_nth_unstable_by`
-        let cmp = |a: &f64, b: &f64| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal);
+        let cmp = |a: &f64, b: &f64| a.total_cmp(b);
         let percentiles = if intervals_us.len() >= 10 {
             let mut buf = intervals_us.clone();
             let n = buf.len();

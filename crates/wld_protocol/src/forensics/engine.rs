@@ -242,7 +242,7 @@ impl ForensicsEngine {
         }
         let n = self.inter_checkpoint_intervals.len() as f64;
         let mean = self.inter_checkpoint_intervals.iter().sum::<f64>() / n;
-        if mean == 0.0 {
+        if mean == 0.0 || !mean.is_finite() {
             return 0.0;
         }
         let variance = self
@@ -251,7 +251,13 @@ impl ForensicsEngine {
             .map(|&x| (x - mean).powi(2))
             .sum::<f64>()
             / n;
-        variance.sqrt() / mean
+        let cv = variance.sqrt() / mean;
+        // NaN/Inf from pathological inputs must not bypass downstream threshold checks
+        if cv.is_finite() {
+            cv
+        } else {
+            0.0
+        }
     }
 
     fn detect_adversarial_collapse(&self) -> bool {
@@ -338,7 +344,11 @@ impl ForensicsEngine {
         }
 
         let slope = (n_pts * sum_xy - sum_x * sum_y) / denominator;
-        slope.clamp(0.0, 1.0)
+        if slope.is_finite() {
+            slope.clamp(0.0, 1.0)
+        } else {
+            0.5
+        }
     }
 }
 
