@@ -14,7 +14,7 @@
 |----------|------|------------------|-------------|---------------|------------------|
 | CRITICAL | 1    | 16               | 8           | 2             | 0                |
 | HIGH     | 32   | 28 (+19 prior)   | 48          | 16            | 7                |
-| MEDIUM   | 93   | 0                | 66          | 9             | 8                |
+| MEDIUM   | 92   | 0                | 66          | 9             | 9                |
 | SYSTEMIC | 12   | 0                | 11          | 1             | 1                |
 | BUILD    | 3    | 0                | 0           | 0             | 0                |
 
@@ -54,11 +54,12 @@
   Files: `forensics/assessment.rs:178-200`, `forensics/cadence.rs:56-58`, `analysis/behavioral_fingerprint.rs:188`, `analysis/active_probes.rs:240`, `analysis/stats.rs:53`, `analysis/perplexity.rs:82`, `rfc/biology.rs:478`, `fingerprint/comparison.rs:172`, `fingerprint/voice.rs:29`, `ffi/helpers.rs:89`, `platform/synthetic.rs:131`
   Fix: Extract each to named `const` at file/module top with doc comment explaining rationale.
 
-- [ ] **SYS-016** `nan_inf_unguarded` — 10+ files — HIGH
-  <!-- pid:fp_division_unguarded | verified:true | first:2026-03-02 -->
+- [ ] **SYS-016** `nan_inf_unguarded` — 5 files (reduced from 10) — HIGH
+  <!-- pid:fp_division_unguarded | verified:true | first:2026-03-02 | revalidated:2026-03-03 -->
   Division results and floating-point computations not checked for NaN/Infinity before use.
-  Files: `forensics/comparison.rs:54`, `forensics/assessment.rs:226`, `rfc/biology.rs:370,396`, `rfc/jitter_binding.rs:546`, `analysis/behavioral_fingerprint.rs:207`, `evidence/builder.rs:568,571`, `platform/mouse.rs:88`, `platform/stats.rs:16`, `protocol/forensics/engine.rs:217`
-  Fix: Add `.is_finite()` guard or explicit NaN check after every division in scoring/analysis paths.
+  **Actionable files**: `forensics/comparison.rs:54` (H-104), `rfc/jitter_binding.rs:546`, `analysis/behavioral_fingerprint.rs:207`, `evidence/builder.rs:571`, `protocol/forensics/engine.rs:217`
+  **Already safe** (eliminated 2026-03-03): `rfc/biology.rs:370,396` (NaN excluded by `Range::contains`), `platform/mouse.rs:88` (`total_events==0` guard), `platform/stats.rs:16` (same guard), `forensics/assessment.rs:226` (no division exists — M-141 false positive), `evidence/builder.rs:568` (H-088 already guarded)
+  Fix: Add `.is_finite()` guard or explicit NaN check after divisions in the 5 remaining files.
 
 - [ ] **SYS-017** `missing_wire_validation` — 5+ wire type files — HIGH
   <!-- pid:missing_validation | verified:true | first:2026-03-02 -->
@@ -66,10 +67,11 @@
   Files: `rfc/wire_types/packet.rs:41,92`, `rfc/wire_types/checkpoint.rs:33`, `rfc/wire_types/mod.rs:37`
   Fix: Implement `validate()` trait for all wire types. Call after deserialization. Check required fields, sequence continuity, hash non-zero.
 
-- [ ] **SYS-018** `key_zeroize_error_path` — 6+ files — HIGH
-  <!-- pid:key_material_error_path_leak | verified:true | first:2026-03-02 -->
-  Key material allocated but not zeroized on error/exception paths. Extensions of previously-fixed SYS-001.
-  Files: `keyhierarchy/session.rs:43,129,367`, `keyhierarchy/recovery.rs:122,165`, `keyhierarchy/puf.rs:74`, `tpm/secure_enclave.rs:542`, `ffi/helpers.rs:27`, `ffi/ephemeral.rs:794`, `identity/secure_storage.rs:302`
+- [ ] **SYS-018** `key_zeroize_error_path` — 7+ files — HIGH
+  <!-- pid:key_material_error_path_leak | verified:true | first:2026-03-02 | revalidated:2026-03-03 -->
+  Key material allocated but not zeroized on error/exception paths AND happy-path intermediates. Extensions of previously-fixed SYS-001.
+  Files: `keyhierarchy/session.rs:43,129,367`, `keyhierarchy/recovery.rs:122,165`, `keyhierarchy/puf.rs:74`, `tpm/secure_enclave.rs:542`, `ffi/helpers.rs:27`, `ffi/ephemeral.rs:794`, `identity/secure_storage.rs:39,103,302`
+  **New (2026-03-03)**: `identity/secure_storage.rs:39,103` — `save()`/`save_macos()` call `general_purpose::STANDARD.encode(data)` creating an unzeroized `String` containing key material in base64 form on the **happy path**. Every call to `save_seed()`, `save_hmac_key()`, `save_fingerprint_key()`, `save_mnemonic()` leaks via this intermediate. Fix: `let mut encoded = ...; /* use encoded */ encoded.zeroize();` or use `Zeroizing<String>`.
   Fix: Use `Zeroizing<Vec<u8>>` wrappers or scope guards that zeroize on Drop. Replace bare `Vec<u8>` returns for key bytes.
 
 - [ ] **SYS-019** `browser_ext_unvalidated_messages` — 3 files — HIGH
@@ -85,13 +87,14 @@
   Fix: Fail if HOME unset. Never default to /tmp or relative paths for crypto data. Require XDG_DATA_HOME or explicit config.
   **Guidance**: 8+ instances of `.unwrap_or_else(|| PathBuf::from("."))` and `.unwrap_or_else(|| PathBuf::from(".writerslogic"))` in config/defaults.rs. Replace all with `dirs::home_dir().ok_or_else(|| Error::config("HOME directory not set"))?` and propagate the error. This is a breaking change for error handling — callers of `default_*()` functions must handle `Result`.
 
-- [ ] **SYS-021** `lock_unwrap` — 78 instances across 9 files — HIGH
+- [ ] **SYS-021** `lock_unwrap` — 82 instances across 10 files — HIGH
   <!-- pid:lock_unwrap | verified:true | first:2026-03-03 | last:2026-03-03 -->
-  `Mutex::lock().unwrap()` / `RwLock::write().unwrap()` / `RwLock::read().unwrap()` without poison recovery. The `MutexRecover` and `RwLockRecover` traits already exist in `lib.rs` and are correctly used in 14 files (98 call sites), but 9 files still use bare `.unwrap()` — 78 instances total.
+  `Mutex::lock().unwrap()` / `RwLock::write().unwrap()` / `RwLock::read().unwrap()` without poison recovery. The `MutexRecover` and `RwLockRecover` traits already exist in `lib.rs` and are correctly used in 14 files (98 call sites), but 10 files still use bare `.unwrap()` — 82 instances total.
   Files (validated 2026-03-03):
-  - `engine.rs` (14 confirmed), `sentinel/helpers.rs` (17), `tpm/secure_enclave.rs` (15)
+  - `engine.rs` (14), `sentinel/helpers.rs` (17), `tpm/secure_enclave.rs` (15)
   - `tpm/linux.rs` (8), `wal/operations.rs` (8), `sentinel/shadow.rs` (7)
-  - `sentinel/focus.rs` (2), `tpm/software.rs` (2), `tpm/windows.rs` (1)
+  - `sentinel/core.rs` (4 — lines 121, 129, 422, 587), `sentinel/focus.rs` (2), `tpm/software.rs` (2), `tpm/windows.rs` (1)
+  Note: `sentinel/core.rs` already imports and uses `.read_recover()`/`.write_recover()` in 22+ call sites — these 4 are stragglers.
   Fix: Replace `.lock().unwrap()` → `.lock_recover()`, `.read().unwrap()` → `.read_recover()`, `.write().unwrap()` → `.write_recover()`. Add `use crate::{MutexRecover, RwLockRecover};` where missing. Effort: medium (mechanical).
   **Guidance**: `MutexRecover` and `RwLockRecover` traits are defined in `lib.rs` and already used in 14 files (98 call sites). Mechanical fix: search for `.lock().unwrap()`, `.read().unwrap()`, `.write().unwrap()` in each file, replace, add the trait import. Do one file at a time, `cargo check` between each. Start with `engine.rs` (most instances).
 
@@ -395,7 +398,7 @@
 - [ ] **H-101** `[security]` `sealed_identity/store.rs` — Counter rollback gap on first unseal
   <!-- pid:rollback_check_weak | batch:19 | verified:true | first:2026-03-02 | revalidated:2026-03-03 -->
   Both counters init to same value; no rollback protection until second advance | Fix: Fail if counter is None on init | Effort: medium
-  **Guidance**: In `sealed_identity/store.rs`, `initialize()` sets `counter_at_seal` and `last_known_counter` to the same value. After first `advance_counter()`, rollback detection works. But between init and first advance, an attacker can replay the sealed blob. Fix: On `unseal_master_key()`, require `last_known_counter.is_some()` or fail with explicit error for uninitialized state.
+  **Enriched guidance**: 3 gaps: (1) init/unseal use different bind nonces—use consistent `b"identity-counter"` in both. (2) No counter ratchet after unseal—persist updated blob if `current > last_known`. (3) Software TPM: `None` counter skips check entirely (document). 30min total.
 
 - [x] **H-102** `[security]` `protocol/evidence.rs:36,69` — Clock error silently returns 0 ✓ FIXED 2026-03-03
   <!-- pid:clock_error_silent_fallback | batch:20 | verified:true | first:2026-03-02 | fixed:2026-03-03 -->
@@ -701,9 +704,9 @@
   <!-- pid:uncalibrated_threshold | verified:true | first:2026-03-03 -->
   `if metrics.perplexity_score > 15.0` threshold in analysis.rs has no documented basis. May produce false positives/negatives.
 
-- [ ] **M-141** `[correctness]` `forensics/assessment.rs:226` — Division unguarded in assessment score → SYS-016
-  <!-- pid:fp_division_unguarded | verified:true | first:2026-03-03 -->
-  Assessment score computation may divide by zero producing NaN that propagates to final score.
+- [x] **M-141** `[correctness]` `forensics/assessment.rs:226` — Division unguarded in assessment score ✗ FALSE POSITIVE
+  <!-- pid:fp_division_unguarded | verified:true | first:2026-03-03 | eliminated:2026-03-03 -->
+  **Eliminated**: Line 226 is `if cadence.percentiles[4] == 0.0 { return 0.5; }` — a data quality guard, not a division guard. No division exists in `calculate_cadence_score()`. The function only subtracts penalties from `score` starting at 1.0 and clamps to [0.0, 1.0].
 
 - [ ] **M-142** `[security]` `config/loading.rs` — Config file created without explicit permissions → M-083
   <!-- pid:world_readable_config | verified:true | first:2026-03-03 -->
