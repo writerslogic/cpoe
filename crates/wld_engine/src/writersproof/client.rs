@@ -191,13 +191,19 @@ impl WritersProofClient {
     /// `GET /health`
     pub async fn is_online(&self) -> bool {
         let url = format!("{}/health", self.base_url);
-        self.client
+        match self
+            .client
             .get(&url)
             .timeout(std::time::Duration::from_secs(5))
             .send()
             .await
-            .map(|r| r.status().is_success())
-            .unwrap_or(false)
+        {
+            Ok(r) => r.status().is_success(),
+            Err(e) => {
+                log::debug!("Health check failed: {e}");
+                false
+            }
+        }
     }
 }
 

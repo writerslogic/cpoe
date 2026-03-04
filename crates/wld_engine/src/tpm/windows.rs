@@ -886,7 +886,9 @@ impl Provider for WindowsTpmProvider {
             .parse_create_response(&create_response)
             .map_err(|e| TPMError::Sealing(format!("parse create response: {}", e)))?;
 
-        let _ = self.flush_context(srk_handle);
+        if let Err(e) = self.flush_context(srk_handle) {
+            log::warn!("Failed to flush SRK context after seal: {e}");
+        }
 
         Ok(sealed_blob)
     }
@@ -918,8 +920,12 @@ impl Provider for WindowsTpmProvider {
         let unseal_result = self.unseal_object(obj_handle);
 
         // Clean up transient handles regardless of result
-        let _ = self.flush_context(obj_handle);
-        let _ = self.flush_context(srk_handle);
+        if let Err(e) = self.flush_context(obj_handle) {
+            log::warn!("Failed to flush object context after unseal: {e}");
+        }
+        if let Err(e) = self.flush_context(srk_handle) {
+            log::warn!("Failed to flush SRK context after unseal: {e}");
+        }
 
         let unseal_response =
             unseal_result.map_err(|e| TPMError::Unsealing(format!("unseal failed: {}", e)))?;
