@@ -114,6 +114,25 @@ fn verify_signature(public_key: &[u8], payload: &[u8], signature: &[u8]) -> Resu
         }
     }
 
+    // Try ECDSA P-256 (SEC1 uncompressed 65-byte or compressed 33-byte public key)
+    if let Ok(vk) = p256::ecdsa::VerifyingKey::from_sec1_bytes(public_key) {
+        // Raw r||s (64 bytes)
+        if signature.len() == 64 {
+            if let Ok(sig) = p256::ecdsa::Signature::from_slice(signature) {
+                return vk
+                    .verify(payload, &sig)
+                    .map_err(|_| TPMError::InvalidSignature);
+            }
+        }
+        // DER-encoded signature
+        if let Ok(sig) = p256::ecdsa::DerSignature::from_bytes(signature) {
+            return vk
+                .verify(payload, &sig)
+                .map_err(|_| TPMError::InvalidSignature);
+        }
+        return Err(TPMError::InvalidSignature);
+    }
+
     // Try RSA (DER-encoded public key)
     if let Ok(key) = rsa::RsaPublicKey::from_pkcs1_der(public_key)
         .or_else(|_| rsa::RsaPublicKey::from_public_key_der(public_key))

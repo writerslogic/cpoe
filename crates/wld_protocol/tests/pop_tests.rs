@@ -21,7 +21,7 @@ fn test_pop_full_roundtrip() {
         char_count: doc_content.len() as u64,
     };
 
-    let mut builder = PoPBuilder::new(document, Box::new(signing_key));
+    let mut builder = PoPBuilder::new(document, Box::new(signing_key)).unwrap();
     builder
         .add_checkpoint(b"Checkpoint 1", 12)
         .expect("Add checkpoint failed");
@@ -57,7 +57,7 @@ fn test_pop_tamper_detection() {
         char_count: doc_content.len() as u64,
     };
 
-    let mut builder = PoPBuilder::new(document, Box::new(signing_key));
+    let mut builder = PoPBuilder::new(document, Box::new(signing_key)).unwrap();
     builder.add_checkpoint(b"Safe checkpoint", 15).unwrap();
     let signed_evidence = builder.finalize().unwrap();
 

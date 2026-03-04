@@ -27,18 +27,18 @@ pub struct PoPBuilder {
 }
 
 impl PoPBuilder {
-    pub fn new(document: DocumentRef, signer: Box<dyn PoPSigner>) -> Self {
+    pub fn new(document: DocumentRef, signer: Box<dyn PoPSigner>) -> Result<Self> {
         let mut packet_id = [0u8; 16];
         OsRng.fill_bytes(&mut packet_id);
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .expect("system clock before Unix epoch")
+            .map_err(|e| Error::Protocol(format!("system clock error: {}", e)))?
             .as_secs();
 
         let initial_hash = hash_sha256(&document.content_hash.digest);
 
-        Self {
+        Ok(Self {
             version: 1,
             profile_uri: "urn:ietf:params:rats:eat:profile:pop:1.0".to_string(),
             packet_id,
@@ -50,7 +50,7 @@ impl PoPBuilder {
             jitter: PhysJitter::new(1), // Lowered for demo compatibility
             attestation_tier: AttestationTier::SoftwareOnly,
             baseline_verification: None,
-        }
+        })
     }
 
     pub fn with_attestation_tier(mut self, tier: AttestationTier) -> Self {
@@ -66,7 +66,7 @@ impl PoPBuilder {
     pub fn add_checkpoint(&mut self, content: &[u8], char_count: u64) -> Result<()> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .expect("system clock before Unix epoch")
+            .map_err(|e| Error::Protocol(format!("system clock error: {}", e)))?
             .as_secs();
 
         let sequence = self.checkpoints.len() as u64;

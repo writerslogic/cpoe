@@ -80,9 +80,21 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_path() {
-        let path = normalize_document_path("./test.txt");
-        assert!(path.contains("test.txt"));
+    fn test_normalize_path_existing() {
+        // Use a path that always exists
+        let result = normalize_document_path("/");
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_normalize_path_rejects_traversal() {
+        assert!(normalize_document_path("../../../etc/passwd").is_none());
+        assert!(normalize_document_path("/tmp/../etc/shadow").is_none());
+    }
+
+    #[test]
+    fn test_normalize_path_nonexistent_returns_none() {
+        assert!(normalize_document_path("/nonexistent/fakefile.txt").is_none());
     }
 
     #[tokio::test]

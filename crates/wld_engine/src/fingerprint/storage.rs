@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 use zeroize::Zeroize;
 
 use crate::identity::SecureStorage;
@@ -39,6 +40,8 @@ pub struct FingerprintStorage {
     storage_dir: PathBuf,
     encryption_key: [u8; KEY_SIZE],
     profile_index: HashMap<ProfileId, StoredProfile>,
+    /// Tracks mtime per profile file path so refresh_index can skip unchanged files.
+    file_mtimes: HashMap<PathBuf, SystemTime>,
 }
 
 impl FingerprintStorage {
@@ -52,6 +55,7 @@ impl FingerprintStorage {
             storage_dir: storage_dir.to_path_buf(),
             encryption_key,
             profile_index: HashMap::new(),
+            file_mtimes: HashMap::new(),
         };
 
         storage.refresh_index()?;
@@ -60,25 +64,65 @@ impl FingerprintStorage {
     }
 
     /// Rebuild in-memory index by scanning `.profile` files on disk.
+    ///
+    /// Only decrypts files whose mtime has changed since the last refresh,
+    /// avoiding repeated key-material exposure for unchanged profiles.
     pub fn refresh_index(&mut self) -> Result<()> {
-        self.profile_index.clear();
-
         if !self.storage_dir.exists() {
+            self.profile_index.clear();
+            self.file_mtimes.clear();
             return Ok(());
         }
 
+        let mut current_paths: HashMap<PathBuf, SystemTime> = HashMap::new();
         for entry in fs::read_dir(&self.storage_dir)? {
             let entry = entry?;
             let path = entry.path();
-
             if path.extension().and_then(|s| s.to_str()) == Some("profile") {
-                if let Ok(profile) = self.load_metadata(&path) {
+                let mtime = entry
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .unwrap_or(SystemTime::UNIX_EPOCH);
+                current_paths.insert(path, mtime);
+            }
+        }
+
+        // Remove entries for files that no longer exist on disk.
+        let stale_ids: Vec<ProfileId> = self
+            .profile_index
+            .iter()
+            .filter(|(_, profile)| {
+                let path = self.profile_path_for_id(&profile.id);
+                !current_paths.contains_key(&path)
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in &stale_ids {
+            self.profile_index.remove(id);
+        }
+        self.file_mtimes
+            .retain(|path, _| current_paths.contains_key(path));
+
+        // Decrypt only new or modified files.
+        for (path, mtime) in &current_paths {
+            let needs_decrypt = match self.file_mtimes.get(path) {
+                Some(cached_mtime) => cached_mtime != mtime,
+                None => true,
+            };
+            if needs_decrypt {
+                if let Ok(profile) = self.load_metadata(path) {
                     self.profile_index.insert(profile.id.clone(), profile);
+                    self.file_mtimes.insert(path.clone(), *mtime);
                 }
             }
         }
 
         Ok(())
+    }
+
+    /// Build the canonical file path for a profile ID (used by cache bookkeeping).
+    fn profile_path_for_id(&self, id: &ProfileId) -> PathBuf {
+        self.profile_path(id)
     }
 
     /// Encrypt and persist a profile, updating the in-memory index.
@@ -87,6 +131,12 @@ impl FingerprintStorage {
         let plaintext = serde_json::to_vec(fingerprint)?;
         let ciphertext = self.encrypt(&plaintext)?;
         fs::write(&path, &ciphertext)?;
+
+        // Record mtime so refresh_index won't re-decrypt this file.
+        let mtime = fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+        self.file_mtimes.insert(path, mtime);
 
         let metadata = StoredProfile {
             id: fingerprint.id.clone(),
@@ -118,7 +168,7 @@ impl FingerprintStorage {
         Ok(fingerprint)
     }
 
-    /// Extract metadata (currently requires full decrypt; see TODO).
+    /// Extract metadata from an encrypted profile file.
     fn load_metadata(&self, path: &Path) -> Result<StoredProfile> {
         let ciphertext = fs::read(path)?;
         let plaintext = self.decrypt(&ciphertext)?;
@@ -149,6 +199,7 @@ impl FingerprintStorage {
             fs::remove_file(&path)?;
         }
 
+        self.file_mtimes.remove(&path);
         self.profile_index.remove(id);
         Ok(())
     }

@@ -89,6 +89,8 @@ pub enum CodecError {
     MissingTag,
     #[error("Invalid semantic tag: expected {expected}, got {actual}")]
     InvalidTag { expected: u64, actual: u64 },
+    #[error("Validation error: {0}")]
+    Validation(String),
 }
 
 /// Result type for codec operations.

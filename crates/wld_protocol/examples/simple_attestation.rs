@@ -28,7 +28,7 @@ fn main() -> anyhow::Result<()> {
 
     // 3. Start Evidence Generation (The Attester)
     println!("[Attester] Starting evidence collection...");
-    let mut builder = PoPBuilder::new(document, Box::new(signing_key));
+    let mut builder = PoPBuilder::new(document, Box::new(signing_key))?;
 
     // Simulate a multi-step process with checkpoints
     let steps = vec![

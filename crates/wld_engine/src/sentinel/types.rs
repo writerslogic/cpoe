@@ -361,13 +361,24 @@ fn looks_like_file_path(s: &str) -> bool {
 }
 
 /// Normalize a document path to an absolute canonical form.
-pub fn normalize_document_path(path: &str) -> String {
-    let path = Path::new(path);
+/// Returns `None` if the path contains traversal components or cannot be resolved.
+pub fn normalize_document_path(path: &str) -> Option<String> {
+    let p = Path::new(path);
 
-    let abs = path.canonicalize().unwrap_or_else(|e| {
-        log::warn!("Failed to canonicalize path '{}': {e}", path.display());
-        path.to_path_buf()
-    });
+    // Reject path traversal components before any filesystem interaction
+    for component in p.components() {
+        if matches!(component, std::path::Component::ParentDir) {
+            log::warn!("Rejected path with traversal component: '{path}'");
+            return None;
+        }
+    }
 
-    abs.to_string_lossy().to_string()
+    match p.canonicalize() {
+        Ok(canonical) => Some(canonical.to_string_lossy().to_string()),
+        Err(e) => {
+            // Path doesn't exist or can't be resolved — refuse to guess
+            log::warn!("Failed to canonicalize path '{path}': {e}");
+            None
+        }
+    }
 }
