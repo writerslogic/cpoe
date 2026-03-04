@@ -306,7 +306,7 @@ impl TimeEvidence {
         let bc = self
             .blockchain_anchors
             .iter()
-            .flat_map(|v| v.iter().map(|a| a.block_timestamp * 1000));
+            .flat_map(|v| v.iter().map(|a| a.block_timestamp.saturating_mul(1000)));
         let rt = self
             .roughtime_samples
             .iter()

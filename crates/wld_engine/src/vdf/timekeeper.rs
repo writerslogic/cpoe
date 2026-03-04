@@ -40,7 +40,7 @@ impl TimeKeeper {
     pub async fn fetch_network_time() -> Option<DateTime<Utc>> {
         match crate::vdf::RoughtimeClient::get_verified_time() {
             Ok(micros) => {
-                let seconds = (micros / 1_000_000) as i64;
+                let seconds = i64::try_from(micros / 1_000_000).unwrap_or(i64::MAX);
                 let nanos = ((micros % 1_000_000) * 1000) as u32;
                 DateTime::from_timestamp(seconds, nanos)
             }

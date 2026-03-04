@@ -194,7 +194,7 @@ impl AttestationResultWire {
 
         EarToken {
             eat_profile: POP_EAR_PROFILE.to_string(),
-            iat: (self.created / 1000) as i64,
+            iat: i64::try_from(self.created / 1000).unwrap_or(i64::MAX),
             ear_verifier_id: VerifierId::default(),
             submods,
         }
