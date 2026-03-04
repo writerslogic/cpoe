@@ -50,9 +50,10 @@ pub fn compare_profiles(
         0.5,
     );
 
+    // Compare in log-space; guard against ln(0) = -inf and ln(neg) = NaN
     scores.interval_similarity = gaussian_similarity(
-        profile_a.metrics.median_interval.ln().max(0.0),
-        profile_b.metrics.median_interval.ln().max(0.0),
+        safe_ln(profile_a.metrics.median_interval),
+        safe_ln(profile_b.metrics.median_interval),
         0.5,
     );
 
@@ -100,4 +101,13 @@ pub fn compare_profiles(
 fn gaussian_similarity(a: f64, b: f64, sigma: f64) -> f64 {
     let diff = a - b;
     (-diff * diff / (2.0 * sigma * sigma)).exp()
+}
+
+/// Return `ln(v)` clamped to 0.0 for non-positive inputs.
+fn safe_ln(v: f64) -> f64 {
+    if v > 0.0 {
+        v.ln().max(0.0)
+    } else {
+        0.0
+    }
 }
