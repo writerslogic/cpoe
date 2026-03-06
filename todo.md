@@ -22,11 +22,12 @@ SESSION_OWNER: instruct-mission-3
 - 2026-03-05: Phase 6 (5644f7de): M-064, M-067, M-068, M-072, M-073, M-076, M-084, M-085, M-086, M-089, M-092, M-094, M-095, M-103, M-105, M-110, M-111, M-116, M-119, M-127, M-139. 707 pass.
 - 2026-03-05: Phase 7 (fe54ace2): M-088, M-128, M-129, M-130, M-131, M-144, M-145, M-146, M-147. Triaged: M-053, M-056, M-083, M-087, M-137, M-138. 707 pass.
 - 2026-03-05: Phase 8 (6e43d1a3): SYS-015 (50+ named constants), SYS-019 (browser ext validation), H-105, H-106, M-052, M-070, M-071, M-079, M-080, M-081, M-082, M-090, M-091, M-098, M-099, M-102, M-112, M-114, M-115, M-118, M-132, M-135. 707 pass.
+- 2026-03-06: Quality audit (ca30939e): Fixed C-025 single-leaf Merkle hash, SYS-013 FFI expect→match, SYS-015 cadence bare literal, browser dead code/unhandled rejections/dangling promises. 707 pass.
 
 ### Handoff Summary
 <!-- Replace this block before ending a session near context limits -->
 ```
-CONTEXT: Phase 8 committed (6e43d1a3). All engine MEDIUM/HIGH items resolved or triaged. Browser extension fully hardened. 707 tests passing, clippy clean.
+CONTEXT: Quality audit complete (ca30939e). All 163 completed items verified by 3 parallel audit agents. 7 issues found and fixed. 707 tests passing, clippy clean with and without FFI.
 BLOCKERS: None
 REMAINING_ENGINE: C-014 (TPM signing, Windows-only), H-066 (ECDSA P-256, coupled with C-014), H-077 (FFI refactor, deferred), M-050 (tpm god module, deferred), M-058/M-060/M-136/M-143 (deferred architecture/feature items)
 REMAINING_APPS: macOS (9C + 28H + 75M + 7SYS), Windows (6C + 56H + 119M + 7SYS) — separate submodule repos
