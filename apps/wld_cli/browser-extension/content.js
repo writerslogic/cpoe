@@ -39,7 +39,6 @@
 
   // M-091: Cached editor element references, invalidated on stop/start
   let cachedEditorElements = null;
-  let cachedSite = null;
 
   function storageKey() {
     return `witnessing_${window.location.origin}${window.location.pathname}`;
@@ -68,7 +67,6 @@
   /** Invalidate cached editor elements (call on start/stop witnessing). */
   function invalidateEditorCache() {
     cachedEditorElements = null;
-    cachedSite = null;
   }
 
   /**
@@ -141,7 +139,6 @@
 
     if (elements && elements.length > 0) {
       cachedEditorElements = elements;
-      cachedSite = site;
     }
     return elements;
   }
@@ -252,25 +249,29 @@
 
     clearTimeout(changeDebounceTimer);
     changeDebounceTimer = setTimeout(async () => {
-      const text = getDocumentText();
-      const charCount = text.length;
-      const delta = charCount - lastCharCount;
+      try {
+        const text = getDocumentText();
+        const charCount = text.length;
+        const delta = charCount - lastCharCount;
 
-      if (Math.abs(delta) < MIN_CHANGE_THRESHOLD) return;
+        if (Math.abs(delta) < MIN_CHANGE_THRESHOLD) return;
 
-      const contentHash = await sha256(text);
-      if (contentHash === lastContentHash) return;
+        const contentHash = await sha256(text);
+        if (contentHash === lastContentHash) return;
 
-      lastContentHash = contentHash;
-      const previousCount = lastCharCount;
-      lastCharCount = charCount;
+        lastContentHash = contentHash;
+        const previousCount = lastCharCount;
+        lastCharCount = charCount;
 
-      chrome.runtime.sendMessage({
-        action: "content_changed",
-        contentHash,
-        charCount,
-        delta: charCount - previousCount,
-      });
+        chrome.runtime.sendMessage({
+          action: "content_changed",
+          contentHash,
+          charCount,
+          delta: charCount - previousCount,
+        });
+      } catch (e) {
+        console.warn("WritersLogic: content change handling failed:", e);
+      }
     }, 2000);
   }
 
@@ -304,7 +305,7 @@
     lastCharCount = text.length;
     sha256(text).then((hash) => {
       lastContentHash = hash;
-    });
+    }).catch(() => {});
   }
 
   function stopObserving() {

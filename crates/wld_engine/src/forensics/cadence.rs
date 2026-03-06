@@ -125,7 +125,7 @@ fn detect_bursts_and_pauses(ikis: &[f64]) -> (Vec<TypingBurst>, Vec<f64>) {
 
     if let Some(start) = burst_start {
         let length = ikis.len() - start;
-        if length >= 3 {
+        if length >= MIN_BURST_LENGTH {
             bursts.push(TypingBurst {
                 start_idx: start,
                 length,

@@ -260,7 +260,8 @@ impl MerkleVdfBuilder {
         }
 
         if self.leaf_hashes.len() == 1 {
-            return self.leaf_hashes[0].clone();
+            let digest: [u8; 32] = Sha256::digest(self.leaf_hashes[0].as_bytes()).into();
+            return hex::encode(digest);
         }
 
         // Hash each leaf string into a 32-byte SHA-256 digest
