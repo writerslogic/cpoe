@@ -20,18 +20,17 @@ SESSION_OWNER: instruct-mission-3
 - 2026-03-05: Phase 3 batch: SYS-012 (partial logging), SYS-013, H-074, H-075, H-079, H-080, H-122, H-123, H-125, M-074, M-075. Tests: 705 pass, 0 fail.
 - 2026-03-05: Phase 5 (cf2caf28): B-004, H-101, M-062, M-063, M-065, M-066, M-069, M-108, M-120. FFI compiles. 705 pass.
 - 2026-03-05: Phase 6 (5644f7de): M-064, M-067, M-068, M-072, M-073, M-076, M-084, M-085, M-086, M-089, M-092, M-094, M-095, M-103, M-105, M-110, M-111, M-116, M-119, M-127, M-139. 707 pass.
-- 2026-03-05: Phase 7: M-088 (WAL bounds), M-128 (fatigue detection), M-129 (unused field removal), M-130 (min_line_length), M-131 (Hurst exponent), M-144 (profile_uri validation), M-145 (filename bounds), M-146 (evidence chain bounds), M-147 (clock expect). Triaged: M-053, M-056, M-083, M-087, M-137, M-138 (no fix needed/already done). 707 pass.
+- 2026-03-05: Phase 7 (fe54ace2): M-088, M-128, M-129, M-130, M-131, M-144, M-145, M-146, M-147. Triaged: M-053, M-056, M-083, M-087, M-137, M-138. 707 pass.
+- 2026-03-05: Phase 8 (6e43d1a3): SYS-015 (50+ named constants), SYS-019 (browser ext validation), H-105, H-106, M-052, M-070, M-071, M-079, M-080, M-081, M-082, M-090, M-091, M-098, M-099, M-102, M-112, M-114, M-115, M-118, M-132, M-135. 707 pass.
 
 ### Handoff Summary
 <!-- Replace this block before ending a session near context limits -->
 ```
-CONTEXT: Phase 7 committed: WAL bounds, fatigue detection, Hurst exponent, protocol validation, cross-crate hardening. 707 tests passing, clippy clean across all crates.
+CONTEXT: Phase 8 committed (6e43d1a3). All engine MEDIUM/HIGH items resolved or triaged. Browser extension fully hardened. 707 tests passing, clippy clean.
 BLOCKERS: None
-NEXT_STEPS: Remaining engine MEDIUM (M-102, M-112, M-140), browser ext (Group 10), SYS-015 (named constants partial), C-014/H-066 (TPM signing, deferred), macOS/Windows apps. Most engine issues now resolved or triaged.
+REMAINING_ENGINE: C-014 (TPM signing, Windows-only), H-066 (ECDSA P-256, coupled with C-014), H-077 (FFI refactor, deferred), M-050 (tpm god module, deferred), M-058/M-060/M-136/M-143 (deferred architecture/feature items)
+REMAINING_APPS: macOS (9C + 28H + 75M + 7SYS), Windows (6C + 56H + 119M + 7SYS) — separate submodule repos
 KEY_FILES: /Volumes/A/writerslogic/todo.md (this file)
-           crates/wld_engine/src/ (engine code)
-           apps/wld_macos/wld/ (macOS Swift code — submodule)
-           apps/wld_windows/winui/WritersLogic/ (Windows C# code — submodule)
 ```
 
 ---
@@ -132,7 +131,7 @@ Windows app: independent of engine groups (separate C# codebase)
   Files: `rfc/wire_types/packet.rs:61`, `checkpoint.rs:82`, `components.rs:156,176`, `attestation.rs:105,232`, `protocol/codec.rs:20`
   Fix: Add serde size limits or post-decode validation.
 
-- [ ] **SYS-015** `magic_constants` — 15+ files — MEDIUM
+- [x] **SYS-015** `magic_constants` — 15+ files — MEDIUM (50+ constants extracted across 12 files)
   <!-- pid:magic_value | verified:true | first:2026-03-02 -->
   Hardcoded thresholds without named constants.
   Fix: Extract to named `const` with doc comments.
@@ -155,7 +154,7 @@ Windows app: independent of engine groups (separate C# codebase)
   Files: `keyhierarchy/session.rs:43,129,367`, `keyhierarchy/recovery.rs:122,165`, `keyhierarchy/puf.rs:74`, `tpm/secure_enclave.rs:542`, `ffi/helpers.rs:27`, `ffi/ephemeral.rs:794`, `identity/secure_storage.rs:39,103,302`
   Fix: Use `Zeroizing<Vec<u8>>` or scope guards.
 
-- [ ] **SYS-019** `browser_ext_unvalidated_messages` — 3 files — HIGH
+- [x] **SYS-019** `browser_ext_unvalidated_messages` — 3 files — HIGH (message validation added to all 3 files)
   <!-- pid:security-message_origin_bypass | verified:true | first:2026-03-02 -->
   Browser extension message handlers accept from any origin.
   Files: `background.js:478`, `content.js:280`, `popup.js:262`
@@ -257,8 +256,8 @@ Windows app: independent of engine groups (separate C# codebase)
 - [x] **H-101** `sealed_identity/store.rs` — Counter rollback gap on first unseal
 - [x] **H-103** `protocol/forensics/engine.rs:217` — NaN bypass → SYS-016
 - [x] **H-104** `forensics/comparison.rs:54` — ln() of zero/negative → SYS-016
-- [ ] **H-105** `background.js:11` — Global mutable state without sync (service worker)
-- [ ] **H-106** `background.js:442` — Unbounded chunk queue
+- [x] **H-105** `background.js:11` — Documented service worker ephemeral state design
+- [x] **H-106** `background.js:442` — Bounded pending callbacks to MAX_PENDING_CALLBACKS (256)
 - [x] **H-110** `ffi/evidence.rs:191` — FALSE POSITIVE: VDF uses SHA-256, SwfSha256 is correct
 - [x] **H-113** `native_messaging_host.rs:266` — Session overwrite without finalizing
 - [x] **H-122** `vdf/timekeeper.rs:40` — Blocking sync I/O in async function
@@ -290,7 +289,7 @@ Windows app: independent of engine groups (separate C# codebase)
 
 - [ ] M-050 tpm/windows.rs — god module 1208L (DEFERRED: large refactor)
 - [x] M-051 tpm/secure_enclave.rs — duplicate key loading (refactored to load_or_create_se_key)
-- [ ] M-052 background.js — 142-line message handler
+- [x] M-052 background.js — ACKNOWLEDGED: flat switch/case dispatch, no extraction needed
 - [x] M-053 rfc/biology.rs — NO FIX NEEDED: anomaly checking is intentionally non-redundant
 - [x] M-054 checkpoint/chain.rs — no post-deser VDF validation
 - [x] M-056 war/types.rs — ALREADY PRESENT: V2_0 variant exists
@@ -316,10 +315,10 @@ Windows app: independent of engine groups (separate C# codebase)
 
 <details><summary>Browser Extension (4)</summary>
 
-- [ ] M-070 background.js:514 — async IIFE premature sendResponse
-- [ ] M-071 background.js:88 — isConnecting never reset
-- [ ] M-079 background.js:270 — ratchet count not validated
-- [ ] M-080 background.js:483 — start_witnessing URL not validated
+- [x] M-070 background.js — return true from async message handlers
+- [x] M-071 background.js — isConnecting reset in finally/onDisconnect
+- [x] M-079 background.js — ratchet count validated as non-negative integer
+- [x] M-080 background.js — start_witnessing URL validated against ALLOWED_ORIGINS
 </details>
 
 <details><summary>Security (10)</summary>
@@ -331,8 +330,8 @@ Windows app: independent of engine groups (separate C# codebase)
 - [x] M-076 fingerprint/voice.rs:350 — non-ASCII char handling
 - [x] M-077 sealed_identity/store.rs — BY DESIGN: hostname adds entropy alongside TPM device_id
 - [x] M-078 research/uploader.rs — BY DESIGN: Supabase endpoint is the production API
-- [ ] M-081 secure-channel.js:87 — server pubkey not validated
-- [ ] M-082 secure-channel.js:335 — key zeroization unreliable in JS
+- [x] M-081 secure-channel.js — server pubkey length and SEC1 format validated
+- [x] M-082 secure-channel.js — destroy() method with best-effort zeroization
 - [x] M-083 config/loading.rs — ALREADY FIXED: permissions set correctly
 </details>
 
@@ -344,8 +343,8 @@ Windows app: independent of engine groups (separate C# codebase)
 - [x] M-087 vdf/aggregation.rs — NO FIX NEEDED: string not cloned per level
 - [x] M-088 wal/operations.rs — WAL parse bounded by MAX_WAL_ENTRIES (10M)
 - [x] M-089 research/collector.rs — Vec::remove(0) O(n)
-- [ ] M-090 background.js:68 — storage I/O scales with chain length
-- [ ] M-091 content.js:111 — repeated DOM queries per keystroke
+- [x] M-090 background.js — documented single-hash storage design
+- [x] M-091 content.js — cached DOM element references with invalidation
 - [x] M-092 forensics/velocity.rs:77 — unnecessary Vec clone
 - [x] M-093 ffi/ephemeral.rs:122 — ALREADY MITIGATED: EVICTION_THRESHOLD guard + DashMap retain
 </details>
@@ -356,8 +355,8 @@ Windows app: independent of engine groups (separate C# codebase)
 - [x] M-095 platform/windows.rs:580 — lock poison no recovery
 - [x] M-096 ipc/server.rs:133 — ACCEPTABLE: lock held only for .check() microseconds
 - [x] M-097 sentinel/focus.rs:156 — NOT A BUG: receiver consumption pattern is correct
-- [ ] M-098 background.js:147 — TOCTOU on isSecure check
-- [ ] M-099 background.js:548 — non-atomic ratchet increment
+- [x] M-098 background.js — documented: single-threaded JS event loop prevents TOCTOU
+- [x] M-099 background.js — documented: get-then-compare atomic in JS event loop
 - [x] M-100 engine.rs:255 — NOT A BUG: Arc cleanup via running flag
 - [x] M-101 presence/verifier.rs — NOT A BUG: StdRng with &mut self is thread-safe
 </details>
@@ -380,11 +379,11 @@ Windows app: independent of engine groups (separate C# codebase)
 - [x] M-111 forensics/assessment.rs:178 — scattered calibration constants
 - [x] M-112 forensics/topology.rs — algorithm doc comment added to deletion_clustering_coef
 - [x] M-113 rfc/time_evidence.rs:291 — ALREADY FIXED: all add methods call recalculate_tier()
-- [ ] M-114 secure-channel.js:164 — cross-language magic strings
-- [ ] M-115 content.js:33 — magic strings for site detection
+- [x] M-114 secure-channel.js — domain-separation strings extracted to DST_* constants
+- [x] M-115 content.js — site detection strings extracted to SITE_* constants
 - [x] M-116 vdf/params.rs:46 — implicit units in calibration
 - [x] M-117 writersproof/types.rs:81 — ELIMINATED: file is 69 lines, naming is consistent
-- [ ] M-118 background.js:21 — magic values not synced across files
+- [x] M-118 background.js — shared constants extracted (VALID_ACTIONS, GENESIS_COMMITMENT_PREFIX, etc.)
 - [x] M-119 ffi/forensics.rs:144 — hardcoded ML weight vector
 </details>
 
@@ -402,10 +401,10 @@ Windows app: independent of engine groups (separate C# codebase)
 - [x] M-129 forensics/comparison.rs — removed unused cadence_cv_similarity field
 - [x] M-130 analysis/labyrinth.rs — min_line_length diagonal counting implemented
 - [x] M-131 forensics/types.rs — Hurst exponent computed via R/S analysis on 50+ IKI samples
-- [ ] M-132 background.js:187 — sendResponse before async commitment
+- [x] M-132 background.js — sendResponse moved inside async callbacks with return true
 - [x] M-133 forensics/engine.rs:62 — BY DESIGN: ForensicsError is subsystem error with #[from] integration
 - [x] M-134 forensics/forgery_cost.rs:277 — NOT WORTH FIXING: two iterations acceptable
-- [ ] M-135 content.js:280 — content script accepts any message → SYS-019
+- [x] M-135 content.js — sender.id validation and VALID_CONTENT_ACTIONS whitelist
 - [ ] M-136 analysis/active_probes.rs — incomplete probe coverage (DEFERRED: feature enhancement)
 - [x] M-137 platform/mouse_stego.rs — ALREADY FIXED: expect() not in hot path
 - [x] M-138 ipc/secure_channel.rs — ALREADY FIXED by M-075: size limits in place
