@@ -21,7 +21,6 @@ const DST_BROWSER_COMMIT = "wld-browser-commit";
 
 // M-081: Expected sizes for public key validation
 const P256_UNCOMPRESSED_PUBKEY_LEN = 65; // 0x04 || X(32) || Y(32)
-const AES_256_KEY_LEN = 32;
 
 // eslint-disable-next-line no-unused-vars
 class SecureChannel {
@@ -467,6 +466,12 @@ class SecureChannel {
     this.txSequence = 0;
     this.rxSequence = 1;
     this.ratchetCount = 0;
+    // Clear dangling handshake promise callbacks
+    if (this._handshakeReject) {
+      this._handshakeReject(new Error("channel destroyed"));
+    }
+    this._handshakeResolve = null;
+    this._handshakeReject = null;
   }
 }
 

@@ -345,10 +345,17 @@ pub fn ffi_ephemeral_finalize(
     }
 
     // Validation passed — now remove the session for finalization
-    let session = sessions()
-        .remove(&session_id)
-        .expect("session verified present above")
-        .1;
+    let (_, session) = match sessions().remove(&session_id) {
+        Some(pair) => pair,
+        None => {
+            return FfiEphemeralFinalizeResult {
+                success: false,
+                war_block: String::new(),
+                compact_ref: String::new(),
+                error_message: Some("Session was removed concurrently".to_string()),
+            };
+        }
+    };
 
     // Final content hash
     let final_hash: [u8; 32] = Sha256::digest(content.as_bytes()).into();
