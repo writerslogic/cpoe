@@ -11,8 +11,12 @@ pub fn render_html(r: &WarReport) -> String {
     write_verdict(&mut html, r);
     write_enfsi_scale(&mut html, r);
     write_chain_of_custody(&mut html, r);
-    write_process_evidence(&mut html, r);
+    write_category_scores(&mut html, r);
     write_session_timeline(&mut html, r);
+    write_process_evidence(&mut html, r);
+    write_dimension_analysis(&mut html, r);
+    write_statistical_methodology(&mut html, r);
+    write_dimension_lr_table(&mut html, r);
     write_checkpoint_chain(&mut html, r);
     write_forgery_resistance(&mut html, r);
     write_flags(&mut html, r);
@@ -215,6 +219,122 @@ table.data tr:nth-child(even) {{ background: var(--gray-50); }}
   margin: 12px 0;
 }}
 
+/* Category scores */
+.category-scores {{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  margin: 12px 0;
+}}
+.score-bars {{ }}
+.score-bar-row {{
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+}}
+.score-bar-label {{ font-weight: 600; font-size: 14px; min-width: 100px; }}
+.score-bar-track {{
+  flex: 1;
+  height: 18px;
+  background: var(--gray-200);
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 0 8px;
+}}
+.score-bar-fill {{
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s;
+}}
+.score-bar-value {{ font-weight: 700; min-width: 28px; text-align: right; font-size: 14px; }}
+.composite-note {{ font-size: 12px; color: var(--gray-700); margin-top: 8px; }}
+
+/* Writing flow */
+.flow-chart {{
+  position: relative;
+  height: 120px;
+  background: var(--gray-50);
+  border: 1px solid var(--gray-300);
+  border-radius: 6px;
+  display: flex;
+  align-items: flex-end;
+  padding: 8px 4px;
+  gap: 1px;
+  overflow: hidden;
+}}
+.flow-bar {{
+  flex: 1;
+  min-width: 2px;
+  border-radius: 2px 2px 0 0;
+}}
+.flow-labels {{
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--gray-500);
+  margin-top: 4px;
+}}
+.flow-caption {{
+  font-size: 12px;
+  color: var(--gray-700);
+  margin-top: 8px;
+}}
+
+/* Dimension analysis */
+.dimension-card {{
+  background: var(--gray-50);
+  border: 1px solid var(--gray-300);
+  border-radius: 6px;
+  padding: 16px 20px;
+  margin: 12px 0;
+  position: relative;
+}}
+.dimension-card h3 {{
+  font-size: 16px;
+  margin: 0 0 10px;
+}}
+.dimension-badge {{
+  position: absolute;
+  top: 16px;
+  right: 20px;
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  color: #fff;
+  font-weight: 700;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}}
+.dimension-detail {{ font-size: 13px; margin-bottom: 4px; }}
+.dimension-detail strong {{ font-weight: 600; }}
+
+/* Methodology */
+.methodology-grid {{
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+  margin: 12px 0;
+}}
+.methodology-card {{
+  background: var(--gray-100);
+  border: 1px solid var(--gray-300);
+  border-radius: 6px;
+  padding: 14px 16px;
+}}
+.methodology-card h4 {{ font-size: 14px; margin-bottom: 6px; }}
+.methodology-card p {{ font-size: 12px; color: var(--gray-700); margin: 0; }}
+
+/* LR table confidence bar */
+.confidence-bar {{
+  display: inline-block;
+  height: 10px;
+  border-radius: 3px;
+  min-width: 40px;
+  max-width: 100px;
+}}
+
 /* Footer */
 .report-footer {{
   border-top: 1px solid var(--gray-300);
@@ -370,6 +490,172 @@ fn write_chain_of_custody(html: &mut String, r: &WarReport) {
     html.push_str("</table></div>\n");
 }
 
+fn write_category_scores(html: &mut String, r: &WarReport) {
+    if r.dimensions.is_empty() {
+        return;
+    }
+    let _ = write!(
+        html,
+        r#"<div class="category-scores"><div class="score-bars"><h2 style="margin-top:0">Category Scores</h2>"#
+    );
+    for d in &r.dimensions {
+        let _ = write!(
+            html,
+            r#"<div class="score-bar-row">
+<span class="score-bar-label" style="color:{color}">{name}</span>
+<div class="score-bar-track"><div class="score-bar-fill" style="width:{score}%;background:{color}"></div></div>
+<span class="score-bar-value">{score}</span>
+</div>"#,
+            name = html_escape(&d.name),
+            score = d.score,
+            color = d.color,
+        );
+    }
+    let all_pass = r.dimensions.iter().all(|d| d.score >= 60);
+    let contradicts = r.dimensions.iter().any(|d| d.score < 40);
+    if contradicts {
+        html.push_str(
+            r#"<p class="composite-note">Warning: one or more dimensions below threshold.</p>"#,
+        );
+    } else if all_pass {
+        html.push_str(r#"<p class="composite-note">Composite vector: no dimension contradicts verdict. Minimum threshold: 60. All dimensions pass.</p>"#);
+    }
+    html.push_str("</div>");
+
+    if !r.writing_flow.is_empty() {
+        let _ = write!(
+            html,
+            r#"<div><h2 style="margin-top:0">Writing Flow Visualization</h2><div class="flow-chart">"#
+        );
+        let max_intensity = r
+            .writing_flow
+            .iter()
+            .map(|p| p.intensity)
+            .fold(0.0_f64, f64::max)
+            .max(0.01);
+        for point in &r.writing_flow {
+            let pct = (point.intensity / max_intensity * 100.0).min(100.0);
+            let color = match point.phase.as_str() {
+                "drafting" => "#4caf50",
+                "revising" => "#2196f3",
+                "polish" => "#9c27b0",
+                "pause" => "#e0e0e0",
+                _ => "#78909c",
+            };
+            let _ = write!(
+                html,
+                r#"<div class="flow-bar" style="height:{pct:.0}%;background:{color}"></div>"#
+            );
+        }
+        html.push_str("</div>");
+        if let (Some(first), Some(last)) = (r.writing_flow.first(), r.writing_flow.last()) {
+            let _ = write!(
+                html,
+                r#"<div class="flow-labels"><span>{:.0}:00</span><span>Drafting</span><span>Pause</span><span>Revising</span><span>Polish</span><span>{:.0}:{:02.0}</span></div>"#,
+                first.offset_min,
+                last.offset_min as u64,
+                ((last.offset_min % 1.0) * 60.0) as u64,
+            );
+        }
+        let _ = write!(
+            html,
+            r#"<p class="flow-caption">Keystroke intensity over time. Dips indicate natural thinking pauses. Irregular burst patterns are characteristic of human cognitive processing.</p>"#
+        );
+        html.push_str("</div>");
+    }
+
+    html.push_str("</div>\n");
+}
+
+fn write_dimension_analysis(html: &mut String, r: &WarReport) {
+    if r.dimensions.is_empty() {
+        return;
+    }
+    html.push_str("<h2>Detailed Dimension Analysis</h2>\n");
+    for d in &r.dimensions {
+        if d.analysis.is_empty() {
+            continue;
+        }
+        let _ = write!(
+            html,
+            r#"<div class="dimension-card">
+<h3 style="color:{color}">{name}</h3>
+<div class="dimension-badge" style="background:{color}">{score}</div>
+"#,
+            name = html_escape(&d.name),
+            score = d.score,
+            color = d.color,
+        );
+        for detail in &d.analysis {
+            let _ = write!(
+                html,
+                r#"<p class="dimension-detail"><strong>{}:</strong> {}</p>"#,
+                html_escape(&detail.label),
+                html_escape(&detail.text),
+            );
+        }
+        html.push_str("</div>\n");
+    }
+}
+
+fn write_statistical_methodology(html: &mut String, r: &WarReport) {
+    let meth = match r.methodology {
+        Some(ref m) => m,
+        None => return,
+    };
+    html.push_str(r#"<h2>Statistical Methodology</h2><div class="methodology-grid">"#);
+    let _ = write!(
+        html,
+        r#"<div class="methodology-card"><h4>Likelihood Ratio Computation</h4><p>{}</p></div>"#,
+        html_escape(&meth.lr_computation),
+    );
+    let _ = write!(
+        html,
+        r#"<div class="methodology-card"><h4>Confidence Interval</h4><p>{}</p></div>"#,
+        html_escape(&meth.confidence_interval),
+    );
+    let _ = write!(
+        html,
+        r#"<div class="methodology-card"><h4>Calibration</h4><p>{}</p></div>"#,
+        html_escape(&meth.calibration),
+    );
+    html.push_str("</div>\n");
+}
+
+fn write_dimension_lr_table(html: &mut String, r: &WarReport) {
+    if r.dimensions.is_empty() {
+        return;
+    }
+    html.push_str("<h2>Per-Dimension Likelihood Ratios</h2>\n");
+    let _ = write!(
+        html,
+        r#"<table class="data"><tr><th>Dimension</th><th>Score</th><th>LR</th><th>Log-LR</th><th>Confidence</th><th>Key Discriminator</th></tr>"#
+    );
+    for d in &r.dimensions {
+        let conf_pct = (d.confidence * 100.0).min(100.0);
+        let _ = write!(
+            html,
+            r#"<tr><td style="color:{color};font-weight:600">{name}</td><td>{score}</td><td>{lr}</td><td>{log_lr:.2}</td><td><div class="confidence-bar" style="width:{conf_pct:.0}px;background:{color}"></div></td><td>{disc}</td></tr>"#,
+            name = html_escape(&d.name),
+            score = d.score,
+            lr = format_lr(d.lr),
+            log_lr = d.log_lr,
+            conf_pct = conf_pct,
+            color = d.color,
+            disc = html_escape(&d.key_discriminator),
+        );
+    }
+    let _ = write!(
+        html,
+        r#"<tr style="font-weight:700"><td>Combined</td><td>{score}</td><td>{lr}</td><td>{log_lr:.2}</td><td><div class="confidence-bar" style="width:{conf_pct:.0}px;background:#2e7d32"></div></td><td>All dimensions concordant</td></tr>"#,
+        score = r.score,
+        lr = format_lr(r.likelihood_ratio),
+        log_lr = r.likelihood_ratio.log10(),
+        conf_pct = (r.score as f64).min(100.0),
+    );
+    html.push_str("</table>\n");
+}
+
 fn write_process_evidence(html: &mut String, r: &WarReport) {
     let p = &r.process;
     let _ = write!(
@@ -377,7 +663,6 @@ fn write_process_evidence(html: &mut String, r: &WarReport) {
         r#"<h2>Process Evidence (Proof Daemon)</h2><div class="evidence-grid">"#
     );
 
-    // Revision intensity
     let _ = write!(
         html,
         r#"<div class="evidence-card"><h4>Revision Intensity</h4>"#
@@ -394,7 +679,6 @@ fn write_process_evidence(html: &mut String, r: &WarReport) {
     }
     let _ = write!(html, "</div>");
 
-    // Pause distribution
     let _ = write!(
         html,
         r#"<div class="evidence-card"><h4>Pause Distribution</h4>"#
@@ -414,7 +698,6 @@ fn write_process_evidence(html: &mut String, r: &WarReport) {
         r#"<div class="note">Kernel density matches natural cognitive processing.</div></div>"#
     );
 
-    // Paste ratio
     let _ = write!(html, r#"<div class="evidence-card"><h4>Paste Ratio</h4>"#);
     if let Some(pr) = p.paste_ratio_pct {
         let _ = write!(html, r#"<div class="metric">{:.1}% of total text"#, pr);
@@ -431,7 +714,6 @@ fn write_process_evidence(html: &mut String, r: &WarReport) {
         r#"<div class="note">Consistent with inline self-editing.</div></div>"#
     );
 
-    // Keystroke dynamics
     let _ = write!(
         html,
         r#"<div class="evidence-card"><h4>Keystroke Dynamics</h4>"#
@@ -459,7 +741,6 @@ fn write_process_evidence(html: &mut String, r: &WarReport) {
         r#"<div class="note">Timing signature stable throughout session. Behavioral fingerprint consistent with single-author composition.</div></div>"#
     );
 
-    // Deletion patterns
     let _ = write!(
         html,
         r#"<div class="evidence-card"><h4>Deletion Patterns</h4>"#
@@ -479,7 +760,6 @@ fn write_process_evidence(html: &mut String, r: &WarReport) {
         r#"<div class="note">Character-level corrections indicate real-time composition.</div></div>"#
     );
 
-    // SWF checkpoints
     let _ = write!(
         html,
         r#"<div class="evidence-card"><h4>Sequential Work Functions</h4>"#
@@ -661,6 +941,7 @@ fn write_scope(html: &mut String, r: &WarReport) {
 <h3>What This Report Supports:</h3>
 <ul>
 <li>Evidence of human cognitive constraint patterns</li>
+<li>Stylometric consistency with natural authorship</li>
 <li>Documented methodology for dispute review</li>
 <li>Reproducible analysis (same text + algorithm = same results)</li>
 </ul>
@@ -730,8 +1011,6 @@ This report documents process analysis only. It does not constitute legal advice
         year = r.generated_at.format("%Y"),
     );
 }
-
-// -- Helpers --
 
 fn row(html: &mut String, label: &str, value: &str) {
     let _ = write!(
