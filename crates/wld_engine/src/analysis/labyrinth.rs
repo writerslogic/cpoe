@@ -160,28 +160,24 @@ fn find_optimal_delay(data: &[f64], max_delay: usize) -> usize {
         return 1;
     }
 
-    // Normalize data to [0, 1]
     let min_val = data.iter().cloned().fold(f64::INFINITY, f64::min);
     let max_val = data.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
     let range = (max_val - min_val).max(1e-10);
 
     let normalized: Vec<f64> = data.iter().map(|&x| (x - min_val) / range).collect();
 
-    // Calculate mutual information for each delay
     let num_bins = 16;
     let mut prev_mi = f64::INFINITY;
 
     for delay in 1..=max_delay {
         let mi = calculate_mutual_information(&normalized, delay, num_bins);
 
-        // Look for first local minimum
         if mi > prev_mi {
             return delay - 1;
         }
         prev_mi = mi;
     }
 
-    // Default to delay where MI is lowest
     max_delay / 2
 }
 
@@ -192,7 +188,6 @@ fn calculate_mutual_information(data: &[f64], delay: usize, num_bins: usize) -> 
         return f64::INFINITY;
     }
 
-    // Create 2D histogram
     let mut joint_hist = vec![vec![0usize; num_bins]; num_bins];
     let mut hist_x = vec![0usize; num_bins];
     let mut hist_y = vec![0usize; num_bins];
@@ -206,7 +201,6 @@ fn calculate_mutual_information(data: &[f64], delay: usize, num_bins: usize) -> 
         hist_y[y_bin] += 1;
     }
 
-    // Calculate mutual information
     let mut mi = 0.0;
     let n_f = n as f64;
 
@@ -235,7 +229,6 @@ fn estimate_embedding_dimension(data: &[f64], delay: usize, max_dim: usize) -> u
 
         let fnn_ratio = calculate_fnn_ratio(&embedding, data, dim, delay);
 
-        // If FNN ratio drops below threshold, we've found the dimension
         if fnn_ratio < FNN_RATIO_THRESHOLD {
             return dim;
         }
@@ -263,7 +256,6 @@ fn calculate_fnn_ratio(embedding: &[Vec<f64>], original: &[f64], dim: usize, del
     let mut fnn_count = 0;
     let mut total_count = 0;
 
-    // Sample subset for efficiency — search only within sampled points
     let sample_size = n.min(100);
     let step = (n / sample_size).max(1);
     let sampled: Vec<usize> = (0..n).step_by(step).collect();
@@ -348,7 +340,6 @@ fn compute_recurrence_quantification(
         return (0.0, 0.0);
     }
 
-    // Calculate standard deviation for threshold scaling
     let all_coords: Vec<f64> = embedding.iter().flat_map(|p| p.iter().copied()).collect();
     let mean: f64 = all_coords.iter().sum::<f64>() / all_coords.len() as f64;
     let variance: f64 =
@@ -357,7 +348,6 @@ fn compute_recurrence_quantification(
 
     let eps = threshold * std_dev;
 
-    // Sample recurrence matrix for efficiency
     let sample_n = n.min(200);
     let step = (n / sample_n).max(1);
     let sampled_indices: Vec<usize> = (0..n).step_by(step).collect();
@@ -433,7 +423,6 @@ fn estimate_correlation_dimension(embedding: &[Vec<f64>]) -> f64 {
         return 0.0;
     }
 
-    // Calculate pairwise distances
     let mut distances = Vec::new();
     let sample_size = n.min(100);
     let step = (n / sample_size).max(1);
@@ -453,7 +442,6 @@ fn estimate_correlation_dimension(embedding: &[Vec<f64>]) -> f64 {
 
     distances.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
-    // Calculate correlation sum C(r) for different r values
     let mut log_r = Vec::new();
     let mut log_c = Vec::new();
 
@@ -468,7 +456,6 @@ fn estimate_correlation_dimension(embedding: &[Vec<f64>]) -> f64 {
     for i in 0..num_bins {
         let r = r_min * ((r_max / r_min).powf(i as f64 / (num_bins - 1) as f64));
 
-        // Count pairs within distance r
         let count = distances.iter().filter(|&&d| d < r).count();
         let c = count as f64 / distances.len() as f64;
 
@@ -482,7 +469,6 @@ fn estimate_correlation_dimension(embedding: &[Vec<f64>]) -> f64 {
         return 0.0;
     }
 
-    // Linear regression to get slope (correlation dimension)
     let n_pts = log_r.len();
     let mean_r: f64 = log_r.iter().sum::<f64>() / n_pts as f64;
     let mean_c: f64 = log_c.iter().sum::<f64>() / n_pts as f64;
@@ -509,14 +495,12 @@ fn estimate_betti_numbers(embedding: &[Vec<f64>], threshold: f64) -> [usize; 3] 
         return [1, 0, 0];
     }
 
-    // Calculate distance threshold
     let all_coords: Vec<f64> = embedding.iter().flat_map(|p| p.iter().copied()).collect();
     let mean: f64 = all_coords.iter().sum::<f64>() / all_coords.len() as f64;
     let variance: f64 =
         all_coords.iter().map(|&x| (x - mean).powi(2)).sum::<f64>() / all_coords.len() as f64;
     let eps = threshold * variance.sqrt() * 3.0;
 
-    // Build adjacency graph
     let sample_n = n.min(100);
     let step = (n / sample_n).max(1);
     let mut adjacency: HashSet<(usize, usize)> = HashSet::new();
@@ -593,10 +577,8 @@ fn euclidean_distance(a: &[f64], b: &[f64]) -> f64 {
 
 /// Calculate confidence score based on data quality.
 fn calculate_confidence(n: usize, dim: usize, delay: usize) -> f64 {
-    // More data points = higher confidence
     let data_factor = (n as f64 / 100.0).min(1.0);
 
-    // Reasonable embedding parameters = higher confidence
     let embed_factor = if (3..=8).contains(&dim) && (1..=10).contains(&delay) {
         1.0
     } else {
@@ -612,7 +594,6 @@ mod tests {
 
     #[test]
     fn test_labyrinth_basic() {
-        // Generate quasi-periodic data (Lorenz-like)
         let mut data = Vec::new();
         let mut x = 1.0;
         for i in 0..200 {

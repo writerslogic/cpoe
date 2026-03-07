@@ -117,12 +117,10 @@ pub fn analyze_pink_noise(data: &[f64], sample_rate: f64) -> Result<PinkNoiseAna
 
     let psd = compute_psd(data)?;
 
-    // Frequency bins (skip DC component)
     let freq_step = sample_rate / n as f64;
     let mut log_freq = Vec::new();
     let mut log_power = Vec::new();
 
-    // Use only positive frequencies up to Nyquist
     let nyquist_idx = n / 2;
     for (i, &power) in psd.iter().enumerate().take(nyquist_idx).skip(1) {
         let freq = i as f64 * freq_step;
@@ -182,7 +180,6 @@ fn fft_radix2(real: &mut [f64], imag: &mut [f64]) {
     let n = real.len();
     debug_assert!(n.is_power_of_two() && imag.len() == n);
 
-    // Bit-reversal permutation
     let mut j = 0usize;
     for i in 1..n {
         let mut bit = n >> 1;
@@ -197,7 +194,6 @@ fn fft_radix2(real: &mut [f64], imag: &mut [f64]) {
         }
     }
 
-    // Butterfly stages
     let mut len = 2;
     while len <= n {
         let half = len / 2;
@@ -226,7 +222,6 @@ fn fft_radix2(real: &mut [f64], imag: &mut [f64]) {
 fn compute_psd(data: &[f64]) -> Result<Vec<f64>, String> {
     let n = data.len();
 
-    // Pad to next power of 2 for FFT efficiency
     let fft_size = n.next_power_of_two();
 
     // Apply Hann window to reduce spectral leakage
@@ -241,7 +236,6 @@ fn compute_psd(data: &[f64]) -> Result<Vec<f64>, String> {
 
     windowed.resize(fft_size, 0.0);
 
-    // Cooley-Tukey radix-2 FFT (O(n log n))
     let mut real: Vec<f64> = windowed;
     let mut imag = vec![0.0; fft_size];
     fft_radix2(&mut real, &mut imag);
@@ -288,21 +282,18 @@ use super::stats::linear_regression;
 ///
 /// Uses the Voss-McCartney algorithm for 1/f noise generation.
 pub fn generate_pink_noise(length: usize, seed: u64) -> Vec<f64> {
-    // Simple PRNG for reproducibility
     let mut state = seed;
     let mut next_random = || {
         state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
         ((state >> 33) as f64 / u32::MAX as f64) * 2.0 - 1.0
     };
 
-    // Voss-McCartney algorithm with 8 octaves
     let num_octaves = 8;
     let mut octave_values: Vec<f64> = vec![0.0; num_octaves];
     let mut counter = 0u32;
     let mut output = Vec::with_capacity(length);
 
     for _ in 0..length {
-        // Update octaves based on bit changes
         let mut mask = 1u32;
         for octave in octave_values.iter_mut() {
             if (counter & mask) == 0 {
@@ -312,7 +303,6 @@ pub fn generate_pink_noise(length: usize, seed: u64) -> Vec<f64> {
         }
         counter = counter.wrapping_add(1);
 
-        // Sum all octaves
         let sample: f64 = octave_values.iter().sum::<f64>() / num_octaves as f64;
         output.push(sample);
     }
@@ -326,13 +316,10 @@ mod tests {
 
     #[test]
     fn test_pink_noise_detection() {
-        // Generate synthetic pink noise
         let data = generate_pink_noise(512, 42);
 
-        // Analyze at 100 Hz sample rate
         let result = analyze_pink_noise(&data, 100.0).unwrap();
 
-        // Should detect as pink-ish (slope around 1.0)
         assert!(
             result.spectral_slope > 0.5 && result.spectral_slope < 2.0,
             "Pink noise spectral slope should be in reasonable range, got {}",
@@ -342,14 +329,12 @@ mod tests {
 
     #[test]
     fn test_white_noise_detection() {
-        // Generate white noise
         use rand::Rng;
         let mut rng = rand::rng();
         let data: Vec<f64> = (0..512).map(|_| rng.random::<f64>() * 2.0 - 1.0).collect();
 
         let result = analyze_pink_noise(&data, 100.0).unwrap();
 
-        // White noise should have slope near 0
         assert!(
             result.spectral_slope < 0.5,
             "White noise should have low spectral slope, got {}",

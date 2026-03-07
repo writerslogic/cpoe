@@ -209,7 +209,6 @@ mod tests {
             .build()
             .expect("build");
 
-        // Tamper with chain
         packet.checkpoints[1].previous_hash = "wrong".to_string();
 
         let err = packet.verify(chain.vdf_params).unwrap_err();
@@ -222,7 +221,6 @@ mod tests {
         let (chain, _) = create_test_chain(&dir);
         let mut decl = create_test_declaration(&chain);
 
-        // Tamper with declaration
         decl.signature[0] ^= 0xFF;
 
         let err = Builder::new("Test", &chain)
@@ -271,7 +269,6 @@ mod tests {
         let hash = packet.hash().expect("hash");
         assert_ne!(hash, [0u8; 32]);
 
-        // Same packet should have same hash
         let hash2 = packet.hash().expect("hash");
         assert_eq!(hash, hash2);
     }
@@ -420,7 +417,6 @@ mod tests {
             .build()
             .expect("build");
 
-        // Should have at least chain integrity and process declared claims
         assert!(packet
             .claims
             .iter()
@@ -442,7 +438,6 @@ mod tests {
             .build()
             .expect("build");
 
-        // Should have cognitive origin limitation
         assert!(packet
             .limitations
             .iter()
@@ -456,8 +451,6 @@ mod tests {
         fs::write(&path, b"content").expect("write");
 
         let chain = checkpoint::Chain::new(&path, vdf::default_parameters()).expect("chain");
-        // No commits
-
         let signing_key = test_signing_key();
         let decl = declaration::no_ai_declaration([1u8; 32], [2u8; 32], "Empty Chain", "Test")
             .sign(&signing_key)
@@ -520,7 +513,6 @@ mod tests {
             .build()
             .expect("build");
 
-        // Should have AI-related limitation
         assert!(packet
             .limitations
             .iter()
@@ -545,7 +537,7 @@ mod tests {
         assert_eq!(packet.document.title, "Test Doc");
         assert!(packet.document.path.contains("doc.txt"));
         assert!(!packet.document.final_hash.is_empty());
-        assert_eq!(packet.document.final_size, 11); // "hello world".len()
+        assert_eq!(packet.document.final_size, 11);
     }
 
     #[test]
@@ -660,10 +652,8 @@ mod tests {
         let (chain, _) = create_test_chain(&dir);
         let decl = create_test_declaration(&chain);
 
-        // Create a test attestation nonce
         let nonce: [u8; 32] = [0x42u8; 32];
 
-        // Create a minimal binding for testing
         let binding = tpm::Binding {
             version: 1,
             provider_type: "software".to_string(),
@@ -683,14 +673,12 @@ mod tests {
             .build()
             .expect("build");
 
-        // Verify hardware evidence is present with nonce
         assert!(packet.hardware.is_some());
         let hw = packet.hardware.as_ref().unwrap();
         assert_eq!(hw.device_id, "test-device");
         assert!(hw.attestation_nonce.is_some());
         assert_eq!(hw.attestation_nonce.unwrap(), nonce);
 
-        // Verify strength is Enhanced with hardware attestation
         assert!(packet.strength >= Strength::Enhanced);
     }
 
@@ -719,7 +707,6 @@ mod tests {
             .build()
             .expect("build");
 
-        // Verify hardware evidence is present without nonce
         assert!(packet.hardware.is_some());
         let hw = packet.hardware.as_ref().unwrap();
         assert!(hw.attestation_nonce.is_none());
@@ -734,13 +721,9 @@ mod tests {
             attestation_nonce: Some(nonce),
         };
 
-        // Serialize to JSON
         let json = serde_json::to_string(&hw).expect("serialize");
-
-        // Verify nonce is hex-encoded
         assert!(json.contains(&hex::encode(nonce)));
 
-        // Deserialize back
         let decoded: HardwareEvidence = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(decoded.attestation_nonce, Some(nonce));
     }
@@ -753,13 +736,9 @@ mod tests {
             attestation_nonce: None,
         };
 
-        // Serialize to JSON
         let json = serde_json::to_string(&hw).expect("serialize");
-
-        // Verify attestation_nonce is not present (skip_serializing_if = "Option::is_none")
         assert!(!json.contains("attestation_nonce"));
 
-        // Deserialize back
         let decoded: HardwareEvidence = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(decoded.attestation_nonce, None);
     }
@@ -775,7 +754,6 @@ mod tests {
             .build()
             .expect("build");
 
-        // Sign without nonce
         let signing_key = test_signing_key();
         packet.sign(&signing_key).expect("sign");
 
@@ -784,7 +762,6 @@ mod tests {
         assert!(packet.packet_signature.is_some());
         assert!(packet.signing_public_key.is_some());
 
-        // Verify without expecting a nonce
         packet.verify_signature(None).expect("verify");
     }
 
@@ -799,7 +776,6 @@ mod tests {
             .build()
             .expect("build");
 
-        // Sign with nonce
         let signing_key = test_signing_key();
         let nonce: [u8; 32] = [0x42u8; 32];
         packet.sign_with_nonce(&signing_key, nonce).expect("sign");
@@ -808,7 +784,6 @@ mod tests {
         assert!(packet.has_verifier_nonce());
         assert_eq!(packet.get_verifier_nonce(), Some(&nonce));
 
-        // Verify with the correct nonce
         packet.verify_signature(Some(&nonce)).expect("verify");
     }
 
@@ -827,7 +802,6 @@ mod tests {
         let nonce: [u8; 32] = [0x42u8; 32];
         packet.sign_with_nonce(&signing_key, nonce).expect("sign");
 
-        // Verify with wrong nonce should fail
         let wrong_nonce: [u8; 32] = [0x99u8; 32];
         let err = packet.verify_signature(Some(&wrong_nonce)).unwrap_err();
         assert!(err.to_string().contains("nonce mismatch"));
@@ -844,11 +818,9 @@ mod tests {
             .build()
             .expect("build");
 
-        // Sign without nonce
         let signing_key = test_signing_key();
         packet.sign(&signing_key).expect("sign");
 
-        // Verify expecting a nonce should fail
         let expected_nonce: [u8; 32] = [0x42u8; 32];
         let err = packet.verify_signature(Some(&expected_nonce)).unwrap_err();
         assert!(err
@@ -867,7 +839,6 @@ mod tests {
             .build()
             .expect("build");
 
-        // Verify without signing should fail
         let err = packet.verify_signature(None).unwrap_err();
         assert!(err.to_string().contains("packet not signed"));
     }
@@ -887,15 +858,12 @@ mod tests {
         let nonce1: [u8; 32] = [0x11u8; 32];
         let nonce2: [u8; 32] = [0x22u8; 32];
 
-        // Sign with first nonce
         packet.sign_with_nonce(&signing_key, nonce1).expect("sign");
 
-        // Verify with first nonce passes
         packet
             .verify_signature(Some(&nonce1))
             .expect("verify nonce1");
 
-        // Attempting to verify with second nonce fails (replay prevention)
         let err = packet.verify_signature(Some(&nonce2)).unwrap_err();
         assert!(err.to_string().contains("nonce mismatch"));
     }
@@ -915,18 +883,13 @@ mod tests {
         let nonce: [u8; 32] = [0xABu8; 32];
         packet.sign_with_nonce(&signing_key, nonce).expect("sign");
 
-        // Encode to JSON
         let encoded = packet.encode().expect("encode");
-
-        // Decode back
         let decoded = Packet::decode(&encoded).expect("decode");
 
-        // Verify fields are preserved
         assert_eq!(decoded.verifier_nonce, packet.verifier_nonce);
         assert_eq!(decoded.packet_signature, packet.packet_signature);
         assert_eq!(decoded.signing_public_key, packet.signing_public_key);
 
-        // Verify signature still works
         decoded
             .verify_signature(Some(&nonce))
             .expect("verify after roundtrip");
@@ -946,11 +909,9 @@ mod tests {
         let signing_key = test_signing_key();
         let nonce1: [u8; 32] = [0x11u8; 32];
 
-        // Sign with first nonce
         packet.sign_with_nonce(&signing_key, nonce1).expect("sign");
         assert!(packet.is_signed());
 
-        // Setting a new nonce should clear the signature
         let nonce2: [u8; 32] = [0x22u8; 32];
         packet.set_verifier_nonce(nonce2);
 
@@ -972,7 +933,6 @@ mod tests {
             .build()
             .expect("build");
 
-        // Content hash should be consistent
         let hash1 = packet.content_hash();
         let hash2 = packet.content_hash();
         assert_eq!(hash1, hash2);
@@ -989,7 +949,6 @@ mod tests {
             .build()
             .expect("build");
 
-        // Without nonce, signing payload equals content hash
         let content = packet.content_hash();
         let payload = packet.signing_payload();
         assert_eq!(content, payload);
@@ -1009,7 +968,6 @@ mod tests {
         let nonce: [u8; 32] = [0x42u8; 32];
         packet.set_verifier_nonce(nonce);
 
-        // With nonce, signing payload differs from content hash
         let content = packet.content_hash();
         let payload = packet.signing_payload();
         assert_ne!(content, payload);
@@ -1037,7 +995,6 @@ mod tests {
         packet1.set_verifier_nonce(nonce1);
         packet2.set_verifier_nonce(nonce2);
 
-        // Different nonces should produce different signing payloads
         let payload1 = packet1.signing_payload();
         let payload2 = packet2.signing_payload();
         assert_ne!(payload1, payload2);
@@ -1054,20 +1011,16 @@ mod tests {
             .build()
             .expect("build");
 
-        // Default encode uses CBOR with PPP tag
         let encoded = packet.encode().expect("encode");
 
-        // Verify it has the PPP semantic tag
         assert!(
             crate::codec::cbor::has_tag(&encoded, crate::codec::CBOR_TAG_PPP),
             "encoded packet should have PPP semantic tag"
         );
 
-        // Verify format detection works
         let format = crate::codec::Format::detect(&encoded);
         assert_eq!(format, Some(crate::codec::Format::Cbor));
 
-        // Verify roundtrip
         let decoded = Packet::decode(&encoded).expect("decode");
         assert_eq!(decoded.document.title, packet.document.title);
         assert_eq!(decoded.chain_hash, packet.chain_hash);
@@ -1084,19 +1037,15 @@ mod tests {
             .build()
             .expect("build");
 
-        // Encode as JSON
         let encoded = packet
             .encode_with_format(crate::codec::Format::Json)
             .expect("encode json");
 
-        // Verify format detection
         let format = crate::codec::Format::detect(&encoded);
         assert_eq!(format, Some(crate::codec::Format::Json));
 
-        // Verify it starts with JSON object marker
         assert_eq!(encoded[0], b'{');
 
-        // Verify roundtrip via auto-detect
         let decoded = Packet::decode(&encoded).expect("decode");
         assert_eq!(decoded.document.title, packet.document.title);
     }
@@ -1112,10 +1061,8 @@ mod tests {
             .build()
             .expect("build");
 
-        // Encode as raw CBOR (no tag)
         let untagged = crate::codec::cbor::encode(&packet).expect("encode untagged");
 
-        // Decoding should fail due to missing PPP tag
         let result = Packet::decode(&untagged);
         assert!(result.is_err());
         assert!(result
@@ -1135,7 +1082,6 @@ mod tests {
             .build()
             .expect("build");
 
-        // Unsigned packet should be Local tier
         assert_eq!(packet.trust_tier, Some(TrustTier::Local));
         assert_eq!(packet.compute_trust_tier(), TrustTier::Local);
     }
@@ -1151,7 +1097,6 @@ mod tests {
             .build()
             .expect("build");
 
-        // Sign without nonce
         let signing_key = test_signing_key();
         packet.sign(&signing_key).expect("sign");
 
@@ -1169,7 +1114,6 @@ mod tests {
             .build()
             .expect("build");
 
-        // Sign with nonce
         let signing_key = test_signing_key();
         let nonce = [0x42u8; 32];
         packet.sign_with_nonce(&signing_key, nonce).expect("sign");
@@ -1189,7 +1133,6 @@ mod tests {
             .build()
             .expect("build");
 
-        // WritersProof certificate trumps everything
         assert_eq!(packet.trust_tier, Some(TrustTier::Attested));
         assert_eq!(packet.compute_trust_tier(), TrustTier::Attested);
     }

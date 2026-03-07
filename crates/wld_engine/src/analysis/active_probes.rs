@@ -132,8 +132,7 @@ pub fn analyze_galton_invariant(
         return Err("Insufficient samples for Galton analysis (minimum 20)".to_string());
     }
 
-    // Find perturbation events (intervals significantly different from baseline)
-    let threshold = baseline_interval_ms * 0.3; // 30% deviation threshold
+    let threshold = baseline_interval_ms * 0.3;
     let mut perturbations: Vec<(usize, f64)> = Vec::new();
 
     for (i, sample) in samples.iter().enumerate() {
@@ -147,13 +146,11 @@ pub fn analyze_galton_invariant(
         return Err("Insufficient perturbations detected (minimum 3)".to_string());
     }
 
-    // Analyze recovery after each perturbation
     let mut absorption_rates = Vec::new();
     let mut acceleration_recoveries = Vec::new();
     let mut deceleration_recoveries = Vec::new();
 
     for &(pert_idx, deviation) in &perturbations {
-        // Track how quickly subsequent intervals return to baseline
         let mut recovery_samples = Vec::new();
 
         let end_idx = samples.len().min(pert_idx + 10);
@@ -163,7 +160,6 @@ pub fn analyze_galton_invariant(
         }
 
         if recovery_samples.len() >= 3 {
-            // Calculate exponential decay rate
             let decay_rate = estimate_decay_rate(&recovery_samples);
             absorption_rates.push(decay_rate);
 
@@ -179,7 +175,6 @@ pub fn analyze_galton_invariant(
         return Err("Could not calculate absorption rates".to_string());
     }
 
-    // Calculate mean absorption coefficient
     let absorption_coefficient: f64 =
         absorption_rates.iter().sum::<f64>() / absorption_rates.len() as f64;
 
@@ -190,7 +185,6 @@ pub fn analyze_galton_invariant(
         f64::INFINITY
     };
 
-    // Calculate asymmetry factor
     let accel_mean = if !acceleration_recoveries.is_empty() {
         acceleration_recoveries.iter().sum::<f64>() / acceleration_recoveries.len() as f64
     } else {
@@ -209,7 +203,6 @@ pub fn analyze_galton_invariant(
         1.0
     };
 
-    // Calculate standard error
     let variance: f64 = absorption_rates
         .iter()
         .map(|&r| (r - absorption_coefficient).powi(2))
@@ -269,7 +262,6 @@ fn estimate_decay_rate(deviations: &[f64]) -> f64 {
 /// # Returns
 /// * `ReflexGateResult` with latency characteristics
 pub fn analyze_reflex_gate(samples: &[ProbeSample]) -> Result<ReflexGateResult, String> {
-    // Filter to stimulus responses only
     let responses: Vec<f64> = samples
         .iter()
         .filter(|s| s.is_stimulus_response)
@@ -282,7 +274,6 @@ pub fn analyze_reflex_gate(samples: &[ProbeSample]) -> Result<ReflexGateResult, 
 
     let n = responses.len();
 
-    // Calculate statistics
     let min_latency_ms = responses.iter().cloned().fold(f64::INFINITY, f64::min);
     let mean_latency_ms: f64 = responses.iter().sum::<f64>() / n as f64;
 
@@ -299,7 +290,6 @@ pub fn analyze_reflex_gate(samples: &[ProbeSample]) -> Result<ReflexGateResult, 
         0.0
     };
 
-    // Calculate sequential dependency (lag-1 autocorrelation)
     let sequential_dependency = if responses.len() >= 3 {
         calculate_lag1_autocorrelation(&responses)
     } else {
@@ -418,7 +408,6 @@ mod tests {
         for i in 0..50 {
             let mut interval = base_interval;
 
-            // Check if this is a perturbation
             for &(pert_idx, deviation) in perturbations {
                 if i == pert_idx {
                     interval += deviation;
@@ -443,7 +432,6 @@ mod tests {
 
     #[test]
     fn test_galton_invariant_basic() {
-        // Create samples with some perturbations that decay
         let samples = create_rhythmic_samples(200.0, &[(10, 100.0), (25, -80.0), (40, 60.0)]);
 
         let result = analyze_galton_invariant(&samples, 200.0).unwrap();
@@ -491,7 +479,6 @@ mod tests {
 
     #[test]
     fn test_reflex_gate_superhuman() {
-        // Create samples with impossibly fast responses
         let latencies = [50.0, 60.0, 55.0, 70.0, 45.0];
         let samples: Vec<ProbeSample> = latencies
             .iter()
@@ -542,14 +529,12 @@ mod tests {
         // Perfectly correlated series (linear trend)
         let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
         let corr = calculate_lag1_autocorrelation(&data);
-        // Linear series has high positive autocorrelation
         assert!(
             corr > 0.0,
             "Linear series should have positive autocorrelation, got {}",
             corr
         );
 
-        // Alternating series (negative autocorrelation)
         let data2 = vec![1.0, -1.0, 1.0, -1.0, 1.0];
         let corr2 = calculate_lag1_autocorrelation(&data2);
         assert!(

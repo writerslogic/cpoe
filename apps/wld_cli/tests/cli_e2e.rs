@@ -7,7 +7,6 @@ fn test_cli_full_workflow() {
     let dir = tempdir().unwrap();
     let bin = env!("CARGO_BIN_EXE_writerslogic");
 
-    // Helper to run command
     let run = |args: &[&str], input: Option<&str>| {
         use std::io::Write;
         use std::process::Stdio;
@@ -41,20 +40,14 @@ fn test_cli_full_workflow() {
         String::from_utf8_lossy(&output.stdout).to_string()
     };
 
-    // 1. Init
-    println!("Testing init...");
     let stdout = run(&["init"], None);
     assert!(stdout.contains("initialized successfully"));
     assert!(dir.path().join("signing_key").exists());
 
-    // 2. Status
-    println!("Testing status...");
     let stdout = run(&["status"], None);
     assert!(stdout.contains("WritersLogic Status"));
     assert!(stdout.contains("VERIFIED"));
 
-    // 3. Commit (minimum 3 checkpoints required for export per spec)
-    println!("Testing commit...");
     let doc_path = dir.path().join("test.txt");
     fs::write(&doc_path, "First version content").unwrap();
 
@@ -64,7 +57,6 @@ fn test_cli_full_workflow() {
     );
     assert!(stdout.contains("Checkpoint #1 created"));
 
-    // Update file and commit again
     fs::write(&doc_path, "Second version content - more text").unwrap();
     let stdout = run(
         &["commit", doc_path.to_str().unwrap(), "-m", "Second commit"],
@@ -72,7 +64,6 @@ fn test_cli_full_workflow() {
     );
     assert!(stdout.contains("Checkpoint #2 created"));
 
-    // Third commit required for minimum 3 checkpoints per evidence packet
     fs::write(
         &doc_path,
         "Third version content - even more text added here",
@@ -84,18 +75,13 @@ fn test_cli_full_workflow() {
     );
     assert!(stdout.contains("Checkpoint #3 created"));
 
-    // 4. Log
-    println!("Testing log...");
     let stdout = run(&["log", doc_path.to_str().unwrap()], None);
     assert!(stdout.contains("Checkpoint History"));
     assert!(stdout.contains("First commit"));
     assert!(stdout.contains("Second commit"));
     assert!(stdout.contains("Third commit"));
 
-    // 5. Export
-    println!("Testing export...");
     let evidence_path = dir.path().join("evidence.json");
-    // Provide answers for: AI tools (n), Declaration statement
     let stdout = run(
         &[
             "export",
@@ -108,8 +94,6 @@ fn test_cli_full_workflow() {
     assert!(stdout.contains("Evidence exported to"));
     assert!(evidence_path.exists());
 
-    // 6. Verify
-    println!("Testing verify...");
     let stdout = run(&["verify", evidence_path.to_str().unwrap()], None);
     assert!(stdout.contains("Evidence packet VERIFIED"));
 }
@@ -199,14 +183,12 @@ fn test_cli_version() {
 fn test_cli_status_before_init() {
     let env = CliTestEnv::new();
     let (success, stdout, _stderr) = env.run(&["status"], None);
-    // Status before init shows status but indicates not found
     if success {
         assert!(
             stdout.contains("not found") || stdout.contains("Status"),
             "Status should indicate database not found or show status"
         );
     }
-    // Failure is also acceptable
 }
 
 #[test]
@@ -215,9 +197,7 @@ fn test_cli_commit_before_init() {
     let doc_path = env.dir.path().join("test.txt");
     fs::write(&doc_path, "content").unwrap();
 
-    // The CLI prompts for init if not initialized, so we pass "n" to reject
     let (success, stdout, _stderr) = env.run(&["commit", doc_path.to_str().unwrap()], Some("n\n"));
-    // Either fails or prompts for init
     assert!(
         !success || stdout.contains("not initialized") || stdout.contains("Initialize"),
         "Commit should fail or prompt for init"
@@ -246,7 +226,6 @@ fn test_cli_list_empty() {
     env.init();
 
     let stdout = env.run_expect_success(&["list"], None);
-    // Should show no tracked files or empty list
     assert!(
         stdout.contains("No tracked") || stdout.contains("0 documents") || stdout.is_empty(),
         "Should indicate no tracked documents"
@@ -258,7 +237,6 @@ fn test_cli_list_after_commits() {
     let env = CliTestEnv::new();
     env.init();
 
-    // Create and commit two files
     let doc1 = env.dir.path().join("doc1.txt");
     let doc2 = env.dir.path().join("doc2.txt");
     fs::write(&doc1, "content1").unwrap();
@@ -280,7 +258,6 @@ fn test_cli_config_show() {
     env.init();
 
     let stdout = env.run_expect_success(&["config", "show"], None);
-    // Should display configuration
     assert!(
         stdout.contains("retention") || stdout.contains("config") || stdout.len() > 10,
         "Should show configuration"
@@ -295,9 +272,7 @@ fn test_cli_log_no_history() {
     let doc_path = env.dir.path().join("new.txt");
     fs::write(&doc_path, "content").unwrap();
 
-    // Log for uncommitted file
     let (success, stdout, _stderr) = env.run(&["log", doc_path.to_str().unwrap()], None);
-    // Either fails or shows empty history
     if success {
         assert!(
             stdout.contains("No checkpoints") || stdout.contains("0 checkpoint"),
@@ -311,7 +286,6 @@ fn test_cli_verify_invalid_file() {
     let env = CliTestEnv::new();
     env.init();
 
-    // Create a file that's not a valid evidence packet
     let invalid = env.dir.path().join("invalid.json");
     fs::write(&invalid, "not valid json evidence").unwrap();
 
@@ -332,7 +306,6 @@ fn test_cli_export_war_format() {
     let env = CliTestEnv::new();
     env.init();
 
-    // Create and commit a file (minimum 3 checkpoints required for export)
     let doc_path = env.dir.path().join("doc.txt");
     fs::write(&doc_path, "WAR format test content").unwrap();
     env.run_expect_success(
@@ -350,7 +323,6 @@ fn test_cli_export_war_format() {
         None,
     );
 
-    // Export in WAR format
     let war_path = env.dir.path().join("evidence.war");
     let stdout = env.run_expect_success(
         &[
@@ -370,7 +342,6 @@ fn test_cli_export_war_format() {
         "Should confirm export"
     );
 
-    // Verify WAR content has ASCII armor
     let war_content = fs::read_to_string(&war_path).unwrap();
     assert!(
         war_content.contains("-----BEGIN WITNESSD") || war_content.contains("BEGIN"),
@@ -383,11 +354,8 @@ fn test_cli_calibrate() {
     let env = CliTestEnv::new();
     env.init();
 
-    // Calibrate command should run without errors
-    // Note: This may take some time as it benchmarks the CPU
     let (success, stdout, stderr) = env.run(&["calibrate"], None);
 
-    // Calibrate might succeed or give a performance warning
     if success {
         assert!(
             stdout.contains("iterations")
@@ -397,7 +365,6 @@ fn test_cli_calibrate() {
             stdout
         );
     } else {
-        // Some environments may not support calibration
         println!(
             "Calibrate failed (may be expected): stdout={}, stderr={}",
             stdout, stderr
@@ -410,7 +377,6 @@ fn test_cli_presence_without_session() {
     let env = CliTestEnv::new();
     env.init();
 
-    // Check presence status without starting a session
     let (success, stdout, _stderr) = env.run(&["presence", "status"], None);
     if success {
         assert!(
@@ -426,7 +392,6 @@ fn test_cli_fingerprint_status() {
     env.init();
 
     let stdout = env.run_expect_success(&["fingerprint", "status"], None);
-    // Should show fingerprint status
     assert!(
         stdout.contains("fingerprint")
             || stdout.contains("activity")

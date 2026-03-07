@@ -51,7 +51,6 @@ const FORGERY_CONFIDENCE_PER_FLAG: f64 = 0.3;
 /// Features extracted from typing that are hard to fake
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BehavioralFingerprint {
-    // Timing distributions (milliseconds)
     pub keystroke_interval_mean: f64,
     pub keystroke_interval_std: f64,
     pub keystroke_interval_skewness: f64,
@@ -92,7 +91,6 @@ impl BehavioralFingerprint {
             return Self::default();
         }
 
-        // SimpleJitterSample has timestamp_ns
         let intervals: Vec<f64> = samples
             .windows(2)
             .map(|w| (w[1].timestamp_ns - w[0].timestamp_ns) as f64 / 1_000_000.0)
@@ -120,7 +118,6 @@ impl BehavioralFingerprint {
             0.0
         };
 
-        // Bursts: sequences separated by > BURST_SEPARATOR_MS
         let mut bursts = Vec::new();
         let mut current_burst_len = 0;
         for w in samples.windows(2) {
@@ -141,7 +138,6 @@ impl BehavioralFingerprint {
             0.0
         };
 
-        // Build interval histogram with bucket edges [0, 50, 100, 150, 200, 300, 500, 1000, 2000, ∞] ms
         let bucket_edges: &[f64] = &[0.0, 50.0, 100.0, 150.0, 200.0, 300.0, 500.0, 1000.0, 2000.0];
         let mut interval_buckets = vec![0.0f64; bucket_edges.len()];
         for &iv in &intervals {
@@ -236,7 +232,6 @@ impl BehavioralFingerprint {
 
         let (mean, std) = stats::mean_and_std_dev(&intervals);
 
-        // Too regular (humans have high variance)
         if mean > 0.0 {
             let cv = std / mean;
             if cv < CV_FORGERY_THRESHOLD {
@@ -360,7 +355,6 @@ mod tests {
         let fp = BehavioralFingerprint::from_samples(&samples);
 
         assert_eq!(fp.interval_buckets.len(), 9);
-        // All buckets should sum to ~1.0
         let sum: f64 = fp.interval_buckets.iter().sum();
         assert!((sum - 1.0).abs() < 0.01);
     }

@@ -88,7 +88,6 @@ pub struct ForgeryCostInput {
 pub fn estimate_forgery_cost(input: &ForgeryCostInput) -> ForgeryCostEstimate {
     let mut components = Vec::new();
 
-    // 1. VDF proof chain
     let vdf_cost = if input.vdf_iterations > 0 && input.vdf_rate > 0 {
         let sequential_seconds = input.vdf_iterations as f64 / input.vdf_rate as f64;
         // VDFs are inherently sequential -- parallelism doesn't help.
@@ -112,10 +111,7 @@ pub fn estimate_forgery_cost(input: &ForgeryCostInput) -> ForgeryCostEstimate {
     };
     components.push(vdf_cost);
 
-    // 2. Checkpoint hash chain
     let chain_cost = if input.checkpoint_count > 0 {
-        // Hash chain is cheap to compute, but each link must be sequential
-        // and reference the previous one. Cost = chain_duration (can't compress time).
         let cost = input.chain_duration_sec as f64;
         ComponentCost {
             name: "checkpoint_chain".into(),
@@ -136,11 +132,7 @@ pub fn estimate_forgery_cost(input: &ForgeryCostInput) -> ForgeryCostEstimate {
     };
     components.push(chain_cost);
 
-    // 3. Jitter entropy binding
     let jitter_cost = if input.has_jitter_binding && input.jitter_sample_count > 0 {
-        // Each jitter sample must have plausible timing entropy.
-        // Generating convincing 1/f noise requires careful statistical modeling.
-        // Cost estimate: ~0.1s per sample for statistical generation + verification.
         let cost = input.jitter_sample_count as f64 * 0.1;
         ComponentCost {
             name: "jitter_entropy".into(),
@@ -162,10 +154,7 @@ pub fn estimate_forgery_cost(input: &ForgeryCostInput) -> ForgeryCostEstimate {
     };
     components.push(jitter_cost);
 
-    // 4. Hardware attestation
     let hw_cost = if input.has_hardware_attestation {
-        // Hardware-backed keys cannot be extracted. The adversary must use
-        // the actual device, making remote forgery impossible.
         ComponentCost {
             name: "hardware_attestation".into(),
             cost_cpu_sec: f64::INFINITY,
@@ -175,20 +164,17 @@ pub fn estimate_forgery_cost(input: &ForgeryCostInput) -> ForgeryCostEstimate {
     } else {
         ComponentCost {
             name: "hardware_attestation".into(),
-            cost_cpu_sec: 1.0, // Software keys can be extracted trivially
+            cost_cpu_sec: 1.0,
             present: false,
             explanation: "Software-only keys; extractable by device owner".into(),
         }
     };
     components.push(hw_cost);
 
-    // 5. Behavioral fingerprint
     let behavioral_cost = if input.has_behavioral_fingerprint {
-        // Adversary must produce keystroke patterns matching a known profile.
-        // Hurst exponent, 1/f spectrum, digraph latencies must all be consistent.
         ComponentCost {
             name: "behavioral_fingerprint".into(),
-            cost_cpu_sec: 3600.0, // ~1 hour to model and replay convincingly
+            cost_cpu_sec: 3600.0,
             present: true,
             explanation: "Must replicate typing dynamics (Hurst, 1/f, cadence)".into(),
         }
@@ -202,16 +188,13 @@ pub fn estimate_forgery_cost(input: &ForgeryCostInput) -> ForgeryCostEstimate {
     };
     components.push(behavioral_cost);
 
-    // 6. Cross-modal consistency
     let cross_modal_cost = if input.cross_modal_total > 0 {
-        // Each cross-modal check creates a pairwise constraint.
-        // n checks = O(n^2) consistency constraints.
         let n = input.cross_modal_total as f64;
         let constraint_factor = n * (n - 1.0) / 2.0;
         let cost = if input.cross_modal_consistent {
-            constraint_factor * 60.0 // 1 minute per constraint pair
+            constraint_factor * 60.0
         } else {
-            10.0 // Already failing; low bar
+            10.0
         };
         ComponentCost {
             name: "cross_modal_consistency".into(),
@@ -232,7 +215,6 @@ pub fn estimate_forgery_cost(input: &ForgeryCostInput) -> ForgeryCostEstimate {
     };
     components.push(cross_modal_cost);
 
-    // 7. External time anchor
     let time_cost = if input.has_external_time_anchor {
         ComponentCost {
             name: "external_time_anchor".into(),
@@ -250,11 +232,8 @@ pub fn estimate_forgery_cost(input: &ForgeryCostInput) -> ForgeryCostEstimate {
     };
     components.push(time_cost);
 
-    // 8. Content-key entanglement
     let entangle_cost = if input.has_content_key_entanglement {
-        // Content hash is mixed into VDF input, so changing content requires
-        // recomputing the entire VDF chain from that point.
-        let cost = input.chain_duration_sec as f64 * 2.0; // 2x because of entanglement
+        let cost = input.chain_duration_sec as f64 * 2.0;
         ComponentCost {
             name: "content_key_entanglement".into(),
             cost_cpu_sec: cost,
@@ -273,7 +252,6 @@ pub fn estimate_forgery_cost(input: &ForgeryCostInput) -> ForgeryCostEstimate {
     };
     components.push(entangle_cost);
 
-    // Compute overall difficulty (geometric mean of finite costs on log scale)
     let finite_costs: Vec<f64> = components
         .iter()
         .filter(|c| c.present && c.cost_cpu_sec.is_finite() && c.cost_cpu_sec > 0.0)
@@ -294,7 +272,7 @@ pub fn estimate_forgery_cost(input: &ForgeryCostInput) -> ForgeryCostEstimate {
         let log_sum: f64 = finite_costs.iter().map(|c| c.ln()).sum();
         let geo_mean = (log_sum / finite_costs.len() as f64).exp();
         if has_infinite {
-            geo_mean * 100.0 // Boost significantly when hardware is present
+            geo_mean * 100.0
         } else {
             geo_mean
         }
@@ -324,7 +302,7 @@ pub fn estimate_forgery_cost(input: &ForgeryCostInput) -> ForgeryCostEstimate {
                 .iter()
                 .filter(|c| c.present && c.cost_cpu_sec.is_finite())
                 .map(|c| c.cost_cpu_sec)
-                .fold(0.0_f64, f64::max) // Bottleneck = slowest sequential component
+                .fold(0.0_f64, f64::max)
         }
     };
 
@@ -347,13 +325,10 @@ fn classify_tier(difficulty: f64, has_hardware_attestation: bool) -> ForgeryResi
         return ForgeryResistanceTier::VeryHigh;
     }
     if difficulty > 86400.0 {
-        // > 1 day
         ForgeryResistanceTier::High
     } else if difficulty > 3600.0 {
-        // > 1 hour
         ForgeryResistanceTier::Moderate
     } else if difficulty > 60.0 {
-        // > 1 minute
         ForgeryResistanceTier::Low
     } else {
         ForgeryResistanceTier::Trivial

@@ -54,7 +54,6 @@ pub fn ffi_sentinel_start() -> FfiResult {
         }
     };
 
-    // Auto-create data directory if it doesn't exist (replaces `wld init` dependency)
     if !data_dir.exists() {
         if let Err(e) = std::fs::create_dir_all(&data_dir) {
             return FfiResult {
@@ -68,8 +67,6 @@ pub fn ffi_sentinel_start() -> FfiResult {
         }
     }
 
-    // Pre-check accessibility permissions on macOS — the sentinel will start
-    // without them but keystroke/mouse capture will be silently skipped.
     #[cfg(target_os = "macos")]
     let accessibility_granted = crate::sentinel::macos_focus::check_accessibility_permissions();
 
@@ -79,7 +76,6 @@ pub fn ffi_sentinel_start() -> FfiResult {
         Ok(s) => Arc::new(s),
         Err(e) => {
             let msg = format!("{e}");
-            // Surface accessibility hint if that's the likely cause
             #[cfg(target_os = "macos")]
             if !accessibility_granted && msg.contains("accessibility") {
                 return FfiResult {
@@ -100,7 +96,6 @@ pub fn ffi_sentinel_start() -> FfiResult {
         }
     };
 
-    // Load and set HMAC key for event signing
     if let Some(mut key) = load_hmac_key() {
         sentinel.set_hmac_key(std::mem::take(&mut *key));
     }
@@ -138,15 +133,13 @@ pub fn ffi_sentinel_start() -> FfiResult {
         }
     }
 
-    // Store globally — if another thread raced us, stop the loser's sentinel
-    // to avoid leaking tokio tasks and file watchers.
+    // OnceLock race: stop the duplicate to avoid leaking tokio tasks
     if let Err(leaked) = SENTINEL.set(sentinel) {
         if let Err(e) = rt.block_on(leaked.stop()) {
             log::warn!("Failed to stop duplicate sentinel: {}", e);
         }
     }
 
-    // Build success message with capability warnings
     #[allow(unused_mut)]
     let mut msg = "Sentinel started".to_string();
     #[cfg(target_os = "macos")]
@@ -301,13 +294,11 @@ pub fn ffi_sentinel_status() -> FfiSentinelStatus {
 
     let tracked = sentinel.tracked_files();
 
-    // Keystroke count from activity accumulator
     let summary = sentinel
         .activity_accumulator
         .read_recover()
         .to_session_summary();
 
-    // Sum focus duration across all active sessions
     let total_focus_ms: i64 = sentinel
         .sessions()
         .iter()
@@ -387,7 +378,6 @@ pub fn ffi_sentinel_witnessing_status() -> FfiWitnessingStatus {
         .unwrap_or_default()
         .as_secs_f64();
 
-    // Checkpoint count and forensic score from the store
     let (checkpoint_count, forensic_score) = match crate::ffi::helpers::open_store() {
         Ok(store) => {
             let events = store.get_events_for_file(&session.path).unwrap_or_default();
@@ -423,7 +413,6 @@ mod tests {
 
     #[test]
     fn test_sentinel_not_initialized() {
-        // Before any initialization, is_running should return false
         assert!(!ffi_sentinel_is_running());
     }
 
