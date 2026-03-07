@@ -102,6 +102,13 @@ impl Wal {
         Ok(())
     }
 
+    /// Verify the WAL's integrity by replaying the hash chain and signatures.
+    ///
+    /// Returns `WalVerification { valid: false, .. }` (not `Err`) when integrity
+    /// checks fail, because this is a read-only inspection — the caller needs the
+    /// partial result (entry count, final hash) to decide how to recover. Compare
+    /// with [`scan_to_end`](Self::scan_to_end) which returns `Err` on the same
+    /// conditions because it cannot proceed with state reconstruction.
     pub fn verify(&self) -> Result<WalVerification, WalError> {
         let state = self.inner.lock_recover();
         let verifying_key = state.signing_key.verifying_key();
@@ -385,6 +392,11 @@ impl Wal {
         Ok(())
     }
 
+    /// Replay the WAL to reconstruct in-memory state (next sequence, last hash).
+    ///
+    /// Returns `Err` (not `WalVerification`) when limits are hit because the
+    /// caller (`open`) cannot proceed without valid state. Contrast with
+    /// [`verify`](Self::verify) which returns a result struct for inspection.
     fn scan_to_end(state: &mut WalState) -> Result<(), WalError> {
         let mut offset = HEADER_SIZE as u64;
         loop {

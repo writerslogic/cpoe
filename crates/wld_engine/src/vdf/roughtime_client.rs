@@ -162,34 +162,20 @@ impl RoughtimeClient {
 
     /// Query multiple Roughtime servers and return a quorum-verified time.
     ///
-    /// At least 2 servers must agree within 10 seconds. Falls back to local
-    /// time if quorum cannot be reached.
+    /// At least 2 servers must agree within 10 seconds. Returns `Err` if
+    /// quorum cannot be reached — the caller decides on fallback policy
+    /// (e.g. local time, offline mode).
     pub fn get_verified_time() -> Result<u64> {
         let mut results: Vec<(u64, &str)> = Vec::new();
-        let mut errors: Vec<String> = Vec::new();
 
         for server in SERVERS {
             match Self::fetch_time(server) {
                 Ok(time) => results.push((time, server.name)),
-                Err(e) => {
-                    log::warn!("roughtime: {} failed: {}", server.name, e);
-                    errors.push(format!("{}: {}", server.name, e));
-                }
+                Err(e) => log::warn!("roughtime: {} failed: {}", server.name, e),
             }
         }
 
-        match Self::find_quorum(&mut results) {
-            Ok(time) => Ok(time),
-            Err(e) => {
-                log::warn!(
-                    "roughtime: quorum failed ({} ok, {} err); falling back to local time. {}",
-                    results.len(),
-                    errors.len(),
-                    e
-                );
-                Ok(chrono::Utc::now().timestamp_micros().max(0) as u64)
-            }
-        }
+        Self::find_quorum(&mut results)
     }
 }
 
@@ -199,12 +185,11 @@ mod tests {
 
     #[test]
     fn test_get_verified_time_returns_reasonable_value() {
-        // Always succeeds: either Roughtime quorum works, or falls back to local time
-        let time = RoughtimeClient::get_verified_time();
-        assert!(time.is_ok());
-
-        let ts = time.unwrap();
-        assert!(ts > 1_600_000_000_000_000);
+        // May fail if no Roughtime servers are reachable (offline CI).
+        // When it succeeds, the timestamp must be reasonable.
+        if let Ok(ts) = RoughtimeClient::get_verified_time() {
+            assert!(ts > 1_600_000_000_000_000);
+        }
     }
 
     #[test]
