@@ -45,14 +45,11 @@ fuzz_target!(|input: FuzzInput| {
     wrong_secret[0] = wrong_secret[0].wrapping_add(1);
     let _ = chain.verify_integrity(&wrong_secret);
 
-    // Test chain verification with inputs
     if !input.inputs.is_empty() && num_records > 0 {
-        // Create inputs matching the number of records
         let inputs: Vec<&[u8]> = (0..num_records).map(|_| input.inputs.as_slice()).collect();
         let _ = chain.verify_chain(&input.secret, &inputs, &engine);
     }
 
-    // Test empty chain
     let empty_chain = EvidenceChain::with_secret(input.secret);
     let _ = empty_chain.verify_integrity(&input.secret);
     let empty_inputs: Vec<&[u8]> = vec![];

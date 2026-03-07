@@ -131,7 +131,6 @@ impl VerifiedConnection {
 
             let exe_path_str = exe.to_string_lossy();
 
-            // Check both filename and full path to prevent same-named binary bypass
             if !allowed_names.contains(&exe_name)
                 && !allowed_names.iter().any(|n| exe_path_str.ends_with(n))
             {

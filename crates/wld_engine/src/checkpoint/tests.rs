@@ -49,7 +49,6 @@ fn test_chain_creation() {
 #[test]
 fn test_chain_creation_invalid_path() {
     let err = Chain::new("/nonexistent/path/to/file.txt", test_vdf_params()).unwrap_err();
-    // Platform-dependent message
     let msg = err.to_string();
     assert!(
         msg.contains("No such file") || msg.contains("cannot find the path"),
@@ -133,7 +132,6 @@ fn test_chain_verification_hash_mismatch() {
         .commit_with_vdf_duration(None, Duration::from_millis(10))
         .expect("commit");
 
-    // Tamper with the checkpoint hash
     chain.checkpoints[0].hash = [0xFFu8; 32];
 
     let err = chain.verify().unwrap_err();
@@ -154,9 +152,7 @@ fn test_chain_verification_broken_chain_link() {
         .commit_with_vdf_duration(None, Duration::from_millis(10))
         .expect("commit 1");
 
-    // Tamper with the previous_hash to break the chain
     chain.checkpoints[1].previous_hash = [0xFFu8; 32];
-    // Recompute hash to pass hash check (but link is broken)
     chain.checkpoints[1].hash = chain.checkpoints[1].compute_hash();
 
     let err = chain.verify().unwrap_err();
@@ -176,9 +172,7 @@ fn test_chain_verification_nonzero_first_previous_hash() {
         .commit_with_vdf_duration(None, Duration::from_millis(10))
         .expect("commit");
 
-    // Tamper with first checkpoint's previous_hash
     chain.checkpoints[0].previous_hash = [0x01u8; 32];
-    // Recompute hash to pass hash check
     chain.checkpoints[0].hash = chain.checkpoints[0].compute_hash();
 
     let err = chain.verify().unwrap_err();
@@ -225,7 +219,6 @@ fn test_chain_summary() {
     assert!(summary.first_commit.is_some());
     assert!(summary.last_commit.is_some());
     assert!(summary.final_content_hash.is_some());
-    // chain_valid is None until explicitly verified
     assert!(summary.chain_valid.is_none());
 
     drop(dir);
@@ -261,7 +254,6 @@ fn test_total_elapsed_time() {
     let (dir, path) = temp_document();
     let mut chain = test_chain(&path);
 
-    // First commit has no VDF, so no elapsed time
     chain
         .commit_with_vdf_duration(None, Duration::from_millis(10))
         .expect("commit 0");
@@ -272,7 +264,6 @@ fn test_total_elapsed_time() {
         .commit_with_vdf_duration(None, Duration::from_millis(50))
         .expect("commit 1");
 
-    // Should have some elapsed time from VDF
     let elapsed = chain.total_elapsed_time();
     assert!(elapsed > Duration::from_secs(0));
 
@@ -287,7 +278,6 @@ fn test_get_or_create_chain() {
 
     fs::write(&doc_path, b"content").expect("write doc");
 
-    // First call should create
     let chain1 = Chain::get_or_create_chain(&doc_path, &writerslogic_dir, test_vdf_params())
         .expect("get_or_create");
     assert!(chain1.checkpoints.is_empty());
@@ -344,11 +334,9 @@ fn test_vdf_verification_in_chain() {
         .commit_with_vdf_duration(None, Duration::from_millis(10))
         .expect("commit 1");
 
-    // Tamper with VDF output
     if let Some(ref mut vdf) = chain.checkpoints[1].vdf {
         vdf.output = [0xFFu8; 32];
     }
-    // Recompute hash to pass hash check (but VDF verification will fail)
     chain.checkpoints[1].hash = chain.checkpoints[1].compute_hash();
 
     let err = chain.verify().unwrap_err();
@@ -374,11 +362,9 @@ fn test_vdf_input_mismatch_detection() {
         .commit_with_vdf_duration(None, Duration::from_millis(10))
         .expect("commit 1");
 
-    // Tamper with VDF input
     if let Some(ref mut vdf) = chain.checkpoints[1].vdf {
         vdf.input = [0xAAu8; 32];
     }
-    // Recompute hash to pass hash check (but VDF input check will fail)
     chain.checkpoints[1].hash = chain.checkpoints[1].compute_hash();
 
     let err = chain.verify().unwrap_err();
@@ -437,7 +423,7 @@ fn test_entangled_single_commit() {
         .expect("commit entangled");
 
     assert_eq!(checkpoint.ordinal, 0);
-    assert!(checkpoint.vdf.is_some()); // Entangled mode has VDF even on first commit
+    assert!(checkpoint.vdf.is_some());
     assert!(checkpoint.jitter_binding.is_some());
     let binding = checkpoint.jitter_binding.as_ref().unwrap();
     assert_eq!(binding.jitter_hash, jitter_hash);
@@ -492,7 +478,6 @@ fn test_entangled_multiple_commits() {
     assert_eq!(cp1.previous_hash, cp0.hash);
     assert_eq!(cp2.previous_hash, cp1.hash);
 
-    // Each VDF input depends on previous VDF output
     let vdf0 = cp0.vdf.as_ref().unwrap();
     let vdf1 = cp1.vdf.as_ref().unwrap();
     let expected_input1 = vdf::chain_input_entangled(vdf0.output, [2u8; 32], cp1.content_hash, 1);
@@ -530,14 +515,12 @@ fn test_entangled_verify_detects_vdf_tampering() {
         )
         .expect("commit 1");
 
-    // Tamper with VDF output (this breaks the entanglement chain)
     if let Some(ref mut vdf) = chain.checkpoints[0].vdf {
         vdf.output = [0xFFu8; 32];
     }
     chain.checkpoints[0].hash = chain.checkpoints[0].compute_hash();
 
     let err = chain.verify().unwrap_err();
-    // The first checkpoint's VDF verification itself will fail
     assert!(
         err.to_string().contains("VDF verification failed"),
         "Expected VDF verification failure, got: {}",
@@ -562,7 +545,6 @@ fn test_entangled_verify_detects_jitter_tampering() {
         )
         .expect("commit 0");
 
-    // Tamper with jitter hash (but not VDF input - this should cause mismatch)
     chain.checkpoints[0]
         .jitter_binding
         .as_mut()
@@ -675,7 +657,6 @@ fn test_commit_rfc_basic() {
         .expect("commit_rfc");
 
     assert_eq!(checkpoint.ordinal, 0);
-    // First commit has no VDF in legacy mode
     assert!(checkpoint.vdf.is_none());
     assert!(checkpoint.rfc_vdf.is_none());
     assert!(checkpoint.rfc_jitter.is_none());
@@ -757,11 +738,10 @@ fn test_commit_rfc_with_jitter_binding() {
     assert!(checkpoint.vdf.is_some());
     assert!(checkpoint.rfc_vdf.is_some());
     assert!(checkpoint.rfc_jitter.is_some());
-    assert!(checkpoint.jitter_binding.is_some()); // Backward compat
+    assert!(checkpoint.jitter_binding.is_some());
 
     let rfc_vdf = checkpoint.rfc_vdf.as_ref().unwrap();
     assert!(rfc_vdf.iterations > 0);
-    // duration_ms can be 0 for very fast computations
     assert_eq!(rfc_vdf.calibration.hardware_class, "test-hardware");
 
     let jitter = checkpoint.rfc_jitter.as_ref().unwrap();
@@ -791,13 +771,11 @@ fn test_commit_rfc_v3_domain_separator() {
         )
         .expect("commit 0");
 
-    // V1 domain separator (no jitter, no RFC)
     let expected_hash = cp0.compute_hash();
     assert_eq!(cp0.hash, expected_hash);
 
     fs::write(&path, b"updated").expect("update");
 
-    // Create minimal RFC jitter to trigger v3
     let entropy_commitment = rfc::jitter_binding::EntropyCommitment {
         hash: [1u8; 32],
         timestamp_ms: 1700000000000,
@@ -831,7 +809,6 @@ fn test_commit_rfc_v3_domain_separator() {
         )
         .expect("commit 1");
 
-    // Should use v3 domain separator
     assert!(cp1.rfc_jitter.is_some());
     let computed = cp1.compute_hash();
     assert_eq!(cp1.hash, computed);
@@ -888,7 +865,6 @@ fn test_ordinal_gap_detected() {
         .commit_with_vdf_duration(None, Duration::from_millis(10))
         .expect("commit 1");
 
-    // Tamper with ordinal to create a gap
     chain.checkpoints[1].ordinal = 5;
     chain.checkpoints[1].hash = chain.checkpoints[1].compute_hash();
 
@@ -904,14 +880,12 @@ fn test_ordinal_gap_detected() {
 fn test_unsigned_checkpoint_rejected_required_policy() {
     let (_dir, path) = temp_document();
     let mut chain = Chain::new(&path, test_vdf_params()).expect("create chain");
-    // New chains default to Required policy
     assert_eq!(chain.signature_policy, SignaturePolicy::Required);
 
     chain
         .commit_with_vdf_duration(None, Duration::from_millis(10))
         .expect("commit 0");
 
-    // Verify should fail because checkpoint is unsigned
     let err = chain.verify().unwrap_err();
     assert!(err.to_string().contains("unsigned"));
 }
@@ -925,7 +899,6 @@ fn test_unsigned_checkpoint_accepted_optional_policy() {
         .commit_with_vdf_duration(None, Duration::from_millis(10))
         .expect("commit 0");
 
-    // Should pass with warning
     let report = chain.verify_detailed();
     assert!(report.valid);
     assert!(!report.unsigned_checkpoints.is_empty());
@@ -998,7 +971,6 @@ fn test_metadata_count_mismatch_detected() {
         .commit_with_vdf_duration(None, Duration::from_millis(10))
         .expect("commit 0");
 
-    // Set metadata claiming 5 checkpoints when there's only 1
     chain.metadata = Some(ChainMetadata {
         checkpoint_count: 5,
         mmr_root: [0u8; 32],

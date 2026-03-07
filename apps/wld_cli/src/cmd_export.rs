@@ -318,7 +318,7 @@ pub(crate) fn cmd_export(
             "final_size": latest.file_size,
             // CDDL document-ref fields
             "content_hash": {
-                "algorithm": 1,    // sha256
+                "algorithm": 1,
                 "digest": hex::encode(latest.content_hash)
             },
             "byte_length": latest.file_size.max(0) as u64,

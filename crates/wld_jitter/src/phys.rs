@@ -183,7 +183,7 @@ mod tests {
 
     #[test]
     fn test_entropy_collection() {
-        let phys = PhysJitter::new(0); // No minimum for testing
+        let phys = PhysJitter::new(0);
         let result = phys.sample(b"test");
         assert!(result.is_ok());
     }

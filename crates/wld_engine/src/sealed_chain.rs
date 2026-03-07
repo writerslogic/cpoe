@@ -92,7 +92,6 @@ pub fn save_sealed(
     let cipher = Aes256Gcm::new_from_slice(key.key.as_bytes())
         .map_err(|_| Error::crypto("AES-GCM key init failed"))?;
 
-    // Generate random nonce
     let mut nonce_bytes = [0u8; 12];
     rand::Fill::fill(&mut nonce_bytes, &mut rand::rng());
     let nonce = Nonce::from_slice(&nonce_bytes);
@@ -101,7 +100,6 @@ pub fn save_sealed(
         .encrypt(nonce, plaintext.as_ref())
         .map_err(|_| Error::crypto("AES-GCM encryption failed"))?;
 
-    // Build output: magic + version + nonce + document_id + ciphertext(+tag)
     let mut output = Vec::with_capacity(HEADER_SIZE + ciphertext.len());
     output.extend_from_slice(SEALED_MAGIC);
     output.extend_from_slice(&SEALED_VERSION.to_le_bytes());
@@ -145,12 +143,10 @@ pub fn load_sealed_verified(
         return Err(Error::checkpoint("sealed file too short"));
     }
 
-    // Validate magic
     if &data[0..4] != SEALED_MAGIC {
         return Err(Error::checkpoint("invalid sealed file magic"));
     }
 
-    // Validate version
     let version = u32::from_le_bytes(
         data[4..8]
             .try_into()
@@ -313,7 +309,6 @@ mod tests {
 
         save_sealed(&chain, &sealed_path, &key, &doc_id).unwrap();
 
-        // Try with wrong key
         let wrong_key = ChainEncryptionKey::from_bytes([0xCC; 32]);
         let result = load_sealed(&sealed_path, &wrong_key);
         assert!(result.is_err());
@@ -343,7 +338,6 @@ mod tests {
 
         save_sealed(&chain, &sealed_path, &key, &doc_id).unwrap();
 
-        // Tamper with ciphertext (flip a byte after the header)
         let mut data = fs::read(&sealed_path).unwrap();
         let tamper_idx = HEADER_SIZE + 5;
         data[tamper_idx] ^= 0xFF;
@@ -358,7 +352,6 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let canonical_dir = dir.path().canonicalize().unwrap();
 
-        // Create a sealed file
         let sealed_path = canonical_dir.join("test.sealed");
         let mut data = Vec::new();
         data.extend_from_slice(SEALED_MAGIC);
@@ -369,12 +362,10 @@ mod tests {
         fs::write(&sealed_path, &data).unwrap();
         assert!(is_sealed_file(&sealed_path));
 
-        // Create a JSON file
         let json_path = canonical_dir.join("test.json");
         fs::write(&json_path, b"{}").unwrap();
         assert!(!is_sealed_file(&json_path));
 
-        // Non-existent file
         assert!(!is_sealed_file(&canonical_dir.join("nonexistent")));
     }
 
@@ -428,7 +419,6 @@ mod tests {
         assert!(!json_path.exists()); // original renamed
         assert!(canonical_dir.join("chain.json.bak").exists());
 
-        // Verify sealed file loads correctly
         let loaded = load_sealed(&sealed_path, &key).unwrap();
         assert_eq!(loaded.checkpoints.len(), 1);
     }
@@ -441,10 +431,8 @@ mod tests {
         let key1 = ChainEncryptionKey::derive(&master_seed, &doc_id).unwrap();
         let key2 = ChainEncryptionKey::derive(&master_seed, &doc_id).unwrap();
 
-        // Same inputs produce same key
         assert_eq!(key1.key.as_bytes(), key2.key.as_bytes());
 
-        // Different document_id produces different key
         let doc_id2 = [0x02u8; 32];
         let key3 = ChainEncryptionKey::derive(&master_seed, &doc_id2).unwrap();
         assert_ne!(key1.key.as_bytes(), key3.key.as_bytes());
@@ -489,7 +477,6 @@ mod tests {
         let sealed_path = canonical_dir.join("chain.sealed");
         save_sealed(&chain, &sealed_path, &key, &doc_id).unwrap();
 
-        // Correct expected_id succeeds
         let loaded = load_sealed_verified(&sealed_path, &key, Some(&doc_id)).unwrap();
         assert_eq!(loaded.checkpoints.len(), chain.checkpoints.len());
     }
@@ -513,7 +500,6 @@ mod tests {
         let sealed_path = canonical_dir.join("chain.sealed");
         save_sealed(&chain, &sealed_path, &key, &doc_id).unwrap();
 
-        // Wrong expected_id fails
         let wrong_id = [0xCC; 32];
         let result = load_sealed_verified(&sealed_path, &key, Some(&wrong_id));
         assert!(result.is_err());

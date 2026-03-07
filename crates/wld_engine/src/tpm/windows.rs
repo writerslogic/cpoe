@@ -219,7 +219,6 @@ impl TbsContext {
             return Err(TbsError::ResponseTooShort);
         }
 
-        // Response code at bytes 6-9 (big-endian)
         let rc = u32::from_be_bytes([response[6], response[7], response[8], response[9]]);
         if rc != TPM_RC_SUCCESS {
             return Err(TbsError::TpmError { code: rc });
@@ -363,7 +362,6 @@ pub fn build_pcr_read_command(pcr_selection: &[u32]) -> Vec<u8> {
     cmd.extend_from_slice(&command_size.to_be_bytes());
     cmd.extend_from_slice(&TPM2_CC_PCR_READ.to_be_bytes());
 
-    // TPML_PCR_SELECTION: 1 selection of SHA-256 with 3-byte bitmap
     cmd.extend_from_slice(&1u32.to_be_bytes());
     cmd.extend_from_slice(&TPM2_ALG_SHA256.to_be_bytes());
     cmd.push(3u8);
@@ -398,49 +396,46 @@ struct WindowsTpmState {
 /// Probe for an available TPM 2.0 via TBS.
 pub fn try_init() -> Option<WindowsTpmProvider> {
     match TbsContext::new() {
-        Ok(context) => {
-            match context.get_device_info() {
-                Ok(info) if info.is_tpm20() => {
-                    log::info!(
-                        "Windows TPM 2.0 detected (version: {}, revision: {})",
-                        info.tpm_version,
-                        info.tpm_impl_revision
-                    );
+        Ok(context) => match context.get_device_info() {
+            Ok(info) if info.is_tpm20() => {
+                log::info!(
+                    "Windows TPM 2.0 detected (version: {}, revision: {})",
+                    info.tpm_version,
+                    info.tpm_impl_revision
+                );
 
-                    // Derive deterministic public key from TPM's ECC P-256 SRK
-                    let public_key = match create_srk_public_key(&context) {
-                        Ok(key) => key,
-                        Err(e) => {
-                            log::warn!(
-                                "Failed to derive SRK public key: {}. Falling back to TPM random.",
-                                e
-                            );
-                            context.get_random(32).unwrap_or_else(|_| vec![0u8; 32])
-                        }
-                    };
+                let public_key = match create_srk_public_key(&context) {
+                    Ok(key) => key,
+                    Err(e) => {
+                        log::warn!(
+                            "Failed to derive SRK public key: {}. Falling back to TPM random.",
+                            e
+                        );
+                        context.get_random(32).unwrap_or_else(|_| vec![0u8; 32])
+                    }
+                };
 
-                    Some(WindowsTpmProvider {
-                        context,
-                        public_key,
-                        state: Mutex::new(WindowsTpmState { counter: 0 }),
-                    })
-                }
-                Ok(info) => {
-                    log::warn!(
-                        "TPM found but not version 2.0 (version: {}), using software fallback",
-                        info.tpm_version
-                    );
-                    None
-                }
-                Err(e) => {
-                    log::warn!(
-                        "Failed to get TPM device info: {}, using software fallback",
-                        e
-                    );
-                    None
-                }
+                Some(WindowsTpmProvider {
+                    context,
+                    public_key,
+                    state: Mutex::new(WindowsTpmState { counter: 0 }),
+                })
             }
-        }
+            Ok(info) => {
+                log::warn!(
+                    "TPM found but not version 2.0 (version: {}), using software fallback",
+                    info.tpm_version
+                );
+                None
+            }
+            Err(e) => {
+                log::warn!(
+                    "Failed to get TPM device info: {}, using software fallback",
+                    e
+                );
+                None
+            }
+        },
         Err(e) => {
             log::debug!("Windows TPM not available: {}", e);
             None
@@ -476,7 +471,6 @@ impl WindowsTpmProvider {
 
         let mut offset = TPM2_RESPONSE_HEADER_SIZE;
 
-        // pcrUpdateCounter
         offset += 4;
 
         if offset + 4 > response.len() {
@@ -913,7 +907,6 @@ impl Provider for WindowsTpmProvider {
     fn unseal(&self, sealed: &[u8]) -> Result<Vec<u8>, TPMError> {
         let (pub_bytes, priv_bytes) = super::parse_sealed_blob(sealed)?;
 
-        // SRK must be recreated each time (transient primary)
         let srk_response = self
             .create_primary_srk()
             .map_err(|e| TPMError::Unsealing(format!("SRK creation failed: {}", e)))?;
@@ -936,7 +929,6 @@ impl Provider for WindowsTpmProvider {
 
         let unseal_result = self.unseal_object(obj_handle);
 
-        // Clean up transient handles regardless of result
         if let Err(e) = self.flush_context(obj_handle) {
             log::warn!("Failed to flush object context after unseal: {e}");
         }
@@ -947,7 +939,6 @@ impl Provider for WindowsTpmProvider {
         let unseal_response =
             unseal_result.map_err(|e| TPMError::Unsealing(format!("unseal failed: {}", e)))?;
 
-        // Parse unseal response: header (10) + TPM2B_SENSITIVE_DATA (2 bytes size + data)
         if unseal_response.len() < 12 {
             return Err(TPMError::Unsealing("unseal response too short".into()));
         }
@@ -964,19 +955,17 @@ impl Provider for WindowsTpmProvider {
         let mut cmd = Vec::with_capacity(command_size as usize);
         cmd.extend_from_slice(&TPM2_ST_NO_SESSIONS.to_be_bytes());
         cmd.extend_from_slice(&command_size.to_be_bytes());
-        cmd.extend_from_slice(&0x00000181u32.to_be_bytes()); // TPM2_CC_ReadClock
+        cmd.extend_from_slice(&0x00000181u32.to_be_bytes());
 
         let response = self
             .context
             .submit_command(&cmd)
             .map_err(|e| TPMError::Quote(format!("ReadClock failed: {}", e)))?;
 
-        // TPMS_TIME_INFO: time(u64) + TPMS_CLOCK_INFO(clock:u64, reset:u32, restart:u32, safe:u8)
         if response.len() < 10 + 8 + 8 + 4 + 4 + 1 {
             return Err(TPMError::Quote("ReadClock response too short".into()));
         }
 
-        // Skip header (10) + TPMS_TIME_INFO.time (8) to reach TPMS_CLOCK_INFO
         let offset = 18;
         let clock = u64::from_be_bytes([
             response[offset],
@@ -1018,9 +1007,9 @@ fn build_empty_auth_area(handle: u32) -> Vec<u8> {
 /// Build a TPM_RS_PW authorization area with the given password.
 fn build_auth_area_with_password(handle: u32, password: &[u8]) -> Vec<u8> {
     let mut auth = Vec::new();
-    auth.extend_from_slice(&0x40000009u32.to_be_bytes()); // TPM_RS_PW
-    auth.extend_from_slice(&0u16.to_be_bytes()); // nonceCaller (empty)
-    auth.push(0x01); // continueSession
+    auth.extend_from_slice(&0x40000009u32.to_be_bytes());
+    auth.extend_from_slice(&0u16.to_be_bytes());
+    auth.push(0x01);
     auth.extend_from_slice(&(password.len() as u16).to_be_bytes());
     auth.extend_from_slice(password);
     auth
@@ -1037,17 +1026,15 @@ fn build_srk_public_ecc() -> Vec<u8> {
     let attrs: u32 = 0x00030472;
     public.extend_from_slice(&attrs.to_be_bytes());
 
-    public.extend_from_slice(&0u16.to_be_bytes()); // authPolicy (empty)
+    public.extend_from_slice(&0u16.to_be_bytes());
 
-    // TPMS_ECC_PARMS: AES-128-CFB symmetric, NULL scheme, P-256, NULL kdf
     public.extend_from_slice(&TPM2_ALG_AES.to_be_bytes());
     public.extend_from_slice(&128u16.to_be_bytes());
     public.extend_from_slice(&TPM2_ALG_CFB.to_be_bytes());
-    public.extend_from_slice(&TPM2_ALG_NULL.to_be_bytes()); // scheme
+    public.extend_from_slice(&TPM2_ALG_NULL.to_be_bytes());
     public.extend_from_slice(&TPM2_ECC_NIST_P256.to_be_bytes());
-    public.extend_from_slice(&TPM2_ALG_NULL.to_be_bytes()); // kdf
+    public.extend_from_slice(&TPM2_ALG_NULL.to_be_bytes());
 
-    // unique: empty ECC point
     public.extend_from_slice(&0u16.to_be_bytes());
     public.extend_from_slice(&0u16.to_be_bytes());
 
@@ -1059,7 +1046,6 @@ fn build_srk_public_ecc() -> Vec<u8> {
 /// The SRK is deterministic — same template + same TPM hierarchy = same key on every call.
 /// Returns the 64-byte uncompressed ECC point (x || y).
 fn create_srk_public_key(context: &TbsContext) -> Result<Vec<u8>, String> {
-    // Build TPM2_CreatePrimary command (same logic as WindowsTpmProvider::create_primary_srk)
     let mut body = Vec::new();
     body.extend_from_slice(&TPM2_RH_OWNER.to_be_bytes());
     let auth_area = build_empty_auth_area(TPM2_RH_OWNER);
@@ -1087,7 +1073,6 @@ fn create_srk_public_key(context: &TbsContext) -> Result<Vec<u8>, String> {
         .submit_command(&cmd)
         .map_err(|e| format!("CreatePrimary failed: {e}"))?;
 
-    // Parse response: header(10) + handle(4) + paramSize(4) + outPublic(2+TPMT_PUBLIC) + ...
     if response.len() < 18 {
         return Err("CreatePrimary response too short".into());
     }
@@ -1097,15 +1082,12 @@ fn create_srk_public_key(context: &TbsContext) -> Result<Vec<u8>, String> {
     }
     let handle = u32::from_be_bytes([response[10], response[11], response[12], response[13]]);
 
-    // Navigate TPMT_PUBLIC to reach the ECC unique point at the end.
-    // outPublic starts at offset 18: size(2) + type(2) + nameAlg(2) + attrs(4) + authPolicy(2+n)
-    // + TPMS_ECC_PARMS(symmetric + scheme + curveID + kdf) + TPMS_ECC_POINT(x + y)
-    let mut offset = 18; // start of outPublic
+    let mut offset = 18;
     if offset + 2 > response.len() {
         return Err("Missing outPublic size".into());
     }
-    offset += 2; // skip TPM2B_PUBLIC size
-    offset += 2 + 2 + 4; // type + nameAlg + objectAttributes
+    offset += 2;
+    offset += 2 + 2 + 4;
 
     if offset + 2 > response.len() {
         return Err("Missing authPolicy".into());
@@ -1113,16 +1095,14 @@ fn create_srk_public_key(context: &TbsContext) -> Result<Vec<u8>, String> {
     let auth_policy_len = u16::from_be_bytes([response[offset], response[offset + 1]]) as usize;
     offset += 2 + auth_policy_len;
 
-    // TPMS_ECC_PARMS: symmetric algo
     if offset + 2 > response.len() {
         return Err("Missing symmetric algorithm".into());
     }
     let sym_alg = u16::from_be_bytes([response[offset], response[offset + 1]]);
     offset += 2;
     if sym_alg != TPM2_ALG_NULL {
-        offset += 2 + 2; // keyBits + mode
+        offset += 2 + 2;
     }
-    // scheme
     if offset + 2 > response.len() {
         return Err("Missing scheme".into());
     }
@@ -1190,9 +1170,9 @@ fn build_sealing_public() -> Vec<u8> {
     let attrs: u32 = 0x00000052;
     public.extend_from_slice(&attrs.to_be_bytes());
 
-    public.extend_from_slice(&0u16.to_be_bytes()); // authPolicy (empty)
-    public.extend_from_slice(&TPM2_ALG_NULL.to_be_bytes()); // scheme (NULL = sealing)
-    public.extend_from_slice(&0u16.to_be_bytes()); // unique (empty)
+    public.extend_from_slice(&0u16.to_be_bytes());
+    public.extend_from_slice(&TPM2_ALG_NULL.to_be_bytes());
+    public.extend_from_slice(&0u16.to_be_bytes());
 
     public
 }

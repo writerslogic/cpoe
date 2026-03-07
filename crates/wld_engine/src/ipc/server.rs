@@ -471,7 +471,6 @@ unsafe fn get_token_user_sid(token: windows::Win32::Foundation::HANDLE) -> Resul
     let token_user = &*(buffer.as_ptr() as *const TOKEN_USER);
     let sid = token_user.User.Sid;
 
-    // Convert SID to string
     let mut sid_string = windows::core::PWSTR::null();
     ConvertSidToStringSidW(sid, &mut sid_string)
         .map_err(|e| anyhow!("ConvertSidToStringSid failed: {}", e))?;
@@ -480,7 +479,6 @@ unsafe fn get_token_user_sid(token: windows::Win32::Foundation::HANDLE) -> Resul
         .to_string()
         .map_err(|e| anyhow!("SID string conversion failed: {}", e));
 
-    // Free the Win32-allocated string
     windows::Win32::Foundation::LocalFree(Some(windows::Win32::Foundation::HLOCAL(
         sid_string.as_ptr() as *mut _,
     )));
@@ -494,7 +492,6 @@ async fn handle_windows_connection<H: IpcMessageHandler>(
     handler: Arc<H>,
     rate_limiter: Arc<Mutex<RateLimiter>>,
 ) {
-    // Verify the connecting client is running as the same user (Windows SID check)
     if let Err(e) = verify_windows_pipe_peer(&pipe) {
         log::error!(
             "IPC: peer SID verification failed: {} (rejecting connection)",

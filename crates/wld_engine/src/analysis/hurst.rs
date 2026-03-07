@@ -104,7 +104,6 @@ pub fn calculate_hurst_rs(data: &[f64]) -> Result<HurstAnalysis, String> {
     let mut log_n_vec = Vec::new();
     let mut log_rs_vec = Vec::new();
 
-    // Window sizes: powers of 2 from RS_MIN_WINDOW to n/4
     let min_window = RS_MIN_WINDOW;
     let max_window = n / 4;
 
@@ -177,7 +176,6 @@ fn calculate_rs_for_window(data: &[f64], window_size: usize) -> f64 {
         let end = start + window_size;
         let window = &data[start..end];
 
-        // Calculate mean
         let mean: f64 = window.iter().sum::<f64>() / window_size as f64;
 
         let mut cumulative = Vec::with_capacity(window_size);
@@ -235,7 +233,6 @@ pub fn calculate_hurst_dfa(data: &[f64]) -> Result<HurstAnalysis, String> {
     let mut log_scales = Vec::new();
     let mut log_fluct = Vec::new();
 
-    // Scales from DFA_MIN_SCALE to n/4
     let min_scale = DFA_MIN_SCALE;
     let max_scale = n / 4;
 
@@ -305,12 +302,10 @@ fn calculate_dfa_fluctuation(profile: &[f64], scale: usize) -> f64 {
         let end = start + scale;
         let segment = &profile[start..end];
 
-        // Linear detrend using least squares
         let detrended_variance = detrend_variance(segment);
         total_variance += detrended_variance;
     }
 
-    // Average variance, then sqrt for fluctuation
     (total_variance / num_segments as f64).sqrt()
 }
 
@@ -321,7 +316,6 @@ fn detrend_variance(segment: &[f64]) -> f64 {
         return 0.0;
     }
 
-    // Fit linear trend: y = a*x + b
     let x: Vec<f64> = (0..n).map(|i| i as f64).collect();
     let y = segment;
 
@@ -355,13 +349,11 @@ mod tests {
 
     #[test]
     fn test_hurst_white_noise() {
-        // White noise should have H ≈ 0.5
         use rand::Rng;
         let mut rng = rand::rng();
         let data: Vec<f64> = (0..500).map(|_| rng.random::<f64>()).collect();
 
         let result = calculate_hurst_rs(&data).unwrap();
-        // White noise typically gives H in range 0.4-0.6
         assert!(
             result.exponent > 0.2 && result.exponent < 0.8,
             "White noise Hurst should be near 0.5, got {}",
@@ -371,7 +363,6 @@ mod tests {
 
     #[test]
     fn test_hurst_trending() {
-        // Cumulative sum of white noise should have H ≈ 1.0
         use rand::Rng;
         let mut rng = rand::rng();
         let mut cumsum = 0.0;
@@ -383,7 +374,6 @@ mod tests {
             .collect();
 
         let result = calculate_hurst_rs(&data).unwrap();
-        // Trending data should have H > 0.7
         assert!(
             result.exponent > 0.7,
             "Trending data Hurst should be > 0.7, got {}",
