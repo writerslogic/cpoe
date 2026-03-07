@@ -388,7 +388,6 @@ pub(crate) fn cmd_export(
             let war_block = war::Block::from_packet_signed(&evidence_packet, signer.as_ref())
                 .map_err(|e| anyhow!("Failed to create WAR block: {}", e))?;
 
-            // Atomic write
             let data = war_block.encode_ascii();
             let tmp_path = out_path.with_extension("tmp");
             fs::write(&tmp_path, data)?;
@@ -447,7 +446,6 @@ pub(crate) fn cmd_export(
             println!("  Open in a browser to view, or print to PDF.");
         }
         _ => {
-            // Atomic write
             let data = serde_json::to_string_pretty(&packet)?;
             let tmp_path = out_path.with_extension("tmp");
             fs::write(&tmp_path, data)?;
@@ -490,7 +488,6 @@ fn build_war_report(
         .unwrap_or_default();
     let doc_size = last.map(|e| e.file_size).unwrap_or(0);
 
-    // Compute score from forensic_score average
     let avg_forensic: f64 = if events.is_empty() {
         0.0
     } else {
@@ -504,10 +501,8 @@ fn build_war_report(
     let total_secs = total_vdf_time.as_secs_f64();
     let total_min = total_secs / 60.0;
 
-    // Session detection: group events by gaps > 30 min
     let sessions = detect_sessions(events);
 
-    // Build checkpoints
     let checkpoints: Vec<ReportCheckpoint> = events
         .iter()
         .enumerate()
@@ -528,7 +523,6 @@ fn build_war_report(
         })
         .collect();
 
-    // Process evidence
     let paste_count = events.iter().filter(|e| e.is_paste).count() as u64;
     let total_iterations: u64 = events.iter().map(|e| e.vdf_iterations).sum();
     let avg_compute_ms = if !events.is_empty() && vdf_params.iterations_per_second > 0 {
@@ -552,7 +546,6 @@ fn build_war_report(
         ..Default::default()
     };
 
-    // Flags from forensic data
     let mut flags = Vec::new();
     if avg_forensic > 0.7 {
         flags.push(ReportFlag {
@@ -658,6 +651,9 @@ fn build_war_report(
         process,
         flags,
         forgery: ForgeryInfo::default(),
+        dimensions: Vec::new(),
+        writing_flow: Vec::new(),
+        methodology: None,
         limitations: vec![
             "Cannot prove cognitive origin of ideas".into(),
             "Cannot prove absence of AI involvement in ideation".into(),
@@ -683,7 +679,7 @@ fn detect_sessions(events: &[wld_engine::store::SecureEvent]) -> Vec<report::Rep
         return vec![];
     }
 
-    let gap_ns: i64 = 30 * 60 * 1_000_000_000; // 30 minutes
+    let gap_ns: i64 = 30 * 60 * 1_000_000_000;
     let mut sessions = Vec::new();
     let mut session_start = 0usize;
 

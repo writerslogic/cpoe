@@ -181,6 +181,42 @@ impl FlagSignal {
     }
 }
 
+/// A single stylometric dimension score.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DimensionScore {
+    pub name: String,
+    pub score: u32,
+    pub lr: f64,
+    pub log_lr: f64,
+    pub confidence: f64,
+    pub key_discriminator: String,
+    pub color: String,
+    pub analysis: Vec<DimensionDetail>,
+}
+
+/// A detail item within a dimension analysis.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DimensionDetail {
+    pub label: String,
+    pub text: String,
+}
+
+/// Statistical methodology summary.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct StatisticalMethodology {
+    pub lr_computation: String,
+    pub confidence_interval: String,
+    pub calibration: String,
+}
+
+/// Writing flow visualization data point.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlowDataPoint {
+    pub offset_min: f64,
+    pub intensity: f64,
+    pub phase: String,
+}
+
 /// Forgery resistance info for the report.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ForgeryInfo {
@@ -243,6 +279,15 @@ pub struct WarReport {
 
     // Forgery resistance
     pub forgery: ForgeryInfo,
+
+    // Stylometric dimensions (optional — populated when NLP analysis available)
+    pub dimensions: Vec<DimensionScore>,
+
+    // Writing flow visualization data (optional)
+    pub writing_flow: Vec<FlowDataPoint>,
+
+    // Statistical methodology (optional)
+    pub methodology: Option<StatisticalMethodology>,
 
     // Scope
     pub limitations: Vec<String>,
