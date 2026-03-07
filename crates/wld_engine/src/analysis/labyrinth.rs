@@ -373,24 +373,37 @@ fn compute_recurrence_quantification(
                     recurrent_count += 1;
 
                     // Count diagonal lines of at least min_line_length consecutive
-                    // recurrent points. Walk forward from (si, sj) along the diagonal.
-                    let mut line_len = 1;
-                    let mut k = 1;
-                    while si + k < sampled_indices.len() && sj + k < sampled_indices.len() {
-                        let i_next = sampled_indices[si + k];
-                        let j_next = sampled_indices[sj + k];
-                        if i_next < n
-                            && j_next < n
-                            && euclidean_distance(&embedding[i_next], &embedding[j_next]) < eps
-                        {
-                            line_len += 1;
-                            k += 1;
-                        } else {
-                            break;
+                    // recurrent points. Only start a walk from the *beginning* of a
+                    // diagonal (predecessor (si-1, sj-1) is not recurrent or out of
+                    // bounds) to avoid counting each diagonal L times.
+                    let is_diagonal_start = if si > 0 && sj > 0 {
+                        let i_prev = sampled_indices[si - 1];
+                        let j_prev = sampled_indices[sj - 1];
+                        i_prev == j_prev
+                            || euclidean_distance(&embedding[i_prev], &embedding[j_prev]) >= eps
+                    } else {
+                        true
+                    };
+
+                    if is_diagonal_start {
+                        let mut line_len = 1;
+                        let mut k = 1;
+                        while si + k < sampled_indices.len() && sj + k < sampled_indices.len() {
+                            let i_next = sampled_indices[si + k];
+                            let j_next = sampled_indices[sj + k];
+                            if i_next < n
+                                && j_next < n
+                                && euclidean_distance(&embedding[i_next], &embedding[j_next]) < eps
+                            {
+                                line_len += 1;
+                                k += 1;
+                            } else {
+                                break;
+                            }
                         }
-                    }
-                    if line_len >= min_line_length {
-                        diagonal_count += 1;
+                        if line_len >= min_line_length {
+                            diagonal_count += 1;
+                        }
                     }
                 }
             }

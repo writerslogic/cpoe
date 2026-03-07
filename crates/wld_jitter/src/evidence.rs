@@ -147,6 +147,7 @@ impl Evidence {
 pub const MAX_EVIDENCE_RECORDS: usize = 100_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(try_from = "EvidenceChainRaw")]
 pub struct EvidenceChain {
     pub version: u8,
     pub records: Vec<Evidence>,
@@ -155,6 +156,35 @@ pub struct EvidenceChain {
     next_sequence: u64,
     #[serde(skip)]
     secret: Option<Zeroizing<[u8; 32]>>,
+}
+
+/// Raw deserialization target for [`EvidenceChain`].
+/// Bounds are validated via [`TryFrom`] so untrusted input cannot allocate
+/// more than [`MAX_EVIDENCE_RECORDS`] entries.
+#[derive(Deserialize)]
+struct EvidenceChainRaw {
+    version: u8,
+    records: Vec<Evidence>,
+    chain_mac: [u8; 32],
+    #[serde(default)]
+    next_sequence: u64,
+}
+
+impl TryFrom<EvidenceChainRaw> for EvidenceChain {
+    type Error = &'static str;
+
+    fn try_from(raw: EvidenceChainRaw) -> core::result::Result<Self, Self::Error> {
+        if raw.records.len() > MAX_EVIDENCE_RECORDS {
+            return Err("evidence chain exceeds MAX_EVIDENCE_RECORDS");
+        }
+        Ok(Self {
+            version: raw.version,
+            records: raw.records,
+            chain_mac: raw.chain_mac,
+            next_sequence: raw.next_sequence,
+            secret: None,
+        })
+    }
 }
 
 impl Default for EvidenceChain {
@@ -194,8 +224,11 @@ impl EvidenceChain {
         }
     }
 
-    /// Validate that the chain does not exceed bounds after deserialization.
-    /// Returns false if the record count exceeds [`MAX_EVIDENCE_RECORDS`].
+    /// Check whether the chain exceeds [`MAX_EVIDENCE_RECORDS`].
+    ///
+    /// This is enforced automatically during serde deserialization via
+    /// `#[serde(try_from)]`. This method remains public for manual checks
+    /// on chains built programmatically.
     pub fn validate_bounds(&self) -> bool {
         self.records.len() <= MAX_EVIDENCE_RECORDS
     }
