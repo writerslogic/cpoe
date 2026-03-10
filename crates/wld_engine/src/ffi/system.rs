@@ -263,3 +263,25 @@ pub fn ffi_get_activity_data(days: u32) -> Vec<FfiActivityPoint> {
         })
         .collect()
 }
+
+/// Get the identity recovery mnemonic phrase.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn ffi_get_identity_mnemonic() -> FfiResult {
+    match crate::identity::secure_storage::SecureStorage::load_mnemonic() {
+        Ok(Some(phrase)) => FfiResult {
+            success: true,
+            message: Some(phrase),
+            error_message: None,
+        },
+        Ok(None) => FfiResult {
+            success: false,
+            message: None,
+            error_message: Some("No identity mnemonic found".to_string()),
+        },
+        Err(e) => FfiResult {
+            success: false,
+            message: None,
+            error_message: Some(format!("Failed to load mnemonic: {e}")),
+        },
+    }
+}

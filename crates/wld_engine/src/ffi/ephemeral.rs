@@ -46,6 +46,8 @@ struct EphemeralSession {
     last_timestamp_ns: i64,
     /// Content hashes from each checkpoint (for chain building).
     content_snapshots: Vec<ContentSnapshot>,
+    /// Canary seed from NMH handshake (hex-encoded).
+    canary_seed: Option<String>,
 }
 
 /// A checkpoint snapshot of the content at a point in time.
@@ -143,6 +145,7 @@ pub fn ffi_start_ephemeral_session(context_label: String) -> FfiEphemeralSession
             keystroke_count: 0,
             last_timestamp_ns: 0,
             content_snapshots: Vec::new(),
+            canary_seed: None,
         },
     );
 
@@ -401,6 +404,163 @@ pub fn ffi_ephemeral_status(session_id: String) -> FfiEphemeralStatusResult {
             elapsed_secs: 0.0,
             error_message: Some(format!("No ephemeral session: {session_id}")),
         },
+    }
+}
+
+/// Create a checkpoint from a pre-computed content hash (avoids sending full content).
+/// Used by the NMH where Chrome's 1MB native messaging limit prevents sending full documents.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn ffi_ephemeral_checkpoint_hash(
+    session_id: String,
+    content_hash_hex: String,
+    char_count: u64,
+    size_delta: i32,
+    message: String,
+    commitment: Option<String>,
+) -> FfiResult {
+    let mut entry = match sessions().get_mut(&session_id) {
+        Some(e) => e,
+        None => {
+            return FfiResult {
+                success: false,
+                message: None,
+                error_message: Some(format!("No ephemeral session: {session_id}")),
+            }
+        }
+    };
+
+    if content_hash_hex.len() != 64 {
+        return FfiResult {
+            success: false,
+            message: None,
+            error_message: Some(format!(
+                "Invalid hash length: {} chars (expected 64 hex chars)",
+                content_hash_hex.len()
+            )),
+        };
+    }
+
+    let content_hash: [u8; 32] = match hex::decode(&content_hash_hex) {
+        Ok(bytes) if bytes.len() == 32 => {
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&bytes);
+            arr
+        }
+        _ => {
+            return FfiResult {
+                success: false,
+                message: None,
+                error_message: Some("Invalid hex in content hash".to_string()),
+            }
+        }
+    };
+
+    if entry.content_snapshots.len() >= MAX_SNAPSHOTS {
+        return FfiResult {
+            success: false,
+            message: None,
+            error_message: Some(format!("Max snapshots reached ({})", MAX_SNAPSHOTS)),
+        };
+    }
+
+    let context_note = if message.is_empty() {
+        commitment
+    } else if let Some(c) = commitment {
+        Some(format!("{message} [{c}]"))
+    } else {
+        Some(message)
+    };
+
+    entry.content_snapshots.push(ContentSnapshot {
+        timestamp_ns: now_ns(),
+        content_hash,
+        char_count,
+        size_delta,
+        message: context_note,
+    });
+    entry.checkpoint_count += 1;
+
+    let ephemeral_path = format!("ephemeral://{session_id}");
+    if let Ok(mut store) = open_store() {
+        let mut event = crate::store::SecureEvent {
+            id: None,
+            device_id: [0u8; 16],
+            machine_id: String::new(),
+            timestamp_ns: now_ns(),
+            file_path: ephemeral_path,
+            content_hash,
+            file_size: char_count as i64,
+            size_delta,
+            previous_hash: [0u8; 32],
+            event_hash: [0u8; 32],
+            context_type: Some("ephemeral".to_string()),
+            context_note: entry
+                .content_snapshots
+                .last()
+                .and_then(|s| s.message.clone()),
+            vdf_input: None,
+            vdf_output: None,
+            vdf_iterations: 0,
+            forensic_score: 0.0,
+            is_paste: false,
+            hardware_counter: None,
+        };
+        let _ = store.insert_secure_event(&mut event);
+    }
+
+    flush_session_state(&session_id, &entry);
+
+    FfiResult {
+        success: true,
+        message: Some(format!(
+            "Ephemeral checkpoint #{}: {}",
+            entry.checkpoint_count,
+            &content_hash_hex[..16]
+        )),
+        error_message: None,
+    }
+}
+
+/// Set the canary seed for an ephemeral session (derived during NMH handshake).
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn ffi_ephemeral_set_canary_seed(session_id: String, canary_seed_hex: String) -> FfiResult {
+    let mut entry = match sessions().get_mut(&session_id) {
+        Some(e) => e,
+        None => {
+            return FfiResult {
+                success: false,
+                message: None,
+                error_message: Some(format!("No ephemeral session: {session_id}")),
+            }
+        }
+    };
+
+    if canary_seed_hex.len() != 64 {
+        return FfiResult {
+            success: false,
+            message: None,
+            error_message: Some(format!(
+                "Invalid canary seed length: {} chars (expected 64 hex chars)",
+                canary_seed_hex.len()
+            )),
+        };
+    }
+
+    if hex::decode(&canary_seed_hex).is_err() {
+        return FfiResult {
+            success: false,
+            message: None,
+            error_message: Some("Invalid hex in canary seed".to_string()),
+        };
+    }
+
+    entry.canary_seed = Some(canary_seed_hex);
+    entry.last_activity = Instant::now();
+
+    FfiResult {
+        success: true,
+        message: Some("Canary seed set".to_string()),
+        error_message: None,
     }
 }
 
