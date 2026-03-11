@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+#![allow(clippy::field_reassign_with_default)]
 
 use super::*;
 use tempfile::tempdir;

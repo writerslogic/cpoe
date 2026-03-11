@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+#![allow(clippy::needless_borrows_for_generic_args)]
 
-#[allow(clippy::needless_borrows_for_generic_args)]
 use super::*;
 use tempfile::TempDir;
 
