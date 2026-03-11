@@ -84,10 +84,9 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-latest
             archive: tar.gz
-          # Windows build disabled until platform code compiles (pre-existing issues)
-          # - target: x86_64-pc-windows-msvc
-          #   os: windows-latest
-          #   archive: zip
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive: zip
     steps:
       - uses: actions/checkout@v4
 
@@ -278,33 +277,32 @@ jobs:
               "sha256_x86": "${{ steps.hashes.outputs.sha_x86 }}"
             }
 
-  # Scoop update disabled until Windows build is fixed
-  # update-scoop:
-  #   name: Update Scoop Bucket
-  #   runs-on: ubuntu-latest
-  #   needs: [validate, release]
-  #   if: "!contains(needs.validate.outputs.tag, '-')"
-  #   steps:
-  #     - name: Download Windows artifact
-  #       uses: actions/download-artifact@v4
-  #       with:
-  #         name: build-x86_64-pc-windows-msvc
-  #         path: artifacts
-  #     - name: Compute SHA-256 hash
-  #       id: hash
-  #       run: |
-  #         TAG=${{ needs.validate.outputs.tag }}
-  #         SHA_WIN=$(shasum -a 256 artifacts/writerslogic-${TAG}-x86_64-pc-windows-msvc.zip | awk '{print $1}')
-  #         echo "sha_win=$SHA_WIN" >> $GITHUB_OUTPUT
-  #     - name: Update Scoop manifest
-  #       uses: peter-evans/repository-dispatch@v3
-  #       with:
-  #         token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-  #         repository: writerslogic/scoop-bucket
-  #         event-type: update-manifest
-  #         client-payload: |
-  #           {
-  #             "tag": "${{ needs.validate.outputs.tag }}",
-  #             "version": "${{ needs.validate.outputs.version }}",
-  #             "sha256_win": "${{ steps.hash.outputs.sha_win }}"
-  #           }
+  update-scoop:
+    name: Update Scoop Bucket
+    runs-on: ubuntu-latest
+    needs: [validate, release]
+    if: "!contains(needs.validate.outputs.tag, '-')"
+    steps:
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-x86_64-pc-windows-msvc
+          path: artifacts
+      - name: Compute SHA-256 hash
+        id: hash
+        run: |
+          TAG=${{ needs.validate.outputs.tag }}
+          SHA_WIN=$(shasum -a 256 artifacts/writerslogic-${TAG}-x86_64-pc-windows-msvc.zip | awk '{print $1}')
+          echo "sha_win=$SHA_WIN" >> $GITHUB_OUTPUT
+      - name: Update Scoop manifest
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.SCOOP_BUCKET_TOKEN }}
+          repository: writerslogic/scoop-bucket
+          event-type: update-manifest
+          client-payload: |
+            {
+              "tag": "${{ needs.validate.outputs.tag }}",
+              "version": "${{ needs.validate.outputs.version }}",
+              "sha256_win": "${{ steps.hash.outputs.sha_win }}"
+            }
