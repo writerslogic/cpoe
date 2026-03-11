@@ -109,19 +109,19 @@ impl SentinelFocusTracker for StubSentinelFocusTracker {
         )
     }
 
-    fn focus_events(&self) -> mpsc::Receiver<FocusEvent> {
-        self.focus_rx.lock_recover().take().unwrap_or_else(|| {
+    fn focus_events(&self) -> Result<mpsc::Receiver<FocusEvent>> {
+        Ok(self.focus_rx.lock_recover().take().unwrap_or_else(|| {
             log::error!("Focus receiver already consumed - returning dummy receiver");
             let (_tx, rx) = mpsc::channel(1);
             rx
-        })
+        }))
     }
 
-    fn change_events(&self) -> mpsc::Receiver<ChangeEvent> {
-        self.change_rx.lock_recover().take().unwrap_or_else(|| {
+    fn change_events(&self) -> Result<mpsc::Receiver<ChangeEvent>> {
+        Ok(self.change_rx.lock_recover().take().unwrap_or_else(|| {
             log::error!("Change receiver already consumed - returning dummy receiver");
             let (_tx, rx) = mpsc::channel(1);
             rx
-        })
+        }))
     }
 }

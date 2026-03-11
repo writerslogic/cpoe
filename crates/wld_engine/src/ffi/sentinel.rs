@@ -75,18 +75,20 @@ pub fn ffi_sentinel_start() -> FfiResult {
     let sentinel = match Sentinel::new(config) {
         Ok(s) => Arc::new(s),
         Err(e) => {
-            let msg = format!("{e}");
             #[cfg(target_os = "macos")]
-            if !accessibility_granted && msg.contains("accessibility") {
-                return FfiResult {
-                    success: false,
-                    message: None,
-                    error_message: Some(
-                        "Accessibility permission required — grant access in System Settings > \
-                         Privacy & Security > Accessibility"
-                            .to_string(),
-                    ),
-                };
+            {
+                let msg = format!("{e}");
+                if !accessibility_granted && msg.contains("accessibility") {
+                    return FfiResult {
+                        success: false,
+                        message: None,
+                        error_message: Some(
+                            "Accessibility permission required — grant access in System \
+                             Settings > Privacy & Security > Accessibility"
+                                .to_string(),
+                        ),
+                    };
+                }
             }
             return FfiResult {
                 success: false,
