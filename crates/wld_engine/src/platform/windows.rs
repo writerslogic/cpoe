@@ -244,7 +244,7 @@ impl KeystrokeCapture for WindowsKeystrokeCapture {
             let mut msg = MSG::default();
             while running.load(Ordering::SeqCst) {
                 unsafe {
-                    if !GetMessageW(&mut msg, None, 0, 0).into() {
+                    if GetMessageW(&mut msg, None, 0, 0).0 <= 0 {
                         break;
                     }
                 }
@@ -489,7 +489,7 @@ impl MouseCapture for WindowsMouseCapture {
             let mut msg = MSG::default();
             while running.load(Ordering::SeqCst) {
                 unsafe {
-                    if !GetMessageW(&mut msg, None, 0, 0).into() {
+                    if GetMessageW(&mut msg, None, 0, 0).0 <= 0 {
                         break;
                     }
                 }
