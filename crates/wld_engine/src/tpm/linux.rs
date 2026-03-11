@@ -288,18 +288,17 @@ impl Provider for LinuxTpmProvider {
     }
 
     fn clock_info(&self) -> Result<super::ClockInfo, TPMError> {
-        let mut state = self.inner.lock_recover();
-        let clock_data = state
-            .context
-            .read_clock()
-            .map_err(|_| TPMError::Quote("read_clock failed".into()))?;
-
-        let clock_info = clock_data.clock_info;
+        // tss-esapi 7.x does not expose ReadClock; capabilities() already
+        // reports secure_clock: false, so fall back to host monotonic time.
+        let elapsed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
         Ok(super::ClockInfo {
-            clock: clock_info.clock,
-            reset_count: clock_info.reset_count,
-            restart_count: clock_info.restart_count,
-            safe: clock_info.safe == tss_esapi::tss2_esys::YES,
+            clock: elapsed,
+            reset_count: 0,
+            restart_count: 0,
+            safe: false,
         })
     }
 

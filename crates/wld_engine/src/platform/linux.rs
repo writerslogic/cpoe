@@ -900,9 +900,7 @@ impl LinuxMouseCapture {
                                 };
 
                                 if is_micro {
-                                    if let Ok(mut s) = stats.write() {
-                                        s.record(&mouse_event);
-                                    }
+                                    stats.write_recover().record(&mouse_event);
                                 }
 
                                 if (!idle_only_mode.load(Ordering::Relaxed) || is_micro)
