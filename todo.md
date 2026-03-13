@@ -5,9 +5,9 @@
 <!-- UPDATE THIS SECTION AT START AND END OF EVERY SESSION -->
 
 ```
-ACTIVE_TASKS: []
-LAST_UPDATED: 2026-03-05
-SESSION_OWNER: instruct-mission-3
+ACTIVE_TASKS: [suggest-audit-3]
+LAST_UPDATED: 2026-03-12
+SESSION_OWNER: suggest-audit
 ```
 
 ### Completed Summary
@@ -23,14 +23,20 @@ SESSION_OWNER: instruct-mission-3
 - 2026-03-05: Phase 7 (fe54ace2): M-088, M-128, M-129, M-130, M-131, M-144, M-145, M-146, M-147. Triaged: M-053, M-056, M-083, M-087, M-137, M-138. 707 pass.
 - 2026-03-05: Phase 8 (6e43d1a3): SYS-015 (50+ named constants), SYS-019 (browser ext validation), H-105, H-106, M-052, M-070, M-071, M-079, M-080, M-081, M-082, M-090, M-091, M-098, M-099, M-102, M-112, M-114, M-115, M-118, M-132, M-135. 707 pass.
 - 2026-03-06: Quality audit (ca30939e): Fixed C-025 single-leaf Merkle hash, SYS-013 FFI expect→match, SYS-015 cadence bare literal, browser dead code/unhandled rejections/dangling promises. 707 pass.
+- 2026-03-11: Re-audit of 3 crates (wld_engine, wld_jitter, wld_protocol). ~200 files, 15 batches, 3 waves. 5 new HIGH + 4 new MEDIUM found. 730 tests passing.
+- 2026-03-11: Code quality / duplication / performance audit. ~200 files, 9 batches, 2 waves. 8 new SYS + 14 HIGH + 42 MEDIUM found.
+- 2026-03-12: CLI exhaustive review: 7 bugs fixed (CLI-C1..C3, CLI-H1, CLI-H6, CLI-M11, CLI-M12), 6 false positives eliminated. 15/15 tests pass, 0 clippy warnings.
+- 2026-03-12: Engine/protocol dedup batch: M-169 (nonce dedup), M-175 (causality lock dedup), M-176 (CBOR encode generic), M-192 (AIExtent Ord). CLI-L1, CLI-L6 fixed. H-150 resolved via C-032. Tests: 737 engine, 36 protocol, 15 CLI — all pass.
+- 2026-03-12: CLI production polish: Added --json (status/list/log/commit), --quiet global flag, `wld completions` command, binary file type rejection on commit, fixed clap conflicts_with assertion. 13 new tests (28 total). 0 clippy warnings.
+- 2026-03-12: Full codebase re-audit (suggest run 4). ~215 files, 15 batches, 3 waves. 3 new CRITICAL + 2 new SYS + 27 new HIGH found. 737 tests passing.
 
 ### Handoff Summary
 <!-- Replace this block before ending a session near context limits -->
 ```
-CONTEXT: Quality audit complete (ca30939e). All 163 completed items verified by 3 parallel audit agents. 7 issues found and fixed. 707 tests passing, clippy clean with and without FFI.
+CONTEXT: Full re-audit complete (2026-03-12). 215 files, 15 batches, 3 waves. Found 3C + 2SYS + 27H new issues. Key themes: residual NaN guards, residual key zeroize, MMR proof validation gaps, TPM Windows compile error.
 BLOCKERS: None
-REMAINING_ENGINE: C-014 (TPM signing, Windows-only), H-066 (ECDSA P-256, coupled with C-014), H-077 (FFI refactor, deferred), M-050 (tpm god module, deferred), M-058/M-060/M-136/M-143 (deferred architecture/feature items)
-REMAINING_APPS: macOS (9C + 28H + 75M + 7SYS), Windows (6C + 56H + 119M + 7SYS) — separate submodule repos
+REMAINING_ENGINE: C-014 (TPM signing), C-034..C-036 (zeroize+TPM), H-066 (ECDSA), H-077 (FFI), H-135..H-143 (quality), H-154..H-180 (new), SYS-024..SYS-033, M-050..M-206
+REMAINING_APPS: macOS (9C + 28H + 75M + 7SYS), Windows (6C + 56H + 119M + 7SYS)
 KEY_FILES: /Volumes/A/writerslogic/todo.md (this file)
 ```
 
@@ -185,6 +191,73 @@ Windows app: independent of engine groups (separate C# codebase)
   Files: `forensics/engine.rs:57-82`, `forensics/topology.rs`
   Fix: Implement real region extraction from edit deltas.
 
+### Code Quality Systemic (2026-03-11)
+
+- [ ] **SYS-024** `anchor_http_duplication` — 6 files — HIGH
+  <!-- pid:duplicated_logic | verified:true | first:2026-03-11 -->
+  HTTP client / JSON-RPC / request-building pattern duplicated across all anchor providers and WritersProof client.
+  Files: `anchors/ethereum.rs:117`, `anchors/bitcoin.rs:51`, `anchors/rfc3161.rs:27`, `anchors/ots.rs:232`, `anchors/notary.rs:29`, `writersproof/client.rs:40`
+  Fix: Extract shared `JsonRpcClient` trait and `fn send_authenticated_request()` helper. Effort: medium
+
+- [ ] **SYS-025** `serde_helper_duplication` — 5+ files — HIGH
+  <!-- pid:duplicated_logic | verified:true | first:2026-03-11 -->
+  Identical hex/base64 serde modules duplicated across crate boundaries.
+  Files: `rfc/serde_helpers.rs` (120L), `rfc/wire_types/serde_helpers.rs` (104L), `evidence/serde_helpers.rs` (62L), `protocol/baseline.rs:123` (serde_bytes_opt), `anchors/types.rs:148,171,191` (3 near-identical modules)
+  Fix: Consolidate into single `crate::serde_utils` module; re-export where needed. Effort: small
+
+- [ ] **SYS-026** `sentinel_ipc_code_duplication` — 8+ sites — HIGH
+  <!-- pid:duplicated_logic | verified:true | first:2026-03-11 -->
+  Duplicated patterns across sentinel/IPC subsystems:
+  - WAL append logic repeated 3x in `sentinel/helpers.rs` (lines 134, 222, and focus_document_sync)
+  - Send/recv frame logic in `ipc/async_client.rs` + `ipc/sync_client.rs` (identical protocol)
+  - AX query pattern duplicated in `sentinel/macos_focus.rs` (get_document_path + get_window_title)
+  - Daemon setup duplicated in `sentinel/daemon.rs` (cmd_start + cmd_start_foreground)
+  - IPC path validation lists duplicated for Unix/Windows in `ipc/messages.rs:38,64`
+  Fix: Extract `wal_append_session_event()`, `IpcTransport` trait, `query_ax_attribute()`, `setup_daemon_common()`. Effort: medium
+
+- [ ] **SYS-027** `double_iteration_patterns` — 6+ files — MEDIUM
+  <!-- pid:collect_then_iter | verified:true | first:2026-03-11 -->
+  Collections iterated multiple times where a single pass suffices.
+  Files: `forensics/velocity.rs:23` (clone+sort 2x), `forensics/analysis.rs:53` (sort 2x), `presence/verifier.rs:70` (count 2x), `fingerprint/activity.rs:326` (3 passes in from_samples), `evidence/packet.rs:299` (count+hash), `c2pa.rs:623` (count+contains)
+  Fix: Consolidate into single-pass accumulators. Effort: small per-file
+
+- [ ] **SYS-028** `war_profile_duplication` — 2 files — HIGH
+  <!-- pid:duplicated_logic | verified:true | first:2026-03-11 -->
+  WAR trust vector mapping, attestation tier derivation, and EAR data preparation duplicated between VC and C2PA profiles.
+  Files: `war/profiles/vc.rs:96,125`, `war/profiles/c2pa.rs:86,129,134`
+  Fix: Extract `TrustVectorSerialized` struct, `tier_from_trust_vector()`, `prepare_ear_attestation_data()`. Effort: small
+
+- [ ] **SYS-029** `histogram_stats_scattered` — 4+ files — MEDIUM
+  <!-- pid:duplicated_logic | verified:true | first:2026-03-11 -->
+  Histogram normalization, cosine similarity, percentile computation, and merge utilities defined independently in fingerprint and jitter modules.
+  Files: `fingerprint/activity.rs:751` (normalize/merge), `jitter/profile.rs:100` (cosine similarity), `fingerprint/voice.rs:432` (bhattacharyya with f32→f64 alloc), `evidence/builder.rs:551` (5x select_nth_unstable)
+  Fix: Consolidate into `analysis::stats` module with `normalize_histogram()`, `histogram_similarity()`, `compute_percentiles()`. Effort: medium
+
+- [ ] **SYS-030** `config_defaults_boilerplate` — 2 files — MEDIUM
+  <!-- pid:duplicated_logic | verified:true | first:2026-03-11 -->
+  168 lines of trivial `default_*()` functions in `config/defaults.rs`, each duplicated via `impl Default` in `config/types.rs` (7 structs, ~70 lines of boilerplate).
+  Fix: Use `#[serde(default = "fn")]` on fields directly; eliminate manual `impl Default` blocks. Effort: small
+
+- [ ] **SYS-031** `platform_enumerate_duplication` — 3+ files — MEDIUM
+
+### Residual Systemic (2026-03-12)
+
+- [ ] **SYS-032** `nan_inf_residual` — 6+ files — HIGH
+  <!-- pid:nan_inf_residual | verified:true | first:2026-03-12 | last:2026-03-12 -->
+  Residual NaN/Inf-unguarded patterns missed by original SYS-016 fix.
+  Files: `platform/linux.rs:859`, `platform/synthetic.rs:115`, `rfc/biology.rs:558,364,370`, `forensics/cross_modal.rs:310`
+  Fix: Apply `.is_finite()` guards and division-by-zero checks at each site
+
+- [ ] **SYS-033** `key_zeroize_residual` — 4+ files — CRITICAL
+  <!-- pid:key_zeroize_residual | verified:true | first:2026-03-12 | last:2026-03-12 -->
+  Residual key material zeroization gaps missed by original SYS-018 fix.
+  Files: `ffi/system.rs:33`, `ffi/ephemeral.rs:576`, `sealed_identity/store.rs:236`, `identity/secure_storage.rs:358`
+  Fix: Wrap seed/key data in `Zeroizing<Vec<u8>>` or `Zeroizing<[u8; 32]>` at each site
+  <!-- pid:duplicated_logic | verified:true | first:2026-03-11 -->
+  Platform device enumeration and virtual device checking logic duplicated.
+  Files: `platform/linux.rs:694` (enumerate_keyboards ≈ enumerate_mice, 70+ lines each), `platform/linux.rs:200` (is_virtual_device ≈ is_virtual_mouse), `platform/windows.rs:155` (6 global statics for overlapping capture types)
+  Fix: Extract `enumerate_input_devices(filter)`, `is_virtual_device_name()`. Effort: small
+
 ---
 
 ## Engine — Build Issues
@@ -206,11 +279,69 @@ Windows app: independent of engine groups (separate C# codebase)
 
 ---
 
-## Engine — Critical (1 open)
+## Engine — Critical (4 open, 6 spec-conformance fixed 2026-03-12)
 
 - [ ] **C-014** `[security]` `tpm/windows.rs:536-546` — sign_payload uses SHA256 not TPM2_Sign
   <!-- pid:sec_no_real_signing | verified:true | first:2026-03-02 | revalidated:2026-03-03 -->
   Hardware trust boundary violated. Fix: Implement TPM2_Sign. Effort: large
+
+- [ ] **C-034** `[error_handling]` `tpm/windows/provider.rs:587,589` + `tpm/windows/commands.rs:90` — `TPMError::CommunicationError` variant does not exist in enum
+  <!-- pid:missing_enum_variant | batch:5 | verified:true | first:2026-03-12 | last:2026-03-12 -->
+  Impact: Windows TPM module fails to compile — 3 call sites use nonexistent variant | Fix: Add `CommunicationError(String)` to `TPMError` enum in `tpm/types.rs`, or replace with `Quote(e.to_string())` | Effort: small
+
+- [ ] **C-035** `[security]` `ffi/system.rs:33` — Seed array `[u8; 32]` not zeroized after `SigningKey::from_bytes()`
+  <!-- pid:key_zeroize_residual | batch:10 | verified:true | first:2026-03-12 | last:2026-03-12 -->
+  Impact: 32-byte signing key seed persists on stack after use | Fix: `use zeroize::Zeroize; seed.zeroize();` after line 41 | Effort: small
+  ```diff
+  - let signing_key = SigningKey::from_bytes(&seed);
+  + let signing_key = SigningKey::from_bytes(&seed);
+  + seed.zeroize();
+  ```
+
+- [ ] **C-036** `[security]` `ffi/ephemeral.rs:576` — Key data read from disk not zeroized after use
+  <!-- pid:key_zeroize_residual | batch:10 | verified:true | first:2026-03-12 | last:2026-03-12 -->
+  Impact: Signing key bytes from `std::fs::read()` persist in heap memory | Fix: Wrap in `Zeroizing<Vec<u8>>` | Effort: small
+  ```diff
+  - let key_data = std::fs::read(&key_path).map_err(|e| format!("Cannot read signing key: {e}"))?;
+  + let key_data = zeroize::Zeroizing::new(std::fs::read(&key_path).map_err(|e| format!("Cannot read signing key: {e}"))?);
+  ```
+
+- [x] **C-028** `[spec]` Evidence Packet profile URI wrong — uses EAT URI instead of PoP URI
+  <!-- pid:spec_profile_uri | verified:true | first:2026-03-12 -->
+  Code: `"urn:ietf:params:rats:eat:profile:pop:1.0"` (EAT/WAR profile).
+  Spec: `"urn:ietf:params:pop:profile:1.0"` (Evidence profile, §6.5).
+  Files: `spec.rs:6`, `wire_conversion.rs:20`, `packet.rs:308/318/328`, `evidence.rs:43/219`, `ffi/evidence.rs:235/598`, plus test files.
+  Fix: Replace all Evidence Packet URIs; keep EAT URI only for WAR/attestation-result. Effort: small
+
+- [x] **C-029** `[spec]` Argon2id salt derivation doesn't match spec
+  <!-- pid:spec_argon2_salt | verified:true | first:2026-03-12 -->
+  Code (`swf_argon2.rs:83-85`): `salt = i.to_be_bytes() || current[..8]` (custom 16-byte).
+  Spec (§7.1): `salt_0 = H(0x00 || "PoP-salt-v1" || seed)`, `salt_i = H(0x01 || "PoP-salt-v1" || I2OSP(i, 4))`.
+  Fix: Derive 32-byte spec-conformant salts via SHA-256 with DST prefix. Effort: small
+
+- [x] **C-030** `[spec]` Fiat-Shamir challenge derivation doesn't match spec
+  <!-- pid:spec_fiat_shamir | verified:true | first:2026-03-12 -->
+  Code (`swf_argon2.rs:207-213`): DST `"witnessd-fiat-shamir-v1"`, wrong field order, missing proof-params/algorithm, iterated SHA-256 for index selection.
+  Spec (§7.3): DST `"PoP-Fiat-Shamir-v1"`, includes `I2OSP(proof-algorithm, 2) || CBOR-encode(proof-params) || input || merkle_root`, uses HKDF-Expand for index derivation.
+  Fix: Rewrite `fiat_shamir_challenge()` and `select_indices()` per spec. Effort: medium
+
+- [x] **C-031** `[spec]` HKDF key derivation missing two-stage hierarchy (already resolved)
+  <!-- pid:spec_hkdf_hierarchy | verified:true | first:2026-03-12 -->
+  Code (`crypto.rs:121-146`): Single-stage `HKDF::from_prk(merkle_root)` with info `"PoP-jitter-seal"` / `"PoP-entangled-mac"`.
+  Spec (§7.6): Two-stage: `PRK = HKDF-Extract(salt="PoP-key-derivation-v1", IKM=merkle_root || input)`, then `HKDF-Expand(PRK, "PoP-jitter-tag-v1", hash_len)` / `HKDF-Expand(PRK, "PoP-entangled-binding-v1", hash_len)`.
+  Fix: Add HKDF-Extract stage, update info strings, pass `process-proof.input` to both functions. Effort: small
+
+- [x] **C-032** `[spec]` Merkle tree construction lacks tagged hashing (already resolved)
+  <!-- pid:spec_merkle_tagged | verified:true | first:2026-03-12 -->
+  Code (`swf_argon2.rs:244-268`): No tag prefixes; leaves stored directly; internals `H(left || right)`; padding repeats last leaf.
+  Spec (§7.4): Leaf = `H(0x00 || state_i)`, Internal = `H(0x01 || left || right)`, Pad = `H(0x02 || I2OSP(steps+1, 4))`.
+  Fix: Add 0x00/0x01/0x02 prefix tags in `build_merkle_tree()`, `merkle_proof()`, `verify_merkle_proof()`. Effort: medium
+
+- [x] **C-033** `[spec]` Checkpoint hash computation differs from spec
+  <!-- pid:spec_checkpoint_hash | verified:true | first:2026-03-12 -->
+  Code (`checkpoint.rs:134-157`): `H("PoP-Checkpoint-v1" || CBOR-encode(checkpoint \ {key 8}))` — hashes whole map.
+  Spec (§6.6): `H("PoP-Checkpoint-v1" || prev-hash || content-hash || CBOR-encode(edit-delta) || CBOR-encode(jitter-binding) || CBOR-encode(physical-state) || merkle-root)` — individual field concatenation.
+  Fix: Rewrite `compute_hash()` to concatenate individual fields per spec. Effort: medium
 
 <details><summary>Engine Critical — Fixed (16)</summary>
 
@@ -234,7 +365,34 @@ Windows app: independent of engine groups (separate C# codebase)
 
 ---
 
-## Engine — High (32 open)
+## Engine — High (78 open)
+
+- [x] **H-149** `[spec]` ASCII armor headers don't match spec
+  <!-- pid:spec_ascii_armor | verified:true | first:2026-03-12 -->
+  Code (`war/encoding.rs:12`): `"-----BEGIN WITNESSD AUTHORSHIP RECORD-----"`.
+  Spec (§6.10): `"-----BEGIN POP WAR-----"` / `"-----END POP WAR-----"`.
+  Also missing: `"-----BEGIN POP EVIDENCE-----"` / `"-----END POP EVIDENCE-----"` armor for .cpop files.
+  Fix: Update WAR armor strings; add CPOP armor support. Effort: small
+
+- [x] **H-150** `[spec]` SWF leaf hashing double-hashes state without tag (resolved as part of C-032)
+  <!-- pid:spec_leaf_hash | verified:true | first:2026-03-12 -->
+
+- [x] **H-151** `[spec]` No enforcement of entangled mode for ENHANCED/MAXIMUM
+  <!-- pid:spec_entangled_enforcement | verified:true | first:2026-03-12 -->
+  Spec (§7.5): "Attesters claiming ENHANCED or MAXIMUM content tier MUST use swf-argon2id-entangled (21) instead of (20)."
+  Code: No validation in CLI export path. Fix: Add check in `cmd_export.rs`. Effort: small
+
+- [x] **H-152** `[spec]` Jitter quantization not implemented (privacy)
+  <!-- pid:spec_jitter_quantize | verified:true | first:2026-03-12 -->
+  Spec (§11.4): "Minimum quantization of 5ms RECOMMENDED" for privacy protection.
+  Code: Raw millisecond intervals passed through without quantization.
+  Fix: Round jitter intervals to nearest 5ms before inclusion in Evidence Packet. Effort: small
+
+- [x] **H-153** `[spec]` SWF default parameters may not match spec minimums per tier
+  <!-- pid:spec_swf_defaults | verified:true | first:2026-03-12 -->
+  Spec (§7.5): CORE requires `steps=90, m=65536, t=1, p=1` for Mode 20.
+  Code: `Argon2SwfParams::default()` needs verification against spec table.
+  Fix: Ensure defaults match spec minimums; add per-tier parameter selection. Effort: small
 
 - [x] **H-065** `tpm/secure_enclave.rs:448` — Already returns CounterRollback error on corruption
 - [ ] **H-066** `tpm/verification.rs:102` — No ECDSA P-256 verification (coupled with C-014)
@@ -267,6 +425,216 @@ Windows app: independent of engine groups (separate C# codebase)
 - [x] **H-125** `vdf/roughtime_client.rs` — Single hardcoded Roughtime server
 - [x] **H-126** `jitter/session.rs:313` — Session::load no chain integrity verification
 - [x] **H-128** `native_messaging_host.rs` — Jitter rate limit has no temporal component
+- [x] **H-130** `[error_handling]` `checkpoint/chain.rs:357,360` — Silent `unwrap_or_default()` on CBOR encode corrupts SWF seed
+  <!-- pid:silent_error_swallow | batch:6 | verified:true | first:2026-03-11 | last:2026-03-11 -->
+  Impact: Empty Vec used as SWF seed input if CBOR fails, weakening proof | Fix: Propagate via `?` | Effort: small
+  ```diff
+  - crate::codec::cbor::encode(&jb.summary.sample_count).unwrap_or_default();
+  + crate::codec::cbor::encode(&jb.summary.sample_count)
+  +     .map_err(|e| Error::checkpoint(format!("CBOR encode intervals: {e}")))?;
+  ```
+- [x] **H-131** `[security]` `mmr/proof.rs:77,85,91,365,375,383,389` — `as u16` truncation in MMR proof serialization
+  <!-- pid:truncating_cast | batch:9 | verified:true | first:2026-03-11 | last:2026-03-11 -->
+  Impact: Proof integrity violation on MMR trees with >65535 elements | Fix: Bounds check before cast | Effort: small
+  ```diff
+  - buf[offset..offset + 2].copy_from_slice(&(self.merkle_path.len() as u16).to_be_bytes());
+  + let path_len: u16 = self.merkle_path.len().try_into()
+  +     .map_err(|_| MmrError::ProofTooLarge)?;
+  + buf[offset..offset + 2].copy_from_slice(&path_len.to_be_bytes());
+  ```
+- [x] **H-132** `[error_handling]` `trust_policy/evaluation.rs:93-106` — NaN propagation through trust score
+  <!-- pid:nan_inf_unguarded | batch:4 | verified:true | first:2026-03-11 | last:2026-03-11 -->
+  Impact: NaN metrics → NaN trust verdict, bypassing policy | Fix: Guard with `.is_finite()` | Effort: small
+  ```diff
+  + if !cov.is_finite() {
+  +     0.0
+  + } else if cov <= 0.0 {
+  - if cov <= 0.0 {
+  ```
+- [x] **H-133** `[security]` `wal/serialization.rs:67` — `payload_len as u32` truncates WAL payload length >4GB
+  <!-- pid:truncating_cast | batch:7 | verified:true | first:2026-03-11 | last:2026-03-11 -->
+  Impact: WAL chain integrity corruption on large payloads | Fix: Return error if >u32::MAX | Effort: small
+- [x] **H-134** `[error_handling]` `evidence/wire_conversion.rs:146,174,178` — Silent CBOR encode failures in jitter seal and entangled MAC
+  <!-- pid:silent_error_swallow | batch:8 | verified:true | first:2026-03-11 | last:2026-03-11 -->
+  Impact: Weakened cryptographic bindings if CBOR encode fails | Fix: Propagate via `?` | Effort: small
+
+### Code Quality HIGH (2026-03-11)
+
+- [ ] **H-135** `[code_quality]` `report/html.rs:1-1082` — God module: 1082 lines of monolithic HTML generation with 50+ `write!` results ignored
+  <!-- pid:god_module | verified:true | first:2026-03-11 -->
+  Impact: Silent formatting failures, untestable sections | Fix: Split into `write_header()`, `write_timeline()`, `write_forensics()`, `write_css()` | Effort: medium
+
+- [ ] **H-136** `[code_quality]` `evidence/builder.rs:48` — 32+ `with_*` setter methods with duplicated strength-escalation pattern
+  <!-- pid:high_complexity | verified:true | first:2026-03-11 -->
+  Impact: 1094 lines of repetitive logic; strength rules scattered | Fix: Extract strength escalation into macro or `fn escalate_strength()` | Effort: large
+
+- [ ] **H-137** `[architecture]` `platform/windows.rs:155` — 6 global static Mutex/AtomicBool for thread communication
+  <!-- pid:unsafe_global_state | verified:true | first:2026-03-11 -->
+  Impact: Hidden state; overlapping GLOBAL_SENDER/GLOBAL_STATS risk undefined behavior if both KeystrokeMonitor and WindowsKeystrokeCapture started | Fix: Encapsulate in struct or use channels | Effort: medium
+
+- [ ] **H-138** `[code_quality]` `sentinel/core.rs:186` — 200+ line `start()` method with tokio::select! mixing keystroke, mouse, focus, debounce, idle
+  <!-- pid:high_complexity | verified:true | first:2026-03-11 -->
+  Impact: Tightly coupled async event loop, hard to test/modify | Fix: Extract `keyboard_bridge()`, `mouse_bridge()`, `focus_handler()` as separate tasks | Effort: medium
+
+- [x] **H-139** `[code_quality]` `sentinel/helpers.rs:196` — WAL append logic repeated 3x (lines 134, 222, and focus_document_sync)
+  <!-- pid:duplicated_logic | verified:true | first:2026-03-11 -->
+  Impact: Bug in WAL logic must be fixed in 3 places | Fix: Extract `fn wal_append_session_event()` | Effort: small
+
+- [ ] **H-140** `[architecture]` `ffi/forensics.rs:26` — Business logic in FFI layer; forensic metrics computed in FFI instead of core
+  <!-- pid:logic_in_boundary | verified:true | first:2026-03-11 -->
+  Impact: Metric calculation duplicated between `ffi_get_forensics` and `ffi_list_tracked_files` | Fix: Move to forensics module; FFI marshals only | Effort: medium
+
+- [x] **H-141** `[error_handling]` `config/loading.rs:26` — Config loaded without calling `validate()`
+  <!-- pid:missing_validation | verified:true | first:2026-03-11 -->
+  Impact: Zero checkpoint intervals, invalid paths pass silently | Fix: Call `config.validate()` after `load_or_default()` | Effort: small
+
+- [x] **H-142** `[security]` `crypto/obfuscated.rs:30` — Plaintext intermediate not zeroized during Obfuscated::new()
+  <!-- pid:key_zeroize_error_path | verified:true | first:2026-03-11 -->
+  Impact: Serialized plaintext held in memory before XOR mask applied | Fix: Use `Zeroizing<Vec<u8>>` for intermediate | Effort: medium
+
+- [ ] **H-143** `[code_quality]` `fingerprint/activity.rs:268` — 3 distribution types (IKI, Zone, Pause) with identical from_data/similarity/merge but no shared trait
+  <!-- pid:duplicated_logic | verified:true | first:2026-03-11 -->
+  Impact: 400+ lines of mechanical code; adding a distribution requires full copy-paste | Fix: `Distribution<T>` trait with generic methods | Effort: large
+
+- [-] **H-144** `[performance]` `fingerprint/activity.rs:722` — `current_fingerprint()` clones entire VecDeque<Sample> on every call — FALSE POSITIVE: guarded by dirty flag, only recomputes on change
+  <!-- pid:clone_in_loop | verified:true | first:2026-03-11 -->
+  Impact: Up to 10k samples cloned on every dirty check | Fix: Pass `&[Sample]` to `from_samples()` | Effort: medium
+
+- [-] **H-145** `[code_quality]` `jitter/content.rs:192` — `analyze_document_zones()` hardcodes bucket=5 ignoring actual interval — FALSE POSITIVE: by design for static analysis boundaries
+  <!-- pid:magic_value | verified:true | first:2026-03-11 -->
+  Impact: All transitions map to same bucket; temporal information lost | Fix: Compute bucket from `interval_to_bucket()` | Effort: medium
+
+- [-] **H-146** `[code_quality]` `c2pa.rs:619` — `validate_manifest()` 78 lines with 10+ sequential checks and deep nesting — FALSE POSITIVE: well-structured sequential validation, each check is distinct
+  <!-- pid:high_complexity | verified:true | first:2026-03-11 -->
+  Impact: Hard to test individual rules | Fix: Split into `validate_hard_binding()`, `validate_actions()`, etc. | Effort: medium
+
+- [x] **H-147** `[code_quality]` `keyhierarchy/puf.rs:60` — Inconsistent zeroization in `load_or_create_seed()` (3 paths, sometimes moved, sometimes cloned)
+  <!-- pid:key_zeroize_error_path | verified:true | first:2026-03-11 -->
+  Impact: Seed left in memory on some error paths | Fix: Use `Zeroizing<Vec<u8>>` wrapper for all paths | Effort: small
+
+- [x] **H-148** `[code_quality]` `keyhierarchy/verification.rs:36` — Fragile counter delta logic, easy off-by-one
+  <!-- pid:fragile_counter_delta | verified:true | first:2026-03-11 -->
+  Impact: Counter verification silently passes on off-by-one errors | Fix: Extract `verify_counter_delta(prev, current, delta) -> Result<()>` | Effort: small
+
+### Re-audit HIGH (2026-03-12)
+
+#### Security
+
+- [ ] **H-154** `[security]` `mmr/proof.rs:214` — RangeProof::verify() does not check leaf_indices for duplicates; HashMap silently deduplicates
+  <!-- pid:missing_bounds_check | batch:13 | verified:true | first:2026-03-12 | last:2026-03-12 -->
+  Impact: Attacker could submit duplicate leaf indices to satisfy count check, weakening range proof integrity | Fix: `if leaf_indices.len() != leaf_indices.iter().collect::<HashSet<_>>().len() { return Err(InvalidProof) }` | Effort: small
+
+- [ ] **H-155** `[security]` `mmr/proof.rs:317` — Multiple remaining peaks not validated as single root after Merkle reconstruction
+  <!-- pid:missing_validation | batch:13 | verified:true | first:2026-03-12 | last:2026-03-12 -->
+  Impact: Proof could fraudulently claim disjoint subtrees form a single peak | Fix: Add `if current.len() != 1 { return Err(InvalidProof) }` before `values().next()` | Effort: small
+
+- [ ] **H-156** `[security]` `checkpoint/chain.rs:178` — `commit_entangled()` does not validate `jitter_session_id` is non-empty
+  <!-- pid:input_validation | batch:13 | verified:true | first:2026-03-12 | last:2026-03-12 -->
+  Impact: Empty session IDs weaken forensic binding; upstream assumes uniqueness | Fix: `if jitter_session_id.is_empty() { return Err(Error::checkpoint("empty session_id")) }` | Effort: small
+
+- [ ] **H-157** `[security]` `sealed_identity/store.rs:236` — Derived seed not zeroized in reseal fallback path
+  <!-- pid:key_zeroize_residual | batch:10 | verified:true | first:2026-03-12 | last:2026-03-12 -->
+  Impact: PUF-derived seed persists in heap on unseal failure | Fix: Wrap in `Zeroizing<Vec<u8>>` | Effort: small
+
+- [ ] **H-158** `[security]` `identity/secure_storage.rs:358` — Seed cache returns unzeroized `Vec<u8>` copies via `to_vec()`
+  <!-- pid:key_zeroize_residual | batch:14 | verified:true | first:2026-03-12 | last:2026-03-12 -->
+  Impact: Callers receive raw seed bytes without zeroization guarantee | Fix: Return `Zeroizing<Vec<u8>>` from `load_seed()` | Effort: small
+
+- [ ] **H-159** `[security]` `crypto/anti_analysis.rs:48` — macOS `is_debugger_present()` returns hardcoded `false`
+  <!-- pid:incomplete_impl | batch:15 | verified:true | first:2026-03-12 | last:2026-03-12 -->
+  Impact: Anti-debugging defense completely bypassed on macOS | Fix: Implement via `sysctl` P_TRACED flag check | Effort: medium
+
+- [ ] **H-160** `[security]` `crypto/mem.rs:32` — `mlock()` failure silently ignored with `let _`
+  <!-- pid:error_swallow | batch:15 | verified:true | first:2026-03-12 | last:2026-03-12 -->
+  Impact: Key material may be paged to disk without warning | Fix: `if libc::mlock(...) != 0 { log::warn!("mlock failed") }` | Effort: small
+
+- [ ] **H-161** `[security]` `sealed_chain.rs:96` — Key derivation uses HKDF with cleartext `document_id` as context
+  <!-- pid:key_derivation_entropy | batch:15 | verified:true | first:2026-03-12 | last:2026-03-12 -->
+  Impact: If `document_id` is guessable (common filenames), key derivation is weakened | Fix: Add per-instance random nonce to key derivation | Effort: medium
+
+- [ ] **H-162** `[security]` `crypto/obfuscation.rs:30` — Serde serialization outputs plaintext, defeating obfuscation
+  <!-- pid:obfuscation_transparency | batch:15 | verified:true | first:2026-03-12 | last:2026-03-12 -->
+  Impact: Obfuscated data stored as plaintext on disk | Fix: Add `#[serde(skip)]` or custom encrypted serialization | Effort: small
+
+- [ ] **H-163** `[security]` `sentinel/helpers.rs:395` — `validate_path()` TOCTOU: parent canonicalized but symlink can be swapped before file operation
+  <!-- pid:path_toctou_symlink | batch:6 | verified:true | first:2026-03-12 | last:2026-03-12 -->
+  Impact: Attacker on same machine could write to arbitrary location via symlink race | Fix: Use `openat(2)` or validate immediately before OS operation | Effort: medium
+
+- [ ] **H-164** `[security]` `ipc/messages.rs:13` — Path validation does not check for symlinks; TOCTOU window with sentinel
+  <!-- pid:symlink_traversal | batch:9 | verified:true | first:2026-03-12 | last:2026-03-12 -->
+  Impact: Symlink traversal between IPC validation and sentinel processing | Fix: `Path::canonicalize()` during IPC validation | Effort: medium
+
+- [ ] **H-165** `[security]` `checkpoint/chain.rs:400` — `verify_hash_chain()` accepts mixed genesis modes without enforcement
+  <!-- pid:integrity_binding | batch:13 | verified:true | first:2026-03-12 | last:2026-03-12 -->
+  Impact: Entangled chain could have legacy all-zeros genesis, weakening mode integrity | Fix: Check entanglement_mode consistency with genesis prev_hash | Effort: medium
+
+#### Performance
+
+- [ ] **H-166** `[performance]` `vdf/swf_argon2.rs:333` — O(n²) linear search via `indices.contains()` in Fiat-Shamir index sampling
+  <!-- pid:perf_quadratic_search | batch:14 | verified:true | first:2026-03-12 | last:2026-03-12 -->
+  Impact: For k=100 (MAXIMUM tier), 5050 comparisons per proof | Fix: Use `HashSet` for O(1) lookups | Effort: small
+
+- [ ] **H-167** `[performance]` `fingerprint/storage.rs:90` — O(n³) nested `.iter().find()` in cluster analysis
+  <!-- pid:perf_nested_find | batch:4 | verified:true | first:2026-03-12 | last:2026-03-12 -->
+  Impact: Quadratic/cubic complexity on fingerprint lookups | Fix: Build `HashMap<ProfileId, &AuthorFingerprint>` once before loop | Effort: small
+
+- [ ] **H-168** `[performance]` `platform/linux.rs:548,871` — `device_id` cloned on every keystroke and mouse event in hot loop
+  <!-- pid:perf_heap_alloc_loop | batch:2 | verified:true | first:2026-03-12 | last:2026-03-12 -->
+  Impact: O(n) String clone per event at typing/mouse frequency | Fix: Cache `device_id` before loop or use `Arc<String>` | Effort: small
+
+#### Error Handling
+
+- [ ] **H-169** `[error_handling]` `c2pa.rs:989` — `.unwrap()` on external COSE signature data at trust boundary
+  <!-- pid:unwrap_on_external | batch:1 | verified:true | first:2026-03-12 | last:2026-03-12 -->
+  Impact: Malformed/tampered C2PA manifest causes library panic | Fix: `map_err()` and propagate | Effort: small
+
+- [ ] **H-170** `[error_handling]` `forensics/velocity.rs:117` — Unsafe unwrap in session statistics; panics on empty session list
+  <!-- pid:error_handling_unwrap | batch:8 | verified:true | first:2026-03-12 | last:2026-03-12 -->
+  Impact: Crash on edge case during forensic analysis | Fix: Guard with `if sessions.is_empty() { return default }` | Effort: small
+
+- [ ] **H-171** `[error_handling]` `forensics/cross_modal.rs:310` — Division-by-zero risk in temporal drift score
+  <!-- pid:unguarded_division | batch:8 | verified:true | first:2026-03-12 | last:2026-03-12 -->
+  Impact: NaN propagation if constants misconfigured | Fix: Assert `MAX_TEMPORAL_DRIFT_SEC > DRIFT_PERFECT_SEC` or clamp denominator | Effort: small
+
+- [ ] **H-172** `[error_handling]` `rfc/biology.rs:558` — `10f64.powf(spectral_slope)` with external data; NaN/Inf silently stored
+  <!-- pid:nan_inf_residual | batch:11 | verified:true | first:2026-03-12 | last:2026-03-12 -->
+  Impact: Silent corruption of biological measurements | Fix: Validate `spectral_slope.is_finite()` before `powf()` | Effort: small
+
+- [ ] **H-173** `[error_handling]` `rfc/biology.rs:364` — Unclamped FP accumulation; NaN scores silently become 0 millibits
+  <!-- pid:unclamped_fp_accumulation | batch:11 | verified:true | first:2026-03-12 | last:2026-03-12 -->
+  Impact: Subtle data loss — invalid scores look like valid "no evidence" | Fix: Check `is_finite()` on each sub-score before accumulation | Effort: small
+
+- [ ] **H-174** `[error_handling]` `rfc/biology.rs:370` — NaN passes range check (`(0.55..=0.85).contains(&NaN)` returns false silently)
+  <!-- pid:nan_skip_validation | batch:11 | verified:true | first:2026-03-12 | last:2026-03-12 -->
+  Impact: Malformed Hurst exponents bypass anomaly detection | Fix: Add `h.is_finite()` check before range tests | Effort: small
+
+- [ ] **H-175** `[error_handling]` `platform/linux.rs:859` — NaN from `sqrt()` in mouse magnitude without finite guard
+  <!-- pid:nan_inf_residual | batch:2 | verified:true | first:2026-03-12 | last:2026-03-12 -->
+  Impact: Synthetic jitter detection silently broken on overflow | Fix: Check `.is_finite()` after sqrt | Effort: small
+
+- [ ] **H-176** `[error_handling]` `platform/synthetic.rs:115` — Variance/std NaN when window is empty
+  <!-- pid:nan_guard_missing | batch:2 | verified:true | first:2026-03-12 | last:2026-03-12 -->
+  Impact: CV threshold check always false on NaN; verdicts unreliable | Fix: Guard `window.len() >= MIN_SAMPLES` before stats calc | Effort: small
+
+- [ ] **H-177** `[error_handling]` `platform/windows.rs:262` — `UnhookWindowsHookEx()` result silently discarded with `let _`
+  <!-- pid:silent_error_swallow | batch:2 | verified:true | first:2026-03-12 | last:2026-03-12 -->
+  Impact: Hook may fail to detach; system resource leak in Drop | Fix: Log result | Effort: small
+
+#### Architecture
+
+- [ ] **H-178** `[architecture]` `c2pa.rs:244` — `CLAIM_GENERATOR` version string hardcoded, not from `CARGO_PKG_VERSION`
+  <!-- pid:hardcoded_version | batch:1 | verified:true | first:2026-03-12 | last:2026-03-12 -->
+  Impact: C2PA manifest version becomes stale on crate version bump | Fix: Use `env!("CARGO_PKG_VERSION")` | Effort: small
+
+#### Concurrency
+
+- [ ] **H-179** `[concurrency]` `sentinel/core.rs:322` — Keystroke accumulator write lock acquired twice without idempotency guard
+  <!-- pid:double_write_guard | batch:6 | verified:true | first:2026-03-12 | last:2026-03-12 -->
+  Impact: Possible duplicate writes if channel sends same event twice | Fix: Add idempotent event IDs | Effort: small
+
+- [ ] **H-180** `[concurrency]` `platform/windows.rs:186` — `GLOBAL_SESSION.lock()` poison error silently swallowed via `.ok().and_then()`
+  <!-- pid:poison_error_swallow | batch:2 | verified:true | first:2026-03-12 | last:2026-03-12 -->
+  Impact: Panic in hook silently treats session as None; no recovery path | Fix: Log poison errors explicitly | Effort: small
 
 <details><summary>Engine High — Fixed/Eliminated (28)</summary>
 
@@ -284,7 +652,7 @@ Windows app: independent of engine groups (separate C# codebase)
 
 ---
 
-## Engine — Medium (92 open)
+## Engine — Medium (135 open)
 
 <details><summary>Architecture (12)</summary>
 
@@ -416,6 +784,74 @@ Windows app: independent of engine groups (separate C# codebase)
 - [ ] M-143 ffi/ephemeral.rs — 900+ line FFI module (DEFERRED: architecture)
 </details>
 
+<details><summary>Re-audit Findings 2026-03-11 (4)</summary>
+
+- [-] **M-148** `[code_quality]` `rfc/wire_types/hash.rs:34,63,92` — Public `sha256()`/`sha384()`/`sha512()` use `assert!()` (panicking API)
+  <!-- pid:panic_in_library | batch:3 | verified:true | first:2026-03-11 | last:2026-03-11 -->
+  BY DESIGN: All callers pass `[u8; 32].to_vec()` (guaranteed correct length). `try_*` alternatives exist for untrusted input. Documented `# Panics` section. Idiomatic Rust pattern.
+- [x] **M-149** `[concurrency]` `sentinel/core.rs:337` — Inconsistent `.write()` vs `.write_recover()` on mouse_stego_engine
+  <!-- pid:lock_unwrap | batch:5 | verified:true | first:2026-03-11 | last:2026-03-11 -->
+  Impact: Mouse stego silently stops on lock poison | Fix: Change to `write_recover()` | Effort: small
+- [x] **M-150** `[security]` `keyhierarchy/puf.rs:133` — `seed()` returns unprotected `Vec<u8>` clone of key material
+  <!-- pid:key_material_error_path_leak | batch:4 | verified:true | first:2026-03-11 | last:2026-03-11 -->
+  Impact: PUF seed copy may persist in memory | Fix: Return `Zeroizing<Vec<u8>>` | Effort: small
+- [x] **M-151** `[error_handling]` `steganography/extraction.rs:65` — `hex::decode().unwrap_or_default()` silently fails tag verification
+  <!-- pid:silent_error_swallow | batch:10 | verified:true | first:2026-03-11 | last:2026-03-11 -->
+  Impact: Stego tag check always fails on corrupted hex | Fix: Return error on invalid hex | Effort: small
+</details>
+
+<details><summary>Code Quality Audit 2026-03-11 (42)</summary>
+
+**Performance**
+- [x] **M-152** `fingerprint/activity.rs:326` — `ZoneProfile::from_samples()` triple-pass (zone counts, transitions, IKI) | Fix: Single accumulator pass | Effort: medium
+- [-] **M-153** `jitter/content.rs:340` — `extract_recorded_zones()` double iteration (decode, then normalize) | Fix: Inline into single pass | Effort: small
+- [-] **M-154** `jitter/codec.rs:207` — `compare_chains()` always O(n), no early exit on first mismatch | Fix: Return on first divergence | Effort: small
+- [x] **M-155** `fingerprint/voice.rs:432` — `histogram_similarity()` f32→f64 via collect; intermediate Vec per comparison | Fix: `bhattacharyya_coefficient` accept f32 directly | Effort: small
+- [x] **M-156** `anchors/ethereum.rs:103` — `address()` computed via full ECDSA derivation on every RPC call | Fix: Cache in `EthereumProvider::new()` | Effort: small
+- [x] **M-157** `tpm/secure_enclave.rs:460` — `device_id()` / `public_key()` clone String/Vec on every call | Fix: Cache as `Arc<String>` | Effort: small
+- [ ] **M-158** `codec/cbor.rs:51` — `encode_tagged()` deserializes to Value then re-encodes (2x serde overhead) | Fix: Low-level Value construction | Effort: medium
+- [ ] **M-159** `ffi/system.rs:133` — `ffi_list_tracked_files()` runs `evaluate_authorship` + `analyze_forensics` redundantly | Fix: Cache metrics or use single pass | Effort: medium
+- [x] **M-160** `ffi/attestation.rs:180` — `get_model()` / `get_os_version()` shell-exec on every FFI call | Fix: Cache in `OnceLock` | Effort: small
+- [-] **M-161** `platform/linux.rs:490` — `device_reader_thread()` RwLock + HashMap lookup per keystroke event | Fix: Snapshot device_info at thread start | Effort: small — FALSE POSITIVE: already snapshotted before event loop
+- [ ] **M-162** `collaboration.rs:217` — `validate_coverage()` allocates `vec![false; N]` for large N | Fix: Use `BitSet` or `BTreeSet<Range>` | Effort: medium
+- [-] **M-163** `anchors/rfc3161.rs:214` — `children()` iterator rebuilds Vec on each call | Fix: Cache DER tree parse results | Effort: small — FALSE POSITIVE: pure function with different inputs each call
+
+**Code Duplication**
+- [x] **M-164** `platform/linux.rs:694` — `enumerate_keyboards()` ≈ `enumerate_mice()` (70+ lines each) | Fix: Extract `enumerate_input_devices(filter)` | Effort: medium
+- [-] **M-165** `platform/linux.rs:200` — `is_virtual_device()` ≈ `is_virtual_mouse()` (same pattern matching) | Fix: Merge into single fn | Effort: small
+- [x] **M-166** `sentinel/macos_focus.rs:68` — `get_document_path_via_ax()` ≈ `get_window_title_via_ax()` (65 lines each, differ only in attr name) | Fix: Extract `query_ax_attribute(pid, attr)` | Effort: small
+- [x] **M-167** `sentinel/daemon.rs:349` — `cmd_start()` ≈ `cmd_start_foreground()` (50 lines duplicate setup) | Fix: Extract `setup_daemon_common()` | Effort: medium
+- [ ] **M-168** `ipc/sync_client.rs:1-140` — Unix/Windows IpcClient duplicated (identical send/recv protocol) | Fix: Extract `IpcTransport` trait | Effort: medium
+- [x] **M-169** `ipc/crypto.rs:74` — Nonce construction duplicated between encrypt/decrypt | Fix: Extract `fn construct_nonce(prefix, seq)` | Effort: small
+- [x] **M-170** `vdf/proof.rs:62` — `verify()` and `verify_with_progress()` duplicate iteration logic | Fix: Extract `verify_internal(callback)` | Effort: small
+- [x] **M-171** `checkpoint/chain.rs:120` — `commit()` and `commit_with_vdf_duration()` 90% identical | Fix: Extract `commit_internal(vdf_duration: Option)` | Effort: small
+- [-] **M-172** `checkpoint/chain.rs:282` — VDF input computation duplicated between `commit_entangled()` and `commit_rfc()` | Fix: Shared `compute_vdf_input()` | Effort: medium — FALSE POSITIVE: overlap is only 2 lines, methods differ significantly
+- [x] **M-173** `c2pa.rs:522` — `build_assertion_jumbf_json` ≈ `build_assertion_jumbf_cbor` (identical JUMBF boilerplate) | Fix: Parameterize on content format | Effort: small
+- [-] **M-174** `protocol/baseline.rs:123` — `serde_bytes_opt` duplicates `evidence/serde_helpers.rs` | Fix: Share via `wld_protocol::serde_utils` | Effort: small — FALSE POSITIVE: cross-crate serde `with` path resolution makes sharing impractical
+- [x] **M-175** `protocol/crypto.rs:21` — `compute_causality_lock` ≈ `compute_causality_lock_v2` (differ only in DST + phys_entropy) | Fix: Extract shared inner fn | Effort: small
+- [x] **M-176** `protocol/codec.rs:9` — `encode_evidence` / `encode_attestation` duplicate CBOR tag wrapping | Fix: Generic `encode_cbor<T>(tag, val)` | Effort: small
+- [x] **M-177** `keyhierarchy/identity.rs:13` — `derive_master_identity()` ≈ `derive_master_private_key()` (35 lines duplicated) | Fix: Single source fn | Effort: small
+- [x] **M-178** `sealed_identity/store.rs:45` — `initialize()` duplicates PUF + HKDF logic from `keyhierarchy/identity.rs` | Fix: Call shared `derive_and_seal()` | Effort: small
+- [-] **M-179** `writersproof/types.rs:1` — Response types (Nonce, Enroll, Attest) all identical `{ success, message, data }` | Fix: Generic `BaseResponse<T>` | Effort: small
+- [x] **M-180** `identity/secure_storage.rs:34` — Keyring Entry creation + error wrapping repeated 3x | Fix: Extract `keyring_entry(account)` helper | Effort: small
+- [x] **M-181** `config/types.rs:296` — `SentinelConfig::validate()` repeats zero-check pattern for 4+ interval fields | Fix: Extract `validate_interval(val, name)` | Effort: small
+
+**Code Quality / Abstraction**
+- [x] **M-182** `tpm/windows.rs:463` — Manual buffer parsing with 17 `u32::from_be_bytes` + 9 offset checks | Fix: Create `fn read_u32_be(data, offset) -> Result<u32>` | Effort: small
+- [x] **M-183** `tpm/types.rs:69` — `default_pcr_selection()` hardcodes `vec![0,4,7]` duplicating `DEFAULT_QUOTE_PCRS` in mod.rs | Fix: Reuse const | Effort: small
+- [x] **M-184** `tpm/verification.rs:102` — 3 sequential fallback tries (Ed25519/ECDSA/RSA) with 5+ indent levels | Fix: Break into `try_verify_*` helpers | Effort: small
+- [ ] **M-185** `rfc/checkpoint.rs:111` — `compute_hash()` 24 manual `hasher.update()` calls; fragile to reordering | Fix: CBOR-then-hash for canonical form | Effort: medium
+- [ ] **M-186** `checkpoint/types.rs:198` — 5 DST branches (v1-v4) scattered in conditionals | Fix: `CheckpointHashVersion` enum | Effort: medium
+- [ ] **M-187** `evidence/builder.rs:284` — Hardcoded confidence strings ('high', 'cryptographic', 'statistical') in 20+ calls | Fix: `ConfidenceLevel` enum | Effort: medium
+- [-] **M-188** `presence/verifier.rs:242` — 3 challenge generators (phrase/word/math) follow identical pattern | Fix: Table-driven `generate_challenge(typ)` | Effort: small — FALSE POSITIVE: math generator has different logic, each only ~10 lines
+- [ ] **M-189** `trust_policy/profiles.rs:9` — Policy definitions buried in code as builder chains | Fix: Define as const data structs, build from data | Effort: medium
+- [x] **M-190** `vdf/swf_argon2.rs:217` — `select_indices()` uses modulo without rejection sampling (bias for non-power-of-two) | Fix: Rejection sampling | Effort: small
+- [-] **M-191** `vdf/params.rs:78` — Hash-and-finalize pattern repeated 6+ times across vdf module | Fix: Extract `hash_with_dst(dst, parts)` | Effort: small
+- [x] **M-192** `declaration/helpers.rs:1` — `extent_rank()` fragile if enum variant order changes | Fix: `impl Ord for AIExtent` or `#[repr(u8)]` | Effort: small
+- [ ] **M-193** `wld_jitter_bridge/types.rs:1` — Mirror types that don't add value over `wld_jitter` types | Fix: Remove wrappers or document value-add | Effort: medium
+
+</details>
+
 <details><summary>Crate Audit Findings 2026-03-05 (4)</summary>
 
 - [x] M-144 `[security]` wld_protocol/src/evidence.rs — profile_uri validated against spec URI
@@ -457,6 +893,72 @@ Windows app: independent of engine groups (separate C# codebase)
 | 17 | Deserialization integrity | H-126, M-054 | 20min | Chain verify on load |
 | 18 | IPC hardening | H-079, H-080, M-074, M-075 | 2h | Path traversal + limits |
 | 19 | Checkpoint test fixes | B-006 | 15min | Supply signing key |
+
+---
+
+## CLI App (apps/wld_cli/) — Exhaustive Review (2026-03-12)
+
+> Source: Exhaustive CLI quality review across all 20 source files + tests.
+> 7 fixes applied, 6 false positives eliminated.
+
+### CLI — Fixed (7)
+
+- [x] **CLI-C1** `cmd_verify.rs:140` — CPOP verify prints "VERIFIED" without validation
+  <!-- pid:cli_cpop_verify | verified:true | first:2026-03-12 -->
+  Fix: Call `packet.validate()` after CBOR decode; show [WARN] if validation fails.
+
+- [x] **CLI-C2** `cmd_export.rs:323,385` — char_count uses byte count instead of character count
+  <!-- pid:cli_char_count | verified:true | first:2026-03-12 -->
+  Fix: Document-level char_count reads file and counts `chars()`. Per-checkpoint uses byte approx (schema limitation).
+
+- [x] **CLI-C3** `cmd_track.rs:35` — No file size limit in auto_checkpoint_file (OOM risk)
+  <!-- pid:cli_file_size_limit | verified:true | first:2026-03-12 -->
+  Fix: Skip files >500MB (matching cmd_watch.rs limit).
+
+- [x] **CLI-H1** `cmd_export.rs:294` — TPM detection `Ok((_, hw)) => (hw, hw)` loses has_tpm flag
+  <!-- pid:cli_tpm_flag | verified:true | first:2026-03-12 -->
+  Fix: Changed to `Ok((tpm, hw)) => (tpm, hw)`.
+
+- [x] **CLI-H6** `cmd_export.rs:343-346` — JSON export hardcodes dummy proof params (memory_cost=0)
+  <!-- pid:cli_proof_params | verified:true | first:2026-03-12 -->
+  Fix: Use `vdf::params_for_tier(spec_content_tier)` for actual Argon2 parameters.
+
+- [x] **CLI-M11** `cmd_track.rs:308-314` — Silent SQLITE_BUSY, skipped checkpoints not logged
+  <!-- pid:cli_sqlite_busy | verified:true | first:2026-03-12 -->
+  Fix: Added timestamped warning to stderr.
+
+- [x] **CLI-M12** `cmd_export.rs:932` — `collect_declaration` pub(crate) broader than needed
+  <!-- pid:cli_visibility | verified:true | first:2026-03-12 -->
+  Fix: Changed to `fn` (only used within the file).
+
+### CLI — False Positives / Already Fixed (6)
+
+- [-] **CLI-C4** Lock poisoning in cmd_track.rs — already handled via `if let Ok(...)` pattern
+- [-] **CLI-C5** TOCTOU in file.exists() — caught by subsequent fs::metadata()
+- [-] **CLI-C6** install.sh tar failure — `set -e` catches it
+- [-] **CLI-H2** PID file write race — already uses `acquire_pid_file()` with atomic acquisition
+- [-] **CLI-H3** Ctrl+C capture — handled within 250ms via AtomicBool + ctrlc handler
+- [-] **CLI-M4** No debounce in watch — already present at line 288/303-306
+
+### CLI — Remaining (not fixed, lower priority)
+
+- [ ] **CLI-H4** Tests — soft assertions hide failures. Effort: medium
+- [ ] **CLI-H5** Tests — 6+ commands lack test coverage (init, identity, commit, daemon, config, watch). Effort: large
+- [x] **CLI-M1** WAR test expects old `WITNESSD` armor header. Effort: small
+- [ ] **CLI-M3** No daemon log rotation. Effort: medium
+- [ ] **CLI-M5** Verify output doesn't show which checks passed/failed. Effort: small
+- [ ] **CLI-M6** Log output not paginated for large histories. Effort: medium
+- [-] **CLI-M2** Hardcoded 30s — this is session-save interval, not checkpoint interval. Not a bug.
+- [-] **CLI-M7** Session active/inactive — requires daemon state query, UX enhancement.
+- [-] **CLI-M8** Config validation on `set` — ALREADY PRESENT: every key has type + range validation.
+- [-] **CLI-M9** Mnemonic warning — ALREADY PRESENT: "WARNING: Keep this secret!" + non-terminal detection.
+- [-] **CLI-M10** Progress indicator — ALREADY PRESENT: "Computing checkpoint..." + "done ({elapsed})".
+- [x] **CLI-L1** `main.rs:61` — auto-start daemon now logs warning on failure.
+- [ ] **CLI-L2** `cmd_daemon.rs:77,85` — permission set failures silently ignored. Effort: trivial
+- [-] **CLI-L3** `cmd_config.rs` — editor retry loop bounded by user confirmation prompt. Not unbounded.
+- [ ] **CLI-L4** No `--quiet` flag for scripting. Effort: medium
+- [ ] **CLI-L5** No `--json` flag on most commands. Effort: medium
+- [x] **CLI-L6** `cmd_watch.rs` — HashMap cleanup threshold extracted to named `stale_entry_threshold`.
 
 ---
 
@@ -586,10 +1088,25 @@ Windows app: independent of engine groups (separate C# codebase)
 
 ## Audit Coverage
 
-### Engine (2026-03-02/03)
+### Engine (2026-03-02/03, re-audits 2026-03-11)
 <!-- 230 files, 20 batches, 4 waves + incremental + deep review -->
 <!-- Prior audit: 159 issues (133 fixed, 26 skipped/eliminated) -->
 <!-- This cycle: 322 new findings, 44 fixed, 8 eliminated -->
+<!-- Re-audit 2026-03-11: ~200 files, 15 batches, 3 waves. 5 new HIGH + 4 new MEDIUM. All CRITICAL/HIGH verified by file read. -->
+<!-- Code quality audit 2026-03-11: ~200 files, 9 batches, 2 waves. Focus: duplication, performance, abstraction. 8 SYS + 14 HIGH + 42 MEDIUM. -->
+<!-- reviewed:checkpoint/chain.rs:2026-03-11 -->
+<!-- reviewed:mmr/proof.rs:2026-03-11 -->
+<!-- reviewed:trust_policy/evaluation.rs:2026-03-11 -->
+<!-- reviewed:wal/serialization.rs:2026-03-11 -->
+<!-- reviewed:evidence/wire_conversion.rs:2026-03-11 -->
+<!-- reviewed:sentinel/core.rs:2026-03-11 -->
+<!-- reviewed:crypto/obfuscated.rs:2026-03-11 -->
+<!-- reviewed:keyhierarchy/puf.rs:2026-03-11 -->
+<!-- reviewed:rfc/wire_types/hash.rs:2026-03-11 -->
+<!-- reviewed:steganography/extraction.rs:2026-03-11 -->
+<!-- reviewed:report/html.rs:2026-03-11 -->
+<!-- reviewed:config/defaults.rs:2026-03-11 -->
+<!-- reviewed:vdf/proof.rs:2026-03-11 -->
 
 ### macOS (2026-03-04)
 <!-- 86 files (Swift, JS, shell, HTML) -->
