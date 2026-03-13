@@ -189,6 +189,28 @@ pub fn load_did(dir: &Path) -> Result<String> {
         .ok_or_else(|| anyhow!("Identity file missing 'did' field"))
 }
 
+/// Write data to a file with restrictive permissions (0o600 on Unix).
+pub fn write_restrictive(path: &Path, data: &[u8]) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)
+            .map_err(|e| anyhow!("Failed to create file {}: {}", path.display(), e))?;
+        std::io::Write::write_all(&mut file, data)
+            .map_err(|e| anyhow!("Failed to write {}: {}", path.display(), e))?;
+    }
+    #[cfg(not(unix))]
+    {
+        fs::write(path, data).map_err(|e| anyhow!("Failed to write {}: {}", path.display(), e))?;
+    }
+    Ok(())
+}
+
 /// Load the WritersProof API key.
 pub fn load_api_key(dir: &Path) -> Result<String> {
     let key_path = dir.join("api_key");

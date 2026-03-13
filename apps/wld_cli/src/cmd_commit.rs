@@ -13,12 +13,28 @@ use std::time::Duration;
 use wld_engine::vdf;
 use wld_engine::SecureEvent;
 
+use crate::output::OutputMode;
 use crate::util::{
     ensure_dirs, get_device_id, get_machine_id, load_vdf_params, open_secure_store,
     writerslogic_dir,
 };
 
-pub(crate) fn cmd_commit(file_path: &PathBuf, message: Option<String>) -> Result<()> {
+/// Extensions that are clearly not text documents.
+const BINARY_EXTENSIONS: &[&str] = &[
+    "exe", "dll", "so", "dylib", "o", "a", "lib", "obj", // executables/libraries
+    "zip", "tar", "gz", "bz2", "xz", "7z", "rar", "zst", // archives
+    "jpg", "jpeg", "png", "gif", "bmp", "ico", "webp", "svg", "tiff", // images
+    "mp3", "mp4", "avi", "mov", "wav", "flac", "ogg", "mkv", "wmv", // media
+    "pdf", // binary document (no character-level tracking)
+    "db", "sqlite", "sqlite3", // databases
+    "wasm", "class", "pyc", "pyo", // compiled code
+];
+
+pub(crate) fn cmd_commit(
+    file_path: &PathBuf,
+    message: Option<String>,
+    out: &OutputMode,
+) -> Result<()> {
     if !file_path.exists() {
         return Err(anyhow!(
             "File not found: {}\n\n\
@@ -37,6 +53,19 @@ pub(crate) fn cmd_commit(file_path: &PathBuf, message: Option<String>) -> Result
     })?;
     let abs_path_str = abs_path.to_string_lossy().to_string();
 
+    // Reject binary file types that cannot be meaningfully checkpointed
+    if let Some(ext) = abs_path.extension().and_then(|e| e.to_str()) {
+        let ext_lower = ext.to_lowercase();
+        if BINARY_EXTENSIONS.contains(&ext_lower.as_str()) {
+            return Err(anyhow!(
+                "File type '.{}' is not a text document.\n\n\
+                 WritersLogic is designed for text documents (txt, md, tex, docx, etc.).\n\
+                 Binary files cannot be meaningfully checkpointed for authorship evidence.",
+                ext_lower
+            ));
+        }
+    }
+
     let metadata =
         fs::metadata(&abs_path).map_err(|e| anyhow!("Cannot read file metadata: {}", e))?;
     if metadata.len() > 500_000_000 {
@@ -47,7 +76,7 @@ pub(crate) fn cmd_commit(file_path: &PathBuf, message: Option<String>) -> Result
             metadata.len() as f64 / 1_000_000.0
         ));
     }
-    if metadata.len() > 50_000_000 {
+    if metadata.len() > 50_000_000 && !out.quiet {
         eprintln!(
             "Warning: Large file ({:.0} MB). Checkpoint may take longer than usual.",
             metadata.len() as f64 / 1_000_000.0
@@ -90,8 +119,10 @@ pub(crate) fn cmd_commit(file_path: &PathBuf, message: Option<String>) -> Result
     let config = ensure_dirs()?;
     let vdf_params = load_vdf_params(&config);
 
-    print!("Computing checkpoint...");
-    io::stdout().flush()?;
+    if !out.quiet && !out.json {
+        print!("Computing checkpoint...");
+        io::stdout().flush()?;
+    }
 
     let start = std::time::Instant::now();
     let vdf_proof = vdf::compute(vdf_input, Duration::from_secs(1), vdf_params)
@@ -109,8 +140,8 @@ pub(crate) fn cmd_commit(file_path: &PathBuf, message: Option<String>) -> Result
         content_hash,
         file_size,
         size_delta,
-        previous_hash: [0u8; 32], // Will be set by insert_secure_event
-        event_hash: [0u8; 32],    // Will be computed by insert_secure_event
+        previous_hash: [0u8; 32],
+        event_hash: [0u8; 32],
         context_type: Some("manual".to_string()),
         context_note: message.clone(),
         vdf_input: Some(vdf_input),
@@ -127,17 +158,33 @@ pub(crate) fn cmd_commit(file_path: &PathBuf, message: Option<String>) -> Result
     let events = db.get_events_for_file(&abs_path_str)?;
     let count = events.len();
 
-    println!(" done ({:.2?})", elapsed);
-    println!();
-    println!("Checkpoint #{} created", count);
-    println!("  Content hash: {}...", hex::encode(&content_hash[..8]));
-    println!("  Event hash:   {}...", hex::encode(&event.event_hash[..8]));
-    println!(
-        "  VDF proves:   >= {:?} elapsed",
-        vdf_proof.min_elapsed_time(vdf_params)
-    );
-    if let Some(msg) = &message {
-        println!("  Message:      {}", msg);
+    if out.json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "checkpoint": count,
+                "content_hash": hex::encode(content_hash),
+                "event_hash": hex::encode(event.event_hash),
+                "file_size": file_size,
+                "size_delta": size_delta,
+                "vdf_iterations": vdf_proof.iterations,
+                "elapsed_secs": elapsed.as_secs_f64(),
+                "message": message,
+            })
+        );
+    } else if !out.quiet {
+        println!(" done ({:.2?})", elapsed);
+        println!();
+        println!("Checkpoint #{} created", count);
+        println!("  Content hash: {}...", hex::encode(&content_hash[..8]));
+        println!("  Event hash:   {}...", hex::encode(&event.event_hash[..8]));
+        println!(
+            "  VDF proves:   >= {:?} elapsed",
+            vdf_proof.min_elapsed_time(vdf_params)
+        );
+        if let Some(msg) = &message {
+            println!("  Message:      {}", msg);
+        }
     }
 
     Ok(())
@@ -148,21 +195,28 @@ pub(crate) async fn cmd_commit_smart(
     file: Option<PathBuf>,
     message: Option<String>,
     anchor: bool,
+    out: &OutputMode,
 ) -> Result<()> {
     let dir = writerslogic_dir()?;
 
     if !crate::smart_defaults::is_initialized(&dir) {
-        println!("WritersLogic is not initialized.");
-        if crate::smart_defaults::ask_confirmation("Initialize now?", true)? {
+        if !out.quiet {
+            println!("WritersLogic is not initialized.");
+        }
+        if !out.json && crate::smart_defaults::ask_confirmation("Initialize now?", true)? {
             crate::cmd_init::cmd_init()?;
             println!();
+        } else if out.json {
+            return Err(anyhow!("Not initialized. Run 'wld init' first."));
         } else {
             return Err(anyhow!("Run 'wld init' first."));
         }
     }
 
     let config = ensure_dirs()?;
-    crate::smart_defaults::ensure_vdf_calibrated_with_warning(config.vdf.iterations_per_second);
+    if !out.quiet {
+        crate::smart_defaults::ensure_vdf_calibrated_with_warning(config.vdf.iterations_per_second);
+    }
 
     let file_path = match file {
         Some(f) => {
@@ -178,7 +232,7 @@ pub(crate) async fn cmd_commit_smart(
 
     let msg = message.or_else(|| Some(crate::smart_defaults::default_commit_message()));
 
-    cmd_commit(&file_path, msg)?;
+    cmd_commit(&file_path, msg, out)?;
 
     if anchor {
         cmd_anchor(&file_path).await?;
@@ -218,8 +272,9 @@ async fn cmd_anchor(file_path: &PathBuf) -> Result<()> {
     print!("Anchoring to transparency log...");
     io::stdout().flush()?;
 
-    let resp = client
-        .anchor(AnchorRequest {
+    let resp = tokio::time::timeout(
+        Duration::from_secs(30),
+        client.anchor(AnchorRequest {
             evidence_hash,
             author_did: did,
             signature,
@@ -229,8 +284,10 @@ async fn cmd_anchor(file_path: &PathBuf) -> Result<()> {
                     .map(|n| n.to_string_lossy().to_string()),
                 tier: Some("anchored".into()),
             }),
-        })
-        .await?;
+        }),
+    )
+    .await
+    .map_err(|_| anyhow!("Anchor request timed out after 30s"))??;
 
     println!(" done");
     println!("  Anchor ID: {}", resp.anchor_id);

@@ -139,7 +139,15 @@ pub(crate) fn cmd_verify(file_path: &PathBuf, key: Option<PathBuf>) -> Result<()
         let data = fs::read(file_path).context("Failed to read CPOP file")?;
         match wld_engine::rfc::wire_types::packet::EvidencePacketWire::decode_cbor(&data) {
             Ok(packet) => {
-                println!("[OK] CPOP evidence packet VERIFIED");
+                // Validate structure and field constraints per CDDL schema
+                match packet.validate() {
+                    Ok(()) => {
+                        println!("[OK] CPOP evidence packet VERIFIED");
+                    }
+                    Err(e) => {
+                        println!("[WARN] CPOP decoded but validation failed: {}", e);
+                    }
+                }
                 println!("  Version: {}", packet.version);
                 println!("  Profile: {}", packet.profile_uri);
                 println!("  Checkpoints: {}", packet.checkpoints.len());

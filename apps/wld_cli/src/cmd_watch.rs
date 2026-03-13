@@ -286,6 +286,8 @@ async fn run_watcher(config: &WatchConfig) -> Result<()> {
 
     let mut last_checkpoint: HashMap<PathBuf, Instant> = HashMap::new();
     let debounce_duration = Duration::from_secs(5);
+    // Evict debounce entries older than this to prevent unbounded HashMap growth
+    let stale_entry_threshold = debounce_duration * 2;
 
     loop {
         if !running.load(Ordering::SeqCst) {
@@ -350,8 +352,7 @@ async fn run_watcher(config: &WatchConfig) -> Result<()> {
                 // Use 2x debounce_duration so entries remain valid through the
                 // full debounce window and are only evicted once clearly stale.
                 let now = Instant::now();
-                let cleanup_threshold = debounce_duration * 2;
-                last_checkpoint.retain(|_, last| now.duration_since(*last) < cleanup_threshold);
+                last_checkpoint.retain(|_, last| now.duration_since(*last) < stale_entry_threshold);
             }
             Err(std_mpsc::RecvTimeoutError::Disconnected) => {
                 break;

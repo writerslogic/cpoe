@@ -344,7 +344,7 @@ fn test_cli_export_war_format() {
 
     let war_content = fs::read_to_string(&war_path).unwrap();
     assert!(
-        war_content.contains("-----BEGIN WITNESSD") || war_content.contains("BEGIN"),
+        war_content.contains("-----BEGIN CPOP WAR") || war_content.contains("BEGIN"),
         "WAR file should have ASCII armor"
     );
 }
@@ -398,5 +398,238 @@ fn test_cli_fingerprint_status() {
             || stdout.contains("status")
             || stdout.len() > 5,
         "Should show fingerprint status"
+    );
+}
+
+#[test]
+fn test_cli_status_json() {
+    let env = CliTestEnv::new();
+    env.init();
+
+    let stdout = env.run_expect_success(&["status", "--json"], None);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("Status --json should return valid JSON: {e}\nGot: {stdout}"));
+    assert!(parsed.get("data_dir").is_some(), "Should have data_dir");
+    assert!(
+        parsed.get("database").is_some(),
+        "Should have database section"
+    );
+    assert!(
+        parsed.get("hardware").is_some(),
+        "Should have hardware section"
+    );
+}
+
+#[test]
+fn test_cli_list_json() {
+    let env = CliTestEnv::new();
+    env.init();
+
+    let doc = env.dir.path().join("test.txt");
+    fs::write(&doc, "content").unwrap();
+    env.run_expect_success(&["commit", doc.to_str().unwrap(), "-m", "Test"], None);
+
+    let stdout = env.run_expect_success(&["list", "--json"], None);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("List --json should return valid JSON: {e}\nGot: {stdout}"));
+    assert_eq!(
+        parsed.get("total").and_then(|v| v.as_u64()),
+        Some(1),
+        "Should have 1 document"
+    );
+    let docs = parsed.get("documents").and_then(|v| v.as_array());
+    assert!(docs.is_some(), "Should have documents array");
+    assert_eq!(docs.unwrap().len(), 1);
+}
+
+#[test]
+fn test_cli_log_json() {
+    let env = CliTestEnv::new();
+    env.init();
+
+    let doc = env.dir.path().join("test.txt");
+    fs::write(&doc, "content").unwrap();
+    env.run_expect_success(&["commit", doc.to_str().unwrap(), "-m", "First"], None);
+    fs::write(&doc, "content updated").unwrap();
+    env.run_expect_success(&["commit", doc.to_str().unwrap(), "-m", "Second"], None);
+
+    let stdout = env.run_expect_success(&["log", doc.to_str().unwrap(), "--json"], None);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("Log --json should return valid JSON: {e}\nGot: {stdout}"));
+    assert_eq!(
+        parsed.get("checkpoint_count").and_then(|v| v.as_u64()),
+        Some(2)
+    );
+    let checkpoints = parsed.get("checkpoints").and_then(|v| v.as_array());
+    assert!(checkpoints.is_some());
+    assert_eq!(checkpoints.unwrap().len(), 2);
+}
+
+#[test]
+fn test_cli_commit_json() {
+    let env = CliTestEnv::new();
+    env.init();
+
+    let doc = env.dir.path().join("essay.txt");
+    fs::write(&doc, "My essay content").unwrap();
+
+    let stdout = env.run_expect_success(
+        &["commit", doc.to_str().unwrap(), "-m", "Draft", "--json"],
+        None,
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("Commit --json should return valid JSON: {e}\nGot: {stdout}"));
+    assert_eq!(parsed.get("checkpoint").and_then(|v| v.as_u64()), Some(1));
+    assert!(parsed.get("content_hash").is_some());
+    assert!(parsed.get("event_hash").is_some());
+}
+
+#[test]
+fn test_cli_quiet_mode() {
+    let env = CliTestEnv::new();
+    env.init();
+
+    let doc = env.dir.path().join("quiet.txt");
+    fs::write(&doc, "quiet content").unwrap();
+    env.run_expect_success(
+        &["commit", doc.to_str().unwrap(), "-m", "Quiet", "--quiet"],
+        None,
+    );
+
+    let stdout = env.run_expect_success(&["status", "--quiet"], None);
+    assert!(stdout.is_empty(), "Quiet status should produce no output");
+
+    let stdout = env.run_expect_success(&["list", "--quiet"], None);
+    assert!(stdout.is_empty(), "Quiet list should produce no output");
+}
+
+#[test]
+fn test_cli_commit_binary_rejected() {
+    let env = CliTestEnv::new();
+    env.init();
+
+    let binary = env.dir.path().join("image.png");
+    fs::write(&binary, b"\x89PNG\r\n\x1a\n").unwrap();
+
+    let (success, _stdout, stderr) = env.run(&["commit", binary.to_str().unwrap()], None);
+    assert!(!success, "Commit should reject binary files");
+    assert!(
+        stderr.contains("not a text document") || stderr.contains("Binary"),
+        "Should explain why binary is rejected. stderr: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_cli_completions() {
+    let env = CliTestEnv::new();
+    let stdout = env.run_expect_success(&["completions", "bash"], None);
+    assert!(
+        stdout.contains("complete") || stdout.contains("wld"),
+        "Should generate bash completions"
+    );
+}
+
+#[test]
+fn test_cli_session_list() {
+    let env = CliTestEnv::new();
+    env.init();
+
+    let stdout = env.run_expect_success(&["session", "list"], None);
+    assert!(
+        stdout.contains("No active") || stdout.contains("sessions"),
+        "Should show sessions. stdout: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_cli_watch_list_empty() {
+    let env = CliTestEnv::new();
+    env.init();
+
+    let stdout = env.run_expect_success(&["watch", "list"], None);
+    assert!(
+        stdout.contains("No folders") || stdout.contains("watch"),
+        "Should indicate no watched folders"
+    );
+}
+
+#[test]
+fn test_cli_watch_add_remove() {
+    let env = CliTestEnv::new();
+    env.init();
+
+    let watch_dir = env.dir.path().join("docs");
+    fs::create_dir_all(&watch_dir).unwrap();
+
+    let stdout = env.run_expect_success(&["watch", "add", watch_dir.to_str().unwrap()], None);
+    assert!(
+        stdout.contains("Added") || stdout.contains("watch"),
+        "Should confirm add"
+    );
+
+    let stdout = env.run_expect_success(&["watch", "list"], None);
+    assert!(
+        stdout.contains("docs") || stdout.contains("Watched"),
+        "Should show watched folder"
+    );
+
+    env.run_expect_success(&["watch", "remove", watch_dir.to_str().unwrap()], None);
+
+    let stdout = env.run_expect_success(&["watch", "list"], None);
+    assert!(
+        stdout.contains("No folders") || !stdout.contains("docs"),
+        "Folder should be removed"
+    );
+}
+
+#[test]
+fn test_cli_identity_json() {
+    let env = CliTestEnv::new();
+    env.init();
+
+    let stdout = env.run_expect_success(&["identity", "--json"], None);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("Identity --json should return valid JSON: {e}\nGot: {stdout}"));
+    assert!(
+        parsed.get("fingerprint").is_some(),
+        "Should have fingerprint"
+    );
+    assert!(parsed.get("did").is_some(), "Should have DID");
+    assert!(parsed.get("public_key").is_some(), "Should have public_key");
+}
+
+#[test]
+fn test_cli_config_set_invalid() {
+    let env = CliTestEnv::new();
+    env.init();
+
+    let (success, _stdout, stderr) = env.run(
+        &["config", "set", "sentinel.heartbeat_interval_secs", "0"],
+        None,
+    );
+    assert!(!success, "Should reject invalid config value");
+    assert!(
+        stderr.contains("must be between")
+            || stderr.contains("invalid")
+            || stderr.contains("Error"),
+        "Should explain validation failure"
+    );
+}
+
+#[test]
+fn test_cli_verify_unsupported_extension() {
+    let env = CliTestEnv::new();
+    env.init();
+
+    let bad_file = env.dir.path().join("data.xyz");
+    fs::write(&bad_file, "data").unwrap();
+
+    let (success, _stdout, stderr) = env.run(&["verify", bad_file.to_str().unwrap()], None);
+    assert!(!success, "Verify should reject unsupported format");
+    assert!(
+        stderr.contains("format") || stderr.contains("Supported"),
+        "Should list supported formats"
     );
 }
