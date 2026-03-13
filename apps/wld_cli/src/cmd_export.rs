@@ -6,6 +6,7 @@ use std::fs;
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use zeroize::Zeroize;
 
 use wld_engine::declaration::{self, AIExtent, AIPurpose, ModalityType};
 use wld_engine::evidence;
@@ -283,12 +284,16 @@ pub(crate) async fn cmd_export(
     let spec_content_tier = content_tier_from_cli(tier);
     let spec_profile_uri = profile_uri_from_cli(tier);
 
+    // §7.5: ENHANCED/MAXIMUM MUST use swf-argon2id-entangled (21) instead of (20)
+    let proof_algorithm: u8 = if spec_content_tier >= 2 { 21 } else { 20 };
+    let swf_params = wld_engine::vdf::params_for_tier(spec_content_tier);
+
     let (has_tpm, tpm_hardware_backed) = match std::panic::catch_unwind(|| {
         let provider = tpm::detect_provider();
         let caps = provider.capabilities();
         (true, caps.hardware_backed)
     }) {
-        Ok((_, hw)) => (hw, hw),
+        Ok((tpm, hw)) => (tpm, hw),
         Err(_) => (false, false),
     };
     let spec_attestation_tier = attestation_tier_value(has_tpm, tpm_hardware_backed);
@@ -317,7 +322,8 @@ pub(crate) async fn cmd_export(
                 "timestamp_ms": (ev.timestamp_ns / 1_000_000).max(0) as u64, // CDDL key 3: epoch milliseconds
                 "content_hash": hex::encode(ev.content_hash),   // CDDL key 4: hash-value
                 "content_size": ev.file_size,
-                "char_count": ev.file_size,                     // CDDL key 5: char-count
+                // CDDL key 5: char-count (byte-size approximation for stored checkpoints)
+                "char_count": ev.file_size.max(0) as u64,
                 "delta": {                                      // CDDL key 6: edit-delta
                     "chars_added": if ev.size_delta > 0 { ev.size_delta as u64 } else { 0u64 },
                     "chars_deleted": if ev.size_delta < 0 { (-(ev.size_delta as i64)) as u64 } else { 0u64 },
@@ -335,11 +341,11 @@ pub(crate) async fn cmd_export(
                 "previous_hash": hex::encode(ev.previous_hash), // CDDL key 7: prev-hash
                 "hash": hex::encode(ev.event_hash),              // CDDL key 8: checkpoint-hash
                 "process_proof": {                               // CDDL key 9: process-proof (SWF)
-                    "algorithm": 20,                             // swf-argon2id
+                    "algorithm": proof_algorithm,                // swf-argon2id (20) or entangled (21)
                     "params": {
-                        "time_cost": vdf_params.min_iterations,
-                        "memory_cost": 0,
-                        "parallelism": 1,
+                        "time_cost": swf_params.time_cost,
+                        "memory_cost": swf_params.memory_cost,
+                        "parallelism": swf_params.parallelism,
                         "iterations": ev.vdf_iterations
                     },
                     "input": ev.vdf_input.map(hex::encode),
@@ -379,7 +385,10 @@ pub(crate) async fn cmd_export(
                 "digest": hex::encode(latest.content_hash)
             },
             "byte_length": latest.file_size.max(0) as u64,
-            "char_count": latest.file_size.max(0) as u64,
+            // Read file to count actual characters (UTF-8 codepoints), not bytes
+            "char_count": fs::read_to_string(&abs_path_str)
+                .map(|s| s.chars().count() as u64)
+                .unwrap_or(latest.file_size.max(0) as u64),
         },
         "checkpoints": checkpoints,
         "vdf_params": {
@@ -582,7 +591,7 @@ async fn embed_steganographic_watermark(
 
     // Derive the watermark HMAC key from the signing key
     let signing_key = crate::util::load_signing_key(dir)?;
-    let hmac_key: [u8; 32] = {
+    let mut hmac_key: [u8; 32] = {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(b"witnessd-stego-key-v1");
@@ -591,18 +600,20 @@ async fn embed_steganographic_watermark(
     };
 
     let embedder = ZwcEmbedder::new(ZwcParams::default());
-    let (watermarked, binding) = embedder.embed(&content, &mmr_root, &hmac_key)?;
+    let result = embedder.embed(&content, &mmr_root, &hmac_key);
+    hmac_key.zeroize();
+    let (watermarked, binding) = result?;
 
     // Write watermarked document
     let stego_path = file_path.with_extension("stego.txt");
     let tmp_path = stego_path.with_extension("tmp");
-    fs::write(&tmp_path, &watermarked)?;
+    crate::util::write_restrictive(&tmp_path, watermarked.as_bytes())?;
     fs::rename(&tmp_path, &stego_path)?;
 
     // Save binding record
     let binding_path = file_path.with_extension("stego.binding.json");
     let binding_json = serde_json::to_string_pretty(&binding)?;
-    fs::write(&binding_path, binding_json)?;
+    crate::util::write_restrictive(&binding_path, binding_json.as_bytes())?;
 
     println!();
     println!("Steganographic watermark embedded:");
@@ -626,34 +637,43 @@ async fn embed_steganographic_watermark(
         print!("  Signing watermark via WritersProof...");
         io::stdout().flush()?;
 
-        match client
-            .stego_sign(StegoSignRequest {
+        match tokio::time::timeout(
+            Duration::from_secs(30),
+            client.stego_sign(StegoSignRequest {
                 mmr_root: binding.mmr_root.clone(),
                 document_hash: binding.document_hash.clone(),
                 author_did: did,
                 anchor_id: None,
-            })
-            .await
+            }),
+        )
+        .await
         {
-            Ok(resp) => {
-                println!(" done (expires: {})", resp.expires_at);
-            }
-            Err(e) => {
+            Err(_) => {
                 eprintln!();
-                eprintln!(
-                    "Warning: Steganographic watermark was embedded \
-                     but NOT signed by WritersProof."
-                );
-                eprintln!("  Reason: {}", e);
-                eprintln!(
-                    "  The watermark can only be verified locally, \
-                     not by third parties."
-                );
-                eprintln!(
-                    "  To sign it later: wld export {} --stego",
-                    file_path.display(),
-                );
+                eprintln!("Warning: Stego sign request timed out after 30s.");
+                eprintln!("  The watermark was embedded but NOT signed by WritersProof.");
             }
+            Ok(inner) => match inner {
+                Ok(resp) => {
+                    println!(" done (expires: {})", resp.expires_at);
+                }
+                Err(e) => {
+                    eprintln!();
+                    eprintln!(
+                        "Warning: Steganographic watermark was embedded \
+                         but NOT signed by WritersProof."
+                    );
+                    eprintln!("  Reason: {}", e);
+                    eprintln!(
+                        "  The watermark can only be verified locally, \
+                         not by third parties."
+                    );
+                    eprintln!(
+                        "  To sign it later: wld export {} --stego",
+                        file_path.display(),
+                    );
+                }
+            },
         }
     }
 
@@ -926,7 +946,7 @@ fn make_session(
 }
 
 /// Collect a declaration from the user
-pub(crate) fn collect_declaration(
+fn collect_declaration(
     document_hash: [u8; 32],
     chain_hash: [u8; 32],
     title: String,

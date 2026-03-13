@@ -2,8 +2,8 @@
 
 //! RATS PoP spec helper functions for CLI tier/profile mapping.
 
-/// EAT profile URI per draft-condrey-rats-pop-protocol.
-pub const PROFILE_URI: &str = "urn:ietf:params:rats:eat:profile:pop:1.0";
+/// Evidence Packet profile URI per draft-condrey-rats-pop-protocol.
+pub const PROFILE_URI: &str = "urn:ietf:params:pop:profile:1.0";
 /// CDDL: 6 => [3* checkpoint] — minimum checkpoints per evidence packet.
 pub const MIN_CHECKPOINTS_PER_PACKET: usize = 3;
 

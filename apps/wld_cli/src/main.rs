@@ -3,7 +3,7 @@
 //! WritersLogic CLI — cryptographic authorship witnessing.
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 
 mod cli;
 mod cmd_commit;
@@ -20,11 +20,13 @@ mod cmd_status;
 mod cmd_track;
 mod cmd_verify;
 mod cmd_watch;
+mod output;
 mod smart_defaults;
 mod spec;
 mod util;
 
 use cli::{Cli, Commands};
+use output::OutputMode;
 
 #[tokio::main]
 async fn main() {
@@ -38,6 +40,7 @@ async fn main() {
 
 async fn run() -> Result<()> {
     let cli = Cli::parse();
+    let out = OutputMode::new(cli.json, cli.quiet);
     let has_path_arg = cli.path.is_some();
     let should_auto_start = has_path_arg
         || !matches!(
@@ -48,6 +51,7 @@ async fn run() -> Result<()> {
                 | Some(Commands::Init { .. })
                 | Some(Commands::Calibrate)
                 | Some(Commands::Config { .. })
+                | Some(Commands::Completions { .. })
                 | None
         );
 
@@ -57,8 +61,12 @@ async fn run() -> Result<()> {
                 if config.sentinel.auto_start {
                     let daemon_manager = wld_engine::DaemonManager::new(config.data_dir.clone());
                     if !daemon_manager.is_running() {
-                        eprintln!("Starting WritersLogic daemon...");
-                        let _ = cmd_daemon::cmd_start(false).await;
+                        if !out.quiet {
+                            eprintln!("Starting WritersLogic daemon...");
+                        }
+                        if let Err(e) = cmd_daemon::cmd_start(false).await {
+                            eprintln!("Warning: auto-start daemon failed: {}", e);
+                        }
                     }
                 }
             }
@@ -101,17 +109,18 @@ async fn run() -> Result<()> {
             recover,
             json,
         }) => {
-            cmd_identity::cmd_identity(fingerprint, did, mnemonic, recover, json)?;
+            // Identity has its own --json flag; use whichever is set
+            cmd_identity::cmd_identity(fingerprint, did, mnemonic, recover, json || out.json)?;
         }
         Some(Commands::Commit {
             file,
             message,
             anchor,
         }) => {
-            cmd_commit::cmd_commit_smart(file, message, anchor).await?;
+            cmd_commit::cmd_commit_smart(file, message, anchor, &out).await?;
         }
         Some(Commands::Log { file }) => {
-            cmd_log::cmd_log_smart(file)?;
+            cmd_log::cmd_log_smart(file, &out)?;
         }
         Some(Commands::Export {
             file,
@@ -129,16 +138,16 @@ async fn run() -> Result<()> {
             cmd_presence::cmd_presence(action)?;
         }
         Some(Commands::Track { action, file }) => {
-            cmd_track::cmd_track_smart(action, file)?;
+            cmd_track::cmd_track_smart(action, file).await?;
         }
         Some(Commands::Calibrate) => {
             cmd_status::cmd_calibrate()?;
         }
         Some(Commands::Status) => {
-            cmd_status::cmd_status()?;
+            cmd_status::cmd_status(&out)?;
         }
         Some(Commands::List) => {
-            cmd_status::cmd_list()?;
+            cmd_status::cmd_list(&out)?;
         }
         Some(Commands::Watch { action, folder }) => {
             cmd_watch::cmd_watch_smart(action, folder).await?;
@@ -158,18 +167,20 @@ async fn run() -> Result<()> {
         Some(Commands::Config { action }) => {
             cmd_config::cmd_config(action)?;
         }
+        Some(Commands::Completions { shell }) => {
+            clap_complete::generate(shell, &mut Cli::command(), "wld", &mut std::io::stdout());
+        }
         None => {
             if let Some(path) = cli.path {
                 let resolved = smart_defaults::normalize_path(&path)?;
                 if resolved.is_dir() {
-                    // Add folder to watch config, then start watching
                     cmd_watch::cmd_watch_smart(None, Some(resolved.clone())).await?;
                     cmd_watch::cmd_watch_smart(Some(crate::cli::WatchAction::Start), None).await?;
                 } else {
-                    cmd_track::cmd_track_smart(None, Some(resolved))?;
+                    cmd_track::cmd_track_smart(None, Some(resolved)).await?;
                 }
             } else {
-                cmd_status::show_quick_status()?;
+                cmd_status::show_quick_status(&out)?;
             }
         }
     }

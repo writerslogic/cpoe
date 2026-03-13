@@ -42,6 +42,14 @@ pub struct Cli {
 
     /// File to track or folder to watch (shorthand for `wld track <file>` / `wld watch <folder>`)
     pub path: Option<PathBuf>,
+
+    /// Output results as JSON (for scripting and CI pipelines)
+    #[arg(long, global = true)]
+    pub json: bool,
+
+    /// Suppress non-error output
+    #[arg(short, long, global = true)]
+    pub quiet: bool,
 }
 
 #[derive(Subcommand)]
@@ -143,11 +151,11 @@ EXAMPLES:\n  \
     wld track status             Check active session\n  \
     wld track export <id>        Export session evidence\n\n\
 PRIVACY: Only counts keystrokes and timing - NOT what you type.")]
+    #[command(args_conflicts_with_subcommands = true)]
     Track {
         #[command(subcommand)]
         action: Option<TrackAction>,
         /// File to track (shorthand for `wld track start <file>`)
-        #[arg(conflicts_with = "action")]
         file: Option<PathBuf>,
     },
     /// Calibrate VDF speed for your CPU
@@ -162,6 +170,16 @@ WHEN TO RE-CALIBRATE:\n  \
     /// List all tracked documents
     #[command(alias = "ls")]
     List,
+    /// Generate shell completions
+    #[command(after_help = "\
+EXAMPLES:\n  \
+    wld completions bash > ~/.bash_completion.d/wld\n  \
+    wld completions zsh > ~/.zsh/completions/_wld\n  \
+    wld completions fish > ~/.config/fish/completions/wld.fish")]
+    Completions {
+        /// Shell to generate completions for
+        shell: clap_complete::Shell,
+    },
     /// Watch a folder and auto-checkpoint on file changes
     #[command(after_help = "\
 EXAMPLES:\n  \
@@ -170,10 +188,10 @@ EXAMPLES:\n  \
     wld watch start\n  \
     wld watch                  (start watching if folders configured)\n\n\
 DEFAULT PATTERNS: *.txt,*.md,*.rtf,*.doc,*.docx")]
+    #[command(args_conflicts_with_subcommands = true)]
     Watch {
         #[command(subcommand)]
         action: Option<WatchAction>,
-        #[arg(conflicts_with = "action")]
         folder: Option<PathBuf>,
     },
     /// Start the WritersLogic daemon

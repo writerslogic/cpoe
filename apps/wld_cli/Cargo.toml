@@ -30,6 +30,7 @@ wld_jitter = ["wld_engine/wld_jitter"]
 [dependencies]
 wld_engine = { path = "../../crates/wld_engine", features = ["ffi"] }
 clap = { version = "4.4", features = ["derive"] }
+clap_complete = "4.4"
 anyhow = "1.0"
 tokio = { version = "1.36", features = ["full"] }
 serde_json = "1.0"

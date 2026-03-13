@@ -11,6 +11,7 @@ use zeroize::Zeroizing;
 
 use wld_engine::config::WLDConfig;
 
+use crate::output::OutputMode;
 use crate::util::{ensure_dirs, open_secure_store, writerslogic_dir};
 
 pub(crate) fn cmd_calibrate() -> Result<()> {
@@ -46,59 +47,37 @@ pub(crate) fn cmd_calibrate() -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn cmd_status() -> Result<()> {
+pub(crate) fn cmd_status(out: &OutputMode) -> Result<()> {
     let config = ensure_dirs()?;
     let dir = &config.data_dir;
 
-    println!("=== WritersLogic Status ===");
-    println!();
+    // Collect status data
+    let pub_key_hex = fs::read(dir.join("signing_key.pub"))
+        .ok()
+        .filter(|k| k.len() >= 8)
+        .map(|k| hex::encode(&k[..8]));
 
-    println!("Data directory: {}", dir.display());
-
-    let key_path = dir.join("signing_key.pub");
-    if let Ok(pub_key) = fs::read(&key_path) {
-        if pub_key.len() >= 8 {
-            println!("Public key: {}...", hex::encode(&pub_key[..8]));
-        }
-    }
-
-    let identity_path = dir.join("identity.json");
-    if identity_path.exists() {
-        if let Ok(data) = fs::read_to_string(&identity_path) {
-            if let Ok(identity) = serde_json::from_str::<serde_json::Value>(&data) {
-                println!(
-                    "Master Identity: {}",
-                    identity
-                        .get("fingerprint")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown")
-                );
-            }
-        }
-    }
-
-    println!("VDF iterations/sec: {}", config.vdf.iterations_per_second);
-
-    println!();
-    println!("=== Secure Database ===");
+    let identity_fingerprint = fs::read_to_string(dir.join("identity.json"))
+        .ok()
+        .and_then(|data| serde_json::from_str::<serde_json::Value>(&data).ok())
+        .and_then(|v| {
+            v.get("fingerprint")
+                .and_then(|f| f.as_str())
+                .map(String::from)
+        });
 
     let db_path = dir.join("events.db");
-
-    if db_path.exists() {
+    let (db_status, tracked_files) = if db_path.exists() {
         let hmac_key = if let Ok(Some(key)) = wld_engine::identity::SecureStorage::load_hmac_key() {
             Some(key.to_vec())
         } else {
             let signing_key_path = dir.join("signing_key");
             if signing_key_path.exists() {
-                if let Ok(key_data) = fs::read(&signing_key_path).map(Zeroizing::new) {
-                    if key_data.len() < 32 {
-                        None
-                    } else {
-                        Some(derive_hmac_key(&key_data[..32]))
-                    }
-                } else {
-                    None
-                }
+                fs::read(&signing_key_path)
+                    .map(Zeroizing::new)
+                    .ok()
+                    .filter(|k| k.len() >= 32)
+                    .map(|k| derive_hmac_key(&k[..32]))
             } else {
                 None
             }
@@ -107,36 +86,136 @@ pub(crate) fn cmd_status() -> Result<()> {
         if let Some(hmac_key) = hmac_key {
             match SecureStore::open(&db_path, hmac_key) {
                 Ok(store) => {
-                    println!("Database: VERIFIED (tamper-evident)");
-                    if let Ok(files) = store.list_files() {
-                        println!();
-                        println!("Tracked documents: {}", files.len());
-                        for (path, last_ts, count) in files.iter().take(10) {
-                            let ts = DateTime::from_timestamp_nanos(*last_ts);
-                            println!(
-                                "  {} ({} checkpoints, last: {})",
-                                path,
-                                count,
-                                ts.format("%Y-%m-%d %H:%M")
-                            );
-                        }
-                        if files.len() > 10 {
-                            println!("  ... and {} more", files.len() - 10);
-                        }
-                    }
+                    let files = store.list_files().unwrap_or_default();
+                    ("verified".to_string(), files)
                 }
-                Err(e) => {
-                    let err_str = format!("{}", e);
-                    if err_str.contains("Permission denied") {
-                        eprintln!("Error: Permission denied reading WritersLogic data.");
-                        eprintln!("Check permissions on ~/.writerslogic/");
-                    } else {
-                        println!("Database: ERROR ({})", e);
-                    }
-                }
+                Err(e) => (format!("error: {}", e), vec![]),
             }
         } else {
-            println!("Database: ERROR reading key (identity not found)");
+            ("error: key not found".to_string(), vec![])
+        }
+    } else {
+        ("not found".to_string(), vec![])
+    };
+
+    let chains_dir = dir.join("chains");
+    let chain_count = fs::read_dir(&chains_dir)
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .filter(|e| {
+                    e.path()
+                        .extension()
+                        .map(|ext| ext == "json")
+                        .unwrap_or(false)
+                })
+                .count()
+        })
+        .unwrap_or(0);
+
+    let presence_active = dir.join("sessions").join("current.json").exists();
+    let tracking_active = dir.join("tracking").join("current_session.json").exists();
+
+    let (tpm_status, tpm_details) = match std::panic::catch_unwind(|| {
+        let provider = tpm::detect_provider();
+        let caps = provider.capabilities();
+        (provider.device_id().to_string(), caps)
+    }) {
+        Ok((device_id, caps)) => {
+            if caps.hardware_backed {
+                (
+                    "hardware-backed".to_string(),
+                    Some(serde_json::json!({
+                        "device_id": device_id,
+                        "supports_pcrs": caps.supports_pcrs,
+                        "supports_sealing": caps.supports_sealing,
+                        "supports_attestation": caps.supports_attestation,
+                        "monotonic_counter": caps.monotonic_counter,
+                        "secure_clock": caps.secure_clock,
+                    })),
+                )
+            } else {
+                ("software".to_string(), None)
+            }
+        }
+        Err(_) => ("detection_failed".to_string(), None),
+    };
+
+    if out.json {
+        let files_json: Vec<serde_json::Value> = tracked_files
+            .iter()
+            .map(|(path, ts, count)| {
+                serde_json::json!({
+                    "path": path,
+                    "last_checkpoint": DateTime::from_timestamp_nanos(*ts).to_rfc3339(),
+                    "checkpoint_count": count,
+                })
+            })
+            .collect();
+
+        let status = serde_json::json!({
+            "data_dir": dir.display().to_string(),
+            "public_key": pub_key_hex,
+            "identity_fingerprint": identity_fingerprint,
+            "vdf_iterations_per_second": config.vdf.iterations_per_second,
+            "database": {
+                "status": db_status,
+                "tracked_documents": files_json.len(),
+                "documents": files_json,
+            },
+            "sessions": {
+                "chains": chain_count,
+                "presence_active": presence_active,
+                "tracking_active": tracking_active,
+            },
+            "hardware": {
+                "tpm": tpm_status,
+                "details": tpm_details,
+            },
+        });
+        println!("{}", serde_json::to_string_pretty(&status)?);
+        return Ok(());
+    }
+
+    if out.quiet {
+        return Ok(());
+    }
+
+    println!("=== WritersLogic Status ===");
+    println!();
+    println!("Data directory: {}", dir.display());
+    if let Some(ref key) = pub_key_hex {
+        println!("Public key: {}...", key);
+    }
+    if let Some(ref fp) = identity_fingerprint {
+        println!("Master Identity: {}", fp);
+    }
+    println!("VDF iterations/sec: {}", config.vdf.iterations_per_second);
+
+    println!();
+    println!("=== Secure Database ===");
+    if db_status == "verified" {
+        println!("Database: VERIFIED (tamper-evident)");
+        println!();
+        println!("Tracked documents: {}", tracked_files.len());
+        for (path, last_ts, count) in tracked_files.iter().take(10) {
+            let ts = DateTime::from_timestamp_nanos(*last_ts);
+            println!(
+                "  {} ({} checkpoints, last: {})",
+                path,
+                count,
+                ts.format("%Y-%m-%d %H:%M")
+            );
+        }
+        if tracked_files.len() > 10 {
+            println!("  ... and {} more", tracked_files.len() - 10);
+        }
+    } else if db_status.starts_with("error") {
+        if db_status.contains("Permission denied") {
+            eprintln!("Error: Permission denied reading WritersLogic data.");
+            eprintln!("Check permissions on ~/.writerslogic/");
+        } else {
+            println!("Database: ERROR ({})", db_status);
         }
     } else {
         println!("Database: not found");
@@ -144,59 +223,44 @@ pub(crate) fn cmd_status() -> Result<()> {
 
     println!();
     println!("=== Sessions ===");
-
-    let chains_dir = dir.join("chains");
-    if let Ok(entries) = fs::read_dir(&chains_dir) {
-        let count = entries
-            .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.path()
-                    .extension()
-                    .map(|ext| ext == "json")
-                    .unwrap_or(false)
-            })
-            .count();
-        println!("JSON chains: {}", count);
-    } else {
-        println!("JSON chains: 0");
-    }
-
-    let session_file = dir.join("sessions").join("current.json");
-    if session_file.exists() {
-        println!("Presence session: ACTIVE");
-    } else {
-        println!("Presence session: none");
-    }
-
-    let tracking_file = dir.join("tracking").join("current_session.json");
-    if tracking_file.exists() {
-        println!("Tracking session: ACTIVE");
-    } else {
-        println!("Tracking session: none");
-    }
+    println!("JSON chains: {}", chain_count);
+    println!(
+        "Presence session: {}",
+        if presence_active { "ACTIVE" } else { "none" }
+    );
+    println!(
+        "Tracking session: {}",
+        if tracking_active { "ACTIVE" } else { "none" }
+    );
 
     println!();
     println!("=== Hardware ===");
-
-    match std::panic::catch_unwind(|| {
-        let provider = tpm::detect_provider();
-        let caps = provider.capabilities();
-        (provider, caps)
-    }) {
-        Ok((provider, caps)) => {
-            if caps.hardware_backed {
-                println!("TPM: hardware-backed");
-                println!("  Device ID: {}", provider.device_id());
-                println!("  Supports PCRs: {}", caps.supports_pcrs);
-                println!("  Supports sealing: {}", caps.supports_sealing);
-                println!("  Supports attestation: {}", caps.supports_attestation);
-                println!("  Monotonic counter: {}", caps.monotonic_counter);
-                println!("  Secure clock: {}", caps.secure_clock);
-            } else {
-                println!("TPM: not available (software provider)");
+    match tpm_status.as_str() {
+        "hardware-backed" => {
+            println!("TPM: hardware-backed");
+            if let Some(details) = tpm_details {
+                if let Some(id) = details.get("device_id").and_then(|v| v.as_str()) {
+                    println!("  Device ID: {}", id);
+                }
+                for field in &[
+                    "supports_pcrs",
+                    "supports_sealing",
+                    "supports_attestation",
+                    "monotonic_counter",
+                    "secure_clock",
+                ] {
+                    if let Some(val) = details.get(field) {
+                        println!(
+                            "  {}: {}",
+                            field.replace('_', " ").replace("supports ", "Supports "),
+                            val
+                        );
+                    }
+                }
             }
         }
-        Err(_) => {
+        "software" => println!("TPM: not available (software provider)"),
+        _ => {
             println!("TPM: detection failed (hardware probe error)");
             println!("  Using software provider as fallback");
         }
@@ -205,9 +269,34 @@ pub(crate) fn cmd_status() -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn cmd_list() -> Result<()> {
+pub(crate) fn cmd_list(out: &OutputMode) -> Result<()> {
     let db = open_secure_store()?;
     let files = db.list_files()?;
+
+    if out.json {
+        let docs: Vec<serde_json::Value> = files
+            .iter()
+            .map(|(path, ts, count)| {
+                serde_json::json!({
+                    "path": path,
+                    "last_checkpoint": DateTime::from_timestamp_nanos(*ts).to_rfc3339(),
+                    "checkpoint_count": count,
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "documents": docs,
+                "total": files.len(),
+            }))?
+        );
+        return Ok(());
+    }
+
+    if out.quiet {
+        return Ok(());
+    }
 
     if files.is_empty() {
         println!("No tracked documents.");
@@ -228,7 +317,7 @@ pub(crate) fn cmd_list() -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn show_quick_status() -> Result<()> {
+pub(crate) fn show_quick_status(out: &OutputMode) -> Result<()> {
     let dir = writerslogic_dir()?;
     let config = WLDConfig::load_or_default(&dir)?;
 
@@ -240,6 +329,41 @@ pub(crate) fn show_quick_status() -> Result<()> {
     } else {
         vec![]
     };
+
+    if out.json {
+        let initialized = crate::smart_defaults::is_initialized(&dir);
+        let calibrated = crate::smart_defaults::is_calibrated(config.vdf.iterations_per_second);
+        let docs: Vec<serde_json::Value> = tracked_files
+            .iter()
+            .map(|(path, ts, count)| {
+                serde_json::json!({
+                    "path": path,
+                    "last_checkpoint": DateTime::from_timestamp_nanos(*ts).to_rfc3339(),
+                    "checkpoint_count": count,
+                })
+            })
+            .collect();
+        let status = if !initialized {
+            "not_initialized"
+        } else if !calibrated {
+            "not_calibrated"
+        } else {
+            "ready"
+        };
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": status,
+                "tracked_documents": docs.len(),
+                "documents": docs,
+            }))?
+        );
+        return Ok(());
+    }
+
+    if out.quiet {
+        return Ok(());
+    }
 
     crate::smart_defaults::show_quick_status(
         &dir,

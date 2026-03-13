@@ -7,27 +7,84 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use chrono::DateTime;
 
+use crate::output::OutputMode;
 use crate::util::{ensure_dirs, load_vdf_params, open_secure_store};
 
-pub(crate) fn cmd_log(file_path: &PathBuf) -> Result<()> {
+pub(crate) fn cmd_log(file_path: &PathBuf, out: &OutputMode) -> Result<()> {
     let abs_path = fs::canonicalize(file_path).context("Failed to resolve path")?;
     let abs_path_str = abs_path.to_string_lossy().to_string();
     let db = open_secure_store()?;
     let events = db.get_events_for_file(&abs_path_str)?;
 
-    if events.is_empty() {
-        let file_name = file_path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| file_path.display().to_string());
-        println!("No checkpoints found for this file.\n");
-        println!("Create one with: wld commit {}", file_name);
-        return Ok(());
-    }
-
     let config = ensure_dirs()?;
     let vdf_params = load_vdf_params(&config);
     let vdf_calibrated = vdf_params.iterations_per_second > 0;
+
+    if out.json {
+        let checkpoints: Vec<serde_json::Value> = events
+            .iter()
+            .enumerate()
+            .map(|(i, ev)| {
+                let ts = DateTime::from_timestamp_nanos(ev.timestamp_ns);
+                let mut cp = serde_json::json!({
+                    "index": i + 1,
+                    "timestamp": ts.to_rfc3339(),
+                    "content_hash": hex::encode(ev.content_hash),
+                    "event_hash": hex::encode(ev.event_hash),
+                    "file_size": ev.file_size,
+                    "size_delta": ev.size_delta,
+                    "vdf_iterations": ev.vdf_iterations,
+                });
+                if vdf_calibrated && ev.vdf_iterations > 0 {
+                    let elapsed =
+                        ev.vdf_iterations as f64 / vdf_params.iterations_per_second as f64;
+                    cp["vdf_elapsed_secs"] = serde_json::json!(elapsed);
+                }
+                if let Some(ref note) = ev.context_note {
+                    if !note.is_empty() {
+                        cp["message"] = serde_json::json!(note);
+                    }
+                }
+                if let Some(ref ctx) = ev.context_type {
+                    cp["context_type"] = serde_json::json!(ctx);
+                }
+                cp
+            })
+            .collect();
+
+        let total_iterations: u64 = events.iter().map(|e| e.vdf_iterations).sum();
+        let mut result = serde_json::json!({
+            "document": abs_path_str,
+            "checkpoint_count": events.len(),
+            "vdf_calibrated": vdf_calibrated,
+            "total_vdf_iterations": total_iterations,
+            "checkpoints": checkpoints,
+        });
+        if vdf_calibrated && total_iterations > 0 {
+            result["total_vdf_time_secs"] = serde_json::json!(
+                total_iterations as f64 / vdf_params.iterations_per_second as f64
+            );
+        }
+        println!("{}", serde_json::to_string_pretty(&result)?);
+        return Ok(());
+    }
+
+    if events.is_empty() {
+        if !out.quiet {
+            let file_name = file_path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| file_path.display().to_string());
+            println!("No checkpoints found for this file.\n");
+            println!("Create one with: wld commit {}", file_name);
+        }
+        return Ok(());
+    }
+
+    if out.quiet {
+        return Ok(());
+    }
+
     let total_iterations: u64 = events.iter().map(|e| e.vdf_iterations).sum();
 
     println!(
@@ -69,7 +126,6 @@ pub(crate) fn cmd_log(file_path: &PathBuf) -> Result<()> {
                 println!("    Msg:  {}", note);
             }
         } else if let Some(ref ctx) = ev.context_type {
-            // Fallback: older events stored message in context_type
             if !ctx.is_empty() && ctx != "manual" && ctx != "auto" {
                 println!("    Msg:  {}", ctx);
             }
@@ -80,13 +136,15 @@ pub(crate) fn cmd_log(file_path: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn cmd_log_smart(file: Option<PathBuf>) -> Result<()> {
+pub(crate) fn cmd_log_smart(file: Option<PathBuf>, out: &OutputMode) -> Result<()> {
     match file {
-        Some(f) => cmd_log(&f),
+        Some(f) => cmd_log(&f, out),
         None => {
-            println!("No file specified. Showing all tracked documents:");
-            println!();
-            crate::cmd_status::cmd_list()
+            if !out.json && !out.quiet {
+                println!("No file specified. Showing all tracked documents:");
+                println!();
+            }
+            crate::cmd_status::cmd_list(out)
         }
     }
 }
