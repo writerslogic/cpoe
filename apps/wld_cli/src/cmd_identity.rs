@@ -198,10 +198,13 @@ pub(crate) fn cmd_identity(
                 println!("{}", words.as_str());
                 words.zeroize();
             } else {
-                println!("Error retrieving mnemonic.");
+                return Err(anyhow!(
+                    "Failed to retrieve mnemonic. Check file permissions on {:?}.",
+                    puf_seed_path
+                ));
             }
         } else {
-            println!("Error accessing PUF.");
+            return Err(anyhow!("Identity not initialized. Run 'wld init' first."));
         }
         return Ok(());
     }
