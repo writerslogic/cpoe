@@ -13,6 +13,7 @@ impl OutputMode {
     }
 
     /// Returns true if informational output should be shown (not json, not quiet).
+    #[allow(dead_code)]
     pub fn verbose(&self) -> bool {
         !self.json && !self.quiet
     }

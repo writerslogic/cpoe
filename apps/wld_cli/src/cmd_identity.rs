@@ -195,7 +195,7 @@ pub(crate) fn cmd_identity(
         let puf_seed_path = dir.join("puf_seed");
         if let Ok(puf) = SoftwarePUF::new_with_path(&puf_seed_path) {
             if let Ok(mut words) = puf.get_mnemonic() {
-                println!("{}", words);
+                println!("{}", words.as_str());
                 words.zeroize();
             } else {
                 println!("Error retrieving mnemonic.");

@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/writerslogic/witnessd/actions"><img src="https://github.com/writerslogic/witnessd/workflows/CI/badge.svg" alt="Build Status"></a>
-  <a href="https://slsa.dev/spec/v1.0/levels#build-l3"><img src="https://slsa.dev/images/gh-badge-level3.svg" alt="SLSA Level 3"></a>
+  <a href="https://github.com/writerslogic/witnessd/attestations"><img src="https://img.shields.io/badge/SLSA-Build_Provenance-blue" alt="SLSA Build Provenance"></a>
   <img src="https://img.shields.io/badge/rust-1.75%2B-orange" alt="Rust">
   <a href="https://github.com/writerslogic/witnessd/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--only-blue" alt="License"></a>
   <img src="https://img.shields.io/badge/Patent-US%2019%2F460%2C364%20Pending-blue" alt="Patent Pending">
@@ -152,7 +152,7 @@ writerslogic/
 
 ```bash
 cargo test --workspace           # Run all tests
-cargo test -p wld_engine --lib   # Fast engine tests (912 tests)
+cargo test -p wld_engine --lib   # Fast engine tests (915 tests)
 cargo clippy --workspace -- -D warnings  # Lint (zero warnings maintained)
 cargo fmt --all -- --check       # Format check
 cargo audit && cargo deny check  # Security audit
