@@ -1,6 +1,7 @@
 #!/bin/bash
 # WritersLogic installer
 # Usage: curl -sSf https://raw.githubusercontent.com/writerslogic/witnessd/main/apps/wld_cli/install.sh | sh
+#        WLD_VERSION=v1.0.0 curl -sSf ... | sh
 
 set -e
 
@@ -71,23 +72,59 @@ get_latest_version() {
         sed -E 's/.*"([^"]+)".*/\1/'
 }
 
+# Verify SHA-256 checksum
+verify_checksum() {
+    local archive="$1"
+    local checksum_file="$2"
+
+    if [ ! -f "$checksum_file" ]; then
+        warn "Checksum file not found — skipping verification"
+        return 0
+    fi
+
+    local expected
+    expected=$(awk '{print $1}' "$checksum_file")
+
+    local actual
+    if command -v sha256sum &> /dev/null; then
+        actual=$(sha256sum "$archive" | awk '{print $1}')
+    elif command -v shasum &> /dev/null; then
+        actual=$(shasum -a 256 "$archive" | awk '{print $1}')
+    else
+        warn "No sha256sum or shasum found — skipping checksum verification"
+        return 0
+    fi
+
+    if [ "$actual" != "$expected" ]; then
+        error "Checksum mismatch!\n  Expected: $expected\n  Got:      $actual\n\nThe download may be corrupted or tampered with."
+    fi
+
+    info "Checksum verified: $actual"
+}
+
 # Download and install
 install_wld() {
-    local platform version url archive_name tmp_dir
+    local platform version url archive_name checksum_url tmp_dir
 
     info "Detecting platform..."
     platform=$(detect_platform)
     info "Platform: $platform"
 
-    info "Fetching latest version..."
-    version=$(get_latest_version)
-    if [ -z "$version" ]; then
-        error "Could not determine latest version. Check your internet connection."
+    if [ -n "${WLD_VERSION:-}" ]; then
+        version="$WLD_VERSION"
+        info "Using pinned version: $version"
+    else
+        info "Fetching latest version..."
+        version=$(get_latest_version)
+        if [ -z "$version" ]; then
+            error "Could not determine latest version. Check your internet connection."
+        fi
+        info "Latest version: $version"
     fi
-    info "Latest version: $version"
 
     archive_name="writerslogic-${version}-${platform}.tar.gz"
     url="https://github.com/${REPO}/releases/download/${version}/${archive_name}"
+    checksum_url="${url}.sha256"
 
     info "Downloading $archive_name..."
     tmp_dir=$(mktemp -d)
@@ -95,6 +132,13 @@ install_wld() {
 
     if ! curl -sSfL -o "${tmp_dir}/${archive_name}" "$url"; then
         error "Failed to download $url"
+    fi
+
+    # Download and verify checksum
+    if curl -sSfL -o "${tmp_dir}/${archive_name}.sha256" "$checksum_url" 2>/dev/null; then
+        verify_checksum "${tmp_dir}/${archive_name}" "${tmp_dir}/${archive_name}.sha256"
+    else
+        warn "Checksum file not available — skipping verification"
     fi
 
     info "Extracting archive..."
@@ -122,18 +166,18 @@ install_wld() {
     info "WritersLogic installed successfully!"
     echo ""
 
-    # Verify installation and auto-initialize
     if command -v wld &> /dev/null; then
         info "Installed version: $(wld --version)"
         echo ""
-        info "Initializing WritersLogic..."
-        wld init || warn "Auto-initialization failed. Run 'wld init' manually."
+        echo "Get started:"
+        echo "  wld --help      # Show all commands"
+        echo "  wld essay.md    # Start tracking a document"
     else
         warn "wld installed but not in PATH. Add $INSTALL_DIR to your PATH."
         echo ""
         echo "After adding to PATH, run:"
-        echo "  wld init        # Initialize (or just use any command — it auto-initializes)"
         echo "  wld --help      # Show all commands"
+        echo "  wld essay.md    # Start tracking a document"
     fi
 }
 

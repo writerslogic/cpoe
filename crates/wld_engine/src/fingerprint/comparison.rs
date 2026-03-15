@@ -384,7 +384,7 @@ mod tests {
         );
         assert_eq!(
             ComparisonVerdict::from_similarity(0.3),
-            ComparisonVerdict::DifferentAuthors
+            ComparisonVerdict::LikelyDifferentAuthors
         );
         assert_eq!(
             ComparisonVerdict::from_similarity(0.1),
