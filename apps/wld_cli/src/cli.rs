@@ -250,6 +250,10 @@ NOTE: Calibration runs automatically during 'wld init' and on first track."
     )]
     Calibrate,
     /// Show WritersLogic status (daemon, identity, recent activity)
+    #[command(after_help = "\
+EXAMPLES:\n  \
+    wld status             Show daemon and tracking status\n  \
+    wld status --json      Machine-readable status for scripting")]
     Status,
     /// Generate shell completions for bash, zsh, fish, elvish, or powershell
     #[command(
@@ -433,7 +437,7 @@ pub enum TrackAction {
         /// File, folder, or writing app project (.scriv, .textbundle)
         path: PathBuf,
         /// Glob patterns to filter files (e.g. "*.txt,*.md") — directory mode only
-        #[arg(short, long, default_value = "")]
+        #[arg(short, long, default_value_t = String::new(), hide_default_value = true)]
         patterns: String,
         #[cfg(feature = "wld_jitter")]
         #[arg(long, help = "Use hardware entropy when available")]

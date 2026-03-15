@@ -87,7 +87,9 @@ pub(crate) async fn cmd_export(
     let vdf_params = load_vdf_params(&config);
 
     if vdf_params.iterations_per_second == 0 {
-        return Err(anyhow!("VDF not calibrated. Run 'wld calibrate' first."));
+        return Err(anyhow!(
+            "VDF not calibrated. Run 'wld init' or 'wld calibrate' first."
+        ));
     }
 
     let tpm_provider = tpm::detect_provider();
@@ -289,7 +291,7 @@ fn find_matching_session(tracking_dir: &Path, abs_path_str: &str) -> Option<Stri
     }
 
     let (path, _) = candidates.iter().max_by_key(|(_, t)| *t)?;
-    println!(
+    eprintln!(
         "Found matching tracking session: {:?}",
         path.file_name().unwrap_or_default()
     );
@@ -310,16 +312,16 @@ fn find_matching_session(tracking_dir: &Path, abs_path_str: &str) -> Option<Stri
 fn load_keystroke_evidence(dir: &Path, abs_path_str: &str) -> serde_json::Value {
     let tracking_dir = dir.join("tracking");
     if !tracking_dir.exists() {
-        println!("No matching tracking session found for this document.");
-        println!("Tip: Run 'wld track start' before writing to generate enhanced evidence.");
+        eprintln!("No matching tracking session found for this document.");
+        eprintln!("Tip: Run 'wld track start' before writing to generate enhanced evidence.");
         return serde_json::Value::Null;
     }
 
     let session_id = match find_matching_session(&tracking_dir, abs_path_str) {
         Some(id) => id,
         None => {
-            println!("No matching tracking session found for this document.");
-            println!("Tip: Run 'wld track start' before writing to generate enhanced evidence.");
+            eprintln!("No matching tracking session found for this document.");
+            eprintln!("Tip: Run 'wld track start' before writing to generate enhanced evidence.");
             return serde_json::Value::Null;
         }
     };
@@ -331,7 +333,7 @@ fn load_keystroke_evidence(dir: &Path, abs_path_str: &str) -> serde_json::Value 
     let evidence = load_session_evidence(&session_path, &hybrid_path);
 
     if evidence != serde_json::Value::Null {
-        println!("Including keystroke evidence from session {}", session_id);
+        eprintln!("Including keystroke evidence from session {}", session_id);
     } else if hybrid_path.exists() {
         #[cfg(not(feature = "wld_jitter"))]
         eprintln!(
@@ -401,7 +403,7 @@ fn resolve_declaration(
     signer: &dyn PoPSigner,
 ) -> Result<declaration::Declaration> {
     if tier_lower == "basic" {
-        println!("Basic tier: using default declaration (no AI tools declared).");
+        eprintln!("Basic tier: using default declaration (no AI tools declared).");
         return declaration::no_ai_declaration(
             content_hash,
             chain_hash,
@@ -413,7 +415,7 @@ fn resolve_declaration(
     }
 
     if !std::io::stdin().is_terminal() {
-        println!("Non-interactive mode: using default declaration.");
+        eprintln!("Non-interactive mode: using default declaration.");
         return declaration::no_ai_declaration(
             content_hash,
             chain_hash,

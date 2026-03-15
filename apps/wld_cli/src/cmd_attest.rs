@@ -42,7 +42,9 @@ pub(crate) fn cmd_attest(
     };
 
     if content.trim().is_empty() {
-        return Err(anyhow!("No content to attest"));
+        return Err(anyhow!(
+            "No content to attest. Provide --input <file> or pipe content to stdin."
+        ));
     }
 
     let context_label = input
