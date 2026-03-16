@@ -7,8 +7,7 @@ use wld_engine::DaemonManager;
 
 use crate::util::ensure_dirs;
 
-/// Acquire the PID file, printing "already running" and returning `Ok(true)` if
-/// another instance holds the lock.
+/// Returns `Ok(true)` if the daemon is already running.
 fn acquire_or_report(daemon_manager: &DaemonManager) -> Result<bool> {
     let acquired = daemon_manager
         .acquire_pid_file(std::process::id())
@@ -120,11 +119,7 @@ pub(crate) fn cmd_stop() -> Result<()> {
         if let Some(pid) = status.pid {
             // Negative/zero PID would signal all processes in a group — reject it
             if pid <= 0 {
-                return Err(anyhow!(
-                    "Invalid PID {} in PID file; refusing to signal. \
-                     Remove the stale PID file and retry.",
-                    pid
-                ));
+                return Err(anyhow!("Invalid PID {} in PID file.", pid));
             }
 
             println!("Stopping daemon (PID: {})...", pid);

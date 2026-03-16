@@ -25,11 +25,10 @@ use crate::util::{
     ensure_dirs, load_signing_key, load_vdf_params, open_secure_store, validate_session_id,
 };
 
-/// Files larger than this are not re-read just for a Unicode char count;
-/// byte length is used as an approximation instead.
-const CHAR_COUNT_READ_LIMIT: i64 = 10_000_000; // 10 MB
+/// Files larger than this use byte count as an approximation for char count.
+const CHAR_COUNT_READ_LIMIT: i64 = 10_000_000;
 
-/// Bundled parameters for building an evidence packet.
+/// Parameters for evidence packet construction.
 struct EvidencePacketContext<'a> {
     file_path: &'a Path,
     abs_path_str: &'a str,
@@ -45,7 +44,7 @@ struct EvidencePacketContext<'a> {
     keystroke_evidence: &'a serde_json::Value,
 }
 
-/// Bundled parameters for writing evidence output in any format.
+/// Parameters for evidence output.
 struct EvidenceOutputContext<'a> {
     format_lower: &'a str,
     out_path: &'a Path,
@@ -244,13 +243,9 @@ fn validate_checkpoint_count(file_path: &Path, events: &[wld_engine::SecureEvent
 
     if events.len() < MIN_CHECKPOINTS_PER_PACKET {
         return Err(anyhow!(
-            "Insufficient checkpoints for evidence export.\n\n\
-             The spec requires a minimum of {} checkpoints per evidence packet.\n\
-             You have {} checkpoint(s) for this file.\n\n\
-             Create more checkpoints with: wld commit {}",
-            MIN_CHECKPOINTS_PER_PACKET,
+            "Insufficient checkpoints (found {}, need {}). Run 'wld commit' for this file.",
             events.len(),
-            file_name()
+            MIN_CHECKPOINTS_PER_PACKET
         ));
     }
 
@@ -1035,33 +1030,11 @@ fn build_report_flags(
 fn verdict_description(verdict: &report::Verdict) -> String {
     use wld_engine::report::Verdict;
     match verdict {
-        Verdict::VerifiedHuman => {
-            "Process analysis across multiple evidence dimensions indicates strong evidence of \
-             natural human authorship. Writing exhibits characteristic cognitive constraints, \
-             revision patterns, and temporal consistency incompatible with generative AI output."
-                .into()
-        }
-        Verdict::LikelyHuman => {
-            "Process evidence indicates likely human authorship with moderate constraint indicators. \
-             Additional evidence dimensions would strengthen the assessment."
-                .into()
-        }
-        Verdict::Inconclusive => {
-            "Insufficient evidence to make a confident determination. Additional checkpoints or \
-             enhanced evidence collection recommended."
-                .into()
-        }
-        Verdict::Suspicious => {
-            "Multiple anomalous patterns detected that are inconsistent with typical human \
-             composition behavior. Further investigation recommended."
-                .into()
-        }
-        Verdict::LikelySynthetic => {
-            "Evidence patterns strongly suggest synthetic or automated content generation. \
-             Revision patterns, timing characteristics, and editing topology are inconsistent \
-             with natural human authorship."
-                .into()
-        }
+        Verdict::VerifiedHuman => "Analysis indicates strong evidence of human authorship based on behavioral timing and revision patterns.".into(),
+        Verdict::LikelyHuman => "Evidence suggests human authorship with moderate constraint indicators.".into(),
+        Verdict::Inconclusive => "Insufficient evidence for a confident determination. Additional checkpoints recommended.".into(),
+        Verdict::Suspicious => "Detected anomalies inconsistent with typical human composition behavior.".into(),
+        Verdict::LikelySynthetic => "Evidence patterns strongly suggest synthetic or automated content generation.".into(),
     }
 }
 

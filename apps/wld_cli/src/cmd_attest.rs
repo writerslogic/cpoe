@@ -25,9 +25,7 @@ pub(crate) fn cmd_attest(
         ));
     }
 
-    // When stdin is piped, read_to_string consumes all input and the
-    // declaration prompt below will get EOF, falling through to the default.
-    // This is intentional — piped usage should use --non-interactive.
+    // Piped stdin consumes all input; declaration prompts will reach EOF.
     let content = if let Some(path) = &input {
         std::fs::read_to_string(path).map_err(|e| anyhow!("Failed to read input file: {e}"))?
     } else {

@@ -72,7 +72,6 @@ pub(crate) fn cmd_fingerprint(action: FingerprintAction, out: &OutputMode) -> Re
                     "disabled"
                 }
             );
-            println!("  (Captures HOW you type - timing, cadence, rhythm)");
 
             let voice_status = match consent_manager.status() {
                 ConsentStatus::Granted => "ENABLED (consent given)",
@@ -89,13 +88,12 @@ pub(crate) fn cmd_fingerprint(action: FingerprintAction, out: &OutputMode) -> Re
                     "disabled"
                 }
             );
-            println!("  (Captures writing style - word patterns, punctuation)");
 
             println!();
 
             if fp_status.activity_samples == 0 && fp_status.current_profile_id.is_none() {
                 println!("Profile: None created yet");
-                println!("  Start the daemon to begin building your fingerprint.");
+                println!("  Start the daemon to build your fingerprint.");
             } else if fp_status.activity_samples < min_samples {
                 let progress =
                     (fp_status.activity_samples as f64 / min_samples as f64 * 100.0).min(100.0);

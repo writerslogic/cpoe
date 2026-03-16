@@ -92,22 +92,22 @@ struct Session {
     checkpoint_count: u64,
     evidence_path: std::path::PathBuf,
     jitter_intervals: Vec<u64>,
-    /// Hash of the previous checkpoint commitment (commitment chain).
-    /// Each checkpoint must build on the previous one, forming an
-    /// append-only log that cannot be reordered or selectively omitted.
+    /// Previous checkpoint commitment hash for the chain.
+    /// Ensures an append-only log that cannot be reordered or selectively omitted.
     prev_commitment: [u8; 32],
-    /// Expected next checkpoint ordinal (monotonic enforcement).
+    /// Expected next checkpoint ordinal (monotonically increasing).
     expected_ordinal: u64,
     /// Session nonce issued at start; binds all subsequent messages.
     session_nonce: [u8; 16],
-    /// Cumulative character count (must be monotonically non-decreasing).
+    /// Cumulative character count (must be non-decreasing).
     last_char_count: u64,
-    /// Timestamp of last checkpoint (must be monotonically increasing).
-    last_checkpoint_ns: u64,
-    /// Token bucket: fractional tokens available for jitter rate limiting.
-    jitter_tokens: f64,
-    /// Timestamp of the last token bucket refill.
-    jitter_last_refill: Instant,
+    /// Timestamp of last checkpoint (monotonically increasing).
+    last_checkpoint_ts: u64,
+    /// Token bucket available for jitter rate limiting.
+    bucket_tokens: f64,
+    /// Timestamp of last token bucket refill.
+    last_refill: std::time::Instant,
+
 }
 
 static SESSION: OnceLock<Mutex<Option<Session>>> = OnceLock::new();
@@ -298,9 +298,9 @@ fn handle_start_session(document_url: String, document_title: String) -> Respons
         expected_ordinal: 2, // Next expected (1 already created)
         session_nonce,
         last_char_count: 0,
-        last_checkpoint_ns: now_ns,
-        jitter_tokens: MAX_JITTER_BATCHES_PER_WINDOW as f64,
-        jitter_last_refill: Instant::now(),
+        last_checkpoint_ts: now_ns,
+        bucket_tokens: MAX_JITTER_BATCHES_PER_WINDOW as f64,
+        last_refill: Instant::now(),
     });
 
     Response::SessionStarted {
@@ -333,8 +333,6 @@ fn handle_checkpoint(
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(0);
 
-    // After genesis checkpoint, commitment and ordinal are mandatory
-    // to prevent bypassing the anti-forgery chain.
     if session.checkpoint_count > 0 {
         if ordinal.is_none() {
             return Response::Error {
@@ -350,7 +348,6 @@ fn handle_checkpoint(
         }
     }
 
-    // Monotonic ordinal enforcement
     if let Some(ord) = ordinal {
         if ord != session.expected_ordinal {
             eprintln!(
@@ -367,15 +364,13 @@ fn handle_checkpoint(
         }
     }
 
-    // Monotonic timestamp enforcement — reject non-monotonic timestamps
-    if now_ns <= session.last_checkpoint_ns {
+    if now_ns <= session.last_checkpoint_ts {
         return Response::Error {
             message: "Non-monotonic timestamp detected: clock moved backward".into(),
             code: "TIMESTAMP_NON_MONOTONIC".into(),
         };
     }
 
-    // Monotonic char_count enforcement — cumulative count must never decrease
     if char_count < session.last_char_count {
         return Response::Error {
             message: format!(
@@ -386,8 +381,6 @@ fn handle_checkpoint(
         };
     }
 
-    // Commitment chain verification: browser must send
-    // H(prev_commitment || content_hash || ordinal || session_nonce)
     if let Some(ref browser_commitment) = commitment {
         let expected = compute_commitment(
             &session.prev_commitment,
@@ -396,8 +389,6 @@ fn handle_checkpoint(
             &session.session_nonce,
         );
 
-        // Decode browser commitment to raw bytes for constant-time comparison.
-        // Fall through to mismatch on invalid hex.
         let browser_bytes = hex::decode(browser_commitment).unwrap_or_default();
         if browser_bytes.len() != 32 || expected.ct_eq(&browser_bytes).unwrap_u8() == 0 {
             #[cfg(debug_assertions)]
@@ -454,7 +445,7 @@ fn handle_checkpoint(
     }
     session.checkpoint_count += 1;
     session.last_char_count = char_count;
-    session.last_checkpoint_ns = now_ns;
+    session.last_checkpoint_ts = now_ns;
 
     Response::CheckpointCreated {
         hash: content_hash,
@@ -566,23 +557,20 @@ fn handle_inject_jitter(intervals: Vec<u64>) -> Response {
         }
     };
 
-    // Token bucket rate limiter: refill tokens proportional to elapsed time,
-    // capped at burst capacity. Each batch costs 1 token. This prevents
-    // gaming by waiting for window boundaries (unlike a fixed window).
     let now = Instant::now();
-    let elapsed = now.duration_since(session.jitter_last_refill);
+    let elapsed = now.duration_since(session.last_refill);
     let refill = elapsed.as_secs_f64() * JITTER_TOKEN_REFILL_RATE;
-    session.jitter_tokens =
-        (session.jitter_tokens + refill).min(MAX_JITTER_BATCHES_PER_WINDOW as f64);
-    session.jitter_last_refill = now;
+    session.bucket_tokens =
+        (session.bucket_tokens + refill).min(MAX_JITTER_BATCHES_PER_WINDOW as f64);
+    session.last_refill = now;
 
-    if session.jitter_tokens < 1.0 {
+    if session.bucket_tokens < 1.0 {
         return Response::Error {
             message: "Jitter batch rate limit exceeded".into(),
             code: "RATE_LIMITED".into(),
         };
     }
-    session.jitter_tokens -= 1.0;
+    session.bucket_tokens -= 1.0;
 
     let valid: Vec<u64> = intervals
         .into_iter()
@@ -619,7 +607,7 @@ fn handle_inject_jitter(intervals: Vec<u64>) -> Response {
     Response::JitterReceived { count: accepted }
 }
 
-/// Basic statistical summary of keystroke timing intervals.
+/// Statistical summary of timing intervals.
 struct JitterStats {
     count: usize,
     mean: f64,
@@ -628,7 +616,7 @@ struct JitterStats {
     max: u64,
 }
 
-/// Compute mean, standard deviation, min, and max of timing intervals.
+/// Compute statistics for timing intervals.
 fn compute_jitter_stats(intervals: &[u64]) -> JitterStats {
     let count = intervals.len();
     let sum: u64 = intervals.iter().sum();

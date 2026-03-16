@@ -41,12 +41,12 @@ fn test_cli_full_workflow() {
     };
 
     let stdout = run(&["init"], None);
-    assert!(stdout.contains("initialized successfully"));
+    assert!(stdout.contains("WritersLogic initialized"));
     assert!(dir.path().join("signing_key").exists());
 
     let stdout = run(&["status"], None);
     assert!(stdout.contains("WritersLogic Status"));
-    assert!(stdout.contains("VERIFIED"));
+    assert!(stdout.contains("Verified"));
 
     let doc_path = dir.path().join("test.txt");
     fs::write(&doc_path, "First version content").unwrap();
@@ -95,7 +95,7 @@ fn test_cli_full_workflow() {
     assert!(evidence_path.exists());
 
     let stdout = run(&["verify", evidence_path.to_str().unwrap()], None);
-    assert!(stdout.contains("Evidence packet VERIFIED"));
+    assert!(stdout.contains("Evidence packet Verified"));
 }
 
 /// Helper struct for CLI test utilities

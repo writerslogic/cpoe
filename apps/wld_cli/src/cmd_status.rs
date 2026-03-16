@@ -194,7 +194,7 @@ pub(crate) fn cmd_status(out: &OutputMode) -> Result<()> {
     println!();
     println!("=== Secure Database ===");
     if db_status == "verified" {
-        println!("Database: VERIFIED (tamper-evident)");
+        println!("Database: Verified");
         println!();
         println!("Tracked documents: {}", tracked_files.len());
         for (path, last_ts, count) in tracked_files.iter().take(10) {
@@ -236,7 +236,7 @@ pub(crate) fn cmd_status(out: &OutputMode) -> Result<()> {
     println!("=== Hardware ===");
     match tpm_status.as_str() {
         "hardware-backed" => {
-            println!("TPM: hardware-backed");
+            println!("TPM: Hardware");
             if let Some(details) = tpm_details {
                 if let Some(id) = details.get("device_id").and_then(|v| v.as_str()) {
                     println!("  Device ID: {}", id);
@@ -258,10 +258,10 @@ pub(crate) fn cmd_status(out: &OutputMode) -> Result<()> {
                 }
             }
         }
-        "software" => println!("TPM: not available (software provider)"),
+        "software" => println!("TPM: Software"),
         _ => {
-            println!("TPM: detection failed (hardware probe error)");
-            println!("  Using software provider as fallback");
+            println!("TPM: Failed");
+            println!("  Using software provider");
         }
     }
 

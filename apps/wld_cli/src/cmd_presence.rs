@@ -12,11 +12,8 @@ use wld_engine::presence::{
     ChallengeStatus, Config as PresenceConfig, Session as PresenceSession, Verifier,
 };
 
-/// Read the session file and its mtime.
-///
-/// If the mtime cannot be read, returns `None` so callers assume a
-/// conflict (conservative path) rather than silently defaulting to
-/// `UNIX_EPOCH` which would hide concurrent modifications.
+/// Read the session file and its modification time.
+/// Returns `None` for mtime if it cannot be read, indicating a potential conflict.
 fn load_session(session_file: &std::path::Path) -> Result<(PresenceSession, Option<SystemTime>)> {
     let data = fs::read(session_file)
         .map_err(|_| anyhow!("No active session. Run 'wld presence start' first."))?;

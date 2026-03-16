@@ -108,7 +108,7 @@ pub(crate) fn cmd_verify(
                     return Ok(());
                 }
 
-                println!("[OK] Evidence packet VERIFIED");
+                println!("[OK] Evidence packet Verified");
                 println!("  Document: {}", packet.document.title);
                 println!("  Checkpoints: {}", packet.checkpoints.len());
                 println!("  Total elapsed: {:?}", packet.total_elapsed_time());
@@ -204,7 +204,7 @@ pub(crate) fn cmd_verify(
 
                 if !out.quiet {
                     if validation_ok {
-                        println!("[OK] CPOP evidence packet VERIFIED");
+                        println!("[OK] CPOP evidence packet Verified");
                     } else if let Some(err) = &validation_err {
                         println!("[WARN] CPOP decoded but validation failed: {}", err);
                     }
@@ -275,7 +275,7 @@ pub(crate) fn cmd_verify(
 
         if !out.quiet {
             if report.valid {
-                println!("[OK] WAR block VERIFIED");
+                println!("[OK] WAR block Verified");
             } else {
                 println!("[FAILED] WAR block INVALID");
             }
@@ -319,16 +319,7 @@ pub(crate) fn cmd_verify(
             return Err(anyhow!("Verification failed"));
         }
     } else if !matches!(ext, "db" | "sqlite") {
-        return Err(anyhow!(
-            "Cannot determine file format: {}\n\n\
-             Supported formats:\n  \
-             .cpop      CBOR evidence packet\n  \
-             .json      JSON evidence packet\n  \
-             .cwar      ASCII-armored CWAR block\n  \
-             .db        Local SQLite database\n\n\
-             Specify the correct file or check the extension.",
-            file_path.display()
-        ));
+        return Err(anyhow!("Unsupported file format: {}", file_path.display()));
     } else {
         let key_path = match key {
             Some(k) => k,
@@ -370,7 +361,7 @@ pub(crate) fn cmd_verify(
                         })
                     );
                 } else if !out.quiet {
-                    println!("[OK] Database integrity VERIFIED");
+                    println!("[OK] Database integrity Verified");
                 }
             }
             Err(e) => {

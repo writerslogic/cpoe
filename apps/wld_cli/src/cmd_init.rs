@@ -44,7 +44,7 @@ pub(crate) fn cmd_init() -> Result<()> {
     let priv_key: SigningKey;
 
     if !key_path.exists() {
-        println!("Generating Ed25519 signing key...");
+        println!("Generating signing key...");
         let mut seed = [0u8; 32];
         getrandom::getrandom(&mut seed)?;
         priv_key = SigningKey::from_bytes(&seed);
@@ -118,10 +118,9 @@ pub(crate) fn cmd_init() -> Result<()> {
             derive_hmac_key(&priv_key.to_bytes())
         };
         let _db = SecureStore::open(&db_path, hmac_key).context("Failed to create database")?;
-        println!("  Database: events.db (tamper-evident)");
+        println!("  Database: events.db");
     }
 
-    // Auto-calibrate VDF
     let mut config = crate::util::ensure_dirs()?;
     if config.vdf.iterations_per_second == 0 {
         println!("Calibrating VDF for your CPU...");
@@ -138,13 +137,11 @@ pub(crate) fn cmd_init() -> Result<()> {
     }
 
     println!();
-    println!("============================================================");
-    println!("  WritersLogic initialized successfully!");
-    println!("============================================================");
+    println!("WritersLogic initialized.");
     println!();
     println!("Start tracking with:");
-    println!("  wld <file>           Track a single file");
-    println!("  wld <folder>         Track all files in a folder");
+    println!("  wld <file>");
+    println!("  wld <folder>");
 
     Ok(())
 }

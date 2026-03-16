@@ -18,8 +18,7 @@ pub fn is_calibrated(iterations_per_second: u64) -> bool {
 
 pub fn ensure_vdf_calibrated_with_warning(iterations_per_second: u64) {
     if !is_calibrated(iterations_per_second) {
-        eprintln!("Warning: VDF not calibrated. Time proofs may be inaccurate.");
-        eprintln!("Run 'wld calibrate' for accurate time measurements.");
+        eprintln!("Warning: VDF not calibrated. Run 'wld calibrate' for accurate time proofs.");
         eprintln!();
     }
 }
@@ -121,14 +120,17 @@ pub fn select_file_from_list(files: &[PathBuf], prompt_prefix: &str) -> Result<O
         Ok(n) if n > 0 && n <= files.len() => Ok(Some(files[n - 1].clone())),
         _ => {
             let input_lower = input.to_lowercase();
-            for file in files {
-                if let Some(name) = file.file_name().and_then(|n| n.to_str()) {
-                    if name.to_lowercase().contains(&input_lower) {
-                        return Ok(Some(file.clone()));
-                    }
-                }
-            }
-            Err(anyhow!("Invalid selection: {}", input))
+            files
+                .iter()
+                .find(|f| {
+                    f.file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|s| s.to_lowercase().contains(&input_lower))
+                        .unwrap_or(false)
+                })
+                .cloned()
+                .ok_or_else(|| anyhow!("Invalid selection: {}", input))
+                .map(Some)
         }
     }
 }
@@ -146,16 +148,12 @@ pub fn show_quick_status(
     println!();
 
     if !is_initialized(writerslogic_dir) {
-        println!("Status: Not initialized");
-        println!();
-        println!("Get started with: wld init");
+        println!("Status: Not initialized. Run 'wld init' to get started.");
         return;
     }
 
     if !is_calibrated(iterations_per_second) {
-        println!("Status: Initialized but not calibrated");
-        println!();
-        println!("Next step: wld calibrate");
+        println!("Status: Not calibrated. Run 'wld calibrate' to set VDF speed.");
         return;
     }
 
@@ -186,7 +184,6 @@ pub fn show_quick_status(
         }
 
         println!();
-        println!("Commands: commit, log, export, verify");
         println!("Shortcuts: wld <file>, wld <folder>");
     }
 }

@@ -117,7 +117,6 @@ pub(crate) fn cmd_config(action: ConfigAction) -> Result<()> {
 
                         match consent_manager.status() {
                             ConsentStatus::Granted => {
-                                // Already consented, just enable
                                 config.fingerprint.voice_enabled = true;
                             }
                             ConsentStatus::Denied | ConsentStatus::Revoked => {
@@ -134,7 +133,6 @@ pub(crate) fn cmd_config(action: ConfigAction) -> Result<()> {
                             }
                         }
                     } else {
-                        // Disabling: revoke consent and disable
                         use wld_engine::fingerprint::ConsentManager;
 
                         let mut consent_manager = ConsentManager::new(&config.data_dir)
@@ -180,20 +178,7 @@ pub(crate) fn cmd_config(action: ConfigAction) -> Result<()> {
                 }
                 _ => {
                     return Err(anyhow!(
-                        "Unknown configuration key: {}\n\n\
-                         Valid keys:\n  \
-                           sentinel.auto_start\n  \
-                           sentinel.heartbeat_interval_secs\n  \
-                           sentinel.checkpoint_interval_secs\n  \
-                           sentinel.idle_timeout_secs\n  \
-                           fingerprint.activity_enabled\n  \
-                           fingerprint.voice_enabled\n  \
-                           fingerprint.retention_days\n  \
-                           fingerprint.min_samples\n  \
-                           privacy.detect_sensitive_fields\n  \
-                           privacy.hash_urls\n  \
-                           privacy.obfuscate_titles",
-                        key
+                        "Unknown configuration key: {key}. Run 'wld config show' to see valid keys."
                     ));
                 }
             }
@@ -216,7 +201,6 @@ pub(crate) fn cmd_config(action: ConfigAction) -> Result<()> {
 
             let (cmd, args) = parse_editor_value(&editor)?;
 
-            // Validate absolute editor paths exist before spawning
             let editor_path = std::path::Path::new(&cmd);
             if editor_path.is_absolute() && !editor_path.exists() {
                 return Err(anyhow!(
@@ -297,7 +281,6 @@ pub(crate) fn cmd_config(action: ConfigAction) -> Result<()> {
     Ok(())
 }
 
-/// Prompt for voice fingerprinting consent; returns true if granted.
 fn prompt_voice_consent(
     consent_manager: &mut wld_engine::fingerprint::ConsentManager,
     config: &mut WLDConfig,
@@ -333,7 +316,7 @@ fn prompt_voice_consent(
     }
 }
 
-/// Split EDITOR into command + args via whitespace (shell metacharacters stay literal).
+/// Split EDITOR into command + args.
 fn parse_editor_value(editor: &str) -> Result<(String, Vec<String>)> {
     let parts: Vec<String> = editor.split_whitespace().map(String::from).collect();
     let (cmd, args) = parts

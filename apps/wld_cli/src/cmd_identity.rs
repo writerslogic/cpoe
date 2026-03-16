@@ -21,7 +21,7 @@ pub(crate) fn cmd_identity(
 
     if recover {
         if !json {
-            eprintln!("Enter your BIP-39 recovery phrase:");
+            eprintln!("Enter your recovery phrase:");
             eprint!("> ");
             io::stderr().flush()?;
         }
@@ -69,8 +69,8 @@ pub(crate) fn cmd_identity(
 
         if key_path.exists() {
             eprintln!("WARNING: This will replace your existing signing key.");
-            eprintln!("Your current key will be backed up, but checkpoints signed");
-            eprintln!("with the old key cannot be created with the new one.");
+            eprintln!("A backup will be created, but new checkpoints for existing");
+            eprintln!("documents will require this new identity.");
             eprintln!();
             if !crate::smart_defaults::ask_confirmation("Proceed with recovery?", false)? {
                 println!("Recovery cancelled.");
@@ -189,7 +189,7 @@ pub(crate) fn cmd_identity(
             eprintln!("      Store it securely and delete the output when done.");
         }
         println!("=== RECOVERY PHRASE ===");
-        println!("WARNING: Keep this secret! Anyone with these words can take your identity.");
+        println!("KEEP THIS SECRET! Anyone with these words can access your identity.");
         println!();
 
         let puf_seed_path = dir.join("puf_seed");
