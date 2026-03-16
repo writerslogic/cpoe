@@ -71,12 +71,7 @@ pub(crate) fn cmd_log(file_path: &PathBuf, out: &OutputMode) -> Result<()> {
 
     if events.is_empty() {
         if !out.quiet {
-            let file_name = file_path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| file_path.display().to_string());
-            println!("No checkpoints found for this file.\n");
-            println!("Create one with: wld commit {}", file_name);
+            println!("No checkpoints found for this file.");
         }
         return Ok(());
     }

@@ -10,25 +10,21 @@ use wld_engine::vdf::params::Parameters as VdfParameters;
 use wld_engine::{derive_hmac_key, SecureStore};
 use zeroize::Zeroize;
 
-/// 500 MB — reject files larger than this.
+/// 500 MB — maximum allowed file size.
 pub(crate) const MAX_FILE_SIZE: u64 = 500_000_000;
 
-/// 50 MB — warn when a file exceeds this size.
+/// 50 MB — warning threshold for large files.
 pub(crate) const LARGE_FILE_WARNING_THRESHOLD: u64 = 50_000_000;
 
-/// File extensions that should NOT be tracked (binary artifacts, media, databases, temp files).
+/// File extensions excluded from tracking.
 pub(crate) const BLOCKED_EXTENSIONS: &[&str] = &[
-    // Binary artifacts
     "exe", "dll", "so", "dylib", "o", "a", "obj", "lib", "class", "pyc", "pyo", "wasm",
-    // Archives
-    "zip", "tar", "gz", "tgz", "bz2", "xz", "zst", "rar", "7z", "dmg", "iso", // Images
+    "zip", "tar", "gz", "tgz", "bz2", "xz", "zst", "rar", "7z", "dmg", "iso",
     "jpg", "jpeg", "png", "gif", "bmp", "ico", "tiff", "tif", "webp", "heic", "heif", "raw", "svg",
-    // Audio/Video
     "mp3", "mp4", "avi", "mov", "wav", "webm", "flac", "aac", "ogg", "mkv", "wmv",
-    // Binary documents
-    "pdf", // Databases
-    "db", "sqlite", "sqlite3", "mdb", // Lock/temp
-    "lock", "tmp", "bak", "swp", "swo", // OS artifacts
+    "pdf",
+    "db", "sqlite", "sqlite3", "mdb",
+    "lock", "tmp", "bak", "swp", "swo",
     "DS_Store",
 ];
 
@@ -56,11 +52,7 @@ pub fn ensure_dirs() -> Result<WLDConfig> {
     for d in &dirs {
         fs::create_dir_all(d).map_err(|e| {
             if e.kind() == std::io::ErrorKind::PermissionDenied {
-                anyhow!(
-                    "Permission denied creating directory: {}\n\n\
-                     Check that you have write access to this location.",
-                    d.display()
-                )
+                anyhow!("Permission denied creating directory: {}", d.display())
             } else {
                 anyhow!("Failed to create directory {}: {}", d.display(), e)
             }
@@ -93,15 +85,10 @@ pub fn load_vdf_params(config: &WLDConfig) -> VdfParameters {
 pub fn load_signing_key(dir: &Path) -> Result<SigningKey> {
     let key_path = dir.join("signing_key");
     let mut key_data = fs::read(&key_path).map_err(|e| match e.kind() {
-        std::io::ErrorKind::NotFound => anyhow!(
-            "WritersLogic has not been initialized yet.\n\n\
-             Run 'wld init' to set up WritersLogic for the first time."
-        ),
-        std::io::ErrorKind::PermissionDenied => anyhow!(
-            "Permission denied: {}\n\n\
-             Check that you have read access to the WritersLogic data directory.",
-            key_path.display()
-        ),
+        std::io::ErrorKind::NotFound => anyhow!("WritersLogic not initialized. Run 'wld init'."),
+        std::io::ErrorKind::PermissionDenied => {
+            anyhow!("Permission denied: {}", key_path.display())
+        }
         _ => anyhow!("Failed to read signing key: {}", e),
     })?;
     let mut seed: [u8; 32] = if key_data.len() == 32 {
@@ -135,32 +122,18 @@ pub fn open_secure_store() -> Result<SecureStore> {
     let db_path = dir.join("events.db");
 
     if let Ok(Some(hmac_key)) = wld_engine::identity::SecureStorage::load_hmac_key() {
-        return SecureStore::open(&db_path, hmac_key.to_vec()).map_err(|e| {
-            anyhow!(
-                "Database error: {}\n\n\
-                 If this persists, check if another process is using the database.",
-                e
-            )
-        });
+        return SecureStore::open(&db_path, hmac_key.to_vec())
+            .map_err(|e| anyhow!("Database error: {}", e));
     }
 
     let signing_key = load_signing_key(&dir)?;
     let hmac_key = derive_hmac_key(&signing_key.to_bytes());
 
     if let Err(e) = wld_engine::identity::SecureStorage::save_hmac_key(&hmac_key) {
-        eprintln!(
-            "Warning: Failed to migrate signing key to secure storage: {}",
-            e
-        );
+        eprintln!("Warning: Failed to migrate signing key: {}", e);
     }
 
-    SecureStore::open(&db_path, hmac_key).map_err(|e| {
-        anyhow!(
-            "Database error: {}\n\n\
-             If this persists, check if another process is using the database.",
-            e
-        )
-    })
+    SecureStore::open(&db_path, hmac_key).map_err(|e| anyhow!("Database error: {}", e))
 }
 
 pub fn get_device_id() -> Result<[u8; 16]> {
@@ -263,43 +236,16 @@ pub fn normalize_path(path: &Path) -> Result<PathBuf> {
 }
 
 fn clean_path(path: &Path) -> PathBuf {
-    let path_str = path.to_string_lossy();
-    let trimmed = path_str.trim_end_matches('/');
-    let trimmed = if trimmed.is_empty() && path_str.starts_with('/') {
-        "/"
-    } else if trimmed.is_empty() {
-        "."
-    } else {
-        trimmed
-    };
-
-    let mut result = String::with_capacity(trimmed.len());
-    let mut last_was_slash = false;
-    for c in trimmed.chars() {
-        if c == '/' || c == '\\' {
-            if !last_was_slash {
-                result.push('/');
-            }
-            last_was_slash = true;
-        } else {
-            result.push(c);
-            last_was_slash = false;
-        }
+    let mut cleaned = PathBuf::new();
+    for component in path.components() {
+        cleaned.push(component);
     }
-
-    PathBuf::from(result)
+    cleaned
 }
 
 pub fn load_api_key(dir: &Path) -> Result<String> {
     let key_path = dir.join("api_key");
     fs::read_to_string(&key_path)
         .map(|s| s.trim().to_string())
-        .map_err(|_| {
-            anyhow!(
-                "No WritersProof API key found.\n\n\
-                 Save your API key to: {}\n\
-                 Get one at: https://writerslogic.com/dashboard/settings",
-                key_path.display()
-            )
-        })
+        .map_err(|_| anyhow!("No WritersProof API key found at: {}", key_path.display()))
 }

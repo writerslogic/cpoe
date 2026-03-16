@@ -23,30 +23,18 @@ pub(crate) fn cmd_commit(
     out: &OutputMode,
 ) -> Result<()> {
     if !file_path.exists() {
-        return Err(anyhow!(
-            "File not found: {}\n\n\
-             Check that the file exists and the path is correct.",
-            file_path.display()
-        ));
+        return Err(anyhow!("File not found: {}", file_path.display()));
     }
 
-    let abs_path = fs::canonicalize(file_path).map_err(|e| {
-        anyhow!(
-            "Cannot resolve path {}: {}\n\n\
-             Check that the path is valid and accessible.",
-            file_path.display(),
-            e
-        )
-    })?;
+    let abs_path = fs::canonicalize(file_path)
+        .map_err(|e| anyhow!("Failed to resolve path {}: {}", file_path.display(), e))?;
     let abs_path_str = abs_path.to_string_lossy().into_owned();
 
     if let Some(ext) = abs_path.extension().and_then(|e| e.to_str()) {
         let ext_lower = ext.to_lowercase();
         if BLOCKED_EXTENSIONS.contains(&ext_lower.as_str()) {
             return Err(anyhow!(
-                "File type '.{}' is not a text document.\n\n\
-                 WritersLogic is designed for text documents (txt, md, tex, docx, etc.).\n\
-                 Binary files cannot be meaningfully checkpointed for authorship evidence.",
+                "File type '.{}' is not a supported text document.",
                 ext_lower
             ));
         }
@@ -74,11 +62,7 @@ pub(crate) fn cmd_commit(
 
     let content = fs::read(&abs_path).map_err(|e| {
         if e.kind() == std::io::ErrorKind::PermissionDenied {
-            anyhow!(
-                "Permission denied: {}\n\n\
-                 Check that you have read access to this file.",
-                abs_path.display()
-            )
+            anyhow!("Permission denied: {}", abs_path.display())
         } else {
             anyhow!("Failed to read file {}: {}", abs_path.display(), e)
         }
@@ -192,10 +176,8 @@ pub(crate) async fn cmd_commit_smart(
         if !out.json && crate::smart_defaults::ask_confirmation("Initialize now?", true)? {
             crate::cmd_init::cmd_init()?;
             println!();
-        } else if out.json {
-            return Err(anyhow!("Not initialized. Run 'wld init' first."));
         } else {
-            return Err(anyhow!("Run 'wld init' first."));
+            return Err(anyhow!("WritersLogic is not initialized. Run 'wld init' first."));
         }
     }
 

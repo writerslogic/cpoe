@@ -129,7 +129,6 @@ fn should_track_file(path: &Path) -> bool {
         return false;
     }
 
-    // Check parent directories for ignored names
     for ancestor in path.ancestors().skip(1) {
         if let Some(dir_name) = ancestor.file_name().and_then(|n| n.to_str()) {
             if IGNORED_DIRS.contains(&dir_name) {
@@ -437,7 +436,6 @@ async fn cmd_track_start(
     }
     let vdf_params = load_vdf_params(&config);
 
-    // Parse glob patterns if provided
     let glob_patterns: Vec<Pattern> = patterns
         .unwrap_or_default()
         .iter()
@@ -454,7 +452,6 @@ async fn cmd_track_start(
     let session_id = session.id.clone();
     let session_path = tracking_dir.join(format!("{}.session.json", session_id));
 
-    // Collect initial files
     let initial_files = collect_trackable_files(&target);
     let file_list: Vec<String> = initial_files
         .iter()
@@ -482,7 +479,6 @@ async fn cmd_track_start(
 
     let (watcher_tx, watcher_rx) = std_mpsc::channel();
 
-    // Determine what to watch and how
     let (watch_path, watch_mode) = match &target {
         TrackTarget::SingleFile(f) => {
             let parent = f.parent().unwrap_or(f).to_path_buf();
@@ -508,7 +504,6 @@ async fn cmd_track_start(
     let machine_id = get_machine_id();
     let mut checkpoint_counts: HashMap<PathBuf, u32> = HashMap::new();
 
-    // Initial checkpoints for all tracked files
     for file in &initial_files {
         match auto_checkpoint_file(file, &mut db, &vdf_params, &device_id, &machine_id) {
             Ok(true) => {
@@ -525,11 +520,7 @@ async fn cmd_track_start(
 
     let total_initial: u32 = checkpoint_counts.values().sum();
     if total_initial > 0 {
-        if total_initial == 1 {
-            println!("Initial checkpoint created.");
-        } else {
-            println!("{} initial checkpoints created.", total_initial);
-        }
+        println!("Created {} initial checkpoint(s).", total_initial);
     }
 
     let running = Arc::new(AtomicBool::new(true));
@@ -539,17 +530,12 @@ async fn cmd_track_start(
     })
     .ok();
 
-    println!();
     println!("Tracking: {}", target.display_name());
     if !target.is_single_file() {
         println!("Files: {}", initial_files.len());
     }
-    println!(
-        "PRIVACY: Captures timing intervals and keystroke counts — NOT key values or content."
-    );
-    println!();
-    println!("Write in any editor. Checkpoints are created automatically on save.");
-    println!("Press Ctrl+C to stop.");
+    println!("Captures timing intervals only (no content/key values).");
+    println!("Checkpoints created automatically on save. Press Ctrl+C to stop.");
     println!();
 
     let mut last_checkpoint_map: HashMap<PathBuf, Instant> = HashMap::new();
@@ -1022,7 +1008,6 @@ pub(crate) async fn cmd_track_smart(
         }
 
         TrackAction::List => {
-            // Show daemon active sessions (from sentinel)
             let sentinel_dir = dir.join("sentinel");
             let sessions_file = sentinel_dir.join("active_sessions.json");
             let mut has_output = false;
@@ -1059,7 +1044,6 @@ pub(crate) async fn cmd_track_smart(
                 }
             }
 
-            // Show saved tracking sessions
             let entries =
                 fs::read_dir(&tracking_dir).with_context(|| "Error reading tracking directory")?;
 
@@ -1237,7 +1221,6 @@ pub(crate) async fn cmd_track_smart(
                 return Ok(());
             }
 
-            // Fall back to sentinel daemon session data
             let sentinel_dir = dir.join("sentinel");
             let sentinel_session = sentinel_dir.join("sessions").join(format!("{}.json", id));
             if sentinel_session.exists() {
@@ -1371,7 +1354,6 @@ pub(crate) async fn cmd_track_smart(
                     }
                 }
             } else {
-                // Fall back to sentinel daemon session data
                 let sentinel_session = dir
                     .join("sentinel")
                     .join("sessions")
