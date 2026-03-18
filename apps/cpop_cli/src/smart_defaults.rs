@@ -124,8 +124,7 @@ pub fn select_file_from_list(files: &[PathBuf], prompt_prefix: &str) -> Result<O
                 .iter()
                 .find(|f| {
                     f.file_name()
-                        .and_then(|n| n.to_str())
-                        .map(|s| s.to_lowercase().contains(&input_lower))
+                        .map(|n| n.to_string_lossy().to_lowercase().contains(&input_lower))
                         .unwrap_or(false)
                 })
                 .cloned()

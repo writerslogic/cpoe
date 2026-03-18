@@ -52,7 +52,7 @@ pub(crate) fn cmd_init() -> Result<()> {
         let pub_key = priv_key.verifying_key();
 
         crate::util::write_restrictive(&key_path, &priv_key.to_bytes())?;
-        fs::write(key_path.with_extension("pub"), pub_key.to_bytes())?;
+        crate::util::write_restrictive(&key_path.with_extension("pub"), &pub_key.to_bytes())?;
 
         println!("  Public key: {}...", hex::encode(&pub_key.to_bytes()[..8]));
     } else {

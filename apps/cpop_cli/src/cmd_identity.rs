@@ -147,27 +147,17 @@ pub(crate) fn cmd_identity(
                     eprintln!("Note: Mnemonic phrase is being written to a non-terminal.");
                     eprintln!("      Store it securely and delete the output when done.");
                 }
-                match SoftwarePUF::new_with_path(&puf_seed_path) {
-                    Ok(puf) => match puf.get_mnemonic() {
-                        Ok(mut words) => {
-                            output["mnemonic"] = serde_json::Value::Array(
-                                words
-                                    .split_whitespace()
-                                    .map(|s| serde_json::Value::String(s.to_string()))
-                                    .collect(),
-                            );
-                            words.zeroize();
-                        }
-                        Err(e) => {
-                            output["mnemonic_error"] = serde_json::Value::String(format!("{}", e));
-                        }
-                    },
-                    Err(e) => {
-                        output["mnemonic_error"] = serde_json::Value::String(format!("{}", e));
+                if let Ok(puf) = SoftwarePUF::new_with_path(&puf_seed_path) {
+                    if let Ok(mut words) = puf.get_mnemonic() {
+                        output["mnemonic"] = serde_json::Value::Array(
+                            words
+                                .split_whitespace()
+                                .map(|s| serde_json::Value::String(s.to_string()))
+                                .collect(),
+                        );
+                        words.zeroize();
                     }
                 }
-            } else {
-                output["mnemonic_error"] = serde_json::Value::String("PUF seed not found".into());
             }
         }
 
@@ -190,18 +180,25 @@ pub(crate) fn cmd_identity(
         println!();
 
         let puf_seed_path = dir.join("puf_seed");
-        if let Ok(puf) = SoftwarePUF::new_with_path(&puf_seed_path) {
-            if let Ok(mut words) = puf.get_mnemonic() {
-                println!("{}", words.as_str());
-                words.zeroize();
-            } else {
+        match SoftwarePUF::new_with_path(&puf_seed_path) {
+            Ok(puf) => {
+                if let Ok(mut words) = puf.get_mnemonic() {
+                    println!("{}", words.as_str());
+                    words.zeroize();
+                } else {
+                    return Err(anyhow!(
+                        "retrieve mnemonic (check permissions on {:?})",
+                        puf_seed_path
+                    ));
+                }
+            }
+            Err(e) => {
                 return Err(anyhow!(
-                    "retrieve mnemonic (check permissions on {:?})",
-                    puf_seed_path
+                    "Failed to load PUF seed at {:?}: {}",
+                    puf_seed_path,
+                    e
                 ));
             }
-        } else {
-            return Err(anyhow!("Identity not initialized. Run 'cpop init' first."));
         }
         return Ok(());
     }

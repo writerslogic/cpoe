@@ -86,7 +86,10 @@ pub(crate) fn cmd_status(out: &OutputMode) -> Result<()> {
         if let Some(hmac_key) = hmac_key {
             match SecureStore::open(&db_path, hmac_key) {
                 Ok(store) => {
-                    let files = store.list_files().unwrap_or_default();
+                    let files = store.list_files().unwrap_or_else(|e| {
+                        eprintln!("Warning: list_files: {}", e);
+                        vec![]
+                    });
                     ("verified".to_string(), files)
                 }
                 Err(e) => (format!("error: {}", e), vec![]),
@@ -111,7 +114,15 @@ pub(crate) fn cmd_status(out: &OutputMode) -> Result<()> {
                 })
                 .count()
         })
-        .unwrap_or(0);
+        .unwrap_or_else(|e| {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                eprintln!(
+                    "Warning: Cannot read chains directory {:?}: {}",
+                    chains_dir, e
+                );
+            }
+            0
+        });
 
     let presence_active = dir.join("sessions").join("current.json").exists();
     let tracking_active = dir.join("tracking").join("current_session.json").exists();

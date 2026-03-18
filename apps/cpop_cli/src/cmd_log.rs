@@ -10,6 +10,29 @@ use chrono::DateTime;
 use crate::output::OutputMode;
 use crate::util::{ensure_dirs, load_vdf_params, open_secure_store};
 
+/// Format a nanosecond timestamp, returning "invalid timestamp" for out-of-range values.
+/// Valid range: year 2000 (946684800s) to year 2100 (4102444800s).
+fn format_timestamp_nanos(ns: i64, fmt: &str) -> String {
+    const MIN_NS: i64 = 946_684_800_000_000_000;
+    const MAX_NS: i64 = 4_102_444_800_000_000_000;
+    if ns >= MIN_NS && ns <= MAX_NS {
+        DateTime::from_timestamp_nanos(ns).format(fmt).to_string()
+    } else {
+        "invalid timestamp".to_string()
+    }
+}
+
+/// Format a nanosecond timestamp as RFC 3339, returning "invalid timestamp" for out-of-range.
+fn format_timestamp_nanos_rfc3339(ns: i64) -> String {
+    const MIN_NS: i64 = 946_684_800_000_000_000;
+    const MAX_NS: i64 = 4_102_444_800_000_000_000;
+    if ns >= MIN_NS && ns <= MAX_NS {
+        DateTime::from_timestamp_nanos(ns).to_rfc3339()
+    } else {
+        "invalid timestamp".to_string()
+    }
+}
+
 pub(crate) fn cmd_log(file_path: &PathBuf, out: &OutputMode) -> Result<()> {
     let abs_path = fs::canonicalize(file_path).context("resolve path")?;
     let path_str = abs_path.to_string_lossy().into_owned();
@@ -25,10 +48,10 @@ pub(crate) fn cmd_log(file_path: &PathBuf, out: &OutputMode) -> Result<()> {
             .iter()
             .enumerate()
             .map(|(i, ev)| {
-                let ts = DateTime::from_timestamp_nanos(ev.timestamp_ns);
+                let ts = format_timestamp_nanos_rfc3339(ev.timestamp_ns);
                 let mut cp = serde_json::json!({
                     "index": i + 1,
-                    "timestamp": ts.to_rfc3339(),
+                    "timestamp": ts,
                     "content_hash": hex::encode(ev.content_hash),
                     "event_hash": hex::encode(ev.event_hash),
                     "file_size": ev.file_size,
@@ -99,8 +122,8 @@ pub(crate) fn cmd_log(file_path: &PathBuf, out: &OutputMode) -> Result<()> {
     println!();
 
     for (i, ev) in events.iter().enumerate() {
-        let ts = DateTime::from_timestamp_nanos(ev.timestamp_ns);
-        println!("[{}] {}", i + 1, ts.format("%Y-%m-%d %H:%M:%S"));
+        let ts = format_timestamp_nanos(ev.timestamp_ns, "%Y-%m-%d %H:%M:%S");
+        println!("[{}] {}", i + 1, ts);
         println!("    Hash: {}", hex::encode(ev.content_hash));
         print!("    Size: {} bytes", ev.file_size);
         if ev.size_delta != 0 {
@@ -154,7 +177,7 @@ fn cmd_list_documents(out: &OutputMode) -> Result<()> {
             .map(|(path, ts, count)| {
                 serde_json::json!({
                     "path": path,
-                    "last_checkpoint": DateTime::from_timestamp_nanos(*ts).to_rfc3339(),
+                    "last_checkpoint": format_timestamp_nanos_rfc3339(*ts),
                     "checkpoint_count": count,
                 })
             })
@@ -180,13 +203,8 @@ fn cmd_list_documents(out: &OutputMode) -> Result<()> {
 
     println!("Tracked documents:");
     for (path, last_ts, count) in &files {
-        let ts = DateTime::from_timestamp_nanos(*last_ts);
-        println!(
-            "  {} ({} checkpoints, last: {})",
-            path,
-            count,
-            ts.format("%Y-%m-%d %H:%M")
-        );
+        let ts = format_timestamp_nanos(*last_ts, "%Y-%m-%d %H:%M");
+        println!("  {} ({} checkpoints, last: {})", path, count, ts);
     }
 
     Ok(())
