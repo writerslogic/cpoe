@@ -14,7 +14,7 @@ use cpop_engine::presence::{
 
 fn load_session(session_file: &std::path::Path) -> Result<(PresenceSession, Option<SystemTime>)> {
     let data = fs::read(session_file)
-        .map_err(|_| anyhow!("No active session. Run 'wld presence start' first."))?;
+        .map_err(|_| anyhow!("No active session. Run 'cpop presence start' first."))?;
     let mtime = match fs::metadata(session_file).and_then(|m| m.modified()) {
         Ok(t) => Some(t),
         Err(e) => {
@@ -46,7 +46,7 @@ pub(crate) fn cmd_presence(action: PresenceAction, out: &OutputMode) -> Result<(
         PresenceAction::Start => {
             if session_file.exists() {
                 return Err(anyhow!(
-                    "Session already active. Run 'wld presence stop' first."
+                    "Session already active. Run 'cpop presence stop' first."
                 ));
             }
 
@@ -67,7 +67,7 @@ pub(crate) fn cmd_presence(action: PresenceAction, out: &OutputMode) -> Result<(
                 println!("Presence verification session started.");
                 println!("Session ID: {}", session.id);
                 println!();
-                println!("Run 'wld presence challenge' periodically to verify presence.");
+                println!("Run 'cpop presence challenge' periodically to verify presence.");
             }
         }
 

@@ -31,7 +31,7 @@ pub use collector::ResearchCollector;
 pub use types::{
     AnonymizedSample, AnonymizedSession, AnonymizedStatistics, HardwareClass, OsType,
     ResearchDataExport, UploadResult, DEFAULT_UPLOAD_INTERVAL_SECS, MIN_SESSIONS_FOR_UPLOAD,
-    RESEARCH_UPLOAD_URL, WLD_VERSION,
+    RESEARCH_UPLOAD_URL, CPOP_VERSION,
 };
 pub use uploader::ResearchUploader;
 

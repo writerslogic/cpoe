@@ -1,6 +1,6 @@
-# Getting Started with WritersLogic
+# Getting Started with CPOP
 
-WritersLogic is a cryptographic authorship witnessing system that creates tamper-evident records of your creative process. This guide will help you install and configure WritersLogic for first use.
+CPOP is a cryptographic authorship witnessing system that creates tamper-evident records of your creative process. This guide will help you install and configure CPOP for first use.
 
 ## Table of Contents
 
@@ -35,15 +35,15 @@ WritersLogic is a cryptographic authorship witnessing system that creates tamper
 #### Using Homebrew
 
 ```bash
-brew tap writerslogic/writerslogic
+brew tap writerslogic/cpop
 brew install writerslogic
 ```
 
 #### Using the macOS App
 
-1. Download `WritersLogic.dmg` from the [releases page](https://github.com/writerslogic/writerslogic/releases)
+1. Download `CPOP.dmg` from the [releases page](https://github.com/writerslogic/cpop/releases)
 2. Open the DMG file
-3. Drag **WritersLogic** to your Applications folder
+3. Drag **CPOP** to your Applications folder
 4. Launch the app from Applications or Spotlight
 
 The macOS app includes:
@@ -57,13 +57,13 @@ The macOS app includes:
 #### Using the Install Script
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/writerslogic/writerslogic/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/writerslogic/cpop/main/install.sh | bash
 ```
 
 #### Building from Source
 
 ```bash
-git clone https://github.com/writerslogic/writerslogic.git
+git clone https://github.com/writerslogic/cpop.git
 cd writerslogic
 make build
 sudo make install
@@ -72,12 +72,12 @@ sudo make install
 ### Verifying Installation
 
 ```bash
-WritersLogic version
+CPOP version
 ```
 
 Expected output:
 ```
-WritersLogic v1.0.0
+CPOP v1.0.0
   Build:    2026-01-15T10:00:00Z
   Commit:   abc1234
   Platform: darwin/arm64
@@ -85,12 +85,12 @@ WritersLogic v1.0.0
 
 ## Initial Setup
 
-### Initialize WritersLogic
+### Initialize CPOP
 
-Before creating checkpoints, you must initialize WritersLogic:
+Before creating checkpoints, you must initialize CPOP:
 
 ```bash
-wld init
+cpop init
 ```
 
 This creates:
@@ -110,12 +110,12 @@ Initializing master identity from PUF...
 Creating secure event database...
   Database: events.db (tamper-evident)
 
-wld initialized!
+cpop initialized!
 
 Next steps:
-  1. Run 'wld calibrate' to calibrate VDF for your machine
-  2. Create checkpoints with 'wld commit <file> -m "message"'
-  3. Export evidence with 'wld export <file>'
+  1. Run 'cpop calibrate' to calibrate VDF for your machine
+  2. Create checkpoints with 'cpop commit <file> -m "message"'
+  3. Export evidence with 'cpop export <file>'
 ```
 
 ### Calibrate VDF
@@ -123,7 +123,7 @@ Next steps:
 The Verifiable Delay Function (VDF) provides timing proofs. Calibration measures your CPU speed:
 
 ```bash
-wld calibrate
+cpop calibrate
 ```
 
 This takes about 30 seconds and only needs to be done once per machine.
@@ -167,7 +167,7 @@ Create a checkpoint for any file:
 echo "My first witnessed document" > mydoc.txt
 
 # Create a checkpoint
-wld commit mydoc.txt -m "Initial version"
+cpop commit mydoc.txt -m "Initial version"
 ```
 
 Output:
@@ -184,7 +184,7 @@ Checkpoint #1 created
 ### View Checkpoint History
 
 ```bash
-wld log mydoc.txt
+cpop log mydoc.txt
 ```
 
 Output:
@@ -203,19 +203,19 @@ For stronger evidence, track keystrokes during writing:
 
 ```bash
 # Start tracking
-wld track start mydoc.txt
+cpop track start mydoc.txt
 
 # ... write your document ...
 # The system counts keystrokes (not content!) in the background
 
 # Check progress
-wld track status
+cpop track status
 
 # Create checkpoint with keystroke evidence
-wld commit mydoc.txt -m "Draft with tracked keystrokes"
+cpop commit mydoc.txt -m "Draft with tracked keystrokes"
 
 # Stop tracking
-wld track stop
+cpop track stop
 ```
 
 ## Exporting Evidence
@@ -225,7 +225,7 @@ wld track stop
 When you need to prove authorship:
 
 ```bash
-wld export mydoc.txt
+cpop export mydoc.txt
 ```
 
 This creates `mydoc.wpkt` containing:
@@ -239,7 +239,7 @@ This creates `mydoc.wpkt` containing:
 Anyone can verify the evidence:
 
 ```bash
-wld verify mydoc.wpkt
+cpop verify mydoc.wpkt
 ```
 
 Output:
@@ -273,7 +273,7 @@ Overall: VERIFIED
 ## Getting Help
 
 - **Documentation**: https://docs.writersproof.com/writerslogic
-- **Issues**: https://github.com/writerslogic/writerslogic/issues
+- **Issues**: https://github.com/writerslogic/cpop/issues
 - **Website**: https://writersproof.com
 
 ---

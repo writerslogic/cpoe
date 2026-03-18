@@ -875,7 +875,7 @@ fn verify_ecdsa_signature(
 }
 
 fn is_secure_enclave_available() -> bool {
-    if std::env::var("WLD_DISABLE_SECURE_ENCLAVE").is_ok() {
+    if std::env::var("CPOP_DISABLE_SECURE_ENCLAVE").is_ok() {
         log::info!("Secure Enclave disabled via environment variable");
         return false;
     }
@@ -984,7 +984,7 @@ fn hardware_uuid() -> Option<String> {
 }
 
 fn writerslogic_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("WLD_DATA_DIR") {
+    if let Ok(dir) = std::env::var("CPOP_DATA_DIR") {
         return PathBuf::from(dir);
     }
     dirs::home_dir()

@@ -1,5 +1,5 @@
 <p align="center">
-  <strong>wld</strong><br>
+  <strong>cpop</strong><br>
   Cryptographic authorship witnessing CLI
 </p>
 
@@ -10,9 +10,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/writerslogic/witnessd/actions"><img src="https://github.com/writerslogic/witnessd/workflows/CI/badge.svg" alt="Build Status"></a>
+  <a href="https://github.com/writerslogic/cpop/actions"><img src="https://github.com/writerslogic/cpop/workflows/CI/badge.svg" alt="Build Status"></a>
   <img src="https://img.shields.io/badge/rust-1.75%2B-orange" alt="Rust">
-  <a href="https://github.com/writerslogic/witnessd/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--only-blue" alt="License"></a>
+  <a href="https://github.com/writerslogic/cpop/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--only-blue" alt="License"></a>
   <img src="https://img.shields.io/badge/Patent-US%2019%2F460%2C364%20Pending-blue" alt="Patent Pending">
 </p>
 
@@ -25,9 +25,9 @@
 
 ## Overview
 
-**wld** is the command-line interface for [WritersLogic](https://github.com/writerslogic/witnessd) — producing independently verifiable, tamper-evident process evidence constraining when and how a document could have been created. It implements the [draft-condrey-rats-pop](https://datatracker.ietf.org/doc/draft-condrey-rats-pop/) IETF protocol specification.
+**cpop** is the command-line interface for [CPOP](https://github.com/writerslogic/cpop) — producing independently verifiable, tamper-evident process evidence constraining when and how a document could have been created. It implements the [draft-condrey-rats-pop](https://datatracker.ietf.org/doc/draft-condrey-rats-pop/) IETF protocol specification.
 
-Part of the WritersLogic monorepo:
+Part of the CPOP monorepo:
 
 | Component | Description |
 |:----------|:------------|
@@ -51,50 +51,50 @@ scoop install writerslogic
 
 **Linux / macOS (script):**
 ```bash
-curl -sSf https://raw.githubusercontent.com/writerslogic/witnessd/main/apps/cpop_cli/install.sh | sh
+curl -sSf https://raw.githubusercontent.com/writerslogic/cpop/main/apps/cpop_cli/install.sh | sh
 ```
 
 **From source:**
 ```bash
-cargo install --git https://github.com/writerslogic/witnessd --bin wld
+cargo install --git https://github.com/writerslogic/cpop --bin cpop
 ```
 
 ## Quick Start
 
 ```bash
 # Start tracking a document (auto-initializes on first use)
-wld essay.md
+cpop essay.md
 
 # Create a checkpoint with a message
-wld commit essay.md -m "first draft complete"
+cpop commit essay.md -m "first draft complete"
 
 # View checkpoint history
-wld log essay.md
+cpop log essay.md
 
 # Export cryptographic evidence (.cpop)
-wld export essay.md -t 2
+cpop export essay.md -t 2
 
 # Verify evidence
-wld verify essay.cpop
+cpop verify essay.cpop
 ```
 
-Run `wld` with no arguments for an interactive menu, or `wld --help` for the full command reference.
+Run `cpop` with no arguments for an interactive menu, or `cpop --help` for the full command reference.
 
 ## Commands
 
 | Command | Aliases | Description |
 |:--------|:--------|:------------|
-| `wld <path>` | | Start tracking a file or directory |
-| `wld commit` | `checkpoint` | Create a checkpoint with VDF time proof |
-| `wld log` | `history`, `ls` | View history or list all tracked documents |
-| `wld export` | `prove` | Export evidence packet (.cpop or .cwar) |
-| `wld verify` | `check` | Verify evidence packet |
-| `wld status` | | Show system status |
-| `wld track` | | Session management (start/stop/status/list/show/export) |
-| `wld identity` | `id` | Identity management |
-| `wld config` | `cfg` | View and edit configuration |
-| `wld fingerprint` | `fp` | Behavioral fingerprinting (status/show/compare/list/delete) |
-| `wld presence` | | Physical presence verification |
+| `cpop <path>` | | Start tracking a file or directory |
+| `cpop commit` | `checkpoint` | Create a checkpoint with VDF time proof |
+| `cpop log` | `history`, `ls` | View history or list all tracked documents |
+| `cpop export` | `prove` | Export evidence packet (.cpop or .cwar) |
+| `cpop verify` | `check` | Verify evidence packet |
+| `cpop status` | | Show system status |
+| `cpop track` | | Session management (start/stop/status/list/show/export) |
+| `cpop identity` | `id` | Identity management |
+| `cpop config` | `cfg` | View and edit configuration |
+| `cpop fingerprint` | `fp` | Behavioral fingerprinting (status/show/compare/list/delete) |
+| `cpop presence` | | Physical presence verification |
 
 All commands support `--json` for machine-readable output and `--quiet` for silent operation.
 
@@ -119,7 +119,7 @@ Per [draft-condrey-rats-pop](https://datatracker.ietf.org/doc/draft-condrey-rats
 ## Security
 
 > [!IMPORTANT]
-> WritersLogic provides **independently verifiable, tamper-evident process evidence**, not absolute proof. The value lies in converting unsubstantiated doubt into testable claims across independent trust boundaries.
+> CPOP provides **independently verifiable, tamper-evident process evidence**, not absolute proof. The value lies in converting unsubstantiated doubt into testable claims across independent trust boundaries.
 
 **Privacy-first design:**
 - Keystroke tracking captures **timing only** — never the keys you press
@@ -142,7 +142,7 @@ cargo fmt --all -- --check         # Format check
 
 ```bibtex
 @article{condrey2026writerslogic,
-  title={WritersLogic: Proof-of-process via Adversarial Collapse},
+  title={CPOP: Proof-of-process via Adversarial Collapse},
   author={Condrey, David},
   journal={arXiv preprint arXiv:2602.01663},
   year={2026},

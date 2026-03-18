@@ -1,6 +1,6 @@
 #!/usr/bin/make -f
 
-# Debian rules file for wld
+# Debian rules file for cpop
 
 export DH_VERBOSE = 1
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all
@@ -20,34 +20,34 @@ override_dh_auto_clean:
 
 override_dh_auto_build:
 	# Build CLI binary
-	cargo build --release --package wld_cli
+	cargo build --release --package cpop_cli
 	mkdir -p bin/
-	cp target/release/wld bin/wld
-	cp target/release/wld-native-messaging-host bin/ || true
+	cp target/release/cpop bin/cpop
+	cp target/release/cpop-native-messaging-host bin/ || true
 
 override_dh_auto_test:
-	cargo test --package wld_cli
+	cargo test --package cpop_cli
 
 override_dh_auto_install:
 	# Install binaries
-	install -D -m 755 bin/wld debian/wld/usr/bin/wld
+	install -D -m 755 bin/cpop debian/cpop/usr/bin/cpop
 
 	# Install man pages
-	install -D -m 644 ../../docs/man/wld.1 debian/wld/usr/share/man/man1/wld.1
+	install -D -m 644 ../../docs/man/cpop.1 debian/cpop/usr/share/man/man1/cpop.1
 
 	# Install systemd units (if present)
 	if [ -d packaging/linux/systemd ]; then \
-		install -D -m 644 packaging/linux/systemd/wld.service debian/wld/lib/systemd/system/wld.service; \
-		install -D -m 644 packaging/linux/systemd/wld-user.service debian/wld/usr/lib/systemd/user/wld.service; \
+		install -D -m 644 packaging/linux/systemd/cpop.service debian/cpop/lib/systemd/system/cpop.service; \
+		install -D -m 644 packaging/linux/systemd/cpop-user.service debian/cpop/usr/lib/systemd/user/cpop.service; \
 	fi
 
 	# Install documentation
-	install -D -m 644 ../../LICENSE debian/wld/usr/share/doc/wld/LICENSE
-	install -D -m 644 README.md debian/wld/usr/share/doc/wld/README.md
+	install -D -m 644 ../../LICENSE debian/cpop/usr/share/doc/cpop/LICENSE
+	install -D -m 644 README.md debian/cpop/usr/share/doc/cpop/README.md
 
 override_dh_installsystemd:
-	dh_installsystemd --name=wld
-	dh_installsystemd --name=wld --user
+	dh_installsystemd --name=cpop
+	dh_installsystemd --name=cpop --user
 
 override_dh_compress:
 	dh_compress -X.md

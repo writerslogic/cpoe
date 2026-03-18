@@ -1,21 +1,42 @@
 # Changelog
 
-All notable changes to the WritersLogic project will be documented in this file.
+All notable changes to the CPOP project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-03-17
+
+### Changed
+- CLI binary renamed from `wld` to `cpop` across all distribution channels
+- Homebrew formula now installs `cpop` binary (was `wld`)
+- install.sh updated for `cpop` binary name
+- Scoop manifest updated for `cpop.exe` binary name
+- `cpop_jitter` and `cpop_protocol` crates now sourced from crates.io (v0.2.0 and v0.1.0)
+- `PoPSigner` trait renamed to `EvidenceSigner` (aligns with cpop-protocol v0.1.0)
+- Package manager update workflow aligned with release workflow (repository dispatch)
+
+### Fixed
+- Homebrew workflow pointed to nonexistent `writerslogic-cli` repo
+- Scoop manifest had wrong archive naming, binary name, and license
+- E2E test assertion for binary file rejection message
+
+## [1.0.1] - 2026-03-16
+
+### Changed
+- Removed aarch64-unknown-linux-gnu from release matrix (cross-compilation issues)
+
 ## [1.0.0] - 2026-03-15
 
 ### Added
-- Flattened CLI to 10 top-level commands with interactive menu (`wld` with no args)
-- `wld man` command for full built-in manual
+- Flattened CLI to 10 top-level commands with interactive menu (`cpop` with no args)
+- `cpop man` command for full built-in manual
 - Shell completions for bash, zsh, fish, elvish, powershell
 - `--json` and `--quiet` output modes on all commands
 - SHA-256 checksum verification in install.sh
-- Version pinning support (`WLD_VERSION=v1.0.0`) in install.sh
+- Version pinning support (`CPOP_VERSION=v1.0.0`) in install.sh
 - aarch64-unknown-linux-gnu release target
 - Steganography and WritersProof FFI bindings for GUI apps
 - 5-band fingerprint comparison verdicts (SameAuthor through DifferentAuthors)
@@ -25,7 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Evidence tier validation rejects unknown tiers at entry with actionable error
 - Fingerprint `show` returns proper error when no active profile exists
 - Voice similarity weights rebalanced to include backspace behavioral signal
-- install.sh no longer auto-runs `wld init`
+- install.sh no longer auto-runs `cpop init`
 - SLSA badge reflects actual build provenance level
 - Release pipeline notarizes macOS binaries before packaging
 
@@ -37,14 +58,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CSPRNG failures are now fatal (no silent fallback to zeroed bytes)
 
 ### Fixed
-- `wld verify` format list now includes `.cpop`
-- `wld export` tier fallback replaced with validation + clear error
-- `wld fingerprint show` no longer falls back to nonexistent "default" profile
+- `cpop verify` format list now includes `.cpop`
+- `cpop export` tier fallback replaced with validation + clear error
+- `cpop fingerprint show` no longer falls back to nonexistent "default" profile
 
 ## [0.3.0] - 2026-03-10
 
 ### Added
-- Unified CLI: `wld <file>` tracks keystrokes, `wld <folder>` watches for changes
+- Unified CLI: `cpop <file>` tracks keystrokes, `cpop <folder>` watches for changes
 - Graceful Ctrl+C shutdown in watch mode with `ctrlc` handler
 - Atomic file operations (tmp+rename) for identity backup
 - PID file locking with stale-PID detection for daemon
@@ -55,9 +76,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - CLI commands reviewed and hardened for production use
-- `wld verify` now exits with code 1 on verification failure
+- `cpop verify` now exits with code 1 on verification failure
 - Export no longer requires unused `session_id` parameter
-- `wld identity` (no flags) shows fingerprint + DID + public key
+- `cpop identity` (no flags) shows fingerprint + DID + public key
 - Monorepo architecture consolidating engine, protocol, jitter, and CLI
 - Workspace-level dependency management
 
@@ -68,7 +89,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Non-regular files (devices, sockets) accepted by track command
 - Verify returned exit 0 on verification failure
 - Config edit accepted invalid config without re-prompting
-- Duplicate `writerslogic` binary target removed (only `wld` binary)
+- Duplicate `writerslogic` binary target removed (only `cpop` binary)
 - Permission-denied errors in status command now show diagnostic message
 - Empty files and oversized files now handled gracefully in commit/watch
 
@@ -82,8 +103,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.2.0] - 2026-02-22
 
 ### Added
-- wld_protocol crate for PoP wire format (CBOR/COSE)
-- wld_jitter `no_std` support and security hardening
+- cpop_protocol crate for PoP wire format (CBOR/COSE)
+- cpop_jitter `no_std` support and security hardening
 - Fuzz targets for VDF and protocol components
 - Browser extension with native messaging host
 - IPC server/client architecture for daemon communication
@@ -96,7 +117,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.0] - 2026-02-01
 
 ### Added
-- Initial release of wld_engine
+- Initial release of cpop_engine
 - Merkle Mountain Range (MMR) for tamper-evident event storage
 - Ed25519 signing with domain separation
 - VDF-based time proofs
@@ -106,8 +127,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SQLite-backed persistent storage with WAL/WAR
 - UniFFI bindings for Swift/Kotlin
 
-[Unreleased]: https://github.com/writerslogic/witnessd/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/writerslogic/witnessd/compare/v0.3.0...v1.0.0
-[0.3.0]: https://github.com/writerslogic/witnessd/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/writerslogic/witnessd/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/writerslogic/writerslogic/releases/tag/v0.1.0
+[Unreleased]: https://github.com/writerslogic/cpop/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/writerslogic/cpop/compare/v0.3.0...v1.0.0
+[0.3.0]: https://github.com/writerslogic/cpop/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/writerslogic/cpop/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/writerslogic/cpop/releases/tag/v0.1.0

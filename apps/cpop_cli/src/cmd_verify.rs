@@ -334,7 +334,7 @@ pub(crate) fn cmd_verify(
             if e.kind() == std::io::ErrorKind::NotFound {
                 anyhow!(
                     "Signing key not found: {}\n\n\
-                     Specify the key with --key, or run 'wld init' first.",
+                     Specify the key with --key, or run 'cpop init' first.",
                     key_path.display()
                 )
             } else {

@@ -1,4 +1,4 @@
-wld (1.0.0-1) unstable; urgency=medium
+cpop (1.0.0-1) unstable; urgency=medium
 
   * Initial release
   * Cryptographic authorship witnessing daemon

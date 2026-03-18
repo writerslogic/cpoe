@@ -2,7 +2,7 @@
 
 use super::ProviderHandle;
 use coset::iana;
-use cpop_protocol::crypto::PoPSigner;
+use cpop_protocol::crypto::EvidenceSigner;
 
 pub struct TpmSigner {
     provider: ProviderHandle,
@@ -14,7 +14,7 @@ impl TpmSigner {
     }
 }
 
-impl PoPSigner for TpmSigner {
+impl EvidenceSigner for TpmSigner {
     fn sign(&self, data: &[u8]) -> cpop_protocol::error::Result<Vec<u8>> {
         self.provider
             .sign(data)

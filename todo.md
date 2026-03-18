@@ -1,4 +1,4 @@
-# WritersLogic — Unified Todo
+# CPOP — Unified Todo
 
 ## Session State
 
@@ -23,11 +23,11 @@ SESSION_OWNER: suggest-audit
 - 2026-03-05: Phase 7 (fe54ace2): M-088, M-128, M-129, M-130, M-131, M-144, M-145, M-146, M-147. Triaged: M-053, M-056, M-083, M-087, M-137, M-138. 707 pass.
 - 2026-03-05: Phase 8 (6e43d1a3): SYS-015 (50+ named constants), SYS-019 (browser ext validation), H-105, H-106, M-052, M-070, M-071, M-079, M-080, M-081, M-082, M-090, M-091, M-098, M-099, M-102, M-112, M-114, M-115, M-118, M-132, M-135. 707 pass.
 - 2026-03-06: Quality audit (ca30939e): Fixed C-025 single-leaf Merkle hash, SYS-013 FFI expect→match, SYS-015 cadence bare literal, browser dead code/unhandled rejections/dangling promises. 707 pass.
-- 2026-03-11: Re-audit of 3 crates (wld_engine, wld_jitter, wld_protocol). ~200 files, 15 batches, 3 waves. 5 new HIGH + 4 new MEDIUM found. 730 tests passing.
+- 2026-03-11: Re-audit of 3 crates (cpop_engine, cpop_jitter, cpop_protocol). ~200 files, 15 batches, 3 waves. 5 new HIGH + 4 new MEDIUM found. 730 tests passing.
 - 2026-03-11: Code quality / duplication / performance audit. ~200 files, 9 batches, 2 waves. 8 new SYS + 14 HIGH + 42 MEDIUM found.
 - 2026-03-12: CLI exhaustive review: 7 bugs fixed (CLI-C1..C3, CLI-H1, CLI-H6, CLI-M11, CLI-M12), 6 false positives eliminated. 15/15 tests pass, 0 clippy warnings.
 - 2026-03-12: Engine/protocol dedup batch: M-169 (nonce dedup), M-175 (causality lock dedup), M-176 (CBOR encode generic), M-192 (AIExtent Ord). CLI-L1, CLI-L6 fixed. H-150 resolved via C-032. Tests: 737 engine, 36 protocol, 15 CLI — all pass.
-- 2026-03-12: CLI production polish: Added --json (status/list/log/commit), --quiet global flag, `wld completions` command, binary file type rejection on commit, fixed clap conflicts_with assertion. 13 new tests (28 total). 0 clippy warnings.
+- 2026-03-12: CLI production polish: Added --json (status/list/log/commit), --quiet global flag, `cpop completions` command, binary file type rejection on commit, fixed clap conflicts_with assertion. 13 new tests (28 total). 0 clippy warnings.
 - 2026-03-12: Full codebase re-audit (suggest run 4). ~215 files, 15 batches, 3 waves. 3 new CRITICAL + 2 new SYS + 27 new HIGH found. 737 tests passing.
 
 ### Handoff Summary
@@ -47,7 +47,7 @@ KEY_FILES: /Volumes/A/writerslogic/todo.md (this file)
 ### Dependency Graph
 
 ```
-Engine Groups (in crates/wld_engine, apps/wld_cli, browser-extension):
+Engine Groups (in crates/cpop_engine, apps/cpop_cli, browser-extension):
   Group 4  (time evidence)     ──> no deps, trivial
   Group 5  (hex decode)        ──> no deps, trivial
   Group 17 (deser integrity)   ──> no deps, trivial
@@ -182,7 +182,7 @@ Windows app: independent of engine groups (separate C# codebase)
 - [x] **SYS-022** `commitment_chain_optional` — 2 files — CRITICAL
   <!-- pid:security-optional_security | verified:true | first:2026-03-03 -->
   Commitment chain fields are `Option` with `#[serde(default)]`. Adversary omits to bypass.
-  Files: `apps/wld_cli/src/native_messaging_host.rs:337,394`, `browser-extension/background.js:89`
+  Files: `apps/cpop_cli/src/native_messaging_host.rs:337,394`, `browser-extension/background.js:89`
   Fix: Make required after genesis checkpoint.
 
 - [x] **SYS-023** `forensic_region_stub` — 2 files — CRITICAL (fixed by C-024 cursor heuristic)
@@ -264,13 +264,13 @@ Windows app: independent of engine groups (separate C# codebase)
 
 - [x] **B-004** FFI feature compilation — multiple errors
   <!-- pid:build_failure | verified:true | first:2026-03-03 -->
-  `cargo check --features ffi -p wld_engine` fails. Missing `ENTROPY_NORMALIZATION_FACTOR`, mismatched `FfiFingerprintStatus` fields.
+  `cargo check --features ffi -p cpop_engine` fails. Missing `ENTROPY_NORMALIZATION_FACTOR`, mismatched `FfiFingerprintStatus` fields.
   Fix: Align FFI types with current engine types. Effort: large
 
 - [x] **B-005** rustfmt failure — module path mismatch
   <!-- pid:build_failure | verified:true | first:2026-03-03 -->
-  `lib.rs:51` declares `pub mod wld_jitter_bridge;` but directory is `writerslogic_jitter_bridge/`.
-  Fix: `git mv` directory to `wld_jitter_bridge/`. Effort: small
+  `lib.rs:51` declares `pub mod cpop_jitter_bridge;` but directory is `writerslogic_jitter_bridge/`.
+  Fix: `git mv` directory to `cpop_jitter_bridge/`. Effort: small
 
 - [x] **B-006** 2 pre-existing checkpoint test failures
   <!-- pid:test_failure | verified:true | first:2026-03-03 -->
@@ -827,7 +827,7 @@ Windows app: independent of engine groups (separate C# codebase)
 - [x] **M-171** `checkpoint/chain.rs:120` — `commit()` and `commit_with_vdf_duration()` 90% identical | Fix: Extract `commit_internal(vdf_duration: Option)` | Effort: small
 - [-] **M-172** `checkpoint/chain.rs:282` — VDF input computation duplicated between `commit_entangled()` and `commit_rfc()` | Fix: Shared `compute_vdf_input()` | Effort: medium — FALSE POSITIVE: overlap is only 2 lines, methods differ significantly
 - [x] **M-173** `c2pa.rs:522` — `build_assertion_jumbf_json` ≈ `build_assertion_jumbf_cbor` (identical JUMBF boilerplate) | Fix: Parameterize on content format | Effort: small
-- [-] **M-174** `protocol/baseline.rs:123` — `serde_bytes_opt` duplicates `evidence/serde_helpers.rs` | Fix: Share via `wld_protocol::serde_utils` | Effort: small — FALSE POSITIVE: cross-crate serde `with` path resolution makes sharing impractical
+- [-] **M-174** `protocol/baseline.rs:123` — `serde_bytes_opt` duplicates `evidence/serde_helpers.rs` | Fix: Share via `cpop_protocol::serde_utils` | Effort: small — FALSE POSITIVE: cross-crate serde `with` path resolution makes sharing impractical
 - [x] **M-175** `protocol/crypto.rs:21` — `compute_causality_lock` ≈ `compute_causality_lock_v2` (differ only in DST + phys_entropy) | Fix: Extract shared inner fn | Effort: small
 - [x] **M-176** `protocol/codec.rs:9` — `encode_evidence` / `encode_attestation` duplicate CBOR tag wrapping | Fix: Generic `encode_cbor<T>(tag, val)` | Effort: small
 - [x] **M-177** `keyhierarchy/identity.rs:13` — `derive_master_identity()` ≈ `derive_master_private_key()` (35 lines duplicated) | Fix: Single source fn | Effort: small
@@ -848,22 +848,22 @@ Windows app: independent of engine groups (separate C# codebase)
 - [x] **M-190** `vdf/swf_argon2.rs:217` — `select_indices()` uses modulo without rejection sampling (bias for non-power-of-two) | Fix: Rejection sampling | Effort: small
 - [-] **M-191** `vdf/params.rs:78` — Hash-and-finalize pattern repeated 6+ times across vdf module | Fix: Extract `hash_with_dst(dst, parts)` | Effort: small
 - [x] **M-192** `declaration/helpers.rs:1` — `extent_rank()` fragile if enum variant order changes | Fix: `impl Ord for AIExtent` or `#[repr(u8)]` | Effort: small
-- [ ] **M-193** `wld_jitter_bridge/types.rs:1` — Mirror types that don't add value over `wld_jitter` types | Fix: Remove wrappers or document value-add | Effort: medium
+- [ ] **M-193** `cpop_jitter_bridge/types.rs:1` — Mirror types that don't add value over `cpop_jitter` types | Fix: Remove wrappers or document value-add | Effort: medium
 
 </details>
 
 <details><summary>Crate Audit Findings 2026-03-05 (4)</summary>
 
-- [x] M-144 `[security]` wld_protocol/src/evidence.rs — profile_uri validated against spec URI
+- [x] M-144 `[security]` cpop_protocol/src/evidence.rs — profile_uri validated against spec URI
   <!-- pid:missing_validation | verified:true | first:2026-03-05 -->
   `protocol_uri` deserialized without value or length validation. Spec requires `urn:ietf:params:rats:eat:profile:pop:1.0`. Related to SYS-014 (String fields).
-- [x] M-145 `[security]` wld_protocol/src/rfc.rs — DocumentRef.filename bounded to MAX_FILENAME_LEN (256)
+- [x] M-145 `[security]` cpop_protocol/src/rfc.rs — DocumentRef.filename bounded to MAX_FILENAME_LEN (256)
   <!-- pid:unbounded_string_deser | verified:true | first:2026-03-05 -->
   No max length on filename field. Related to SYS-014.
-- [x] M-146 `[security]` wld_jitter/src/evidence.rs — EvidenceChain.records bounded to MAX_EVIDENCE_RECORDS (100K)
+- [x] M-146 `[security]` cpop_jitter/src/evidence.rs — EvidenceChain.records bounded to MAX_EVIDENCE_RECORDS (100K)
   <!-- pid:unbounded_vec_deser | verified:true | first:2026-03-05 -->
   Deserialized chain can have arbitrary number of records. Related to SYS-014.
-- [x] M-147 `[code_quality]` wld_jitter/src/evidence.rs — expect() with descriptive message on pre-epoch clock
+- [x] M-147 `[code_quality]` cpop_jitter/src/evidence.rs — expect() with descriptive message on pre-epoch clock
   <!-- pid:clock_error_silent_fallback | verified:true | first:2026-03-05 -->
   `current_timestamp_us()` returns 0 for pre-epoch clock. Engine fixed same pattern at H-102 to use `.expect()`.
 </details>
@@ -896,7 +896,7 @@ Windows app: independent of engine groups (separate C# codebase)
 
 ---
 
-## CLI App (apps/wld_cli/) — Exhaustive Review (2026-03-12)
+## CLI App (apps/cpop_cli/) — Exhaustive Review (2026-03-12)
 
 > Source: Exhaustive CLI quality review across all 20 source files + tests.
 > 7 fixes applied, 6 false positives eliminated.
@@ -962,66 +962,105 @@ Windows app: independent of engine groups (separate C# codebase)
 
 ---
 
-## macOS App (apps/wld_macos/) — 134 issues
+## macOS App (apps/cpop_macos/) — 191 issues (136 original + 55 new)
 
-> Source: `apps/wld_macos/todo.md` (audited 2026-03-04, 86 Swift/JS/shell files)
+> Source: `apps/cpop_macos/todo.md` (audited 2026-03-04, re-audited 2026-03-16, 86 Swift/JS/shell files)
 > Submodule repo — work independently from engine.
+> All 136 original issues (C-001..C-009, H-001..H-028, M-001..M-085, ELEV items) are FIXED.
 
 ### macOS Summary
-| Severity | Open | Fixed | False Positive |
-|----------|------|-------|----------------|
-| CRITICAL | 9    | 0     | 1              |
-| HIGH     | 28   | 3     | 3              |
-| MEDIUM   | 75   | 5     | 3              |
-| Systemic | 7    | 0     | 0              |
+| Severity | Open | Fixed | False Positive | Skipped |
+|----------|------|-------|----------------|---------|
+| CRITICAL | 8 (new) | 9 (original) | 1 | 0 |
+| HIGH     | 15 (new) | 28 (original) | 3 | 0 |
+| MEDIUM   | 32 (new) | 75 + 57 ELEV (original) | 3 | 0 |
+| Systemic | 5   | 2     | 0              | 0 |
 
 ### macOS Systemic
-- [ ] **mac-SYS-001** `god_module` — 4 files (DashboardView 744L, HistoryView 1782L, WLDService 600L, SettingsView 1108L)
-- [ ] **mac-SYS-002** `silent_error_swallow` — 6+ files (WLDService, WLDBridge, GitIntegration, BrowserExtension, PopoverViews, SettingsView, CloudSync, VoiceFingerprint, SafariExtension)
+- [x] **mac-SYS-001** `god_module` — RESOLVED — god modules split per submodule todo
+- [x] **mac-SYS-002** `silent_error_swallow` — RESOLVED — error handling added across 6+ files
 - [ ] **mac-SYS-003** `hardcoded_colors` — 10+ SwiftUI views with hardcoded color literals
 - [ ] **mac-SYS-004** `accessibility_missing` — 8+ views missing VoiceOver labels
-- [ ] **mac-SYS-005** `no_test_coverage` — zero unit tests for any Swift code
+- [x] **mac-SYS-005** `no_test_coverage` — PARTIALLY RESOLVED — 384 tests now exist
 - [ ] **mac-SYS-006** `localization_missing` — all user-facing strings hardcoded in English
 - [ ] **mac-SYS-007** `error_alert_pattern` — inconsistent error presentation across views
 
-### macOS Critical (9 open)
-- [ ] **mac-C-001** WLDBridge.swift — CLI path injection via unsanitized user input
-- [ ] **mac-C-002** WLDService.swift — mnemonic words stored as String array, never zeroized
-- [ ] **mac-C-003** OnboardingView.swift — recovery phrase in plain Text view, clipboard not cleared
-- [ ] **mac-C-004** SettingsView.swift — recovery phrase displayed without memory cleanup
-- [ ] **mac-C-005** WLDBridge.swift — annotation text passed to CLI without escaping
-- [ ] **mac-C-006** SafariWebExtensionHandler.swift — IPC message not validated
-- [ ] **mac-C-007** WLDService.swift — session overwrite without finalizing previous
-- [ ] **mac-C-008** WLDBridge.swift — process output parsed without size limit
-- [ ] **mac-C-009** KeychainService.swift — keychain items not deleted on identity reset
+### macOS Original Critical (all fixed)
+- [x] **mac-C-001** CPOPBridge.swift — CLI path injection via unsanitized user input
+- [x] **mac-C-002** CPOPService.swift — mnemonic words stored as String array, never zeroized
+- [x] **mac-C-003** OnboardingView.swift — recovery phrase in plain Text view, clipboard not cleared
+- [x] **mac-C-004** SettingsView.swift — recovery phrase displayed without memory cleanup
+- [x] **mac-C-005** CPOPBridge.swift — annotation text passed to CLI without escaping
+- [x] **mac-C-006** SafariWebExtensionHandler.swift — IPC message not validated
+- [x] **mac-C-007** CPOPService.swift — session overwrite without finalizing previous
+- [x] **mac-C-008** CPOPBridge.swift — process output parsed without size limit
+- [x] **mac-C-009** KeychainService.swift — keychain items not deleted on identity reset
 
-### macOS High (28 open)
-- [ ] mac-H-001..H-028 — concurrency, error handling, security, and UX issues
-  (See `apps/wld_macos/todo.md` for full details per issue)
+### macOS Original High (all fixed)
+- [x] mac-H-001..H-028 — all 28 issues resolved (concurrency, error handling, security, UX)
 
-### macOS Quick Wins
+### macOS NEW Critical (8 open — 2026-03-16 audit)
+- [ ] **mac-C-010** SafariExtensionShared.swift:938 — Encryption fallback to plaintext UserDefaults when AES-GCM fails. Impact: security downgrade. Fix: fail-closed. Effort: medium
+- [ ] **mac-C-011** ReceiptValidation.swift:721 — Legacy unversioned receipt accepted without structure validation. Fix: reject unversioned. Effort: small
+- [ ] **mac-C-012** CPOPEngineFFI.swift:28 — `try!` on rustCall crashes app on FFI allocation failure. Fix: do-try-catch. Effort: medium
+- [ ] **mac-C-013** CPOPEngineFFI.swift:54 — `rustBuffer.data!` force unwrap on null pointer. Fix: guard let. Effort: small
+- [ ] **mac-C-014** CPOPEngineFFI.swift:2864 — 50+ cascading `try! ... try!` in FFI wrappers. Fix: Result propagation. Effort: large
+- [ ] **mac-C-015** CloudSyncService.swift:618 — HTTP 429 Retry-After header parsing injection. Fix: RFC 7231 parsing. Effort: small
+- [ ] **mac-C-016** SettingsDetailView.swift:286 — Blank recovery phrase sheet on FFI failure. Fix: error handling. Effort: small
+- [ ] **mac-C-017** EngineService.swift:622 — Custom Base58 encoder with no test vectors. Fix: use vetted library. Effort: medium
+
+### macOS NEW High (15 open — 2026-03-16 audit)
+- [ ] **mac-H-029** AuthService.swift:838 — Keychain delete status unchecked before SecItemAdd. Effort: small
+- [ ] **mac-H-030** SecureEnclaveKeyManager.swift:235 — Force unwrap on tag.data(using:). Effort: small
+- [ ] **mac-H-031** DeviceAttestationService.swift:410 — Hardcoded Supabase Edge Function URL. Effort: small
+- [ ] **mac-H-032** DeviceAttestationService.swift:770 — HMAC without domain separation tag. Effort: small
+- [ ] **mac-H-033** DataDirectoryIntegrityService.swift:117 — First-run bypass returns .valid. Effort: small
+- [ ] **mac-H-034** SettingsIntegrityService.swift:245 — "unknown-device" UUID spoofing accepted. Effort: small
+- [ ] **mac-H-035** SafariExtensionShared.swift:966 — Silent decryption failure with plaintext fallback. Effort: small
+- [ ] **mac-H-036** SafariExtensionShared.swift:287 — Commitment hash collision via string concat (no length prefixing). Effort: medium
+- [ ] **mac-H-037** DataDirectoryIntegrityService.swift:778 — Keychain rollback attack accepted. Effort: small
+- [ ] **mac-H-038** ReceiptValidation.swift:376 — Receipt version rollback not detected. Effort: small
+- [ ] **mac-H-039** EngineService.swift:610 — Force unwrap on Data(base64Encoded:). Effort: small
+- [ ] **mac-H-040** AuthService.swift:500 — Continuation double-resume race condition. Effort: medium
+- [ ] **mac-H-041** DeviceAttestationService.swift:849 — HMAC tampering detection logged but no user notification. Effort: medium
+- [ ] **mac-H-042** NotificationManager.swift:694 — Notification history saved unencrypted, forgeable. Effort: medium
+- [ ] **mac-H-043** AppDelegate.swift:88 — Race: service provider callable before integrity validation completes. Effort: medium
+
+### macOS NEW Medium (32 open — 2026-03-16 audit)
+- [ ] mac-M-086..mac-M-117 — concurrency, code quality, maintainability, and performance issues across UI and services
+  (See `apps/cpop_macos/todo.md` for full details per issue)
+
+### macOS Quick Wins (new findings only — originals all fixed)
 | ID | Sev | File | Issue | Effort |
 |----|-----|------|-------|--------|
-| mac-C-003 | CRIT | OnboardingView | Clear clipboard after mnemonic display | trivial |
-| mac-C-004 | CRIT | SettingsView | Clear recovery phrase on dismiss | trivial |
-| mac-H-003 | HIGH | PopoverViews | Stop timer on view disappear | trivial |
-| mac-H-005 | HIGH | WLDService | Add timeout to CLI process | small |
-| mac-H-010 | HIGH | HistoryView | Fix UTC/local time mismatch | small |
-| mac-H-014 | HIGH | DashboardView | Guard division by zero in stats | trivial |
+| mac-C-011 | CRIT | ReceiptValidation | Reject unversioned receipts | small |
+| mac-C-013 | CRIT | CPOPEngineFFI | Guard let on rustBuffer.data | small |
+| mac-C-015 | CRIT | CloudSyncService | RFC 7231 Retry-After parsing | small |
+| mac-C-016 | CRIT | SettingsDetailView | Handle FFI failure on phrase sheet | small |
+| mac-H-029 | HIGH | AuthService | Check keychain delete status | small |
+| mac-H-030 | HIGH | SecureEnclaveKeyManager | Safe unwrap on tag.data | small |
+| mac-H-031 | HIGH | DeviceAttestationService | Extract hardcoded URL to config | small |
+| mac-H-032 | HIGH | DeviceAttestationService | Add DST to HMAC | small |
+| mac-H-033 | HIGH | DataDirectoryIntegrityService | Fail-closed on first run | small |
+| mac-H-034 | HIGH | SettingsIntegrityService | Reject "unknown-device" UUID | small |
+| mac-H-035 | HIGH | SafariExtensionShared | Fail-closed on decryption | small |
+| mac-H-037 | HIGH | DataDirectoryIntegrityService | Detect keychain rollback | small |
+| mac-H-038 | HIGH | ReceiptValidation | Detect receipt version rollback | small |
+| mac-H-039 | HIGH | EngineService | Guard base64 decode | small |
 
 ---
 
-## Windows App (apps/wld_windows/) — 188 issues
+## Windows App (apps/cpop_windows/) — 229 issues (188 original + 41 new)
 
-> Source: `apps/wld_windows/winui/WritersLogic/todo.md` (audited 2026-03-04, 120 C#/PS1/WXS/XAML files)
+> Source: `apps/cpop_windows/winui/CPOP/todo.md` (audited 2026-03-04, re-audited 2026-03-16, 120 C#/PS1/WXS/XAML files)
 > Submodule repo — work independently from engine.
 
 ### Windows Summary
 | Severity | Open | Fixed | Skipped |
 |----------|------|-------|---------|
-| CRITICAL | 6    | 0     | 0       |
-| HIGH     | 56   | 0     | 0       |
-| MEDIUM   | 119  | 0     | 0       |
+| CRITICAL | 1 + 8 (new) | 4 (original) | 1 (C-002) |
+| HIGH     | 14 + 16 (new) | 39 (original) | 3 |
+| MEDIUM   | 119 + 21 (new) | 0 | 0 |
 | Systemic | 7    | 0     | 0       |
 
 ### Windows Systemic
@@ -1033,42 +1072,72 @@ Windows app: independent of engine groups (separate C# codebase)
 - [ ] **win-SYS-006** `accessibility_missing_automation` — 11+ XAML files — missing AutomationProperties
 - [ ] **win-SYS-007** `hardcoded_colors_strings` — 20+ XAML files — hardcoded colors and strings
 
-### Windows Critical (6 open)
-- [ ] **win-C-001** IpcConnectionPool.cs:81 — ConcurrentBag.Count race, unbounded pool growth
-- [ ] **win-C-002** LockScreenDialog.xaml.cs:56 — brute-force lockout bypass
-- [ ] **win-C-003** OnboardingPage.xaml.cs:259 — mnemonic words persist in memory
-- [ ] **win-C-004** SettingsPage.xaml.cs:132 — recovery phrase no memory cleanup
-- [ ] **win-C-005** WLDBridge.cs:~1200 — CLI argument injection via annotation
-- [ ] **win-C-006** MnemonicRecoveryDialog.xaml.cs:31 — recovery phrase in plaintext TextBox
+### Windows Original Critical
+- [x] **win-C-001** IpcConnectionPool.cs:81 — ConcurrentBag.Count race, unbounded pool growth
+- [x] **win-C-002** LockScreenDialog.xaml.cs:56 — brute-force lockout bypass (SKIPPED — non-issue)
+- [x] **win-C-003** OnboardingPage.xaml.cs:259 — mnemonic words persist in memory
+- [x] **win-C-004** SettingsPage.xaml.cs:132 — recovery phrase no memory cleanup
+- [x] **win-C-005** CPOPBridge.cs:~1200 — CLI argument injection via annotation
+- [ ] **win-C-006** MnemonicRecoveryDialog.xaml.cs:31 — recovery phrase in plaintext TextBox. Fix: TextBox → PasswordBox. Effort: medium
 
-### Windows High (56 open)
-- [ ] win-H-001..H-056 — security, concurrency, build, config, UX issues
-  (See `apps/wld_windows/winui/WritersLogic/todo.md` for full details per issue)
+### Windows Original High
+- [x] win-H-001..H-056 — 39 fixed, 3 skipped, 14 remaining open
+- **Still open (14):** win-H-003, H-008, H-009, H-010, H-011, H-012, H-015, H-017, H-027, H-028, H-038, H-040, H-045, H-047, H-048, H-053
+  (See `apps/cpop_windows/winui/CPOP/todo.md` for full details per issue)
+
+### Windows NEW Critical (8 open — 2026-03-16 audit)
+- [ ] **win-C-007** IpcClient.cs:477 — _eventListenerCts reassigned without atomic swap, duplicate listeners. Effort: small
+- [ ] **win-C-008** App.xaml.cs:56 — NullReferenceException handled as e.Handled=true, masks real bugs. Effort: small
+- [ ] **win-C-009** App.xaml.cs:660 — Environment.Exit(0) without awaiting async cleanup. Effort: medium
+- [ ] **win-C-010** EntitlementManager.cs:162 — Premium tier cached unsigned in LocalSettings. Effort: medium
+- [ ] **win-C-011** DataDirectoryIntegrityService.cs:209 — Manifest tampering silently accepted/normalized. Effort: medium
+- [ ] **win-C-012** FileWatcherService.cs:214 — Deadlock: GetAwaiter().GetResult() inside lock(). Effort: small
+- [ ] **win-C-013** InactivityService.cs:82 — CTS race: concurrent Stop/Start disposes CTS while monitor reads. Effort: small
+- [ ] **win-C-014** DatabaseIntegrityService.cs:105 — Overly broad catch maps all DB errors to generic anomaly. Effort: medium
+
+### Windows NEW High (16 open — 2026-03-16 audit)
+- [ ] **win-H-057** IpcClient.cs:490 — Event listener/RequestAsync share pipe without correlation. Effort: large
+- [ ] **win-H-058** IpcClient.cs:524 — No reconnection logic after daemon crash. Effort: medium
+- [ ] **win-H-059** IpcClient.cs:715 — ECDH public key accepted without curve validation. Effort: medium
+- [ ] **win-H-060** CPOPBridge.cs:29 — Batch operation concurrency race on _batchOperationLock. Effort: small
+- [ ] **win-H-061** CPOPDatabaseService.cs:18 — Each method opens new SqliteConnection, SQLITE_BUSY contention. Effort: medium
+- [ ] **win-H-062** CPOPDatabaseService.cs:70 — OpenReadOnlyConnection catches all SqliteException, returns null. Effort: small
+- [ ] **win-H-063** CPOPDatabaseService.cs:722 — _disposed never checked, post-disposal calls succeed. Effort: small
+- [ ] **win-H-064** SecurityService.cs:110 — WinVerifyTrust WINTRUST_DATA passed by value, P/Invoke reads garbage. Effort: medium
+- [ ] **win-H-065** UndoService.cs:15 — Non-thread-safe singleton initialization. Effort: small
+- [ ] **win-H-066** AccessibilityService.cs:41 — Animation preference cache never updated. Effort: small
+- [ ] **win-H-067** RFCErrorMapper.cs:142 — Overly broad substring match hits wrong errors. Effort: small
+- [ ] **win-H-068** DataDirectoryIntegrityService.cs:63 — Fake async (never awaits), blocks UI. Effort: small
+- [ ] **win-H-069** CloudSyncDetectionService.cs:81 — Regex recompiled per file in loop. Effort: small
+- [ ] **win-H-070** CloudSyncDetectionService.cs:171 — DetectCloudFolders() called per-file without caching. Effort: medium
+- [ ] **win-H-071** CollaborativeEvidenceService.cs:61 — Deserialized sessions not validated. Effort: small
+- [ ] **win-H-072** UndoService.cs:22 — Unsynchronized state across UI/timer threads. Effort: small
+
+### Windows Original Medium (119 open)
+- [ ] win-M-001..M-119 — performance, code quality, security, maintainability issues
+  (See `apps/cpop_windows/winui/CPOP/todo.md` for full details)
+
+### Windows NEW Medium (21 open — 2026-03-16 audit)
+- [ ] win-M-120..win-M-140 — various performance, code quality, security, maintainability issues
+  (See `apps/cpop_windows/winui/CPOP/todo.md` for full details)
 
 ### Windows Quick Wins
 | ID | Sev | File | Issue | Effort |
 |----|-----|------|-------|--------|
-| win-C-003 | CRIT | OnboardingPage | Zero `_mnemonicWords` after display | trivial |
-| win-C-004 | CRIT | SettingsPage | Clear recovery phrase on dialog close | trivial |
-| win-H-001 | HIGH | SettingsIntegrityService | Fail-open on HMAC key unavailable | small |
-| win-H-002 | HIGH | SettingsIntegrityService | Null hash bypass | small |
-| win-H-004 | HIGH | WLDBridge | O(n^2) cache eviction | small |
-| win-H-018 | HIGH | AppLogger | Log rotation delete-then-move | trivial |
-| win-H-023 | HIGH | HomePage | Null check for `_bridge` | trivial |
-| win-H-025 | HIGH | HistoryPage | Stop debounce timer on unload | trivial |
-| win-H-029 | HIGH | ExportTierDialog | Unsafe cast to StackPanel | trivial |
-| win-H-030 | HIGH | SettingsPage | Add Clipboard.Flush() | trivial |
-| win-H-031 | HIGH | SessionPage | Remove redundant ItemsSource= | trivial |
-| win-H-033 | HIGH | build-binaries.ps1 | Fix RepoRoot path depth | trivial |
-| win-H-034 | HIGH | create-msix.ps1 | Fix RepoRoot path depth | trivial |
-| win-H-035 | HIGH | build-installer.ps1 | Fix RepoRoot path depth | trivial |
-| win-H-037 | HIGH | AppxManifest.xml | Align MaxVersionTested | trivial |
-| win-H-039 | HIGH | Package.appxmanifest | Remove PhoneIdentity | trivial |
-| win-H-042 | HIGH | WLDBridge | Truncate hashes in log output | trivial |
-| win-H-044 | HIGH | WLDBridge | Read progress counters inside lock | trivial |
-| win-H-046 | HIGH | WLDBridge | Change verify to RunQueryCommandAsync | trivial |
-| win-H-051 | HIGH | IpcClient | Mark session key field readonly | trivial |
-| win-H-055 | HIGH | AppxManifest.xml | Fix StartupTask ID | trivial |
+| win-C-007 | CRIT | IpcClient | Atomic CTS swap for event listeners | small |
+| win-C-008 | CRIT | App.xaml | Stop masking NullReferenceException | small |
+| win-C-012 | CRIT | FileWatcherService | Replace GetAwaiter().GetResult() in lock | small |
+| win-C-013 | CRIT | InactivityService | CTS race on concurrent Stop/Start | small |
+| win-H-060 | HIGH | CPOPBridge | Fix batch operation lock race | small |
+| win-H-062 | HIGH | CPOPDatabaseService | Propagate SqliteException | small |
+| win-H-063 | HIGH | CPOPDatabaseService | Add disposed check | small |
+| win-H-065 | HIGH | UndoService | Thread-safe singleton init | small |
+| win-H-066 | HIGH | AccessibilityService | Refresh animation pref cache | small |
+| win-H-067 | HIGH | RFCErrorMapper | Narrow substring match | small |
+| win-H-068 | HIGH | DataDirectoryIntegrityService | Make truly async | small |
+| win-H-069 | HIGH | CloudSyncDetectionService | Cache compiled regex | small |
+| win-H-071 | HIGH | CollaborativeEvidenceService | Validate deserialized sessions | small |
+| win-H-072 | HIGH | UndoService | Synchronize cross-thread state | small |
 
 ---
 
@@ -1108,13 +1177,15 @@ Windows app: independent of engine groups (separate C# codebase)
 <!-- reviewed:config/defaults.rs:2026-03-11 -->
 <!-- reviewed:vdf/proof.rs:2026-03-11 -->
 
-### macOS (2026-03-04)
+### macOS (2026-03-04, re-audited 2026-03-16)
 <!-- 86 files (Swift, JS, shell, HTML) -->
-<!-- 134 issues found, 9 fixed/eliminated -->
+<!-- Original: 136 issues found, ALL 136 FIXED (9C + 28H + 75M + 57 ELEV) -->
+<!-- Re-audit 2026-03-16: 55 new issues (8C + 15H + 32M) -->
 
-### Windows (2026-03-04)
+### Windows (2026-03-04, re-audited 2026-03-16)
 <!-- 120 files (C#, PS1, WXS, XAML, JSON) -->
-<!-- 188 issues found, 0 fixed -->
+<!-- Original: 188 issues found. Fixed: 4C + 39H. Skipped: 1C (C-002) + 3H. Open: 1C + 14H + 119M + 7 SYS. -->
+<!-- Re-audit 2026-03-16: 41 new issues (8C + 16H + 21M - note: win-H-057 through win-H-072 = 16 items) -->
 
 ---
 

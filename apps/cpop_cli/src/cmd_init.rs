@@ -18,10 +18,10 @@ pub(crate) fn cmd_init() -> Result<()> {
     let signing_key_path = dir.join("signing_key");
     if signing_key_path.exists() && dir.join("puf_seed").exists() && dir.join("events.db").exists()
     {
-        println!("WritersLogic is already initialized.");
+        println!("CPOP is already initialized.");
         println!("  Data directory: {}", dir.display());
         println!();
-        println!("To start fresh, run: wld identity --recover");
+        println!("To start fresh, run: cpop identity --recover");
         return Ok(());
     }
 
@@ -127,11 +127,11 @@ pub(crate) fn cmd_init() -> Result<()> {
     }
 
     println!();
-    println!("WritersLogic initialized.");
+    println!("CPOP initialized.");
     println!();
     println!("Start tracking with:");
-    println!("  wld <file>");
-    println!("  wld <folder>");
+    println!("  cpop <file>");
+    println!("  cpop <folder>");
 
     Ok(())
 }

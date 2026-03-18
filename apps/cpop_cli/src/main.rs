@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
-//! WritersLogic CLI — cryptographic authorship witnessing.
+//! CPOP CLI — cryptographic authorship witnessing.
 
 use std::io::IsTerminal;
 
@@ -34,7 +34,7 @@ async fn main() {
     if let Err(e) = run().await {
         eprintln!("Error: {:#}", e);
         eprintln!();
-        eprintln!("For more information, try 'wld --help'");
+        eprintln!("For more information, try 'cpop --help'");
         std::process::exit(1);
     }
 }
@@ -85,7 +85,7 @@ async fn run() -> Result<()> {
         }) => cmd_attest::cmd_attest(&format, input, output, non_interactive, &out)?,
         Some(Commands::Config { action }) => cmd_config::cmd_config(action)?,
         Some(Commands::Completions { shell }) => {
-            clap_complete::generate(shell, &mut Cli::command(), "wld", &mut std::io::stdout());
+            clap_complete::generate(shell, &mut Cli::command(), "cpop", &mut std::io::stdout());
         }
         Some(Commands::Man) => print_manual(),
         None => {
@@ -128,7 +128,7 @@ async fn maybe_auto_start(cli: &Cli, out: &OutputMode) -> Result<()> {
                 let daemon_manager = cpop_engine::DaemonManager::new(&config.data_dir);
                 if !daemon_manager.is_running() {
                     if !out.quiet {
-                        eprintln!("Starting WritersLogic daemon...");
+                        eprintln!("Starting CPOP daemon...");
                     }
                     if let Err(e) = cmd_daemon::cmd_start(false).await {
                         eprintln!("Warning: daemon auto-start failed: {e}");
@@ -158,7 +158,7 @@ fn maybe_auto_init(cli: &Cli, out: &OutputMode) -> Result<()> {
         if let Ok(dir) = util::writerslogic_dir() {
             if !dir.join("signing_key").exists() {
                 if !out.quiet {
-                    eprintln!("Initializing WritersLogic for first use...");
+                    eprintln!("Initializing CPOP for first use...");
                 }
                 cmd_init::cmd_init()?;
             }

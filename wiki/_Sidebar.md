@@ -45,10 +45,10 @@
 
 ### Components
 
-- [[wld_engine]]
-- [[wld_protocol]]
-- [[wld_jitter]]
+- [[cpop_engine]]
+- [[cpop_protocol]]
+- [[cpop_jitter]]
 
 ---
 
-*[[Home|WritersLogic wiki]]*
+*[[Home|CPOP wiki]]*

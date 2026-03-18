@@ -84,12 +84,12 @@ impl Engine {
 
         #[cfg(target_os = "macos")]
         let accessibility_trusted = platform::macos::check_accessibility_permissions()
-            || std::env::var("WLD_SKIP_PERMISSIONS").is_ok();
+            || std::env::var("CPOP_SKIP_PERMISSIONS").is_ok();
         #[cfg(not(target_os = "macos"))]
         let accessibility_trusted = true;
         #[cfg(target_os = "macos")]
         let input_trusted = platform::macos::check_input_monitoring_permissions()
-            || std::env::var("WLD_SKIP_PERMISSIONS").is_ok();
+            || std::env::var("CPOP_SKIP_PERMISSIONS").is_ok();
         #[cfg(not(target_os = "macos"))]
         let input_trusted = true;
 
@@ -131,7 +131,7 @@ impl Engine {
         });
 
         #[cfg(target_os = "macos")]
-        if std::env::var("WLD_SKIP_PERMISSIONS").is_err() {
+        if std::env::var("CPOP_SKIP_PERMISSIONS").is_err() {
             let monitor =
                 platform::macos::KeystrokeMonitor::start(Arc::clone(&inner.jitter_session))?;
             *inner.keystroke_monitor.lock_recover() = Some(monitor);

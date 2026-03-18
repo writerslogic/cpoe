@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
-//! VDF proof aggregation per the WritersLogic RFC.
+//! VDF proof aggregation per the CPOP RFC.
 //!
 //! Reduces O(n) sequential VDF recomputation to O(1) or O(log n) verification
 //! of entire checkpoint chains.

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
-//! Native Messaging Host for WritersLogic Browser Extension
+//! Native Messaging Host for CPOP Browser Extension
 //!
 //! Implements the Chrome/Firefox Native Messaging protocol:
 //! - Reads 4-byte LE length-prefixed JSON from stdin
@@ -180,7 +180,7 @@ fn handle_start_session(document_url: String, document_title: String) -> Respons
         .or_else(dirs::home_dir)
         .unwrap_or_else(|| std::path::PathBuf::from("."));
 
-    let session_dir = data_dir.join("WritersLogic").join("browser-sessions");
+    let session_dir = data_dir.join("CPOP").join("browser-sessions");
     if let Err(e) = std::fs::create_dir_all(&session_dir) {
         return Response::Error {
             message: format!("create session dir: {e}"),
@@ -628,7 +628,7 @@ fn main() {
     let init_result = cpop_engine::ffi::ffi_init();
     if !init_result.success {
         eprintln!(
-            "Warning: wld init failed: {}",
+            "Warning: cpop init failed: {}",
             init_result.error_message.as_deref().unwrap_or("unknown")
         );
     }

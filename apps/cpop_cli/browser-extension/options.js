@@ -1,5 +1,5 @@
 /**
- * WritersLogic Browser Extension — Options Script
+ * CPOP Browser Extension — Options Script
  */
 
 const DEFAULTS = {

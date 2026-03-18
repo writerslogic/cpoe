@@ -1,8 +1,8 @@
 # Configuration
 
-WritersLogic can be customized via a JSON configuration file. By default, this file is located at:
+CPOP can be customized via a JSON configuration file. By default, this file is located at:
 - **Linux/macOS (CLI)**: `~/.writerslogic/config.json`
-- **macOS App**: `~/Library/Application Support/WritersLogic/config.json`
+- **macOS App**: `~/Library/Application Support/CPOP/config.json`
 
 ## Configuration Structure
 
@@ -45,7 +45,7 @@ WritersLogic can be customized via a JSON configuration file. By default, this f
 - `iterations_per_second`: Calibrated speed of your CPU.
 - `min_iterations`: Minimum delay for any single checkpoint.
 - `max_iterations`: Maximum allowable delay (safety limit).
-- `calibrated`: Whether `wld calibrate` has been run.
+- `calibrated`: Whether `cpop calibrate` has been run.
 
 ### [[Glossary#Sentinel|Sentinel (Background Daemon)]]
 
@@ -61,9 +61,9 @@ You can override certain settings using environment variables:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `WLD_DIR` | Base directory for WritersLogic data | `~/.writerslogic` |
-| `WLD_LOG_LEVEL` | Logging verbosity (debug, info, warn, error) | `info` |
-| `WLD_CONFIG` | Path to a specific config file | `$WLD_DIR/config.json` |
+| `CPOP_DIR` | Base directory for CPOP data | `~/.writerslogic` |
+| `CPOP_LOG_LEVEL` | Logging verbosity (debug, info, warn, error) | `info` |
+| `CPOP_CONFIG` | Path to a specific config file | `$CPOP_DIR/config.json` |
 
 ---
 
@@ -72,7 +72,7 @@ You can override certain settings using environment variables:
 Most CLI commands accept a `--config` flag to use an alternative configuration directory:
 
 ```bash
-WritersLogic --config /path/to/alt/dir commit myfile.txt
+CPOP --config /path/to/alt/dir commit myfile.txt
 ```
 
 ---

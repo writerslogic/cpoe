@@ -10,7 +10,7 @@ readme = "README.md"
 keywords = ["cryptography", "authorship", "witnessing", "attestation", "proof-of-process"]
 categories = ["cryptography", "authentication"]
 rust-version = "1.75.0"
-homepage = "https://github.com/writerslogic/writerslogic"
+homepage = "https://github.com/writerslogic/cpop"
 documentation = "https://docs.rs/cpop_engine"
 exclude = ["tests/", "fuzz/", "benches/"]
 
@@ -99,12 +99,12 @@ dashmap = "6.0"
 # FFI bindings for Swift/Kotlin (via UniFFI)
 uniffi = { version = "0.28", optional = true }
 
-# WritersLogic Jitter - hardware entropy for proof-of-process
-cpop_jitter = { path = "../cpop_jitter", version = "0.2", optional = true }
+# CPOP Jitter - hardware entropy for proof-of-process
+cpop-jitter = { version = "0.2", optional = true }
 typeshare = "1.0.5"
 
-# WritersLogic Protocol
-cpop_protocol = { path = "../cpop_protocol", version = "0.1" }
+# CPOP Protocol
+cpop-protocol = { version = "0.1" }
 
 # Unix Specific
 [target.'cfg(unix)'.dependencies]
@@ -146,7 +146,7 @@ x11rb = { version = "0.13", features = ["allow-unsafe-code"], optional = true }
 default = []
 cargo-clippy = []
 secure-enclave = []
-cpop_jitter = ["dep:cpop_jitter"]
+cpop_jitter = ["dep:cpop-jitter"]
 x11 = ["x11rb"]  # Enable X11 focus detection on Linux
 ffi = ["dep:uniffi", "uniffi/cli"]  # UniFFI bindings for Swift (macOS GUI)
 

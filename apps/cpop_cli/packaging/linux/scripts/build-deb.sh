@@ -6,7 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../../../../.." && pwd)"
-PACKAGING_DIR="${PROJECT_ROOT}/apps/wld_cli/packaging/linux"
+PACKAGING_DIR="${PROJECT_ROOT}/apps/cpop_cli/packaging/linux"
 BUILD_DIR="${PROJECT_ROOT}/build/deb"
 VERSION="${1:-$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "1.0.0")}"
 

@@ -12,7 +12,7 @@ pub(super) fn write_header(html: &mut String, r: &WarReport) {
     };
     let _ = write!(
         html,
-        r#"<h1>WritersLogic Authorship Report{sample}</h1>
+        r#"<h1>CPOP Authorship Report{sample}</h1>
 <p class="subtitle">
   Report ID: {id} &nbsp;|&nbsp; Algorithm: {alg} &nbsp;|&nbsp;
   Generated: {ts} &nbsp;|&nbsp; Report Schema: {schema} &nbsp;|&nbsp; ENFSI-compliant
@@ -636,9 +636,9 @@ pub(super) fn write_footer(html: &mut String, r: &WarReport) {
     let _ = write!(
         html,
         r#"<div class="report-footer">
-WritersLogic Authorship Report &nbsp;|&nbsp; {id} &nbsp;|&nbsp; Algorithm {alg} &nbsp;|&nbsp; Schema {schema}<br>
+CPOP Authorship Report &nbsp;|&nbsp; {id} &nbsp;|&nbsp; Algorithm {alg} &nbsp;|&nbsp; Schema {schema}<br>
 This report documents process analysis only. It does not constitute legal advice or definitive proof of authorship.
-&copy; {year} WritersLogic, Inc.
+&copy; {year} CPOP, Inc.
 </div>
 "#,
         id = r.report_id,

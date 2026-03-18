@@ -1,12 +1,12 @@
 #!/bin/bash
-# WritersLogic installer
-# Usage: curl -sSf https://raw.githubusercontent.com/writerslogic/witnessd/main/apps/wld_cli/install.sh | sh
-#        WLD_VERSION=v1.0.0 curl -sSf ... | sh
+# CPOP installer
+# Usage: curl -sSf https://raw.githubusercontent.com/writerslogic/cpop/main/apps/cpop_cli/install.sh | sh
+#        CPOP_VERSION=v1.0.0 curl -sSf ... | sh
 
 set -e
 
-REPO="writerslogic/witnessd"
-BINARY_NAME="wld"
+REPO="writerslogic/cpop"
+BINARY_NAME="cpop"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 
 # Colors
@@ -103,15 +103,15 @@ verify_checksum() {
 }
 
 # Download and install
-install_wld() {
+install_cpop() {
     local platform version url archive_name checksum_url tmp_dir
 
     info "Detecting platform..."
     platform=$(detect_platform)
     info "Platform: $platform"
 
-    if [ -n "${WLD_VERSION:-}" ]; then
-        version="$WLD_VERSION"
+    if [ -n "${CPOP_VERSION:-}" ]; then
+        version="$CPOP_VERSION"
         info "Using pinned version: $version"
     else
         info "Fetching latest version..."
@@ -147,37 +147,37 @@ install_wld() {
     # Check if we need sudo
     if [ -w "$INSTALL_DIR" ]; then
         info "Installing to $INSTALL_DIR..."
-        mv "${tmp_dir}/${BINARY_NAME}" "${INSTALL_DIR}/wld"
-        chmod +x "${INSTALL_DIR}/wld"
+        mv "${tmp_dir}/${BINARY_NAME}" "${INSTALL_DIR}/cpop"
+        chmod +x "${INSTALL_DIR}/cpop"
         if [ -f "${tmp_dir}/writerslogic-native-messaging-host" ]; then
             mv "${tmp_dir}/writerslogic-native-messaging-host" "${INSTALL_DIR}/writerslogic-native-messaging-host"
             chmod +x "${INSTALL_DIR}/writerslogic-native-messaging-host"
         fi
     else
         info "Installing to $INSTALL_DIR (requires sudo)..."
-        sudo mv "${tmp_dir}/${BINARY_NAME}" "${INSTALL_DIR}/wld"
-        sudo chmod +x "${INSTALL_DIR}/wld"
+        sudo mv "${tmp_dir}/${BINARY_NAME}" "${INSTALL_DIR}/cpop"
+        sudo chmod +x "${INSTALL_DIR}/cpop"
         if [ -f "${tmp_dir}/writerslogic-native-messaging-host" ]; then
             sudo mv "${tmp_dir}/writerslogic-native-messaging-host" "${INSTALL_DIR}/writerslogic-native-messaging-host"
             sudo chmod +x "${INSTALL_DIR}/writerslogic-native-messaging-host"
         fi
     fi
 
-    info "WritersLogic installed successfully!"
+    info "CPOP installed successfully!"
     echo ""
 
-    if command -v wld &> /dev/null; then
-        info "Installed version: $(wld --version)"
+    if command -v cpop &> /dev/null; then
+        info "Installed version: $(cpop --version)"
         echo ""
         echo "Get started:"
-        echo "  wld --help      # Show all commands"
-        echo "  wld essay.md    # Start tracking a document"
+        echo "  cpop --help      # Show all commands"
+        echo "  cpop essay.md    # Start tracking a document"
     else
-        warn "wld installed but not in PATH. Add $INSTALL_DIR to your PATH."
+        warn "cpop installed but not in PATH. Add $INSTALL_DIR to your PATH."
         echo ""
         echo "After adding to PATH, run:"
-        echo "  wld --help      # Show all commands"
-        echo "  wld essay.md    # Start tracking a document"
+        echo "  cpop --help      # Show all commands"
+        echo "  cpop essay.md    # Start tracking a document"
     fi
 }
 
@@ -190,7 +190,7 @@ main() {
     echo "  Cryptographic Authorship Witnessing"
     echo ""
 
-    install_wld
+    install_cpop
 }
 
 main "$@"

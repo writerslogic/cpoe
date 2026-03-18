@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g., v0.1.9)'
+        description: 'Release tag (e.g., v1.0.1)'
         required: true
 
 permissions:
@@ -29,45 +29,31 @@ jobs:
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Download source tarball and compute hash
-        id: hash
+      - name: Download macOS binary artifacts and compute hashes
+        id: hashes
         run: |
           TAG="${{ steps.release.outputs.tag }}"
-          URL="https://github.com/writerslogic/writerslogic-cli/archive/refs/tags/${TAG}.tar.gz"
-          curl -sSfL -o source.tar.gz "$URL"
-          SHA256=$(sha256sum source.tar.gz | awk '{print $1}')
-          echo "sha256=$SHA256" >> $GITHUB_OUTPUT
-          echo "url=$URL" >> $GITHUB_OUTPUT
+          BASE="https://github.com/writerslogic/cpop/releases/download/${TAG}"
 
-      - name: Checkout homebrew-tap
-        uses: actions/checkout@v4
+          curl -sSfL -o arm64.tar.gz "${BASE}/writerslogic-${TAG}-aarch64-apple-darwin.tar.gz"
+          curl -sSfL -o x86_64.tar.gz "${BASE}/writerslogic-${TAG}-x86_64-apple-darwin.tar.gz"
+
+          echo "sha_arm=$(sha256sum arm64.tar.gz | awk '{print $1}')" >> $GITHUB_OUTPUT
+          echo "sha_x86=$(sha256sum x86_64.tar.gz | awk '{print $1}')" >> $GITHUB_OUTPUT
+
+      - name: Update Homebrew formula
+        uses: peter-evans/repository-dispatch@v3
         with:
-          repository: writerslogic/homebrew-tap
           token: ${{ secrets.TAP_GITHUB_TOKEN }}
-          path: homebrew-tap
-
-      - name: Update formula
-        run: |
-          cd homebrew-tap
-          TAG="${{ steps.release.outputs.tag }}"
-          SHA256="${{ steps.hash.outputs.sha256 }}"
-          URL="${{ steps.hash.outputs.url }}"
-
-          sed -i "s|url \".*\"|url \"${URL}\"|" Formula/wld.rb
-          sed -i "s|sha256 \".*\"|sha256 \"${SHA256}\"|" Formula/wld.rb
-
-      - name: Commit and push
-        run: |
-          cd homebrew-tap
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/wld.rb
-          if git diff --cached --quiet; then
-            echo "No changes to commit"
-          else
-            git commit -m "WritersLogic ${{ steps.release.outputs.tag }}"
-            git push
-          fi
+          repository: writerslogic/homebrew-tap
+          event-type: update-formula
+          client-payload: |
+            {
+              "tag": "${{ steps.release.outputs.tag }}",
+              "version": "${{ steps.release.outputs.version }}",
+              "sha256_arm": "${{ steps.hashes.outputs.sha_arm }}",
+              "sha256_x86": "${{ steps.hashes.outputs.sha_x86 }}"
+            }
 
   update-scoop:
     name: Update Scoop Manifest
@@ -89,7 +75,7 @@ jobs:
         id: hash
         run: |
           TAG="${{ steps.release.outputs.tag }}"
-          URL="https://github.com/writerslogic/writerslogic-cli/releases/download/${TAG}/wld_${TAG}_x86_64-pc-windows-msvc.zip"
+          URL="https://github.com/writerslogic/cpop/releases/download/${TAG}/writerslogic-${TAG}-x86_64-pc-windows-msvc.zip"
           curl -sSfL -o windows.zip "$URL"
           SHA256=$(sha256sum windows.zip | awk '{print $1}')
           echo "sha256=$SHA256" >> $GITHUB_OUTPUT
@@ -110,13 +96,13 @@ jobs:
           SHA256="${{ steps.hash.outputs.sha256 }}"
           URL="${{ steps.hash.outputs.url }}"
 
-          cat > wld.json << MANIFEST
+          cat > writerslogic.json << MANIFEST
           {
               "\$schema": "https://raw.githubusercontent.com/ScoopInstaller/Scoop/master/schema.json",
               "version": "${VERSION}",
               "description": "Cryptographic authorship witnessing for writers and creators",
               "homepage": "https://writerslogic.com",
-              "license": "GPL-3.0-only",
+              "license": "AGPL-3.0-only",
               "architecture": {
                   "64bit": {
                       "url": "${URL}",
@@ -124,19 +110,19 @@ jobs:
                   }
               },
               "bin": [
-                  "writerslogic.exe",
-                  ["writerslogic.exe", "wld"]
+                  "cpop.exe",
+                  ["cpop.exe", "writerslogic"]
               ],
               "checkver": {
-                  "github": "https://github.com/writerslogic/writerslogic-cli"
+                  "github": "https://github.com/writerslogic/cpop"
               },
               "autoupdate": {
                   "architecture": {
                       "64bit": {
-                          "url": "https://github.com/writerslogic/writerslogic-cli/releases/download/v\$version/wld_v\$version_x86_64-pc-windows-msvc.zip",
+                          "url": "https://github.com/writerslogic/cpop/releases/download/v\$version/writerslogic-v\$version-x86_64-pc-windows-msvc.zip",
                           "hash": {
-                              "url": "https://github.com/writerslogic/writerslogic-cli/releases/download/v\$version/checksums.txt",
-                              "regex": "([a-f0-9]{64})\\s+wld_v\$version_x86_64-pc-windows-msvc.zip"
+                              "url": "https://github.com/writerslogic/cpop/releases/download/v\$version/writerslogic-v\$version-x86_64-pc-windows-msvc.zip.sha256",
+                              "regex": "([a-f0-9]{64})\\s+writerslogic-v\\$version-x86_64-pc-windows-msvc\\.zip"
                           }
                       }
                   }
@@ -149,10 +135,10 @@ jobs:
           cd scoop-bucket
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add wld.json
+          git add writerslogic.json
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "WritersLogic ${{ steps.release.outputs.tag }}"
+            git commit -m "CPOP ${{ steps.release.outputs.tag }}"
             git push
           fi

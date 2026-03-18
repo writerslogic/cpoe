@@ -1,5 +1,5 @@
 #!/bin/bash
-# prerm script for wld
+# prerm script for cpop
 
 set -e
 
@@ -7,8 +7,8 @@ case "$1" in
     remove|upgrade|deconfigure)
         # Stop the service if running
         if [ -d /run/systemd/system ]; then
-            systemctl stop wld.service >/dev/null 2>&1 || true
-            systemctl stop wld.socket >/dev/null 2>&1 || true
+            systemctl stop cpop.service >/dev/null 2>&1 || true
+            systemctl stop cpop.socket >/dev/null 2>&1 || true
         fi
         ;;
 

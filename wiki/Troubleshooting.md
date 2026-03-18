@@ -1,16 +1,16 @@
 # Troubleshooting Guide
 
-Solutions to common issues with WritersLogic.
+Solutions to common issues with CPOP.
 
 ## Installation & Setup
 
-### "Command not found: wld"
-- **Cause**: WritersLogic is not in your PATH.
+### "Command not found: cpop"
+- **Cause**: CPOP is not in your PATH.
 - **Solution**: Ensure `/usr/local/bin` or your custom install directory is in your shell's PATH.
 
 ### "Error deriving master identity"
 - **Cause**: Hardware identity ([[Glossary#PUF|PUF]]) initialization failed.
-- **Solution**: Check file permissions for `~/.writerslogic/`. Run `wld init` again.
+- **Solution**: Check file permissions for `~/.writerslogic/`. Run `cpop init` again.
 
 ---
 
@@ -18,15 +18,15 @@ Solutions to common issues with WritersLogic.
 
 ### Keystroke count always zero (macOS)
 - **Cause**: Missing Accessibility permissions.
-- **Solution**: Go to **System Settings > Privacy & Security > Accessibility** and ensure WritersLogic is enabled. Restart the application after granting permissions.
+- **Solution**: Go to **System Settings > Privacy & Security > Accessibility** and ensure CPOP is enabled. Restart the application after granting permissions.
 
 ### Checkpoint failed: HMAC verification error
 - **Cause**: The database integrity check failed, possibly indicating manual editing of the database.
-- **Solution**: WritersLogic databases are tamper-evident. If you manually modified `events.db`, you must restore from a backup.
+- **Solution**: CPOP databases are tamper-evident. If you manually modified `events.db`, you must restore from a backup.
 
 ### [[Glossary#VDF|VDF]] computation timeout
 - **Cause**: Your CPU speed has changed or was never calibrated.
-- **Solution**: Run `wld calibrate` to update your performance parameters.
+- **Solution**: Run `cpop calibrate` to update your performance parameters.
 
 ---
 
@@ -34,7 +34,7 @@ Solutions to common issues with WritersLogic.
 
 ### "Invalid checkpoint chain"
 - **Cause**: The cryptographic links between checkpoints are broken.
-- **Solution**: Ensure you haven't deleted intermediate checkpoints from your database. Run `wld verify <file> --verbose` for more details.
+- **Solution**: Ensure you haven't deleted intermediate checkpoints from your database. Run `cpop verify <file> --verbose` for more details.
 
 ### "VDF proof invalid"
 - **Cause**: The timing proof doesn't match the expected iterations.
@@ -56,4 +56,4 @@ Solutions to common issues with WritersLogic.
 
 ---
 
-*For more help, please open an **[Issue on GitHub](https://github.com/writerslogic/writerslogic/issues)**.*
+*For more help, please open an **[Issue on GitHub](https://github.com/writerslogic/cpop/issues)**.*

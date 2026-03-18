@@ -1,5 +1,5 @@
 /**
- * WritersLogic Browser Extension — Background Service Worker
+ * CPOP Browser Extension — Background Service Worker
  *
  * Manages the native messaging connection to writerslogic-native-messaging-host
  * and coordinates between content scripts and the native host.
@@ -8,7 +8,7 @@
 const NATIVE_HOST_NAME = "com.writerslogic.witnessd";
 const CHECKPOINT_INTERVAL_MS = 30_000; // 30 seconds default
 const MAX_PENDING_CALLBACKS = 256;
-const GENESIS_COMMITMENT_PREFIX = "WritersLogic-Genesis-v1";
+const GENESIS_COMMITMENT_PREFIX = "CPOP-Genesis-v1";
 const COMMITMENT_CHAIN_INITIAL_ORDINAL = 2; // Ordinal 1 = session start
 
 // M-118: Shared action names used in message validation
@@ -358,7 +358,7 @@ function sanitizeErrorMessage(raw) {
 
 /**
  * Derive a deterministic genesis commitment from the session nonce.
- * SHA-256("WritersLogic-Genesis-v1" || session_nonce).
+ * SHA-256("CPOP-Genesis-v1" || session_nonce).
  * This ensures the first checkpoint has a valid prev_commitment.
  *
  * M-090: The commitment chain is stored entirely in memory (prevCommitment is
@@ -416,7 +416,7 @@ function bytesToHex(bytes) {
 }
 
 chrome.runtime.onInstalled.addListener(() => {
-  console.log("WritersLogic extension installed");
+  console.log("CPOP extension installed");
   updateBadge("", "#95a5a6");
 });
 

@@ -1,13 +1,13 @@
 cff-version: 1.2.0
-title: "wld-cli"
+title: "cpop-cli"
 message: "If you use this software, please cite the associated paper."
 type: software
 authors:
   - family-names: Condrey
     given-names: David
     orcid: "https://orcid.org/0009-0003-1849-2963"
-repository-code: "https://github.com/writerslogic/wld-cli"
-url: "https://github.com/writerslogic/wld"
+repository-code: "https://github.com/writerslogic/cpop-cli"
+url: "https://github.com/writerslogic/cpop"
 license: GPL-3.0
 version: 0.1.0
 date-released: "2026-02-20"
@@ -19,7 +19,7 @@ keywords:
   - RATS
 preferred-citation:
   type: article
-  title: "WritersLogic: Proof-of-process via Adversarial Collapse"
+  title: "CPOP: Proof-of-process via Adversarial Collapse"
   authors:
     - family-names: Condrey
       given-names: David

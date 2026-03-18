@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "WritersLogic",
+  "name": "CPOP",
   "version": "1.0.0",
   "description": "Cryptographic proof-of-process evidence for browser-based writing. Witness your creative process in Google Docs, Overleaf, Medium, and more.",
   "permissions": [
@@ -16,7 +16,7 @@
   ],
   "browser_specific_settings": {
     "gecko": {
-      "id": "wld@writerslogic.com",
+      "id": "cpop@writerslogic.com",
       "strict_min_version": "109.0"
     }
   },

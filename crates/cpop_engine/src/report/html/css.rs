@@ -11,7 +11,7 @@ pub(super) fn write_head(html: &mut String, r: &WarReport) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>WritersLogic Authorship Report — {report_id}</title>
+<title>CPOP Authorship Report — {report_id}</title>
 <style>
 :root {{
   --green: #2e7d32;

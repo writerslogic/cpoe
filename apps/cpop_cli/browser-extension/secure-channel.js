@@ -1,5 +1,5 @@
 /**
- * WritersLogic Secure Channel — ECDH + AES-256-GCM encrypted communication
+ * CPOP Secure Channel — ECDH + AES-256-GCM encrypted communication
  *
  * Provides end-to-end encryption between the browser extension and the
  * native messaging host using P-256 ECDH key exchange and AES-256-GCM
@@ -11,13 +11,13 @@
  */
 
 // M-114: Cross-language domain-separation strings. Must match Rust native host exactly.
-const DST_HKDF_SALT = "wld-nmh-v1";
+const DST_HKDF_SALT = "cpop-nmh-v1";
 const DST_SESSION_KEY_INFO = "aes-256-gcm-key";
 const DST_CANARY_SEED_INFO = "canary-seed";
-const DST_KEY_CONFIRM = "wld-key-confirm-ok";
-const DST_KEY_RATCHET = "wld-key-ratchet";
-const DST_JITTER_BINDING = "wld-jitter-binding";
-const DST_BROWSER_COMMIT = "wld-browser-commit";
+const DST_KEY_CONFIRM = "cpop-key-confirm-ok";
+const DST_KEY_RATCHET = "cpop-key-ratchet";
+const DST_JITTER_BINDING = "cpop-jitter-binding";
+const DST_BROWSER_COMMIT = "cpop-browser-commit";
 
 // M-081: Expected sizes for public key validation
 const P256_UNCOMPRESSED_PUBKEY_LEN = 65; // 0x04 || X(32) || Y(32)
@@ -341,7 +341,7 @@ class SecureChannel {
 
   /**
    * Compute jitter hash for key ratcheting.
-   * jitter_hash = SHA-256("wld-jitter-binding" || interval_1_le64 || interval_2_le64 || ...)
+   * jitter_hash = SHA-256("cpop-jitter-binding" || interval_1_le64 || interval_2_le64 || ...)
    */
   async computeJitterHash(intervals) {
     const prefix = new TextEncoder().encode(DST_JITTER_BINDING);
@@ -356,7 +356,7 @@ class SecureChannel {
 
   /**
    * Ratchet the session key using jitter entropy.
-   * new_key = HKDF(IKM=current_key, salt=jitter_hash, info="wld-key-ratchet" || ratchet_count_le64)
+   * new_key = HKDF(IKM=current_key, salt=jitter_hash, info="cpop-key-ratchet" || ratchet_count_le64)
    * Must be called AFTER receiving jitter_received ACK from NMH.
    */
   async ratchetWithJitter(jitterHash, newRatchetCount) {
@@ -406,7 +406,7 @@ class SecureChannel {
 
   /**
    * Compute a dual-channel commitment for a checkpoint.
-   * commitment = SHA-256("wld-browser-commit" || session_id || ordinal_le64 || content_hash || timestamp_le64)
+   * commitment = SHA-256("cpop-browser-commit" || session_id || ordinal_le64 || content_hash || timestamp_le64)
    */
   async computeCommitment(sessionId, ordinal, contentHash, timestamp) {
     const data = concatBytes(

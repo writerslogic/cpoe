@@ -1,5 +1,5 @@
 /**
- * WritersLogic Browser Extension — Popup Script
+ * CPOP Browser Extension — Popup Script
  */
 
 const elements = {

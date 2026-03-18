@@ -6,7 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../../../../.." && pwd)"
-PACKAGING_DIR="${PROJECT_ROOT}/apps/wld_cli/packaging/linux"
+PACKAGING_DIR="${PROJECT_ROOT}/apps/cpop_cli/packaging/linux"
 BUILD_DIR="${PROJECT_ROOT}/build/appimage"
 VERSION="${1:-$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "1.0.0")}"
 ARCH="${2:-x86_64}"
@@ -62,7 +62,7 @@ case "${ARCH}" in
         ;;
 esac
 
-cargo build --release --package wld_cli --target "${RUST_TARGET}"
+cargo build --release --package cpop_cli --target "${RUST_TARGET}"
 
 # Install binaries into AppDir
 cp "${PROJECT_ROOT}/target/${RUST_TARGET}/release/writerslogic" "${APPDIR}/usr/bin/writerslogic"

@@ -1,23 +1,23 @@
 #!/bin/bash
-# postrm script for wld
+# postrm script for cpop
 
 set -e
 
 case "$1" in
     purge)
         # Remove data directories on purge
-        rm -rf /var/lib/wld
-        rm -rf /var/log/wld
-        rm -rf /etc/wld
+        rm -rf /var/lib/cpop
+        rm -rf /var/log/cpop
+        rm -rf /etc/cpop
 
-        # Remove wld user
-        if getent passwd wld >/dev/null 2>&1; then
-            deluser --quiet --system wld || true
+        # Remove cpop user
+        if getent passwd cpop >/dev/null 2>&1; then
+            deluser --quiet --system cpop || true
         fi
 
-        # Remove wld group
-        if getent group wld >/dev/null 2>&1; then
-            delgroup --quiet --system wld || true
+        # Remove cpop group
+        if getent group cpop >/dev/null 2>&1; then
+            delgroup --quiet --system cpop || true
         fi
 
         # Reload systemd daemon

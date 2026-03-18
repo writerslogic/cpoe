@@ -1,5 +1,5 @@
 #!/bin/bash
-# AppRun script for wld AppImage
+# AppRun script for cpop AppImage
 # This script is executed when the AppImage is run
 
 SELF=$(readlink -f "$0")
@@ -16,11 +16,11 @@ case "$ARGV0" in
     witnessctl|witnessctl.AppImage)
         exec "${HERE}/usr/bin/witnessctl" "$@"
         ;;
-    wld-ibus|wld-ibus.AppImage)
-        exec "${HERE}/usr/bin/wld-ibus" "$@"
+    cpop-ibus|cpop-ibus.AppImage)
+        exec "${HERE}/usr/bin/cpop-ibus" "$@"
         ;;
     *)
-        # Default to wld daemon
-        exec "${HERE}/usr/bin/wld" "$@"
+        # Default to cpop daemon
+        exec "${HERE}/usr/bin/cpop" "$@"
         ;;
 esac

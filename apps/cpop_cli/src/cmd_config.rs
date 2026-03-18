@@ -16,7 +16,7 @@ pub(crate) fn cmd_config(action: ConfigAction) -> Result<()> {
         ConfigAction::Show => {
             let config = CpopConfig::load_or_default(&dir)?;
 
-            println!("=== WritersLogic Configuration ===");
+            println!("=== CPOP Configuration ===");
             println!();
             println!("Data directory: {}", config.data_dir.display());
             println!();
@@ -178,7 +178,7 @@ pub(crate) fn cmd_config(action: ConfigAction) -> Result<()> {
                 }
                 _ => {
                     return Err(anyhow!(
-                        "Unknown configuration key: {key}. Run 'wld config show' to see valid keys."
+                        "Unknown configuration key: {key}. Run 'cpop config show' to see valid keys."
                     ));
                 }
             }

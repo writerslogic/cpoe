@@ -8,14 +8,14 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use zeroize::Zeroize;
 
+use cpop_engine::cpop_protocol::crypto::EvidenceSigner;
+use cpop_engine::cpop_protocol::rfc::{CBOR_TAG_ATTESTATION_RESULT, CBOR_TAG_EVIDENCE_PACKET};
 use cpop_engine::declaration::{self, AiExtent, AiPurpose, ModalityType};
 use cpop_engine::evidence;
 use cpop_engine::jitter::Session as JitterSession;
 use cpop_engine::report::{self, WarReport};
 use cpop_engine::tpm;
 use cpop_engine::war;
-use cpop_engine::cpop_protocol::crypto::PoPSigner;
-use cpop_engine::cpop_protocol::rfc::{CBOR_TAG_ATTESTATION_RESULT, CBOR_TAG_EVIDENCE_PACKET};
 
 use crate::output::OutputMode;
 use crate::spec::{
@@ -52,7 +52,7 @@ struct EvidenceOutputContext<'a> {
     config: &'a cpop_engine::config::CpopConfig,
     events: &'a [cpop_engine::SecureEvent],
     packet: &'a serde_json::Value,
-    signer: &'a dyn PoPSigner,
+    signer: &'a dyn EvidenceSigner,
     vdf_params: &'a cpop_engine::vdf::params::Parameters,
     tier: &'a str,
     tier_lower: &'a str,
@@ -94,7 +94,7 @@ pub(crate) async fn cmd_export(
 
     if vdf_params.iterations_per_second == 0 {
         return Err(anyhow!(
-            "VDF not calibrated. Run 'wld init' or 'wld calibrate' first."
+            "VDF not calibrated. Run 'cpop init' or 'cpop calibrate' first."
         ));
     }
 
@@ -102,7 +102,7 @@ pub(crate) async fn cmd_export(
     let caps = tpm_provider.capabilities();
     let tpm_device_id = tpm_provider.device_id();
 
-    let signer: Box<dyn PoPSigner> = if caps.hardware_backed {
+    let signer: Box<dyn EvidenceSigner> = if caps.hardware_backed {
         if !out.quiet && !out.json {
             println!(
                 "Using hardware provider for evidence signing: {}",
@@ -236,14 +236,14 @@ fn validate_checkpoint_count(file_path: &Path, events: &[cpop_engine::SecureEven
     if events.is_empty() {
         return Err(anyhow!(
             "No checkpoints found for this file.\n\n\
-             Create one first with: wld commit {}",
+             Create one first with: cpop commit {}",
             file_name()
         ));
     }
 
     if events.len() < MIN_CHECKPOINTS_PER_PACKET {
         return Err(anyhow!(
-            "Insufficient checkpoints (found {}, need {}). Run 'wld commit' for this file.",
+            "Insufficient checkpoints (found {}, need {}). Run 'cpop commit' for this file.",
             events.len(),
             MIN_CHECKPOINTS_PER_PACKET
         ));
@@ -315,7 +315,7 @@ fn load_keystroke_evidence(dir: &Path, abs_path_str: &str) -> serde_json::Value 
     let tracking_dir = dir.join("tracking");
     if !tracking_dir.exists() {
         eprintln!("No matching tracking session found for this document.");
-        eprintln!("Tip: Run 'wld track start' before writing to generate enhanced evidence.");
+        eprintln!("Tip: Run 'cpop track start' before writing to generate enhanced evidence.");
         return serde_json::Value::Null;
     }
 
@@ -323,7 +323,7 @@ fn load_keystroke_evidence(dir: &Path, abs_path_str: &str) -> serde_json::Value 
         Some(id) => id,
         None => {
             eprintln!("No matching tracking session found for this document.");
-            eprintln!("Tip: Run 'wld track start' before writing to generate enhanced evidence.");
+            eprintln!("Tip: Run 'cpop track start' before writing to generate enhanced evidence.");
             return serde_json::Value::Null;
         }
     };
@@ -402,7 +402,7 @@ fn resolve_declaration(
     content_hash: [u8; 32],
     chain_hash: [u8; 32],
     title: String,
-    signer: &dyn PoPSigner,
+    signer: &dyn EvidenceSigner,
 ) -> Result<declaration::Declaration> {
     if tier_lower == "basic" {
         eprintln!("Basic tier: using default declaration (no AI tools declared).");
@@ -837,7 +837,7 @@ async fn embed_steganographic_watermark(
                          not by third parties."
                     );
                     eprintln!(
-                        "  To sign it later: wld export {} --stego",
+                        "  To sign it later: cpop export {} --stego",
                         file_path.display(),
                     );
                 }
@@ -1108,7 +1108,7 @@ fn collect_declaration(
     document_hash: [u8; 32],
     chain_hash: [u8; 32],
     title: String,
-    signer: &dyn PoPSigner,
+    signer: &dyn EvidenceSigner,
 ) -> Result<declaration::Declaration> {
     let stdin = io::stdin();
     let mut reader = stdin.lock();

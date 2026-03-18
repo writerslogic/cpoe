@@ -111,7 +111,7 @@ pub(crate) fn cmd_identity(
 
     let identity_path = dir.join("identity.json");
     if !identity_path.exists() {
-        return Err(anyhow!("Identity not initialized. Run 'wld init' first."));
+        return Err(anyhow!("Identity not initialized. Run 'cpop init' first."));
     }
 
     let data = fs::read_to_string(&identity_path)?;
@@ -193,7 +193,7 @@ pub(crate) fn cmd_identity(
                 ));
             }
         } else {
-            return Err(anyhow!("Identity not initialized. Run 'wld init' first."));
+            return Err(anyhow!("Identity not initialized. Run 'cpop init' first."));
         }
         return Ok(());
     }

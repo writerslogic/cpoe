@@ -402,7 +402,7 @@ mod tests {
 
     #[test]
     fn hash_file_and_hash_file_with_size_agree() {
-        let dir = std::env::temp_dir().join("wld_crypto_test");
+        let dir = std::env::temp_dir().join("cpop_crypto_test");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("test_hash.txt");
         let content = b"hello world for hashing";
@@ -427,7 +427,7 @@ mod tests {
 
     #[test]
     fn hash_file_nonexistent_returns_error() {
-        let result = hash_file(Path::new("/tmp/wld_crypto_nonexistent_file_xyz"));
+        let result = hash_file(Path::new("/tmp/cpop_crypto_nonexistent_file_xyz"));
         assert!(result.is_err());
     }
 }
