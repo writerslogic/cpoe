@@ -23,6 +23,7 @@ pub(crate) fn cmd_attest(
     }
 
     // Piped stdin consumes all input; declaration prompts will reach EOF.
+    let from_stdin = input.is_none();
     let content = if let Some(path) = &input {
         std::fs::read_to_string(path).map_err(|e| anyhow!("read input: {e}"))?
     } else {
@@ -70,7 +71,7 @@ pub(crate) fn cmd_attest(
         ));
     }
 
-    let statement = if non_interactive {
+    let statement = if non_interactive || from_stdin {
         "I authored this text.".to_string()
     } else {
         eprint!("Declaration statement (or press Enter for default): ");
@@ -102,13 +103,7 @@ pub(crate) fn cmd_attest(
         .to_string(),
         "compact" => result.compact_ref.clone(),
         "both" => format!("{}\n{}", result.war_block, result.compact_ref),
-        "war" | "war_block" | "" => result.war_block.clone(),
-        other => {
-            return Err(anyhow!(
-                "Unknown format: '{}'. Valid formats: war, compact, json, both",
-                other
-            ));
-        }
+        _ => result.war_block.clone(),
     };
 
     if let Some(out_path) = output {

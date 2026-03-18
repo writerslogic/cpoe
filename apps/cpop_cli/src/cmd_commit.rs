@@ -40,26 +40,6 @@ pub(crate) fn cmd_commit(
         }
     }
 
-    let metadata =
-        fs::metadata(&abs_path).map_err(|e| anyhow!("Cannot read file metadata: {}", e))?;
-    if metadata.len() > MAX_FILE_SIZE {
-        return Err(anyhow!(
-            "File is too large ({:.0} MB).\n\n\
-             CPOP is designed for text documents, not binary files.\n\
-             Maximum file size: {} MB",
-            metadata.len() as f64 / 1_000_000.0,
-            MAX_FILE_SIZE / 1_000_000
-        ));
-    }
-    if metadata.len() > LARGE_FILE_WARNING_THRESHOLD && !out.quiet {
-        eprintln!(
-            "Warning: Large file ({:.0} MB). Checkpoint may take longer than usual.",
-            metadata.len() as f64 / 1_000_000.0
-        );
-    }
-
-    let mut db = open_secure_store()?;
-
     let content = fs::read(&abs_path).map_err(|e| {
         if e.kind() == std::io::ErrorKind::PermissionDenied {
             anyhow!("Permission denied: {}", abs_path.display())
@@ -67,6 +47,23 @@ pub(crate) fn cmd_commit(
             anyhow!("read {}: {}", abs_path.display(), e)
         }
     })?;
+    if content.len() as u64 > MAX_FILE_SIZE {
+        return Err(anyhow!(
+            "File is too large ({:.0} MB).\n\n\
+             CPOP is designed for text documents, not binary files.\n\
+             Maximum file size: {} MB",
+            content.len() as f64 / 1_000_000.0,
+            MAX_FILE_SIZE / 1_000_000
+        ));
+    }
+    if content.len() as u64 > LARGE_FILE_WARNING_THRESHOLD && !out.quiet {
+        eprintln!(
+            "Warning: Large file ({:.0} MB). Checkpoint may take longer than usual.",
+            content.len() as f64 / 1_000_000.0
+        );
+    }
+
+    let mut db = open_secure_store()?;
     if content.is_empty() {
         eprintln!("Warning: File is empty. Checkpoint will record a zero-byte snapshot.");
     }
@@ -77,24 +74,10 @@ pub(crate) fn cmd_commit(
     let last_event = events.last();
 
     let (vdf_input, size_delta): ([u8; 32], i32) = if let Some(last) = last_event {
-        let raw_delta = file_size - last.file_size;
-        if raw_delta < i32::MIN as i64 || raw_delta > i32::MAX as i64 {
-            eprintln!(
-                "Warning: Size delta {} exceeds i32 range, clamped to {}",
-                raw_delta,
-                raw_delta.clamp(i32::MIN as i64, i32::MAX as i64)
-            );
-        }
-        let delta = raw_delta.clamp(i32::MIN as i64, i32::MAX as i64);
+        let delta = (file_size - last.file_size).clamp(i32::MIN as i64, i32::MAX as i64);
         (last.event_hash, delta as i32)
     } else {
         // Genesis: VDF input is content hash
-        if file_size > i32::MAX as i64 {
-            eprintln!(
-                "Warning: File size {} exceeds i32 range for initial delta, clamped",
-                file_size
-            );
-        }
         (
             content_hash,
             file_size.clamp(i32::MIN as i64, i32::MAX as i64) as i32,

@@ -21,7 +21,7 @@ pub(crate) fn cmd_fingerprint(action: FingerprintAction, out: &OutputMode) -> Re
                 .map_err(|e| anyhow!("consent manager: {}", e))?;
 
             let fp_status = manager.status();
-            let min_samples = (config.fingerprint.min_samples as usize).max(1);
+            let min_samples = config.fingerprint.min_samples as usize;
 
             if out.json {
                 let voice_consent = match consent_manager.status() {
@@ -185,9 +185,13 @@ pub(crate) fn cmd_fingerprint(action: FingerprintAction, out: &OutputMode) -> Re
                 }
                 Err(e) => {
                     let msg = e.to_string();
+                    // NOTE: String matching is brittle; the upstream error (anyhow) does not
+                    // expose a typed variant for "not found". If the error message changes,
+                    // this match will fall through to the generic branch.
                     if msg.contains("not found") {
                         return Err(anyhow!("Profile not found: {}", profile_id));
                     }
+                    eprintln!("Debug: fingerprint load error: {}", e);
                     return Err(anyhow!("Storage error: {}", e));
                 }
             }
