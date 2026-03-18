@@ -16,13 +16,13 @@
   fs::write() then restrict_permissions() is non-atomic. If chmod fails, key file is world-readable.
   Fix: Write to temp file with restrictive umask, then atomic rename.
 
-- [ ] **SYS-002** `toctou_file_ops` — 4 files — HIGH
+- [x] **SYS-002** `toctou_file_ops` — 4 files — HIGH
   Files: `cmd_track.rs:238`, `cmd_track.rs:678`, `cmd_presence.rs:240`, `cmd_export.rs:560`
-  File metadata checked, then file read without locking. Race window for replacement/deletion.
+  Fix: Read-then-validate instead of check-then-read; removed metadata pre-checks
 
-- [ ] **SYS-003** `silent_error_swallow` — 4 files — HIGH
+- [x] **SYS-003** `silent_error_swallow` — 4 files — HIGH
   Files: `native_messaging_host.rs:381`, `cmd_track.rs:517`, `cmd_daemon.rs:96`, `native_messaging_host.rs:270`
-  Errors converted to defaults or logged without propagation.
+  Fix: Return Response::Error for clock failures, eprintln for best-effort paths
 
 ## Critical
 - [x] **C-001** `[security]` `cmd_track.rs:1266` — Export paths relative, arbitrary file write if CWD controlled
