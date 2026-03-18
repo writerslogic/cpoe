@@ -1,7 +1,7 @@
-# Install WritersLogic Native Messaging Host on Windows
+# Install CPOP Native Messaging Host on Windows
 #
 # This script:
-# 1. Copies the native messaging host binary to %LOCALAPPDATA%\WritersLogic\
+# 1. Copies the native messaging host binary to %LOCALAPPDATA%\CPOP\
 # 2. Registers the native messaging manifest via Registry for Chrome, Firefox, and/or Edge
 #
 # Usage: .\install-native-host.ps1 [-Chrome] [-Firefox] [-Edge] [-All] [-ExtensionId ID]
@@ -19,7 +19,7 @@ $ErrorActionPreference = "Stop"
 
 $HostBinary = "writerslogic-native-messaging-host.exe"
 $HostName = "com.writerslogic.witnessd"
-$InstallDir = Join-Path $env:LOCALAPPDATA "WritersLogic"
+$InstallDir = Join-Path $env:LOCALAPPDATA "CPOP"
 
 # Find binary
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -38,7 +38,6 @@ foreach ($candidate in $candidates) {
 }
 
 if (-not $BinaryPath) {
-    Write-Error "Cannot find $HostBinary. Build it first: cargo build --release --bin writerslogic-native-messaging-host"
     exit 1
 }
 
@@ -52,7 +51,7 @@ if ($All -or $Both) {
     $Edge = $true
 }
 
-Write-Host "=== WritersLogic Native Messaging Host Installer ===" -ForegroundColor Cyan
+Write-Host "=== CPOP Native Messaging Host Installer ===" -ForegroundColor Cyan
 Write-Host ""
 
 # Install binary
@@ -69,7 +68,7 @@ New-Item -ItemType Directory -Path $ManifestDir -Force | Out-Null
 function Install-ChromeHost {
     $manifest = @{
         name = $HostName
-        description = "WritersLogic Native Messaging Host"
+        description = "CPOP Native Messaging Host"
         path = $InstalledBinary
         type = "stdio"
         allowed_origins = @("chrome-extension://$ExtensionId/")
@@ -93,10 +92,10 @@ function Install-ChromeHost {
 function Install-FirefoxHost {
     $manifest = @{
         name = $HostName
-        description = "WritersLogic Native Messaging Host"
+        description = "CPOP Native Messaging Host"
         path = $InstalledBinary
         type = "stdio"
-        allowed_extensions = @("wld@writerslogic.com")
+        allowed_extensions = @("cpop@writerslogic.com")
     }
 
     $manifestPath = Join-Path $ManifestDir "firefox-$HostName.json"
@@ -114,7 +113,7 @@ function Install-FirefoxHost {
 function Install-EdgeHost {
     $manifest = @{
         name = $HostName
-        description = "WritersLogic Native Messaging Host"
+        description = "CPOP Native Messaging Host"
         path = $InstalledBinary
         type = "stdio"
         allowed_origins = @("chrome-extension://$ExtensionId/")

@@ -2,9 +2,9 @@
 
 //! EAR (Entity Attestation Result) types per draft-ietf-rats-ear.
 //!
-//! Maps WritersLogic's proof-of-process appraisal onto standard RATS EAR
+//! Maps CPOP's proof-of-process appraisal onto standard RATS EAR
 //! structures with AR4SI trust vectors. Private-use keys 70001-70009
-//! carry WritersLogic-specific claims.
+//! carry CPOP-specific claims.
 
 use std::collections::BTreeMap;
 
@@ -71,7 +71,7 @@ impl Ar4siStatus {
     }
 }
 
-/// AR4SI trustworthiness vector — maps from WritersLogic evidence components.
+/// AR4SI trustworthiness vector — maps from CPOP evidence components.
 ///
 /// Each component is a tier value from -128 to 127:
 /// - 2 = affirming, 32 = warning, 96 = contraindicated, 0 = none

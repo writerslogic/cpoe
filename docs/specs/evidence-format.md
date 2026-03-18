@@ -7,7 +7,7 @@
 
 ## Overview
 
-A WritersLogic **Evidence Packet** (`.wpkt`) is a self-contained, portable proof of documented authorship. It bundles cryptographic proofs, process declarations, and sequential attestations into a single format compliant with the IETF RATS (Remote ATtestation ProcedureS) framework and the **Proof-of-Process (PoP)** protocol.
+A CPOP **Evidence Packet** (`.wpkt`) is a self-contained, portable proof of documented authorship. It bundles cryptographic proofs, process declarations, and sequential attestations into a single format compliant with the IETF RATS (Remote ATtestation ProcedureS) framework and the **Proof-of-Process (PoP)** protocol.
 
 This specification aligns with the CDDL schema defined in `draft-condrey-rats-pop`.
 

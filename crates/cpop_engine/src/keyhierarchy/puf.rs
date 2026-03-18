@@ -221,7 +221,7 @@ pub fn get_or_create_puf() -> Result<Box<dyn PufProvider>, KeyHierarchyError> {
 }
 
 fn writerslogic_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("WLD_DATA_DIR") {
+    if let Ok(dir) = std::env::var("CPOP_DATA_DIR") {
         return PathBuf::from(dir);
     }
     if let Some(home) = dirs::home_dir() {

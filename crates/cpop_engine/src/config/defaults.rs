@@ -15,13 +15,13 @@ pub(super) fn default_data_dir() -> PathBuf {
     {
         dirs::home_dir()
             .expect("cannot determine home directory")
-            .join("Library/Application Support/WritersLogic")
+            .join("Library/Application Support/CPOP")
     }
     #[cfg(target_os = "windows")]
     {
         dirs::data_local_dir()
             .unwrap_or_else(|| dirs::home_dir().expect("cannot determine home directory"))
-            .join("WritersLogic")
+            .join("CPOP")
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {

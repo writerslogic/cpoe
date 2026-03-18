@@ -50,7 +50,7 @@ pub struct AttestResponse {
 pub struct AnchorRequest {
     /// SHA-256 hash of the evidence packet (hex-encoded).
     pub evidence_hash: String,
-    /// Author DID (e.g. `did:wld:...`).
+    /// Author DID (e.g. `did:cpop:...`).
     pub author_did: String,
     /// Ed25519 signature over the evidence hash (hex-encoded).
     pub signature: String,

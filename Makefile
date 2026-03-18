@@ -4,17 +4,17 @@
 build:
 	cargo build
 	@if [ "$$(uname)" = "Darwin" ]; then \
-		codesign -s - -f target/debug/wld 2>/dev/null && \
-		echo "Ad-hoc signed target/debug/wld"; \
+		codesign -s - -f target/debug/cpop 2>/dev/null && \
+		echo "Ad-hoc signed target/debug/cpop"; \
 	fi
 
 # Run all workspace tests (mock keychain — zero keychain interaction)
 test:
-	WLD_NO_KEYCHAIN=1 cargo test --workspace
+	CPOP_NO_KEYCHAIN=1 cargo test --workspace
 
 # Build + codesign + run the binary directly (bypasses cargo run rebuild)
 run: build
-	target/debug/wld $(ARGS)
+	target/debug/cpop $(ARGS)
 
 # Release build (should be properly codesigned separately for distribution)
 release:

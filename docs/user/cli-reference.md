@@ -1,6 +1,6 @@
 # CLI Reference
 
-Complete reference for the WritersLogic command-line interface.
+Complete reference for the CPOP command-line interface.
 
 ## Table of Contents
 
@@ -41,10 +41,10 @@ These options can be used with any command:
 
 ### init
 
-Initialize WritersLogic in the current directory.
+Initialize CPOP in the current directory.
 
 ```bash
-wld init
+cpop init
 ```
 
 **What it does:**
@@ -56,7 +56,7 @@ wld init
 
 **Example:**
 ```bash
-$ wld init
+$ cpop init
 
 Generating Ed25519 signing key...
   Public key: a1b2c3d4...
@@ -66,13 +66,13 @@ Initializing master identity from PUF...
 Creating secure event database...
   Database: events.db (tamper-evident)
 
-wld initialized!
+cpop initialized!
 ```
 
 **Notes:**
 - Safe to run multiple times (idempotent)
 - Preserves existing keys and identity
-- Run `wld calibrate` after initialization
+- Run `cpop calibrate` after initialization
 
 ---
 
@@ -81,7 +81,7 @@ wld initialized!
 Create a checkpoint for a file.
 
 ```bash
-wld commit <file> [-m <message>]
+cpop commit <file> [-m <message>]
 ```
 
 **Options:**
@@ -92,7 +92,7 @@ wld commit <file> [-m <message>]
 
 **Example:**
 ```bash
-$ wld commit manuscript.md -m "Completed chapter 3"
+$ cpop commit manuscript.md -m "Completed chapter 3"
 
 Computing checkpoint... done (1.2s)
 
@@ -112,7 +112,7 @@ Checkpoint #5 created
 
 **With tracking active:**
 ```bash
-$ wld commit manuscript.md -m "Draft with tracking"
+$ cpop commit manuscript.md -m "Draft with tracking"
 
 Computing checkpoint... done (1.2s)
 
@@ -128,7 +128,7 @@ Checkpoint #6 created (tracking: 1523 keystrokes, 45 samples)
 Show checkpoint history for a file.
 
 ```bash
-wld log <file> [options]
+cpop log <file> [options]
 ```
 
 **Options:**
@@ -141,7 +141,7 @@ wld log <file> [options]
 
 **Example:**
 ```bash
-$ wld log manuscript.md
+$ cpop log manuscript.md
 
 Checkpoint History for manuscript.md
 
@@ -157,7 +157,7 @@ Total: 5 checkpoints over 7h 30m
 
 **JSON output:**
 ```bash
-$ wld log manuscript.md --json --limit 1
+$ cpop log manuscript.md --json --limit 1
 ```
 ```json
 {
@@ -183,7 +183,7 @@ $ wld log manuscript.md --json --limit 1
 Export evidence packet for a file.
 
 ```bash
-wld export <file> [options]
+cpop export <file> [options]
 ```
 
 **Options:**
@@ -197,7 +197,7 @@ wld export <file> [options]
 
 **Example:**
 ```bash
-$ wld export manuscript.md
+$ cpop export manuscript.md
 
 Exporting evidence packet...
 
@@ -212,7 +212,7 @@ Packet ready for verification.
 
 **Custom output:**
 ```bash
-$ wld export manuscript.md -o evidence.json --format json --tier 3
+$ cpop export manuscript.md -o evidence.json --format json --tier 3
 ```
 
 **Evidence packet contents:**
@@ -230,7 +230,7 @@ $ wld export manuscript.md -o evidence.json --format json --tier 3
 Verify a checkpoint chain or evidence packet.
 
 ```bash
-wld verify <file|packet> [options]
+cpop verify <file|packet> [options]
 ```
 
 **Options:**
@@ -242,7 +242,7 @@ wld verify <file|packet> [options]
 
 **Verify evidence packet:**
 ```bash
-$ wld verify manuscript.wpkt
+$ cpop verify manuscript.wpkt
 
 Evidence Packet Verification
 
@@ -264,7 +264,7 @@ Overall: VERIFIED
 
 **Verify file against local checkpoints:**
 ```bash
-$ wld verify manuscript.md
+$ cpop verify manuscript.md
 
 Verifying manuscript.md against local checkpoints...
 
@@ -282,7 +282,7 @@ Chain integrity: VALID (15 checkpoints)
 Track keyboard activity for a document.
 
 ```bash
-wld track <action> [options]
+cpop track <action> [options]
 ```
 
 **Actions:**
@@ -297,18 +297,18 @@ wld track <action> [options]
 
 **Start tracking:**
 ```bash
-$ wld track start manuscript.md
+$ cpop track start manuscript.md
 
 Tracking started for manuscript.md
   Session ID: sess_abc123
   WAL: ~/.writerslogic/tracking/manuscript.md.wal
 
-Press Ctrl+C or run 'wld track stop' to end.
+Press Ctrl+C or run 'cpop track stop' to end.
 ```
 
 **Check status:**
 ```bash
-$ wld track status
+$ cpop track status
 
 Tracking Status
   Document: manuscript.md
@@ -320,7 +320,7 @@ Tracking Status
 
 **Stop tracking:**
 ```bash
-$ wld track stop
+$ cpop track stop
 
 Tracking stopped
   Total keystrokes: 4,523
@@ -335,7 +335,7 @@ Tracking stopped
 Manage the background sentinel daemon for automatic tracking.
 
 ```bash
-WritersLogic sentinel <action>
+CPOP sentinel <action>
 ```
 
 **Actions:**
@@ -348,7 +348,7 @@ WritersLogic sentinel <action>
 
 **Start sentinel:**
 ```bash
-$ WritersLogic sentinel start
+$ CPOP sentinel start
 
 Sentinel daemon started
   PID: 12345
@@ -359,7 +359,7 @@ Sentinel daemon started
 
 **Check status:**
 ```bash
-$ WritersLogic sentinel status
+$ CPOP sentinel status
 
 Sentinel Status: Running (PID 12345)
   Uptime: 4h 23m
@@ -374,7 +374,7 @@ Auto-checkpoints: 47 created
 
 **Stop sentinel:**
 ```bash
-$ WritersLogic sentinel stop
+$ CPOP sentinel stop
 
 Sentinel stopped
   Final checkpoint created for all tracked documents
@@ -387,7 +387,7 @@ Sentinel stopped
 Manage presence verification sessions.
 
 ```bash
-wld presence <action>
+cpop presence <action>
 ```
 
 **Actions:**
@@ -400,7 +400,7 @@ wld presence <action>
 
 **Start presence session:**
 ```bash
-$ wld presence start
+$ cpop presence start
 
 Presence verification session started
   Challenge interval: 10m
@@ -424,12 +424,12 @@ Challenge accepted! Next challenge in 10 minutes.
 Calibrate VDF performance for this machine.
 
 ```bash
-wld calibrate
+cpop calibrate
 ```
 
 **Example:**
 ```bash
-$ wld calibrate
+$ cpop calibrate
 
 Calibrating VDF performance...
 
@@ -454,17 +454,17 @@ Configuration updated.
 
 ### status
 
-Show wld status and configuration.
+Show cpop status and configuration.
 
 ```bash
-wld status
+cpop status
 ```
 
 **Example:**
 ```bash
-$ wld status
+$ cpop status
 
-WritersLogic Status
+CPOP Status
   Version: 1.0.0
   Data directory: ~/.writerslogic
   Initialized: Yes
@@ -494,7 +494,7 @@ Tracking: Not active
 List all tracked documents in the database.
 
 ```bash
-WritersLogic list
+CPOP list
 ```
 
 ---
@@ -504,29 +504,29 @@ WritersLogic list
 Watch folders for automatic checkpointing.
 
 ```bash
-wld watch add <folder>
-wld watch remove <folder>
-wld watch list
+cpop watch add <folder>
+cpop watch remove <folder>
+cpop watch list
 ```
 
 ---
 
 ### start
 
-Start the wld daemon in the background.
+Start the cpop daemon in the background.
 
 ```bash
-wld start
+cpop start
 ```
 
 ---
 
 ### stop
 
-Stop the wld daemon.
+Stop the cpop daemon.
 
 ```bash
-wld stop
+cpop stop
 ```
 
 ---
@@ -536,8 +536,8 @@ wld stop
 Manage author fingerprints.
 
 ```bash
-wld fingerprint activity status
-wld fingerprint voice enable
+cpop fingerprint activity status
+cpop fingerprint voice enable
 ```
 
 ---
@@ -547,7 +547,7 @@ wld fingerprint voice enable
 (Legacy) Run background monitoring daemon in the foreground.
 
 ```bash
-wld daemon [options]
+cpop daemon [options]
 ```
 
 **Options:**
@@ -565,14 +565,14 @@ wld daemon [options]
 Show help information.
 
 ```bash
-WritersLogic help [command]
+CPOP help [command]
 ```
 
 **Examples:**
 ```bash
-WritersLogic help          # Show all commands
-WritersLogic help commit   # Show help for commit command
-wld commit --help # Same as above
+CPOP help          # Show all commands
+CPOP help commit   # Show help for commit command
+cpop commit --help # Same as above
 ```
 
 ---
@@ -582,14 +582,14 @@ wld commit --help # Same as above
 Show version information.
 
 ```bash
-WritersLogic version
+CPOP version
 ```
 
 **Example:**
 ```bash
-$ WritersLogic version
+$ CPOP version
 
-WritersLogic v1.0.0
+CPOP v1.0.0
   Build:    2026-01-15T10:00:00Z
   Commit:   abc12345
   Platform: darwin/arm64
@@ -599,16 +599,16 @@ WritersLogic v1.0.0
 
 ## Interactive Menu
 
-Running `wld` without arguments launches the interactive menu:
+Running `cpop` without arguments launches the interactive menu:
 
 ```bash
-$ wld
+$ cpop
 
 ░█░░░█░░▀░░▀█▀░█▀▀▄░█▀▀░█▀▀░█▀▀░░░░█▀▄
 ░▀▄█▄▀░░█▀░░█░░█░▒█░█▀▀░▀▀▄░▀▀▄░▀▀░█░█
 ░░▀░▀░░▀▀▀░░▀░░▀░░▀░▀▀▀░▀▀▀░▀▀▀░░░░▀▀░
 
-WritersLogic v1.0.0
+CPOP v1.0.0
 
 ? Select an action:
   > Initialize

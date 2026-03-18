@@ -25,7 +25,7 @@ pub const CBOR_TAG_CWAR: u64 = 1129791826;
 /// Tag value: 1129336657 (0x43504F51 = "CPOQ")
 pub const CBOR_TAG_COMPACT_REF: u64 = 1129336657;
 
-/// IANA Private Enterprise Number for WritersLogic Inc.
+/// IANA Private Enterprise Number for CPOP Inc.
 pub const IANA_PEN: u32 = 65074;
 
 /// Wire serialization format selector.

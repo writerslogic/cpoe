@@ -1,14 +1,14 @@
 # Privacy & External Interactions
 
-WritersLogic is built on the principle of **computational privacy**. We believe that proving authorship should not require invasive surveillance or the surrender of your creative content to a third party.
+CPOP is built on the principle of **computational privacy**. We believe that proving authorship should not require invasive surveillance or the surrender of your creative content to a third party.
 
 ---
 
 ## 🔒 Offline-First Architecture
 
-By default, **WritersLogic is a strictly local application.**
+By default, **CPOP is a strictly local application.**
 
-*   **Keystroke Capture:** Keystroke counting and timing analysis happen entirely within the `wld` process memory.
+*   **Keystroke Capture:** Keystroke counting and timing analysis happen entirely within the `cpop` process memory.
 *   **Content Hashing:** Document content is hashed locally. The raw text never leaves your device.
 *   **Database:** Your history of creative effort is stored in a local, encrypted-at-rest SQLite database (`~/.writerslogic/events.db`).
 *   **Key Management:** Your cryptographic identity (private keys) is generated on-device and is never shared with our servers.
@@ -17,7 +17,7 @@ By default, **WritersLogic is a strictly local application.**
 
 ## 🌐 External Interactions
 
-While core functionality is offline, WritersLogic interacts with **WritersProof** and **WritersLogic** domains to provide enhanced verification and attestation services.
+While core functionality is offline, CPOP interacts with **WritersProof** and **CPOP** domains to provide enhanced verification and attestation services.
 
 ### 1. Online Verification (`writersproof.com/verify`)
 The desktop applications generate links and QR codes that point to our verification portal.
@@ -25,7 +25,7 @@ The desktop applications generate links and QR codes that point to our verificat
 *   **Privacy:** Your evidence packet (`.wpkt`) and document content are **never uploaded** to our servers. The portal acts as a "dumb" host for the verification scripts.
 
 ### 2. Cloud Attestation API (`writerslogic.com/api`)
-For high-stakes evidence (Tiers 3 and 4), WritersLogic can leverage a cloud trust anchor.
+For high-stakes evidence (Tiers 3 and 4), CPOP can leverage a cloud trust anchor.
 *   **Anti-Replay Nonces:** The engine requests fresh cryptographic nonces to prove that evidence was created *now*, not replayed from the past.
 *   **Remote Attestation:** If you request a cloud-signed certificate, the engine submits an evidence summary (hashes and metadata, not content) to receive a signature from the WritersProof root authority.
 *   **Offline Queue:** Attestation requests are queued locally and only transmitted when you have an active internet connection.
@@ -36,7 +36,7 @@ This domain serves as the technical backbone for the **Proof-of-Process (PoP)** 
 *   **DID Resolution:** Provides lookup for author identities that have been optionally published to the decentralized registry.
 
 ### 4. Browser Extension Infrastructure
-The browser extensions use `wld@writerslogic.com` as a unique identifier to communicate securely with the local `wld` daemon. This enables witnessing in web-based editors like Google Docs and Overleaf.
+The browser extensions use `cpop@writerslogic.com` as a unique identifier to communicate securely with the local `cpop` daemon. This enables witnessing in web-based editors like Google Docs and Overleaf.
 
 ---
 
@@ -49,6 +49,6 @@ We use `writersproof.com` and `writerslogic.com` for the following administrativ
 ---
 
 ## Conclusion
-Our interaction with external domains is limited to **cryptographic synchronization** and **convenient verification tools**. At no point in the process does WritersLogic have access to the contents of your documents or your private creative environment.
+Our interaction with external domains is limited to **cryptographic synchronization** and **convenient verification tools**. At no point in the process does CPOP have access to the contents of your documents or your private creative environment.
 
 *For more information, see our official [Privacy Policy](https://writersproof.com/privacy).*

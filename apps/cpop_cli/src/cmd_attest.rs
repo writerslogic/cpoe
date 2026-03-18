@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
-//! `wld attest` — one-shot text attestation via ephemeral sessions.
+//! `cpop attest` — one-shot text attestation via ephemeral sessions.
 
 use anyhow::{anyhow, Result};
 use std::io::{self, IsTerminal, Read, Write};

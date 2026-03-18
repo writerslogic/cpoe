@@ -123,7 +123,7 @@ pub(crate) fn cmd_fingerprint(action: FingerprintAction, out: &OutputMode) -> Re
                     None => {
                         return Err(anyhow!(
                             "No active fingerprint profile. \
-                             Use 'wld fingerprint list' to see available profiles."
+                             Use 'cpop fingerprint list' to see available profiles."
                         ));
                     }
                 },
@@ -264,7 +264,7 @@ pub(crate) fn cmd_fingerprint(action: FingerprintAction, out: &OutputMode) -> Re
                     println!("No fingerprint profiles stored.");
                     println!();
                     println!("Start the daemon to begin building your fingerprint:");
-                    println!("  wld start");
+                    println!("  cpop start");
                 }
                 return Ok(());
             }

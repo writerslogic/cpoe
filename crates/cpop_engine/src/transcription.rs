@@ -3,7 +3,7 @@
 //! Audio transcription metadata collection.
 //!
 //! This module provides privacy-safe collection of audio transcription evidence.
-//! Following WritersLogic's core principle of content-agnosticism:
+//! Following CPOP's core principle of content-agnosticism:
 //!
 //! - NO audio content is stored
 //! - NO transcript text is stored

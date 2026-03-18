@@ -1,18 +1,16 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/wld_engine",
-    "crates/wld_jitter",
-    "crates/wld_protocol",
-    "apps/wld_cli",
+    "crates/cpop_engine",
+    "apps/cpop_cli",
 ]
 
 [workspace.package]
-version = "1.0.1"
+version = "1.0.2"
 authors = ["David Condrey <david@writerslogic.com>"]
 edition = "2021"
 license = "AGPL-3.0-only"
-repository = "https://github.com/writerslogic/writerslogic"
+repository = "https://github.com/writerslogic/cpop"
 
 [workspace.dependencies]
 serde = { version = "1.0.217", features = ["derive"] }

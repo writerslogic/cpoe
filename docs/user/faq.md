@@ -12,9 +12,9 @@
 
 ## General Questions
 
-### What is WritersLogic?
+### What is CPOP?
 
-WritersLogic is a cryptographic authorship witnessing system that creates tamper-evident records proving you created a document over time. It captures:
+CPOP is a cryptographic authorship witnessing system that creates tamper-evident records proving you created a document over time. It captures:
 - **What**: Content hashes at each checkpoint
 - **When**: VDF-based timing proofs that cannot be backdated
 - **How**: Optional keystroke metrics showing real writing activity
@@ -31,7 +31,7 @@ Common use cases include:
 
 ### How is this different from version control?
 
-| Feature | WritersLogic | Git |
+| Feature | CPOP | Git |
 |---------|----------|-----|
 | Time proofs | VDF - cannot be backdated | Timestamps can be faked |
 | Author binding | Hardware-tied identity | Email-based (spoofable) |
@@ -39,18 +39,18 @@ Common use cases include:
 | Forward secrecy | Ratcheting keys | No |
 | Evidence packets | Self-contained, portable | Requires full repo |
 
-### Is WritersLogic open source?
+### Is CPOP open source?
 
-Yes! WritersLogic is released under the Apache License 2.0. The source code is available at:
-https://github.com/writerslogic/writerslogic
+Yes! CPOP is released under the Apache License 2.0. The source code is available at:
+https://github.com/writerslogic/cpop
 
 ---
 
 ## Privacy and Security
 
-### Does WritersLogic record what I type?
+### Does CPOP record what I type?
 
-**No.** WritersLogic explicitly does NOT capture:
+**No.** CPOP explicitly does NOT capture:
 - Which keys you press
 - Keyboard content or characters
 - Screen content
@@ -66,7 +66,7 @@ It only records:
 
 All data is stored locally on your machine:
 - **CLI**: `~/.writerslogic/`
-- **macOS App**: `~/Library/Application Support/WritersLogic/`
+- **macOS App**: `~/Library/Application Support/CPOP/`
 
 No data is sent to any server unless you explicitly export and share it.
 
@@ -114,11 +114,11 @@ A Verifiable Delay Function (VDF) is a cryptographic function that:
 - Cannot be parallelized or sped up
 - Produces a proof that can be quickly verified
 
-WritersLogic uses VDFs to prove that real time elapsed between checkpoints. You cannot backdate a checkpoint because you cannot compute the VDF faster than real time.
+CPOP uses VDFs to prove that real time elapsed between checkpoints. You cannot backdate a checkpoint because you cannot compute the VDF faster than real time.
 
 ### What is the key hierarchy?
 
-WritersLogic uses a three-tier key hierarchy:
+CPOP uses a three-tier key hierarchy:
 
 1. **Tier 0 (Identity)**: Master key derived from your device's PUF
    - Persistent author identity
@@ -151,7 +151,7 @@ This binds your identity to your specific device.
 
 Higher tiers provide stronger evidence but require more hardware support. Tier names follow the draft-condrey-rats-pop CDDL schema: `content-tier = core(1) / enhanced(2) / maximum(3)`.
 
-### How much storage does WritersLogic use?
+### How much storage does CPOP use?
 
 Typical usage:
 - **Per checkpoint**: ~500 bytes in database
@@ -160,9 +160,9 @@ Typical usage:
 
 Database grows slowly - thousands of checkpoints fit in a few megabytes.
 
-### Can I use WritersLogic offline?
+### Can I use CPOP offline?
 
-Yes! WritersLogic works entirely offline. The only network-optional features are:
+Yes! CPOP works entirely offline. The only network-optional features are:
 - External anchoring (e.g., Bitcoin timestamping)
 - Fetching drand beacon values (for additional time proof)
 
@@ -174,7 +174,7 @@ All core functionality works without internet.
 
 ### Does this provide legal proof of authorship?
 
-WritersLogic creates strong cryptographic evidence of authorship, but legal acceptance depends on:
+CPOP creates strong cryptographic evidence of authorship, but legal acceptance depends on:
 - Jurisdiction
 - Type of proceeding
 - Expert testimony to explain the evidence
@@ -184,21 +184,21 @@ The evidence is designed to be admissible under FRE 902(13) for self-authenticat
 
 ### What is FRE 902(13)?
 
-Federal Rules of Evidence 902(13) allows electronic records to be self-authenticating if certified by a qualified person. WritersLogic evidence packets include:
+Federal Rules of Evidence 902(13) allows electronic records to be self-authenticating if certified by a qualified person. CPOP evidence packets include:
 - Cryptographic verification of integrity
 - Chain of custody through signatures
 - Declarations of authenticity
 
-### Should I use WritersLogic for legal disputes?
+### Should I use CPOP for legal disputes?
 
-WritersLogic provides technical evidence. For legal matters:
+CPOP provides technical evidence. For legal matters:
 - Consult an attorney
 - Expert testimony may be needed to explain evidence
 - Combine with other documentation (emails, drafts, etc.)
 
-### Does WritersLogic guarantee I created the content?
+### Does CPOP guarantee I created the content?
 
-WritersLogic proves:
+CPOP proves:
 - Content existed at specific times
 - Real typing activity occurred
 - The same device/identity signed all checkpoints
@@ -258,7 +258,7 @@ The new checkpoint will:
 
 This is transparent and doesn't corrupt the chain.
 
-### Can I use WritersLogic with cloud documents?
+### Can I use CPOP with cloud documents?
 
 Yes, with caveats:
 - Checkpoint local copies of the file
@@ -271,19 +271,19 @@ For best results, work on local files and sync to cloud as backup.
 
 1. Export the evidence packet:
    ```bash
-   wld export document.md -o evidence.wpkt
+   cpop export document.md -o evidence.wpkt
    ```
 
 2. Share the `.wpkt` file
 
 3. Recipient verifies:
    ```bash
-   wld verify evidence.wpkt
+   cpop verify evidence.wpkt
    ```
 
 No account or registration needed - verification is self-contained.
 
-### Can I verify evidence without WritersLogic installed?
+### Can I verify evidence without CPOP installed?
 
 The evidence packet includes verification instructions. Third-party verification requires:
 - Understanding the cryptographic primitives (Ed25519, SHA-256, VDF)
@@ -296,7 +296,7 @@ You can also verify online at https://writersproof.com/verify
 ## More Questions?
 
 - **Documentation**: https://docs.writersproof.com/writerslogic
-- **GitHub Issues**: https://github.com/writerslogic/writerslogic/issues
+- **GitHub Issues**: https://github.com/writerslogic/cpop/issues
 - **Website**: https://writersproof.com
 
 ---

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
-//! Quantified trust policies per the WritersLogic RFC.
+//! Quantified trust policies per the CPOP RFC.
 //!
 //! Relying Parties configure an [`AppraisalPolicy`] with weighted
 //! [`TrustFactor`]s and [`TrustThreshold`]s. Supported computation models:

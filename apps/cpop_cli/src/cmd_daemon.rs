@@ -19,7 +19,7 @@ fn acquire_or_report(daemon_manager: &DaemonManager) -> Result<bool> {
             println!("Daemon is already running.");
         }
         println!();
-        println!("Use 'wld status' for details or 'wld stop' to stop.");
+        println!("Use 'cpop status' for details or 'cpop stop' to stop.");
     }
     Ok(!acquired)
 }
@@ -34,7 +34,7 @@ pub(crate) async fn cmd_start(foreground: bool) -> Result<()> {
     }
 
     if foreground {
-        eprintln!("Starting WritersLogic daemon in foreground...");
+        eprintln!("Starting CPOP daemon in foreground...");
         eprintln!("Press Ctrl+C to stop.");
         eprintln!();
 
@@ -46,7 +46,7 @@ pub(crate) async fn cmd_start(foreground: bool) -> Result<()> {
         }
         result
     } else {
-        eprintln!("Starting WritersLogic daemon...");
+        eprintln!("Starting CPOP daemon...");
 
         let exe = std::env::current_exe().context("cannot resolve executable path")?;
 
@@ -100,7 +100,7 @@ pub(crate) async fn cmd_start(foreground: bool) -> Result<()> {
         eprintln!("Daemon started (PID: {})", pid);
         eprintln!("Log file: {}", log_path.display());
         eprintln!();
-        eprintln!("Use 'wld status' for details or 'wld stop' to stop.");
+        eprintln!("Use 'cpop status' for details or 'cpop stop' to stop.");
 
         Ok(())
     }

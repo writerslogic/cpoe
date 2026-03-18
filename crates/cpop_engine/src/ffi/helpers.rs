@@ -12,11 +12,11 @@ pub const ENTROPY_NORMALIZATION_FACTOR: f64 = 4.321928;
 pub(crate) fn get_data_dir() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     {
-        dirs::home_dir().map(|h| h.join("Library/Application Support/WritersLogic"))
+        dirs::home_dir().map(|h| h.join("Library/Application Support/CPOP"))
     }
     #[cfg(not(target_os = "macos"))]
     {
-        dirs::data_local_dir().map(|d| d.join("WritersLogic"))
+        dirs::data_local_dir().map(|d| d.join("CPOP"))
     }
 }
 

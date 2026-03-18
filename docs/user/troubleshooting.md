@@ -1,6 +1,6 @@
 # Troubleshooting Guide
 
-Solutions to common issues with WritersLogic.
+Solutions to common issues with CPOP.
 
 ## Table of Contents
 
@@ -16,9 +16,9 @@ Solutions to common issues with WritersLogic.
 
 ## Installation Issues
 
-### "Command not found: wld"
+### "Command not found: cpop"
 
-**Cause:** WritersLogic is not in your PATH.
+**Cause:** CPOP is not in your PATH.
 
 **Solutions:**
 
@@ -87,7 +87,7 @@ make install PREFIX=$HOME/.local
    ```bash
    mkdir -p ~/.writerslogic
    chmod 700 ~/.writerslogic
-   wld init
+   cpop init
    ```
 
 ### "Error generating key"
@@ -105,7 +105,7 @@ make install PREFIX=$HOME/.local
 2. **Regenerate key manually:**
    ```bash
    rm ~/.writerslogic/signing_key*
-   wld init
+   cpop init
    ```
 
 ### "Error deriving master identity"
@@ -117,7 +117,7 @@ make install PREFIX=$HOME/.local
 1. **Remove PUF seed and reinitialize:**
    ```bash
    rm ~/.writerslogic/puf_seed
-   wld init
+   cpop init
    ```
 
 2. **Check file permissions:**
@@ -133,9 +133,9 @@ make install PREFIX=$HOME/.local
 
 **Solutions:**
 
-1. **Check if WritersLogic is initialized:**
+1. **Check if CPOP is initialized:**
    ```bash
-   wld status
+   cpop status
    ```
 
 2. **Verify file exists:**
@@ -145,10 +145,10 @@ make install PREFIX=$HOME/.local
 
 3. **Check for existing tracking session:**
    ```bash
-   wld track status
+   cpop track status
    # If stuck, stop and restart
-   wld track stop
-   wld track start document.md
+   cpop track stop
+   cpop track start document.md
    ```
 
 ### "Keystroke count always zero"
@@ -159,7 +159,7 @@ make install PREFIX=$HOME/.local
 
 1. **Grant accessibility permissions:**
    - System Settings > Privacy & Security > Accessibility
-   - Enable WritersLogic
+   - Enable CPOP
 
 2. **Restart the app after granting permissions**
 
@@ -174,7 +174,7 @@ make install PREFIX=$HOME/.local
 1. **Check if running in terminal with input:**
    ```bash
    # Must run in terminal that receives keyboard input
-   wld track start document.md
+   cpop track start document.md
    ```
 
 2. **Verify input group membership:**
@@ -193,7 +193,7 @@ make install PREFIX=$HOME/.local
 
 1. **Stop tracking and check WAL:**
    ```bash
-   wld track stop
+   cpop track stop
    ls -la ~/.writerslogic/tracking/
    ```
 
@@ -236,7 +236,7 @@ make install PREFIX=$HOME/.local
 
 1. **Calibrate VDF:**
    ```bash
-   wld calibrate
+   cpop calibrate
    ```
 
 2. **Check VDF settings:**
@@ -278,12 +278,12 @@ make install PREFIX=$HOME/.local
 
 1. **Verify with verbose output:**
    ```bash
-   wld verify document.md --verbose
+   cpop verify document.md --verbose
    ```
 
 2. **Check for gaps in sequence:**
    ```bash
-   wld log document.md --json | jq '.[].number'
+   cpop log document.md --json | jq '.[].number'
    ```
 
 ### "VDF proof invalid"
@@ -294,8 +294,8 @@ make install PREFIX=$HOME/.local
 
 1. **Re-verify with current VDF parameters:**
    ```bash
-   wld calibrate
-   wld verify document.wpkt
+   cpop calibrate
+   cpop verify document.wpkt
    ```
 
 2. **VDF proofs are deterministic - if fails, evidence may be invalid**
@@ -308,7 +308,7 @@ make install PREFIX=$HOME/.local
 
 1. **Check certificate chain:**
    ```bash
-   wld verify document.wpkt --verbose 2>&1 | grep -i cert
+   cpop verify document.wpkt --verbose 2>&1 | grep -i cert
    ```
 
 2. **Verify master identity matches:**
@@ -326,8 +326,8 @@ make install PREFIX=$HOME/.local
 
 1. **Check what's running:**
    ```bash
-   wld status
-   WritersLogic sentinel status
+   cpop status
+   CPOP sentinel status
    ```
 
 2. **VDF computation is intentionally CPU-intensive (brief)**
@@ -370,7 +370,7 @@ make install PREFIX=$HOME/.local
 
 1. **Calibrate VDF:**
    ```bash
-   wld calibrate
+   cpop calibrate
    ```
 
 2. **For large files, checkpointing takes longer due to hashing**
@@ -388,15 +388,15 @@ make install PREFIX=$HOME/.local
 
 1. **Check if app is running:**
    ```bash
-   pgrep -l WritersLogic
+   pgrep -l CPOP
    ```
 
 2. **Check menu bar overflow** (click >> on right side of menu bar)
 
 3. **Restart the app:**
    ```bash
-   pkill WritersLogic
-   open /Applications/WritersLogic.app
+   pkill CPOP
+   open /Applications/CPOP.app
    ```
 
 ### App Crashes on Launch
@@ -405,12 +405,12 @@ make install PREFIX=$HOME/.local
 
 1. **Check Console for crash logs:**
    - Open Console.app
-   - Filter for "WritersLogic"
+   - Filter for "CPOP"
 
 2. **Reset app state:**
    ```bash
-   rm -rf ~/Library/Application\ Support/WritersLogic/
-   open /Applications/WritersLogic.app
+   rm -rf ~/Library/Application\ Support/CPOP/
+   open /Applications/CPOP.app
    ```
 
 3. **Check macOS version compatibility**
@@ -420,7 +420,7 @@ make install PREFIX=$HOME/.local
 **Solutions:**
 
 1. **Check notification permissions:**
-   - System Settings > Notifications > WritersLogic
+   - System Settings > Notifications > CPOP
 
 2. **Check Focus mode** isn't blocking notifications
 
@@ -432,7 +432,7 @@ make install PREFIX=$HOME/.local
 
 1. **Remove and re-add permission:**
    - System Settings > Privacy & Security > Accessibility
-   - Remove WritersLogic
+   - Remove CPOP
    - Quit and relaunch app
    - Grant permission when prompted
 
@@ -454,7 +454,7 @@ make install PREFIX=$HOME/.local
 
 2. **If no backup, generate new key:**
    ```bash
-   wld init
+   cpop init
    ```
 
 3. **Previous evidence remains valid but new evidence will have different identity**
@@ -485,8 +485,8 @@ Before complete reset:
 
 ```bash
 # Export all evidence packets
-for file in $(wld log --all --files); do
-  wld export "$file" -o "backup_${file}.wpkt"
+for file in $(cpop log --all --files); do
+  cpop export "$file" -o "backup_${file}.wpkt"
 done
 ```
 
@@ -499,23 +499,23 @@ Collect this before reporting issues:
 ```bash
 # System info
 uname -a
-WritersLogic version
+CPOP version
 
 # Configuration
 cat ~/.writerslogic/config.json
 
 # Status
-wld status
+cpop status
 
 # Recent logs (if available)
-tail -100 ~/.writerslogic/writerslogic.log
+tail -100 ~/.writerslogic/cpop.log
 ```
 
 ### Reporting Issues
 
-1. Search [existing issues](https://github.com/writerslogic/writerslogic/issues)
+1. Search [existing issues](https://github.com/writerslogic/cpop/issues)
 2. Create new issue with:
-   - WritersLogic version
+   - CPOP version
    - Operating system and version
    - Steps to reproduce
    - Expected vs actual behavior
@@ -523,7 +523,7 @@ tail -100 ~/.writerslogic/writerslogic.log
 
 ### Community Support
 
-- GitHub Discussions: https://github.com/writerslogic/writerslogic/discussions
+- GitHub Discussions: https://github.com/writerslogic/cpop/discussions
 - Discord: https://discord.gg/writerslogic
 
 ---

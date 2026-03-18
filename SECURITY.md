@@ -44,12 +44,12 @@ We follow coordinated disclosure:
 
 ### Threat Model
 
-WritersLogic provides cryptographic evidence of file authorship. The security
+CPOP provides cryptographic evidence of file authorship. The security
 model assumes:
 
 **Trusted Components:**
 - Local kernel and hardware (including TPM when used)
-- The user account running WritersLogic
+- The user account running CPOP
 - The filesystem's access control enforcement
 
 **Protected Against:**
@@ -102,10 +102,10 @@ chmod 600 /var/lib/writerslogic/config.toml
 chmod 400 /var/lib/writerslogic/signing.key
 
 # Use TPM-sealed keys (recommended)
-wld init --tpm-sealed
+cpop init --tpm-sealed
 
 # Enable audit logging
-wld start --foreground  # daemon logs to ~/.writerslogic/logs/daemon.log
+cpop start --foreground  # daemon logs to ~/.writerslogic/logs/daemon.log
 ```
 
 ### Linux Capabilities
@@ -114,7 +114,7 @@ Instead of running as root, grant specific capabilities:
 
 ```bash
 # Required for TPM access
-sudo setcap cap_sys_admin+ep /usr/local/bin/wld
+sudo setcap cap_sys_admin+ep /usr/local/bin/cpop
 
 # Or use the provided udev rules for non-root TPM access
 sudo cp rules.d/99-writerslogic-tpm.rules /etc/udev/rules.d/

@@ -11,8 +11,8 @@ readme = "README.md"
 keywords = ["cli", "authorship", "witnessing", "attestation", "proof-of-process"]
 categories = ["command-line-utilities"]
 rust-version = "1.75.0"
-homepage = "https://github.com/writerslogic/writerslogic"
-documentation = "https://github.com/writerslogic/writerslogic/tree/main/apps/cpop_cli"
+homepage = "https://github.com/writerslogic/cpop"
+documentation = "https://github.com/writerslogic/cpop/tree/main/apps/cpop_cli"
 exclude = ["tests/", "browser-extension/"]
 
 [[bin]]

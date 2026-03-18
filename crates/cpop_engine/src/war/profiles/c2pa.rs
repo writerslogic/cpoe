@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{Error, Result};
 use crate::war::ear::EarToken;
 
-/// C2PA assertion label for WritersLogic PoP attestation.
+/// C2PA assertion label for CPOP PoP attestation.
 pub const ASSERTION_LABEL: &str = "com.writerslogic.pop-attestation.v1";
 
 /// C2PA assertion containing EAR-derived data.

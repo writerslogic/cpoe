@@ -1,4 +1,4 @@
-# linuxdeploy configuration for WritersLogic AppImage
+# linuxdeploy configuration for CPOP AppImage
 # https://github.com/linuxdeploy/linuxdeploy
 
 appimage:
@@ -9,18 +9,18 @@ appimage:
 
 # Files to include
 files:
-  - source: usr/bin/wld
-    destination: usr/bin/wld
+  - source: usr/bin/cpop
+    destination: usr/bin/cpop
   - source: usr/bin/witnessctl
     destination: usr/bin/witnessctl
-  - source: usr/bin/wld-ibus
-    destination: usr/bin/wld-ibus
-  - source: usr/share/applications/wld.desktop
-    destination: usr/share/applications/wld.desktop
-  - source: usr/share/icons/hicolor/256x256/apps/wld.png
-    destination: usr/share/icons/hicolor/256x256/apps/wld.png
-  - source: usr/share/metainfo/wld.appdata.xml
-    destination: usr/share/metainfo/wld.appdata.xml
+  - source: usr/bin/cpop-ibus
+    destination: usr/bin/cpop-ibus
+  - source: usr/share/applications/cpop.desktop
+    destination: usr/share/applications/cpop.desktop
+  - source: usr/share/icons/hicolor/256x256/apps/cpop.png
+    destination: usr/share/icons/hicolor/256x256/apps/cpop.png
+  - source: usr/share/metainfo/cpop.appdata.xml
+    destination: usr/share/metainfo/cpop.appdata.xml
 
 # Runtime configuration
 runtime:

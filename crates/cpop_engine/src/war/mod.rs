@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
-//! WAR (WritersLogic Authorship Record) block encoding and verification.
+//! WAR (CPOP Authorship Record) block encoding and verification.
 //!
 //! PGP-style ASCII-armored evidence format -- human-readable and
 //! independently verifiable.
@@ -24,7 +24,7 @@ pub use verification::compute_seal;
 
 use crate::evidence::Packet;
 use crate::trust_policy::AppraisalPolicy;
-use cpop_protocol::crypto::PoPSigner;
+use cpop_protocol::crypto::EvidenceSigner;
 
 impl Block {
     /// Create from an evidence packet.
@@ -72,7 +72,10 @@ impl Block {
     }
 
     /// Create a signed WAR block from an evidence packet.
-    pub fn from_packet_signed(packet: &Packet, signer: &dyn PoPSigner) -> Result<Self, String> {
+    pub fn from_packet_signed(
+        packet: &Packet,
+        signer: &dyn EvidenceSigner,
+    ) -> Result<Self, String> {
         let mut block = Self::from_packet(packet)?;
         block.sign(signer)?;
         Ok(block)
@@ -81,7 +84,7 @@ impl Block {
     /// Create a V2.0 WAR block from an evidence packet with EAR appraisal.
     pub fn from_packet_appraised(
         packet: &Packet,
-        signer: &dyn PoPSigner,
+        signer: &dyn EvidenceSigner,
         policy: &AppraisalPolicy,
     ) -> crate::error::Result<Self> {
         let mut block = Self::from_packet(packet)
@@ -108,7 +111,7 @@ impl Block {
     }
 
     /// Sign the WAR block's seal with the given signer (software or hardware).
-    pub fn sign(&mut self, signer: &dyn PoPSigner) -> Result<(), String> {
+    pub fn sign(&mut self, signer: &dyn EvidenceSigner) -> Result<(), String> {
         let signature_bytes = signer
             .sign(&self.seal.h3)
             .map_err(|e| format!("signing failed: {}", e))?;

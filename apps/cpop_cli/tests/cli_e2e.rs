@@ -5,7 +5,7 @@ use tempfile::tempdir;
 #[test]
 fn test_cli_full_workflow() {
     let dir = tempdir().unwrap();
-    let bin = env!("CARGO_BIN_EXE_wld");
+    let bin = env!("CARGO_BIN_EXE_cpop");
 
     let run = |args: &[&str], input: Option<&str>| {
         use std::io::Write;
@@ -13,7 +13,7 @@ fn test_cli_full_workflow() {
 
         let mut child = Command::new(bin)
             .args(args)
-            .env("WLD_DATA_DIR", dir.path())
+            .env("CPOP_DATA_DIR", dir.path())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -31,7 +31,7 @@ fn test_cli_full_workflow() {
 
         if !output.status.success() {
             panic!(
-                "Command failed: wld {}\nSTDOUT: {}\nSTDERR: {}",
+                "Command failed: cpop {}\nSTDOUT: {}\nSTDERR: {}",
                 args.join(" "),
                 String::from_utf8_lossy(&output.stdout),
                 String::from_utf8_lossy(&output.stderr)
@@ -41,11 +41,11 @@ fn test_cli_full_workflow() {
     };
 
     let stdout = run(&["init"], None);
-    assert!(stdout.contains("WritersLogic initialized"));
+    assert!(stdout.contains("CPOP initialized"));
     assert!(dir.path().join("signing_key").exists());
 
     let stdout = run(&["status"], None);
-    assert!(stdout.contains("WritersLogic Status"));
+    assert!(stdout.contains("CPOP Status"));
     assert!(stdout.contains("Verified"));
 
     let doc_path = dir.path().join("test.txt");
@@ -108,7 +108,7 @@ impl CliTestEnv {
     fn new() -> Self {
         Self {
             dir: tempdir().unwrap(),
-            bin: env!("CARGO_BIN_EXE_wld"),
+            bin: env!("CARGO_BIN_EXE_cpop"),
         }
     }
 
@@ -118,7 +118,7 @@ impl CliTestEnv {
 
         let mut child = Command::new(self.bin)
             .args(args)
-            .env("WLD_DATA_DIR", self.dir.path())
+            .env("CPOP_DATA_DIR", self.dir.path())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -144,7 +144,7 @@ impl CliTestEnv {
         let (success, stdout, stderr) = self.run(args, input);
         assert!(
             success,
-            "Command failed: wld {}\nSTDOUT: {}\nSTDERR: {}",
+            "Command failed: cpop {}\nSTDOUT: {}\nSTDERR: {}",
             args.join(" "),
             stdout,
             stderr
@@ -162,8 +162,8 @@ fn test_cli_help() {
     let env = CliTestEnv::new();
     let stdout = env.run_expect_success(&["--help"], None);
     assert!(
-        stdout.contains("WritersLogic") || stdout.contains("writerslogic"),
-        "Help should mention WritersLogic: {}",
+        stdout.contains("CPOP") || stdout.contains("writerslogic"),
+        "Help should mention CPOP: {}",
         stdout
     );
     assert!(
@@ -527,7 +527,9 @@ fn test_cli_commit_binary_rejected() {
     let (success, _stdout, stderr) = env.run(&["commit", binary.to_str().unwrap()], None);
     assert!(!success, "Commit should reject binary files");
     assert!(
-        stderr.contains("not a text document") || stderr.contains("Binary"),
+        stderr.contains("not a supported text document")
+            || stderr.contains("not a text document")
+            || stderr.contains("Binary"),
         "Should explain why binary is rejected. stderr: {}",
         stderr
     );
@@ -538,7 +540,7 @@ fn test_cli_completions() {
     let env = CliTestEnv::new();
     let stdout = env.run_expect_success(&["completions", "bash"], None);
     assert!(
-        stdout.contains("complete") || stdout.contains("wld"),
+        stdout.contains("complete") || stdout.contains("cpop"),
         "Should generate bash completions"
     );
 }

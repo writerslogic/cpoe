@@ -26,7 +26,7 @@ pub(crate) const BLOCKED_EXTENSIONS: &[&str] = &[
 ];
 
 pub fn writerslogic_dir() -> Result<PathBuf> {
-    if let Ok(dir) = std::env::var("WLD_DATA_DIR") {
+    if let Ok(dir) = std::env::var("CPOP_DATA_DIR") {
         return Ok(PathBuf::from(dir));
     }
     let home = dirs::home_dir().ok_or_else(|| anyhow!("Could not determine home directory"))?;
@@ -73,7 +73,7 @@ pub fn load_vdf_params(config: &CpopConfig) -> VdfParameters {
 pub fn load_signing_key(dir: &Path) -> Result<SigningKey> {
     let key_path = dir.join("signing_key");
     let mut key_data = fs::read(&key_path).map_err(|e| match e.kind() {
-        std::io::ErrorKind::NotFound => anyhow!("WritersLogic not initialized. Run 'wld init'."),
+        std::io::ErrorKind::NotFound => anyhow!("CPOP not initialized. Run 'cpop init'."),
         std::io::ErrorKind::PermissionDenied => {
             anyhow!("Permission denied: {}", key_path.display())
         }
@@ -128,7 +128,7 @@ pub fn get_device_id() -> Result<[u8; 16]> {
     let dir = writerslogic_dir()?;
     let key_path = dir.join("signing_key.pub");
     let pub_key = fs::read(&key_path)
-        .map_err(|e| anyhow::anyhow!("Cannot read signing_key.pub (run `wld init` first): {e}"))?;
+        .map_err(|e| anyhow::anyhow!("Cannot read signing_key.pub (run `cpop init` first): {e}"))?;
     let h = Sha256::digest(&pub_key);
     let mut id = [0u8; 16];
     id.copy_from_slice(&h[..16]);
@@ -160,7 +160,7 @@ pub fn get_machine_id() -> String {
 pub fn load_did(dir: &Path) -> Result<String> {
     let identity_path = dir.join("identity.json");
     let data = fs::read_to_string(&identity_path)
-        .map_err(|_| anyhow!("No identity found. Run 'wld identity' to create one."))?;
+        .map_err(|_| anyhow!("No identity found. Run 'cpop identity' to create one."))?;
     let identity: serde_json::Value = serde_json::from_str(&data)?;
     identity
         .get("did")

@@ -45,7 +45,7 @@ pub(crate) fn cmd_commit(
     if metadata.len() > MAX_FILE_SIZE {
         return Err(anyhow!(
             "File is too large ({:.0} MB).\n\n\
-             WritersLogic is designed for text documents, not binary files.\n\
+             CPOP is designed for text documents, not binary files.\n\
              Maximum file size: {} MB",
             metadata.len() as f64 / 1_000_000.0,
             MAX_FILE_SIZE / 1_000_000
@@ -171,14 +171,14 @@ pub(crate) async fn cmd_commit_smart(
 
     if !crate::smart_defaults::is_initialized(&dir) {
         if !out.quiet {
-            println!("WritersLogic is not initialized.");
+            println!("CPOP is not initialized.");
         }
         if !out.json && crate::smart_defaults::ask_confirmation("Initialize now?", true)? {
             crate::cmd_init::cmd_init()?;
             println!();
         } else {
             return Err(anyhow!(
-                "WritersLogic is not initialized. Run 'wld init' first."
+                "CPOP is not initialized. Run 'cpop init' first."
             ));
         }
     }
@@ -302,7 +302,7 @@ fn select_file_for_commit() -> Result<PathBuf> {
     if recent.is_empty() {
         return Err(anyhow!(
             "No files found in current directory.\n\n\
-             Specify a file: wld commit <file>"
+             Specify a file: cpop commit <file>"
         ));
     }
 

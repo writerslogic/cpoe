@@ -1,6 +1,6 @@
-# Linux Packaging for WritersLogic
+# Linux Packaging for CPOP
 
-This directory contains all the packaging infrastructure for building and distributing WritersLogic on Linux systems.
+This directory contains all the packaging infrastructure for building and distributing CPOP on Linux systems.
 
 ## Package Formats
 
@@ -32,10 +32,10 @@ dpkg-buildpackage -us -uc -b
 
 **Installing:**
 ```bash
-sudo apt install ./wld_1.0.0-1_amd64.deb
+sudo apt install ./cpop_1.0.0-1_amd64.deb
 
 # Or with dependencies
-sudo dpkg -i wld_1.0.0-1_amd64.deb
+sudo dpkg -i cpop_1.0.0-1_amd64.deb
 sudo apt-get -f install
 ```
 
@@ -46,7 +46,7 @@ For Fedora, RHEL, CentOS, Rocky Linux, AlmaLinux, openSUSE, and derivatives.
 **Location:** `platforms/linux/rpm/`
 
 **Contents:**
-- `wld.spec` - Full RPM spec file
+- `cpop.spec` - Full RPM spec file
 
 **Building:**
 ```bash
@@ -54,16 +54,16 @@ For Fedora, RHEL, CentOS, Rocky Linux, AlmaLinux, openSUSE, and derivatives.
 ./platforms/linux/scripts/build-rpm.sh [version]
 
 # Or manually
-rpmbuild -ba platforms/linux/rpm/wld.spec
+rpmbuild -ba platforms/linux/rpm/cpop.spec
 ```
 
 **Installing:**
 ```bash
 # Fedora/RHEL
-sudo dnf install ./wld-1.0.0-1.fc39.x86_64.rpm
+sudo dnf install ./cpop-1.0.0-1.fc39.x86_64.rpm
 
 # openSUSE
-sudo zypper install ./wld-1.0.0-1.x86_64.rpm
+sudo zypper install ./cpop-1.0.0-1.x86_64.rpm
 ```
 
 ### 3. AppImage
@@ -74,8 +74,8 @@ Portable Linux application format that works on most distributions.
 
 **Contents:**
 - `AppRun` - Entry point script
-- `wld.desktop` - Desktop entry file
-- `wld.appdata.xml` - AppStream metadata
+- `cpop.desktop` - Desktop entry file
+- `cpop.appdata.xml` - AppStream metadata
 - `linuxdeploy.yaml` - linuxdeploy configuration
 - `icons/` - Application icons
 
@@ -89,11 +89,11 @@ Portable Linux application format that works on most distributions.
 
 **Running:**
 ```bash
-chmod +x wld-1.0.0-x86_64.AppImage
-./wld-1.0.0-x86_64.AppImage
+chmod +x cpop-1.0.0-x86_64.AppImage
+./cpop-1.0.0-x86_64.AppImage
 
 # With desktop integration
-./wld-1.0.0-x86_64.AppImage --install
+./cpop-1.0.0-x86_64.AppImage --install
 ```
 
 ## Systemd Integration
@@ -104,51 +104,51 @@ chmod +x wld-1.0.0-x86_64.AppImage
 
 | File | Description |
 |------|-------------|
-| `wld.service` | Main daemon (system-wide) |
-| `wld-user.service` | User-level service |
-| `wld.socket` | Socket activation |
-| `wld-ibus.service` | IBus engine (user service) |
-| `wld.conf` | tmpfiles.d configuration |
+| `cpop.service` | Main daemon (system-wide) |
+| `cpop-user.service` | User-level service |
+| `cpop.socket` | Socket activation |
+| `cpop-ibus.service` | IBus engine (user service) |
+| `cpop.conf` | tmpfiles.d configuration |
 | `environment` | Environment variables |
 
 ### System Service
 
 ```bash
 # Enable and start system-wide service
-sudo systemctl enable --now wld.service
+sudo systemctl enable --now cpop.service
 
 # Check status
-sudo systemctl status wld.service
+sudo systemctl status cpop.service
 
 # View logs
-sudo journalctl -u wld.service -f
+sudo journalctl -u cpop.service -f
 ```
 
 ### User Service
 
 ```bash
 # Enable user service (no sudo)
-systemctl --user enable --now wld.service
+systemctl --user enable --now cpop.service
 
 # Check status
-systemctl --user status wld.service
+systemctl --user status cpop.service
 ```
 
 ### Socket Activation
 
 ```bash
 # Enable socket activation
-sudo systemctl enable wld.socket
-sudo systemctl start wld.socket
+sudo systemctl enable cpop.socket
+sudo systemctl start cpop.socket
 ```
 
 ## IBus Integration
 
-The `wld-ibus` package provides IBus input method integration.
+The `cpop-ibus` package provides IBus input method integration.
 
 ```bash
 # Enable IBus service
-systemctl --user enable --now wld-ibus.service
+systemctl --user enable --now cpop-ibus.service
 
 # Restart IBus to pick up the new engine
 ibus restart
@@ -162,9 +162,9 @@ The packages follow the Filesystem Hierarchy Standard:
 
 | Path | Purpose |
 |------|---------|
-| `/usr/bin/wld` | Main daemon binary |
+| `/usr/bin/cpop` | Main daemon binary |
 | `/usr/bin/witnessctl` | Control utility |
-| `/usr/bin/wld-ibus` | IBus engine |
+| `/usr/bin/cpop-ibus` | IBus engine |
 | `/etc/writerslogic/` | Configuration files |
 | `/etc/writerslogic/config.toml` | Main configuration |
 | `/etc/writerslogic/environment` | Environment variables |
@@ -273,7 +273,7 @@ createrepo_c /path/to/repo/fedora/39/x86_64/
 # Add repo file
 cat > /etc/yum.repos.d/writerslogic.repo << EOF
 [writerslogic]
-name=WritersLogic Repository
+name=CPOP Repository
 baseurl=https://repo.example.com/rpm/fedora/\$releasever/\$basearch/
 enabled=1
 gpgcheck=1
@@ -288,7 +288,7 @@ EOF
 **Service won't start:**
 ```bash
 # Check for errors
-sudo journalctl -u wld.service -e
+sudo journalctl -u cpop.service -e
 
 # Verify permissions
 ls -la /var/lib/writerslogic/
@@ -298,7 +298,7 @@ ls -la /etc/writerslogic/
 **IBus engine not appearing:**
 ```bash
 # Check component file
-cat /usr/share/ibus/component/wld.xml
+cat /usr/share/ibus/component/cpop.xml
 
 # Restart IBus
 ibus restart
@@ -313,22 +313,22 @@ journalctl --user -u org.freedesktop.IBus -f
 apt install fuse libfuse2
 
 # Extract and run directly
-./wld.AppImage --appimage-extract
-./squashfs-root/usr/bin/wld
+./cpop.AppImage --appimage-extract
+./squashfs-root/usr/bin/cpop
 ```
 
 ### Verifying Installation
 
 ```bash
 # Check binary
-wld version
+cpop version
 witnessctl status
 
 # Check service
-systemctl status wld.service
+systemctl status cpop.service
 
 # Check socket
-ls -la /run/writerslogic/wld.sock
+ls -la /run/writerslogic/cpop.sock
 
 # Check logs
 tail -f /var/log/writerslogic/writerslogic.log

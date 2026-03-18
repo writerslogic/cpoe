@@ -1,6 +1,6 @@
 # Configuration Guide
 
-WritersLogic can be configured through configuration files, environment variables, and command-line flags. This guide covers all available options.
+CPOP can be configured through configuration files, environment variables, and command-line flags. This guide covers all available options.
 
 ## Table of Contents
 
@@ -23,19 +23,19 @@ WritersLogic can be configured through configuration files, environment variable
 | Platform | Path |
 |----------|------|
 | macOS/Linux | `~/.writerslogic/config.json` |
-| macOS App | `~/Library/Application Support/WritersLogic/config.json` |
+| macOS App | `~/Library/Application Support/CPOP/config.json` |
 
 ### Custom Location
 
-Use the `--config` flag or `WLD_CONFIG` environment variable:
+Use the `--config` flag or `CPOP_CONFIG` environment variable:
 
 ```bash
-WritersLogic --config /path/to/config.json status
+CPOP --config /path/to/config.json status
 ```
 
 ## Configuration File Format
 
-WritersLogic uses JSON configuration with the following structure:
+CPOP uses JSON configuration with the following structure:
 
 ```json
 {
@@ -56,7 +56,7 @@ For the legacy daemon mode, TOML configuration is also supported at `~/.writersl
 watch_paths = ["~/Documents"]
 interval = 5
 database_path = "~/.writerslogic/mmr.db"
-log_path = "~/.writerslogic/writerslogic.log"
+log_path = "~/.writerslogic/cpop.log"
 signing_key_path = "~/.writerslogic/signing_key"
 signatures_path = "~/.writerslogic/signatures.sigs"
 event_store_path = "~/.writerslogic/events.db"
@@ -72,7 +72,7 @@ event_store_path = "~/.writerslogic/events.db"
 
 ## Storage Settings
 
-Configure how WritersLogic stores evidence data.
+Configure how CPOP stores evidence data.
 
 ```json
 {
@@ -128,7 +128,7 @@ Configure the Verifiable Delay Function for timing proofs.
 Run calibration to measure your CPU's VDF performance:
 
 ```bash
-wld calibrate
+cpop calibrate
 ```
 
 This updates `iterations_per_second` to reflect actual performance, ensuring accurate timing proofs.
@@ -196,13 +196,13 @@ Presence sessions create additional proof that the author was actively present:
 
 ```bash
 # Start a presence session
-wld presence start
+cpop presence start
 
 # Respond to challenges when prompted
 # ...
 
 # End session
-wld presence stop
+cpop presence stop
 ```
 
 ## Sentinel Settings
@@ -233,13 +233,13 @@ Configure the background sentinel daemon for automatic document tracking.
 
 ```bash
 # Start sentinel daemon
-WritersLogic sentinel start
+CPOP sentinel start
 
 # Check status
-WritersLogic sentinel status
+CPOP sentinel status
 
 # Stop sentinel
-WritersLogic sentinel stop
+CPOP sentinel stop
 ```
 
 ## Environment Variables
@@ -248,17 +248,17 @@ Override configuration with environment variables:
 
 | Variable | Description |
 |----------|-------------|
-| `WLD_DATA_DIR` | Override data directory path |
-| `WLD_CONFIG` | Path to configuration file |
-| `WLD_LOG_LEVEL` | Logging verbosity: `debug`, `info`, `warn`, `error` |
-| `WLD_NO_COLOR` | Disable colored output |
+| `CPOP_DATA_DIR` | Override data directory path |
+| `CPOP_CONFIG` | Path to configuration file |
+| `CPOP_LOG_LEVEL` | Logging verbosity: `debug`, `info`, `warn`, `error` |
+| `CPOP_NO_COLOR` | Disable colored output |
 
 ### Example
 
 ```bash
-export WLD_DATA_DIR=/custom/path
-export WLD_LOG_LEVEL=debug
-wld status
+export CPOP_DATA_DIR=/custom/path
+export CPOP_LOG_LEVEL=debug
+cpop status
 ```
 
 ## macOS App Settings
@@ -269,7 +269,7 @@ The macOS app provides a graphical settings interface with additional options:
 
 | Setting | Description |
 |---------|-------------|
-| Open at Login | Launch WritersLogic when you log in |
+| Open at Login | Launch CPOP when you log in |
 | Auto-create checkpoints | Automatically save checkpoints at intervals |
 | Checkpoint Interval | Time between auto-checkpoints (5min to 2hr) |
 | Debounce Interval | Wait time after last keystroke (100-2000ms) |

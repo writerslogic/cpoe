@@ -94,7 +94,7 @@ pub(crate) fn cmd_log(file_path: &PathBuf, out: &OutputMode) -> Result<()> {
         );
         println!("Total VDF time: {:.0?}", total_vdf_time);
     } else {
-        println!("Total VDF time: (uncalibrated - run 'wld calibrate')");
+        println!("Total VDF time: (uncalibrated - run 'cpop calibrate')");
     }
     println!();
 

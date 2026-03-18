@@ -180,7 +180,7 @@ pub(crate) fn cmd_status(out: &OutputMode) -> Result<()> {
         return Ok(());
     }
 
-    println!("=== WritersLogic Status ===");
+    println!("=== CPOP Status ===");
     println!();
     println!("Data directory: {}", dir.display());
     if let Some(ref key) = pub_key_hex {
@@ -211,7 +211,7 @@ pub(crate) fn cmd_status(out: &OutputMode) -> Result<()> {
         }
     } else if db_status.starts_with("error") {
         if db_status.contains("Permission denied") {
-            eprintln!("Error: Permission denied reading WritersLogic data.");
+            eprintln!("Error: Permission denied reading CPOP data.");
             eprintln!("Check permissions on ~/.writerslogic/");
         } else {
             println!("Database: ERROR ({})", db_status);

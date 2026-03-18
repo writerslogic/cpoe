@@ -108,9 +108,9 @@ impl WritersProofClient {
             .client
             .post(&url)
             .header("Content-Type", "application/cbor")
-            .header("X-WLD-Nonce", hex::encode(nonce))
-            .header("X-WLD-Hardware-Key-Id", hardware_key_id)
-            .header("X-WLD-Signature", hex::encode(signature.to_bytes()))
+            .header("X-CPOP-Nonce", hex::encode(nonce))
+            .header("X-CPOP-Hardware-Key-Id", hardware_key_id)
+            .header("X-CPOP-Signature", hex::encode(signature.to_bytes()))
             .body(evidence_cbor.to_vec());
 
         if let Some(ref jwt) = self.jwt {

@@ -397,7 +397,7 @@ fn finalize_session(
 
     println!();
     println!(
-        "Export evidence with: wld export {}",
+        "Export evidence with: cpop export {}",
         target.root().display()
     );
 
@@ -416,7 +416,7 @@ async fn cmd_track_start(
 
     if current_file.exists() {
         return Err(anyhow!(
-            "Tracking session already active. Run 'wld track stop' first."
+            "Tracking session already active. Run 'cpop track stop' first."
         ));
     }
 
@@ -678,13 +678,13 @@ pub(crate) async fn cmd_track_smart(
                     println!("No active tracking session.");
                     println!();
                     println!("Usage:");
-                    println!("  wld <file>               Track a single file");
-                    println!("  wld <folder>             Track all files in a folder");
-                    println!("  wld <project.scriv>      Track a Scrivener project");
-                    println!("  wld track stop           Stop active session");
-                    println!("  wld track status         Check session status");
-                    println!("  wld track list           List saved sessions");
-                    println!("  wld track export <id>    Export session evidence");
+                    println!("  cpop <file>               Track a single file");
+                    println!("  cpop <folder>             Track all files in a folder");
+                    println!("  cpop <project.scriv>      Track a Scrivener project");
+                    println!("  cpop track stop           Stop active session");
+                    println!("  cpop track status         Check session status");
+                    println!("  cpop track list           List saved sessions");
+                    println!("  cpop track export <id>    Export session evidence");
                 }
                 return Ok(());
             }

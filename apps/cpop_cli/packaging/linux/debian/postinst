@@ -1,41 +1,41 @@
 #!/bin/bash
-# postinst script for wld
+# postinst script for cpop
 
 set -e
 
 case "$1" in
     configure)
-        # Create wld system user if it doesn't exist
-        if ! getent passwd wld >/dev/null 2>&1; then
-            adduser --system --group --home /var/lib/wld \
+        # Create cpop system user if it doesn't exist
+        if ! getent passwd cpop >/dev/null 2>&1; then
+            adduser --system --group --home /var/lib/cpop \
                 --no-create-home --shell /usr/sbin/nologin \
-                --gecos "WritersLogic Daemon" wld
+                --gecos "CPOP Daemon" cpop
         fi
 
         # Create required directories
-        install -d -m 750 -o wld -g wld /var/lib/wld
-        install -d -m 750 -o wld -g wld /var/log/wld
-        install -d -m 755 /etc/wld
+        install -d -m 750 -o cpop -g cpop /var/lib/cpop
+        install -d -m 750 -o cpop -g cpop /var/log/cpop
+        install -d -m 755 /etc/cpop
 
         # Create default config if it doesn't exist
-        if [ ! -f /etc/wld/config.toml ]; then
-            if [ -f /etc/wld/config.toml.default ]; then
-                cp /etc/wld/config.toml.default /etc/wld/config.toml
-                chmod 640 /etc/wld/config.toml
-                chown root:wld /etc/wld/config.toml
+        if [ ! -f /etc/cpop/config.toml ]; then
+            if [ -f /etc/cpop/config.toml.default ]; then
+                cp /etc/cpop/config.toml.default /etc/cpop/config.toml
+                chmod 640 /etc/cpop/config.toml
+                chown root:cpop /etc/cpop/config.toml
             fi
         fi
 
         # Create environment file if it doesn't exist
-        if [ ! -f /etc/wld/environment ]; then
-            cat > /etc/wld/environment << 'EOF'
-# Environment variables for wld
-# WLD_LOG_LEVEL=info
-# WLD_DATA_DIR=/var/lib/wld
-# WLD_CONFIG=/etc/wld/config.toml
+        if [ ! -f /etc/cpop/environment ]; then
+            cat > /etc/cpop/environment << 'EOF'
+# Environment variables for cpop
+# CPOP_LOG_LEVEL=info
+# CPOP_DATA_DIR=/var/lib/cpop
+# CPOP_CONFIG=/etc/cpop/config.toml
 EOF
-            chmod 640 /etc/wld/environment
-            chown root:wld /etc/wld/environment
+            chmod 640 /etc/cpop/environment
+            chown root:cpop /etc/cpop/environment
         fi
 
         # Reload systemd daemon

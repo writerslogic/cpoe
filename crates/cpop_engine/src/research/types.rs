@@ -14,7 +14,7 @@ pub const MIN_SESSIONS_FOR_UPLOAD: usize = 5;
 pub const DEFAULT_UPLOAD_INTERVAL_SECS: u64 = 4 * 60 * 60;
 
 /// Engine version string embedded at build time.
-pub const WLD_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const CPOP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Anonymized jitter sample -- timing data only, no document/user info.
 #[derive(Debug, Clone, Serialize, Deserialize)]

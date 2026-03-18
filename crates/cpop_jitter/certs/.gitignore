@@ -1,8 +1,0 @@
-# IMPORTANT: Never commit private keys
-private_key.pem
-ca_key.pem
-*.key
-
-# Temporary files
-*.csr
-*.srl

@@ -2,10 +2,10 @@
 
 //! Explicit consent management for voice fingerprinting.
 //!
-//! Grant: `wld fingerprint enable-voice` -- displays explanation,
+//! Grant: `cpop fingerprint enable-voice` -- displays explanation,
 //! records timestamped consent.
 //!
-//! Revoke: `wld fingerprint disable-voice` -- deletes all stored
+//! Revoke: `cpop fingerprint disable-voice` -- deletes all stored
 //! voice data and records revocation timestamp.
 
 use anyhow::{anyhow, Result};
@@ -59,7 +59,7 @@ pub const CONSENT_VERSION: &str = "1.0.0";
 pub const CONSENT_EXPLANATION: &str = r#"
 VOICE FINGERPRINTING CONSENT
 
-WritersLogic can optionally analyze your WRITING STYLE to create a unique
+CPOP can optionally analyze your WRITING STYLE to create a unique
 fingerprint that helps verify you are the author of your documents.
 
 WHAT IS COLLECTED:

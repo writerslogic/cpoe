@@ -86,7 +86,7 @@ impl IpcClient {
             .map_err(|e| {
                 anyhow!(
                     "Failed to connect to daemon named pipe at {}: {}. \
-                     Is the WritersLogic daemon running?",
+                     Is the CPOP daemon running?",
                     pipe_name,
                     e
                 )

@@ -18,7 +18,7 @@ pub fn is_calibrated(iterations_per_second: u64) -> bool {
 
 pub fn ensure_vdf_calibrated_with_warning(iterations_per_second: u64) {
     if !is_calibrated(iterations_per_second) {
-        eprintln!("Warning: VDF not calibrated. Run 'wld calibrate' for accurate time proofs.");
+        eprintln!("Warning: VDF not calibrated. Run 'cpop calibrate' for accurate time proofs.");
         eprintln!();
     }
 }
@@ -144,16 +144,16 @@ pub fn show_quick_status(
     iterations_per_second: u64,
     tracked_files: &[(String, i64, i64)],
 ) {
-    println!("=== WritersLogic Status ===");
+    println!("=== CPOP Status ===");
     println!();
 
     if !is_initialized(writerslogic_dir) {
-        println!("Status: Not initialized. Run 'wld init' to get started.");
+        println!("Status: Not initialized. Run 'cpop init' to get started.");
         return;
     }
 
     if !is_calibrated(iterations_per_second) {
-        println!("Status: Not calibrated. Run 'wld calibrate' to set VDF speed.");
+        println!("Status: Not calibrated. Run 'cpop calibrate' to set VDF speed.");
         return;
     }
 
@@ -163,7 +163,7 @@ pub fn show_quick_status(
     if tracked_files.is_empty() {
         println!("No documents tracked yet.");
         println!();
-        println!("Start checkpointing with: wld commit <file>");
+        println!("Start checkpointing with: cpop commit <file>");
     } else {
         println!("Tracked documents: {}", tracked_files.len());
 
@@ -184,7 +184,7 @@ pub fn show_quick_status(
         }
 
         println!();
-        println!("Shortcuts: wld <file>, wld <folder>");
+        println!("Shortcuts: cpop <file>, cpop <folder>");
     }
 }
 

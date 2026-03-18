@@ -7,22 +7,22 @@ use std::path::PathBuf;
 #[command(
     author,
     version,
-    about = "WritersLogic — cryptographic proof-of-process authorship witnessing",
-    long_about = "WritersLogic captures behavioral evidence during document creation and packages \
+    about = "CPOP — cryptographic proof-of-process authorship witnessing",
+    long_about = "CPOP captures behavioral evidence during document creation and packages \
 it into cryptographically signed packets that prove a human authored content over \
 time. This provides an offline-verifiable alternative to AI detection by proving \
 how something was written, not just what was written."
 )]
 #[command(after_help = "\
 EXAMPLES:\n  \
-    wld essay.txt                     Start tracking a file\n  \
-    wld commit essay.txt -m \"Draft 1\"  Create a checkpoint\n  \
-    wld export essay.txt -t standard   Export evidence for submission\n  \
-    wld verify essay.evidence.json     Verify a proof packet\n\n\
+    cpop essay.txt                     Start tracking a file\n  \
+    cpop commit essay.txt -m \"Draft 1\"  Create a checkpoint\n  \
+    cpop export essay.txt -t standard   Export evidence for submission\n  \
+    cpop verify essay.evidence.json     Verify a proof packet\n\n\
 ENVIRONMENT:\n  \
-    WLD_DATA_DIR    Override default data directory (~/.writerslogic)\n  \
-    EDITOR          Editor for 'wld config edit'\n\n\
-Use 'wld <command> --help' for details on specific commands.")]
+    CPOP_DATA_DIR    Override default data directory (~/.writerslogic)\n  \
+    EDITOR          Editor for 'cpop config edit'\n\n\
+Use 'cpop <command> --help' for details on specific commands.")]
 #[command(args_conflicts_with_subcommands = true)]
 pub struct Cli {
     #[command(subcommand)]
@@ -42,7 +42,7 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Initialize WritersLogic environment
+    /// Initialize CPOP environment
     #[command(hide = true)]
     Init {},
 

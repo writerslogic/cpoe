@@ -9,7 +9,7 @@ use crate::jitter::Evidence;
 
 use super::types::{
     AnonymizedSession, ResearchDataExport, UploadResponse, UploadResult, MIN_SESSIONS_FOR_UPLOAD,
-    RESEARCH_UPLOAD_URL, WLD_VERSION,
+    RESEARCH_UPLOAD_URL, CPOP_VERSION,
 };
 
 /// Collects anonymized sessions and manages disk persistence / upload.
@@ -161,7 +161,7 @@ impl ResearchCollector {
         let response = client
             .post(RESEARCH_UPLOAD_URL)
             .header("Content-Type", "application/json")
-            .header("X-WLD-Version", WLD_VERSION)
+            .header("X-CPOP-Version", CPOP_VERSION)
             .json(&export)
             .timeout(Duration::from_secs(30))
             .send()

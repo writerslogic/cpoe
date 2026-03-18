@@ -1,6 +1,6 @@
 # JSON Schemas
 
-Formal data models for WritersLogic objects.
+Formal data models for CPOP objects.
 
 ## Schemas
 
@@ -12,5 +12,5 @@ Formal data models for WritersLogic objects.
 
 These schemas can be used for:
 1. Automated verification of exported packets.
-2. Cross-platform implementation of WritersLogic clients.
+2. Cross-platform implementation of CPOP clients.
 3. Documentation of the data model.

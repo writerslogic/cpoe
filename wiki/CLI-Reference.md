@@ -1,6 +1,6 @@
 # CLI Reference
 
-The `wld` command-line tool is the primary interface for managing authorship evidence.
+The `cpop` command-line tool is the primary interface for managing authorship evidence.
 
 ## Global Options
 
@@ -15,33 +15,33 @@ The `wld` command-line tool is the primary interface for managing authorship evi
 ## Core Commands
 
 ### `init`
-Initialize WritersLogic and generate your cryptographic identity.
+Initialize CPOP and generate your cryptographic identity.
 ```bash
-wld init
+cpop init
 ```
 
 ### `calibrate`
 Measure your CPU performance for VDF timing proofs. Run this once after installation.
 ```bash
-wld calibrate
+cpop calibrate
 ```
 
 ### `commit`
 Create a checkpoint for a file.
 ```bash
-wld commit <file> [-m "message"]
+cpop commit <file> [-m "message"]
 ```
 
 ### `log`
 Show the checkpoint history for a file.
 ```bash
-wld log <file>
+cpop log <file>
 ```
 
 ### `status`
-Show the current status of WritersLogic, including your identity and configuration.
+Show the current status of CPOP, including your identity and configuration.
 ```bash
-wld status
+cpop status
 ```
 
 ---
@@ -51,13 +51,13 @@ wld status
 ### `export`
 Export a `.wpkt` evidence packet containing the full chain of authorship proof.
 ```bash
-wld export <file> [-o output.wpkt]
+cpop export <file> [-o output.wpkt]
 ```
 
 ### `verify`
 Verify an evidence packet or a local file's checkpoint chain.
 ```bash
-wld verify <file_or_packet>
+cpop verify <file_or_packet>
 ```
 
 ---
@@ -67,17 +67,17 @@ wld verify <file_or_packet>
 ### `track`
 Manage real-time activity tracking for a document.
 ```bash
-wld track start <file>
-wld track status
-wld track stop
+cpop track start <file>
+cpop track status
+cpop track stop
 ```
 
 ### `sentinel`
 Manage the background daemon that handles automatic tracking and checkpoints.
 ```bash
-WritersLogic sentinel start
-WritersLogic sentinel status
-WritersLogic sentinel stop
+CPOP sentinel start
+CPOP sentinel status
+CPOP sentinel stop
 ```
 
 ---
@@ -93,7 +93,7 @@ WritersLogic sentinel stop
 
 ## Interactive Menu
 
-If you run `wld` without any arguments, it will launch an interactive TUI menu for easy navigation.
+If you run `cpop` without any arguments, it will launch an interactive TUI menu for easy navigation.
 
 ---
 

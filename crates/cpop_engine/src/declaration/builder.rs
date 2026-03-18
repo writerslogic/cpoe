@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 use chrono::Utc;
-use cpop_protocol::crypto::PoPSigner;
+use cpop_protocol::crypto::EvidenceSigner;
 
 use crate::error::Error;
 
@@ -102,7 +102,7 @@ impl Builder {
     }
 
     /// Validate, sign, and finalize the declaration.
-    pub fn sign(mut self, signer: &dyn PoPSigner) -> crate::error::Result<Declaration> {
+    pub fn sign(mut self, signer: &dyn EvidenceSigner) -> crate::error::Result<Declaration> {
         if let Some(err) = self.err.take() {
             return Err(Error::validation(err));
         }

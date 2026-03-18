@@ -1,5 +1,5 @@
 #!/bin/bash
-# Install WritersLogic Native Messaging Host on macOS/Linux
+# Install CPOP Native Messaging Host on macOS/Linux
 #
 # This script:
 # 1. Copies the native messaging host binary to /usr/local/bin/
@@ -56,7 +56,7 @@ install_chrome() {
   cat > "${MANIFEST_DIR}/${HOST_NAME}.json" <<EOF
 {
   "name": "${HOST_NAME}",
-  "description": "WritersLogic Native Messaging Host",
+  "description": "CPOP Native Messaging Host",
   "path": "${INSTALLED_BINARY}",
   "type": "stdio",
   "allowed_origins": [
@@ -83,11 +83,11 @@ install_firefox() {
   cat > "${MANIFEST_DIR}/${HOST_NAME}.json" <<EOF
 {
   "name": "${HOST_NAME}",
-  "description": "WritersLogic Native Messaging Host",
+  "description": "CPOP Native Messaging Host",
   "path": "${INSTALLED_BINARY}",
   "type": "stdio",
   "allowed_extensions": [
-    "wld@writerslogic.com"
+    "cpop@writerslogic.com"
   ]
 }
 EOF
@@ -108,7 +108,7 @@ install_edge() {
   cat > "${MANIFEST_DIR}/${HOST_NAME}.json" <<EOF
 {
   "name": "${HOST_NAME}",
-  "description": "WritersLogic Native Messaging Host",
+  "description": "CPOP Native Messaging Host",
   "path": "${INSTALLED_BINARY}",
   "type": "stdio",
   "allowed_origins": [
@@ -144,7 +144,7 @@ if ! $INSTALL_CHROME && ! $INSTALL_FIREFOX && ! $INSTALL_EDGE; then
   INSTALL_CHROME=true; INSTALL_FIREFOX=true; INSTALL_EDGE=true
 fi
 
-echo "=== WritersLogic Native Messaging Host Installer ==="
+echo "=== CPOP Native Messaging Host Installer ==="
 echo ""
 
 install_binary

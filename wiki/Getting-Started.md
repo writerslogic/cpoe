@@ -1,6 +1,6 @@
-# Getting Started with WritersLogic
+# Getting Started with CPOP
 
-WritersLogic is a cryptographic authorship witnessing system that creates tamper-evident records of your creative process. This guide will help you install and configure WritersLogic for first use.
+CPOP is a cryptographic authorship witnessing system that creates tamper-evident records of your creative process. This guide will help you install and configure CPOP for first use.
 
 ## Table of Contents
 
@@ -39,15 +39,15 @@ WritersLogic is a cryptographic authorship witnessing system that creates tamper
 #### Using Homebrew
 
 ```bash
-brew tap writerslogic/writerslogic
+brew tap writerslogic/cpop
 brew install writerslogic
 ```
 
 #### Using the macOS App
 
-1. Download `WritersLogic.dmg` from the [releases page](https://github.com/writerslogic/writerslogic/releases)
+1. Download `CPOP.dmg` from the [releases page](https://github.com/writerslogic/cpop/releases)
 2. Open the DMG file
-3. Drag **WritersLogic** to your Applications folder
+3. Drag **CPOP** to your Applications folder
 4. Launch the app and follow the **Onboarding Guide** to initialize your identity and calibrate your machine.
 
 The macOS app includes:
@@ -61,13 +61,13 @@ The macOS app includes:
 #### Using the Install Script
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/writerslogic/writerslogic/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/writerslogic/cpop/main/install.sh | bash
 ```
 
 #### Building from Source
 
 ```bash
-git clone https://github.com/writerslogic/writerslogic.git
+git clone https://github.com/writerslogic/cpop.git
 cd writerslogic
 make build
 sudo make install
@@ -76,19 +76,19 @@ sudo make install
 ### Verifying Installation
 
 ```bash
-WritersLogic version
+CPOP version
 ```
 
 ---
 
 ## Initial Setup
 
-### 1. Initialize WritersLogic
+### 1. Initialize CPOP
 
-Before creating checkpoints, you must initialize WritersLogic:
+Before creating checkpoints, you must initialize CPOP:
 
 ```bash
-wld init
+cpop init
 ```
 
 This creates your unique cryptographic identity bound to your device hardware via [[Glossary#PUF|Physically Unclonable Functions (PUF)]].
@@ -98,7 +98,7 @@ This creates your unique cryptographic identity bound to your device hardware vi
 Calibrate the [[Glossary#VDF|Verifiable Delay Function (VDF)]] to ensure accurate timing proofs for your specific CPU:
 
 ```bash
-wld calibrate
+cpop calibrate
 ```
 
 ### 3. Register Browser Extension (Optional)
@@ -106,10 +106,10 @@ wld calibrate
 If you want to witness your process in Google Docs, Overleaf, or Notion:
 
 ```bash
-WritersLogic register-native-host
+CPOP register-native-host
 ```
 
-Then install the WritersLogic extension from your browser's extension store.
+Then install the CPOP extension from your browser's extension store.
 
 ### Configuration (Optional)
 
@@ -128,7 +128,7 @@ Create a checkpoint for any file:
 echo "My first witnessed document" > mydoc.txt
 
 # Create a checkpoint
-wld commit mydoc.txt -m "Initial version"
+cpop commit mydoc.txt -m "Initial version"
 ```
 
 ### Enhanced Workflow with Keystroke Tracking
@@ -137,15 +137,15 @@ For stronger evidence, track keystrokes during writing:
 
 ```bash
 # Start tracking
-wld track start mydoc.txt
+cpop track start mydoc.txt
 
 # ... write your document ...
 
 # Create checkpoint with keystroke evidence
-wld commit mydoc.txt -m "Draft with tracked keystrokes"
+cpop commit mydoc.txt -m "Draft with tracked keystrokes"
 
 # Stop tracking
-wld track stop
+cpop track stop
 ```
 
 ---
@@ -157,7 +157,7 @@ wld track stop
 When you need to prove authorship:
 
 ```bash
-wld export mydoc.txt
+cpop export mydoc.txt
 ```
 
 This creates `mydoc.wpkt` containing your evidence.
@@ -167,7 +167,7 @@ This creates `mydoc.wpkt` containing your evidence.
 Anyone can verify the evidence:
 
 ```bash
-wld verify mydoc.wpkt
+cpop verify mydoc.wpkt
 ```
 
 ---
