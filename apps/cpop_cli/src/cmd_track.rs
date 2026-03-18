@@ -1263,11 +1263,12 @@ pub(crate) async fn cmd_track_smart(
                     ev.verify()
                         .map_err(|e| anyhow!("Evidence verification failed: {}", e))?;
 
-                    let export_path = format!("{}.hybrid-jitter.json", session_id);
+                    let export_path =
+                        tracking_dir.join(format!("{}.hybrid-jitter.json", session_id));
                     let data = ev
                         .encode()
                         .map_err(|e| anyhow!("Error encoding evidence: {}", e))?;
-                    let tmp_path = format!("{}.tmp", export_path);
+                    let tmp_path = export_path.with_extension("tmp");
                     fs::write(&tmp_path, &data)?;
                     fs::rename(&tmp_path, &export_path)?;
 
@@ -1275,7 +1276,7 @@ pub(crate) async fn cmd_track_smart(
                         println!(
                             "{}",
                             serde_json::json!({
-                                "exported": export_path,
+                                "exported": export_path.to_string_lossy(),
                                 "duration_secs": ev.statistics.duration.as_secs_f64(),
                                 "keystrokes": ev.statistics.total_keystrokes,
                                 "samples": ev.statistics.total_samples,
@@ -1287,7 +1288,10 @@ pub(crate) async fn cmd_track_smart(
                             })
                         );
                     } else if !out.quiet {
-                        println!("Hybrid jitter evidence exported to: {}", export_path);
+                        println!(
+                            "Hybrid jitter evidence exported to: {}",
+                            export_path.display()
+                        );
                         println!();
                         println!("Evidence summary:");
                         println!("  Duration: {:?}", ev.statistics.duration);
@@ -1325,11 +1329,11 @@ pub(crate) async fn cmd_track_smart(
                 ev.verify()
                     .map_err(|e| anyhow!("Evidence verification failed: {}", e))?;
 
-                let export_path = format!("{}.jitter.json", session_id);
+                let export_path = tracking_dir.join(format!("{}.jitter.json", session_id));
                 let data = ev
                     .encode()
                     .map_err(|e| anyhow!("Error encoding evidence: {}", e))?;
-                let tmp_path = format!("{}.tmp", export_path);
+                let tmp_path = export_path.with_extension("tmp");
                 fs::write(&tmp_path, &data)?;
                 fs::rename(&tmp_path, &export_path)?;
 
@@ -1337,7 +1341,7 @@ pub(crate) async fn cmd_track_smart(
                     println!(
                         "{}",
                         serde_json::json!({
-                            "exported": export_path,
+                            "exported": export_path.to_string_lossy(),
                             "duration_secs": ev.statistics.duration.as_secs_f64(),
                             "keystrokes": ev.statistics.total_keystrokes,
                             "samples": ev.statistics.total_samples,
@@ -1348,7 +1352,7 @@ pub(crate) async fn cmd_track_smart(
                         })
                     );
                 } else if !out.quiet {
-                    println!("Jitter evidence exported to: {}", export_path);
+                    println!("Jitter evidence exported to: {}", export_path.display());
                     println!();
                     println!("Evidence summary:");
                     println!("  Duration: {:?}", ev.statistics.duration);
@@ -1372,7 +1376,7 @@ pub(crate) async fn cmd_track_smart(
                     return Err(anyhow!("Session not found: {}", session_id));
                 }
 
-                let export_path = PathBuf::from(format!("{}.session.json", session_id));
+                let export_path = tracking_dir.join(format!("{}.session.json", session_id));
                 let mut tmp_path = export_path.clone().into_os_string();
                 tmp_path.push(".tmp");
                 let tmp_path = PathBuf::from(tmp_path);

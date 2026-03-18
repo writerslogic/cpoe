@@ -378,7 +378,15 @@ fn handle_checkpoint(
             &session.session_nonce,
         );
 
-        let browser_bytes = hex::decode(browser_commitment).unwrap_or_default();
+        let browser_bytes = match hex::decode(browser_commitment) {
+            Ok(b) => b,
+            Err(_) => {
+                return Response::Error {
+                    message: "Invalid hex in browser commitment".into(),
+                    code: "INVALID_COMMITMENT_HEX".into(),
+                };
+            }
+        };
         if browser_bytes.len() != 32 || expected.ct_eq(&browser_bytes).unwrap_u8() == 0 {
             #[cfg(debug_assertions)]
             eprintln!("Commitment chain violation detected");
@@ -602,6 +610,15 @@ struct JitterStats {
 }
 
 fn compute_jitter_stats(intervals: &[u64]) -> JitterStats {
+    if intervals.is_empty() {
+        return JitterStats {
+            count: 0,
+            mean: 0.0,
+            std_dev: 0.0,
+            min: 0,
+            max: 0,
+        };
+    }
     let count = intervals.len();
     let sum: u64 = intervals.iter().sum();
     let mean = sum as f64 / count as f64;
