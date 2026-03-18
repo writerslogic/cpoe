@@ -516,7 +516,7 @@ Windows app: independent of engine groups (separate C# codebase)
 - [x] **H-210** `[error_handling]` `evidence/builder/setters.rs:331` — i32 overflow silently capped — FIXED: log::warn on overflow
   <!-- pid:overflow_silent | first:2026-03-18 -->
 
-- [ ] **H-211** `[error_handling]` `evidence/wire_conversion.rs:51` — Empty chain produces valid wire packet
+- [-] **H-211** `[error_handling]` `evidence/wire_conversion.rs:51` — Empty chain produces valid wire packet
   <!-- pid:unvalidated_invariant | first:2026-03-18 -->
   0-byte document on empty chain. Verifier can't distinguish 'never written' from 'data lost'. Effort: small
 
@@ -546,7 +546,7 @@ Windows app: independent of engine groups (separate C# codebase)
   <!-- pid:race_condition | first:2026-03-18 -->
   Jitter session cleared but monitor continues recording. Timing data interleaved. Effort: medium
 
-- [ ] **H-219** `[error_handling]` `sealed_chain.rs:169` — Slice bounds assume HEADER_SIZE correct without assert
+- [x] **H-219** `[error_handling]` `sealed_chain.rs:169` — Slice bounds assume HEADER_SIZE correct without assert
   <!-- pid:missing_bounds_check | first:2026-03-18 -->
   data[20..52] access panics if constant is wrong. Add bounds assertion. Effort: small
 
@@ -789,65 +789,65 @@ Windows app: independent of engine groups (separate C# codebase)
   <!-- pid:perf_quadratic_search | batch:14 | verified:true | first:2026-03-12 | last:2026-03-12 -->
   Impact: For k=100 (MAXIMUM tier), 5050 comparisons per proof | Fix: Use `HashSet` for O(1) lookups | Effort: small
 
-- [ ] **H-167** `[performance]` `fingerprint/storage.rs:90` — O(n³) nested `.iter().find()` in cluster analysis
+- [-] **H-167** `[performance]` `fingerprint/storage.rs:90` — O(n³) nested `.iter().find()` in cluster analysis
   <!-- pid:perf_nested_find | batch:4 | verified:true | first:2026-03-12 | last:2026-03-12 -->
   Impact: Quadratic/cubic complexity on fingerprint lookups | Fix: Build `HashMap<ProfileId, &AuthorFingerprint>` once before loop | Effort: small
 
-- [ ] **H-168** `[performance]` `platform/linux.rs:548,871` — `device_id` cloned on every keystroke and mouse event in hot loop
+- [-] **H-168** `[performance]` `platform/linux.rs:548,871` — `device_id` cloned on every keystroke and mouse event in hot loop
   <!-- pid:perf_heap_alloc_loop | batch:2 | verified:true | first:2026-03-12 | last:2026-03-12 -->
   Impact: O(n) String clone per event at typing/mouse frequency | Fix: Cache `device_id` before loop or use `Arc<String>` | Effort: small
 
 #### Error Handling
 
-- [ ] **H-169** `[error_handling]` `c2pa.rs:989` — `.unwrap()` on external COSE signature data at trust boundary
+- [-] **H-169** `[error_handling]` `c2pa.rs:989` — `.unwrap()` on external COSE signature data at trust boundary
   <!-- pid:unwrap_on_external | batch:1 | verified:true | first:2026-03-12 | last:2026-03-12 -->
   Impact: Malformed/tampered C2PA manifest causes library panic | Fix: `map_err()` and propagate | Effort: small
 
-- [ ] **H-170** `[error_handling]` `forensics/velocity.rs:117` — Unsafe unwrap in session statistics; panics on empty session list
+- [-] **H-170** `[error_handling]` `forensics/velocity.rs:117` — Unsafe unwrap in session statistics; panics on empty session list
   <!-- pid:error_handling_unwrap | batch:8 | verified:true | first:2026-03-12 | last:2026-03-12 -->
   Impact: Crash on edge case during forensic analysis | Fix: Guard with `if sessions.is_empty() { return default }` | Effort: small
 
-- [ ] **H-171** `[error_handling]` `forensics/cross_modal.rs:310` — Division-by-zero risk in temporal drift score
+- [x] **H-171** `[error_handling]` `forensics/cross_modal.rs:310` — Division-by-zero risk in temporal drift score
   <!-- pid:unguarded_division | batch:8 | verified:true | first:2026-03-12 | last:2026-03-12 -->
   Impact: NaN propagation if constants misconfigured | Fix: Assert `MAX_TEMPORAL_DRIFT_SEC > DRIFT_PERFECT_SEC` or clamp denominator | Effort: small
 
-- [ ] **H-172** `[error_handling]` `rfc/biology.rs:558` — `10f64.powf(spectral_slope)` with external data; NaN/Inf silently stored
+- [x] **H-172** `[error_handling]` `rfc/biology.rs:558` — `10f64.powf(spectral_slope)` with external data; NaN/Inf silently stored
   <!-- pid:nan_inf_residual | batch:11 | verified:true | first:2026-03-12 | last:2026-03-12 -->
   Impact: Silent corruption of biological measurements | Fix: Validate `spectral_slope.is_finite()` before `powf()` | Effort: small
 
-- [ ] **H-173** `[error_handling]` `rfc/biology.rs:364` — Unclamped FP accumulation; NaN scores silently become 0 millibits
+- [x] **H-173** `[error_handling]` `rfc/biology.rs:364` — Unclamped FP accumulation; NaN scores silently become 0 millibits
   <!-- pid:unclamped_fp_accumulation | batch:11 | verified:true | first:2026-03-12 | last:2026-03-12 -->
   Impact: Subtle data loss — invalid scores look like valid "no evidence" | Fix: Check `is_finite()` on each sub-score before accumulation | Effort: small
 
-- [ ] **H-174** `[error_handling]` `rfc/biology.rs:370` — NaN passes range check (`(0.55..=0.85).contains(&NaN)` returns false silently)
+- [x] **H-174** `[error_handling]` `rfc/biology.rs:370` — NaN passes range check (`(0.55..=0.85).contains(&NaN)` returns false silently)
   <!-- pid:nan_skip_validation | batch:11 | verified:true | first:2026-03-12 | last:2026-03-12 -->
   Impact: Malformed Hurst exponents bypass anomaly detection | Fix: Add `h.is_finite()` check before range tests | Effort: small
 
-- [ ] **H-175** `[error_handling]` `platform/linux.rs:859` — NaN from `sqrt()` in mouse magnitude without finite guard
+- [x] **H-175** `[error_handling]` `platform/linux.rs:859` — NaN from `sqrt()` in mouse magnitude without finite guard
   <!-- pid:nan_inf_residual | batch:2 | verified:true | first:2026-03-12 | last:2026-03-12 -->
   Impact: Synthetic jitter detection silently broken on overflow | Fix: Check `.is_finite()` after sqrt | Effort: small
 
-- [ ] **H-176** `[error_handling]` `platform/synthetic.rs:115` — Variance/std NaN when window is empty
+- [x] **H-176** `[error_handling]` `platform/synthetic.rs:115` — Variance/std NaN when window is empty
   <!-- pid:nan_guard_missing | batch:2 | verified:true | first:2026-03-12 | last:2026-03-12 -->
   Impact: CV threshold check always false on NaN; verdicts unreliable | Fix: Guard `window.len() >= MIN_SAMPLES` before stats calc | Effort: small
 
-- [ ] **H-177** `[error_handling]` `platform/windows.rs:262` — `UnhookWindowsHookEx()` result silently discarded with `let _`
+- [x] **H-177** `[error_handling]` `platform/windows.rs:262` — `UnhookWindowsHookEx()` result silently discarded with `let _`
   <!-- pid:silent_error_swallow | batch:2 | verified:true | first:2026-03-12 | last:2026-03-12 -->
   Impact: Hook may fail to detach; system resource leak in Drop | Fix: Log result | Effort: small
 
 #### Architecture
 
-- [ ] **H-178** `[architecture]` `c2pa.rs:244` — `CLAIM_GENERATOR` version string hardcoded, not from `CARGO_PKG_VERSION`
+- [-] **H-178** `[architecture]` `c2pa.rs:244` — `CLAIM_GENERATOR` version string hardcoded, not from `CARGO_PKG_VERSION`
   <!-- pid:hardcoded_version | batch:1 | verified:true | first:2026-03-12 | last:2026-03-12 -->
   Impact: C2PA manifest version becomes stale on crate version bump | Fix: Use `env!("CARGO_PKG_VERSION")` | Effort: small
 
 #### Concurrency
 
-- [ ] **H-179** `[concurrency]` `sentinel/core.rs:322` — Keystroke accumulator write lock acquired twice without idempotency guard
+- [-] **H-179** `[concurrency]` `sentinel/core.rs:322` — Keystroke accumulator write lock acquired twice without idempotency guard
   <!-- pid:double_write_guard | batch:6 | verified:true | first:2026-03-12 | last:2026-03-12 -->
   Impact: Possible duplicate writes if channel sends same event twice | Fix: Add idempotent event IDs | Effort: small
 
-- [ ] **H-180** `[concurrency]` `platform/windows.rs:186` — `GLOBAL_SESSION.lock()` poison error silently swallowed via `.ok().and_then()`
+- [x] **H-180** `[concurrency]` `platform/windows.rs:186` — `GLOBAL_SESSION.lock()` poison error silently swallowed via `.ok().and_then()`
   <!-- pid:poison_error_swallow | batch:2 | verified:true | first:2026-03-12 | last:2026-03-12 -->
   Impact: Panic in hook silently treats session as None; no recovery path | Fix: Log poison errors explicitly | Effort: small
 
