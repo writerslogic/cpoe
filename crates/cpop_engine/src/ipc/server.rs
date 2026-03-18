@@ -5,10 +5,13 @@ use super::crypto::{
     secure_handshake_server, send_encrypted, RateLimitConfig, RateLimiter, WireProtocol,
     SECURE_JSON_PROTOCOL_MAGIC,
 };
-use super::messages::{IpcErrorCode, IpcMessage, IpcMessageHandler, MAX_MESSAGE_SIZE};
+use super::messages::{
+    IpcErrorCode, IpcMessage, IpcMessageHandler, MAX_CONCURRENT_CONNECTIONS, MAX_MESSAGE_SIZE,
+};
 use crate::MutexRecover;
 use anyhow::Result;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 #[cfg(target_os = "windows")]
 use tokio::net::windows::named_pipe;
@@ -299,14 +302,26 @@ impl IpcServer {
     /// Run the IPC server with a message handler
     pub async fn run_with_handler<H: IpcMessageHandler>(self, handler: Arc<H>) -> Result<()> {
         let rate_limiter = Arc::new(Mutex::new(RateLimiter::new(60)));
+        let active_connections = Arc::new(AtomicUsize::new(0));
         #[cfg(not(target_os = "windows"))]
         {
             loop {
                 let (stream, _) = self.listener.accept().await?;
+                let current = active_connections.load(Ordering::Relaxed);
+                if current >= MAX_CONCURRENT_CONNECTIONS {
+                    log::warn!(
+                        "IPC: rejecting connection ({current}/{MAX_CONCURRENT_CONNECTIONS} active)"
+                    );
+                    drop(stream);
+                    continue;
+                }
                 let handler_clone = Arc::clone(&handler);
                 let rl = Arc::clone(&rate_limiter);
+                let conn_count = Arc::clone(&active_connections);
+                conn_count.fetch_add(1, Ordering::Relaxed);
                 tokio::spawn(async move {
                     handle_connection(stream, handler_clone, rl).await;
+                    conn_count.fetch_sub(1, Ordering::Relaxed);
                 });
             }
         }
@@ -318,10 +333,21 @@ impl IpcServer {
                     .create(&self.pipe_name)?;
 
                 server.connect().await?;
+                let current = active_connections.load(Ordering::Relaxed);
+                if current >= MAX_CONCURRENT_CONNECTIONS {
+                    log::warn!(
+                        "IPC: rejecting connection ({current}/{MAX_CONCURRENT_CONNECTIONS} active)"
+                    );
+                    drop(server);
+                    continue;
+                }
                 let handler_clone = Arc::clone(&handler);
                 let rl = Arc::clone(&rate_limiter);
+                let conn_count = Arc::clone(&active_connections);
+                conn_count.fetch_add(1, Ordering::Relaxed);
                 tokio::spawn(async move {
                     handle_windows_connection(server, handler_clone, rl).await;
+                    conn_count.fetch_sub(1, Ordering::Relaxed);
                 });
             }
         }

@@ -293,52 +293,51 @@ impl Packet {
         Ok(Sha256::digest(data).into())
     }
 
-    /// Hash of packet content excluding signature-related fields.
+    /// Hash of ALL packet content excluding only the three signature-related fields
+    /// (`verifier_nonce`, `packet_signature`, `signing_public_key`) to avoid
+    /// circular dependencies during signing.
     ///
-    /// Omits `verifier_nonce`, `packet_signature`, and `signing_public_key`
-    /// to avoid circular dependencies during signing.
-    // SECURITY TODO: This hash covers only structural fields (version, document hash/size,
-    // chain hash, checkpoint hashes, declaration signature, VDF params). It excludes
-    // behavioral evidence, keystroke metrics, jitter data, hardware attestation, forensic
-    // analysis, and other evidence fields. An attacker could strip those fields without
-    // invalidating the signature. The full `hash()` method covers everything via CBOR
-    // serialization, but `signing_payload()` delegates to this narrower `content_hash()`.
-    // To close this gap, `signing_payload()` should bind to a commitment over all evidence
-    // fields, or `content_hash()` should be extended to include them.
+    /// Uses deterministic CBOR serialization of a clone with signature fields cleared,
+    /// ensuring every evidence field (behavioral, keystroke, jitter, hardware, forensics,
+    /// etc.) is covered. Stripping any field invalidates the signature.
     pub fn content_hash(&self) -> [u8; 32] {
+        // Clone and clear signature-related fields to break circular dependency
+        let mut signable = self.clone();
+        signable.verifier_nonce = None;
+        signable.packet_signature = None;
+        signable.signing_public_key = None;
+
+        // Deterministic CBOR serialization covers ALL remaining fields
+        let data = match codec::cbor::encode(&signable) {
+            Ok(d) => d,
+            Err(_) => {
+                // Fallback: if CBOR encoding fails, hash the structural fields directly.
+                // This should never happen with a well-formed Packet.
+                log::error!("content_hash: CBOR encoding failed, using structural fallback");
+                return self.structural_hash();
+            }
+        };
+
         let mut hasher = Sha256::new();
-        hasher.update(b"witnessd-packet-content-v2");
+        hasher.update(b"witnessd-packet-content-v3");
+        hasher.update(data);
+        hasher.finalize().into()
+    }
+
+    /// Fallback structural hash covering only core fields (used if CBOR encoding fails).
+    fn structural_hash(&self) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        hasher.update(b"witnessd-packet-content-v3-fallback");
         hasher.update(self.version.to_be_bytes());
         hasher.update(self.exported_at.timestamp_nanos_safe().to_be_bytes());
         hasher.update((self.strength as i32).to_be_bytes());
-
-        // Length-prefix variable-length fields to prevent concatenation collisions:
-        let final_hash_bytes = self.document.final_hash.as_bytes();
-        hasher.update((final_hash_bytes.len() as u32).to_be_bytes());
-        hasher.update(final_hash_bytes);
-
+        hasher.update(self.document.final_hash.as_bytes());
         hasher.update(self.document.final_size.to_be_bytes());
-
-        let chain_hash_bytes = self.chain_hash.as_bytes();
-        hasher.update((chain_hash_bytes.len() as u32).to_be_bytes());
-        hasher.update(chain_hash_bytes);
-
+        hasher.update(self.chain_hash.as_bytes());
         hasher.update((self.checkpoints.len() as u64).to_be_bytes());
         for cp in &self.checkpoints {
-            let hash_bytes = cp.hash.as_bytes();
-            hasher.update((hash_bytes.len() as u32).to_be_bytes());
-            hasher.update(hash_bytes);
+            hasher.update(cp.hash.as_bytes());
         }
-
-        if let Some(decl) = &self.declaration {
-            hasher.update(b"decl");
-            hasher.update((decl.signature.len() as u32).to_be_bytes());
-            hasher.update(&decl.signature);
-        }
-
-        hasher.update(self.vdf_params.iterations_per_second.to_be_bytes());
-        hasher.update(self.vdf_params.min_iterations.to_be_bytes());
-
         hasher.finalize().into()
     }
 

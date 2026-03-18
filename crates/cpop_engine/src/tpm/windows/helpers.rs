@@ -168,6 +168,33 @@ pub fn create_srk_public_key(context: &TbsContext) -> Result<Vec<u8>, String> {
     Ok(public_key)
 }
 
+/// Build a TPMT_PUBLIC for an ECC P-256 signing-only key (child of SRK).
+///
+/// Attributes: fixedTPM | fixedParent | sensitiveDataOrigin | userWithAuth | sign
+/// Scheme: ECDSA with SHA-256.
+pub fn build_signing_key_public_ecc() -> Vec<u8> {
+    let mut public = Vec::new();
+
+    public.extend_from_slice(&TPM2_ALG_ECC.to_be_bytes()); // type
+    public.extend_from_slice(&TPM2_ALG_SHA256.to_be_bytes()); // nameAlg
+
+    // fixedTPM(0x02) | fixedParent(0x10) | sensitiveDataOrigin(0x20) | userWithAuth(0x40) | sign(0x40000)
+    let attrs: u32 = 0x00040072;
+    public.extend_from_slice(&attrs.to_be_bytes());
+
+    public.extend_from_slice(&0u16.to_be_bytes()); // authPolicy (empty)
+    public.extend_from_slice(&TPM2_ALG_NULL.to_be_bytes()); // symmetric (none for signing key)
+    public.extend_from_slice(&TPM2_ALG_ECDSA.to_be_bytes()); // scheme = ECDSA
+    public.extend_from_slice(&TPM2_ALG_SHA256.to_be_bytes()); // scheme.hashAlg
+    public.extend_from_slice(&TPM2_ECC_NIST_P256.to_be_bytes()); // curveID
+    public.extend_from_slice(&TPM2_ALG_NULL.to_be_bytes()); // kdf (none)
+
+    public.extend_from_slice(&0u16.to_be_bytes()); // unique.x (empty — TPM generates)
+    public.extend_from_slice(&0u16.to_be_bytes()); // unique.y (empty)
+
+    public
+}
+
 /// Build a TPMT_PUBLIC for a KeyedHash sealing object.
 pub fn build_sealing_public() -> Vec<u8> {
     let mut public = Vec::new();

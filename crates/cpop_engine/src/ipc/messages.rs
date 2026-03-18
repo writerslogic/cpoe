@@ -4,8 +4,13 @@ use crate::jitter::SimpleJitterSample;
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 
-/// 1 MB cap on IPC frames
-pub(crate) const MAX_MESSAGE_SIZE: usize = 1024 * 1024;
+/// 256 KB cap on IPC frames. Typical messages are <1KB (keystroke events,
+/// status queries, session commands). 256KB is generous while limiting
+/// allocation from untrusted length-prefix to a reasonable bound.
+pub(crate) const MAX_MESSAGE_SIZE: usize = 256 * 1024;
+
+/// Maximum concurrent IPC connections. Prevents local DoS via connection flooding.
+pub(crate) const MAX_CONCURRENT_CONNECTIONS: usize = 16;
 
 /// Reject paths with `..` components, relative paths, or paths that resolve
 /// into system directories. Called on every PathBuf deserialized from an IPC
