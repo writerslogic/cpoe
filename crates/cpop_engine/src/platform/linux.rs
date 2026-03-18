@@ -177,13 +177,13 @@ fn is_virtual_input_device(
     }
 
     // Zero vendor+product with no recognizable physical device name
-    if vendor_id == 0 && product_id == 0 {
-        if !known_physical_names
+    if vendor_id == 0
+        && product_id == 0
+        && !known_physical_names
             .iter()
             .any(|kw| name_lower.contains(kw))
-        {
-            return true;
-        }
+    {
+        return true;
     }
 
     false
