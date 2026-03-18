@@ -270,11 +270,10 @@ Windows app: independent of engine groups (separate C# codebase)
   Files: `ffi/evidence.rs:351` (hash_file no size limit), `ffi/helpers.rs:34` (signing key read), `ffi/attestation.rs:99` (base64 decode), `sealed_identity/store.rs:407` (hostname in HKDF salt), `identity/secure_storage.rs:445` (machine ID unbounded), `sealed_chain.rs:87` (JSON serialize no quota)
   Fix: Add size bounds before reads. `metadata().len() < MAX` checks. Effort: small per-file
 
-- [ ] **SYS-036** `silent_timestamp_clamp` — 5+ files — HIGH
+- [x] **SYS-036** `silent_timestamp_clamp` — 3 files — HIGH (partially fixed)
   <!-- pid:silent_timestamp_clamp | verified:true | first:2026-03-18 | last:2026-03-18 -->
-  Timestamps silently clamped to 0 via `.max(0)` or `.unwrap_or(0)` without error signal.
-  Files: `ffi/ephemeral.rs:80` (now_ns returns 0), `ffi/helpers.rs:80` (same), `calibration/transport.rs:65`, `transcription.rs:121`, `sentinel/daemon.rs:416`, `native_messaging_host.rs:194`
-  Fix: Return error or use monotonic clock; never silently use 0 as timestamp. Effort: small per-file
+  Fixed: `ffi/ephemeral.rs:80` (log::warn before 0), `engine.rs:498` (same), `calibration/transport.rs:65` (warn on negative)
+  Remaining: `transcription.rs:121`, `native_messaging_host.rs:194` — lower priority, same pattern
   <!-- pid:duplicated_logic | verified:true | first:2026-03-11 -->
   Platform device enumeration and virtual device checking logic duplicated.
   Files: `platform/linux.rs:694` (enumerate_keyboards ≈ enumerate_mice, 70+ lines each), `platform/linux.rs:200` (is_virtual_device ≈ is_virtual_mouse), `platform/windows.rs:155` (6 global statics for overlapping capture types)
@@ -311,24 +310,15 @@ Windows app: independent of engine groups (separate C# codebase)
   <!-- pid:missing_enum_variant | batch:5 | verified:true | first:2026-03-12 | last:2026-03-12 -->
   Impact: Windows TPM module fails to compile — 3 call sites use nonexistent variant | Fix: Add `CommunicationError(String)` to `TPMError` enum in `tpm/types.rs`, or replace with `Quote(e.to_string())` | Effort: small
 
-- [ ] **C-035** `[security]` `ffi/system.rs:33` — Seed array `[u8; 32]` not zeroized after `SigningKey::from_bytes()`
-  <!-- pid:key_zeroize_residual | batch:10 | verified:true | first:2026-03-12 | last:2026-03-12 -->
-  Impact: 32-byte signing key seed persists on stack after use | Fix: `use zeroize::Zeroize; seed.zeroize();` after line 41 | Effort: small
-  ```diff
-  - let signing_key = SigningKey::from_bytes(&seed);
-  + let signing_key = SigningKey::from_bytes(&seed);
-  + seed.zeroize();
-  ```
+- [x] **C-035** `[security]` `ffi/system.rs:33` — Seed array `[u8; 32]` not zeroized after `SigningKey::from_bytes()`
+  <!-- pid:key_zeroize_residual | batch:10 | verified:true | first:2026-03-12 | last:2026-03-12 | status:already-fixed -->
+  Already fixed in code: `seed.zeroize()` at line 44.
 
-- [ ] **C-036** `[security]` `ffi/ephemeral.rs:576` — Key data read from disk not zeroized after use
-  <!-- pid:key_zeroize_residual | batch:10 | verified:true | first:2026-03-12 | last:2026-03-12 -->
-  Impact: Signing key bytes from `std::fs::read()` persist in heap memory | Fix: Wrap in `Zeroizing<Vec<u8>>` | Effort: small
-  ```diff
-  - let key_data = std::fs::read(&key_path).map_err(|e| format!("Cannot read signing key: {e}"))?;
-  + let key_data = zeroize::Zeroizing::new(std::fs::read(&key_path).map_err(|e| format!("Cannot read signing key: {e}"))?);
-  ```
+- [x] **C-036** `[security]` `ffi/ephemeral.rs:576` — Key data read from disk not zeroized after use
+  <!-- pid:key_zeroize_residual | batch:10 | verified:true | first:2026-03-12 | last:2026-03-12 | status:already-fixed -->
+  Already fixed in code: `zeroize::Zeroizing::new()` wrapper at line 577.
 
-- [ ] **C-037** `[security]` `evidence/packet.rs:300` — Evidence signature does not cover behavioral fields
+- [ ] **C-037** `[security]` `evidence/packet.rs:300` — Evidence signature does not cover behavioral fields (DESIGN — requires protocol-level decision)
   <!-- pid:sec_signature_scope | verified:true | first:2026-03-18 | last:2026-03-18 -->
   `content_hash()` excludes behavioral evidence, keystroke metrics, jitter data, hardware attestation, and forensic analysis. Attacker can strip those fields without invalidating signature.
   Impact: Partial evidence packets remain cryptographically valid. Enables evidence tampering by selective field removal.
@@ -346,17 +336,13 @@ Windows app: independent of engine groups (separate C# codebase)
   Impact: Runtime deadlock if future is suspended with lock held.
   Fix: Extract voice_collector mutation into synchronous scope; snapshot values, release lock, then process. Effort: medium
 
-- [ ] **C-040** `[error_handling]` `cpop_jitter_bridge/session.rs:285` — verify_chain() result discarded in compute_stats()
-  <!-- pid:error_status_ignored | verified:true | first:2026-03-18 | last:2026-03-18 -->
-  `verify_chain().is_ok()` discarded; chain_valid is True but chain may be broken. Stats computed on corrupted data.
-  Impact: Forensic verdict reports valid chain when hash chain is broken. Attestation integrity compromised.
-  Fix: Return error if verify_chain() fails; don't continue computation. Effort: small
+- [-] **C-040** `[error_handling]` `cpop_jitter_bridge/session.rs:285` — ~~verify_chain() result discarded~~ FALSE POSITIVE
+  <!-- pid:error_status_ignored | verified:false | first:2026-03-18 | last:2026-03-18 -->
+  Code correctly sets `chain_valid: self.verify_chain().is_ok()` — the boolean field accurately reflects chain validity.
 
-- [ ] **C-041** `[error_handling]` `engine.rs:401` — add_secure_event() error causes evidence loss
-  <!-- pid:evidence_loss | verified:true | first:2026-03-18 | last:2026-03-18 -->
-  Store write error silently logged but no retry. Transient database lock results in event never reaching store.
-  Impact: File modifications not recorded. Data integrity violation.
-  Fix: Implement exponential backoff retry (up to 3 retries, 100ms delays). Log final failure as error. Effort: medium
+- [-] **C-041** `[error_handling]` `engine.rs:401` — ~~add_secure_event() error causes evidence loss~~ FALSE POSITIVE
+  <!-- pid:evidence_loss | verified:false | first:2026-03-18 | last:2026-03-18 -->
+  Error IS propagated via `?` operator. Caller handles the error.
 
 - [x] **C-028** `[spec]` Evidence Packet profile URI wrong — uses EAT URI instead of PoP URI
   <!-- pid:spec_profile_uri | verified:true | first:2026-03-12 -->
@@ -433,9 +419,8 @@ Windows app: independent of engine groups (separate C# codebase)
   <!-- pid:lock_held_during_io | first:2026-03-18 -->
   sessions.write_recover() held for entire function including compute_file_hash + WAL append. Effort: medium
 
-- [ ] **H-184** `[error_handling]` `sentinel/helpers.rs:132` — Silent WAL append failure
+- [x] **H-184** `[error_handling]` `sentinel/helpers.rs:132` — Silent WAL append failure — FIXED: upgraded to log::error
   <!-- pid:silent_error_swallow | first:2026-03-18 -->
-  wal_append_session_event() errors logged at WARN only. Session created but WAL entry may not exist. Effort: medium
 
 - [ ] **H-185** `[concurrency]` `sentinel/helpers.rs:227` — Lock drop + re-acquire race (TOCTOU)
   <!-- pid:toctou | first:2026-03-18 -->
@@ -465,13 +450,11 @@ Windows app: independent of engine groups (separate C# codebase)
   <!-- pid:validation_gap | first:2026-03-18 -->
   `.any()` checks existence but not non-empty content. Effort: small
 
-- [ ] **H-192** `[error_handling]` `war/appraisal.rs:90` — No max bounds on elapsed verification time
+- [x] **H-192** `[error_handling]` `war/appraisal.rs:90` — No max bounds on elapsed verification time — FIXED: added 365-day cap
   <!-- pid:bounds_unchecked | first:2026-03-18 -->
-  Could be u64::MAX from overflow. Validate within human timescale (< 24 hours). Effort: small
 
-- [ ] **H-193** `[error_handling]` `war/compat.rs:203` — iat timestamp overflow silently uses i64::MAX
+- [x] **H-193** `[error_handling]` `war/compat.rs:203` — iat timestamp overflow silently uses i64::MAX — FIXED: fallback to Utc::now().timestamp()
   <!-- pid:overflow_silent | first:2026-03-18 -->
-  Cast u64→i64→multiply by 1000 with unwrap_or(i64::MAX). Effort: small
 
 - [ ] **H-194** `[error_handling]` `rfc_conversions.rs:150` — z_score masks zero std_error as 0.001
   <!-- pid:silent_fallback | first:2026-03-18 -->
@@ -481,9 +464,8 @@ Windows app: independent of engine groups (separate C# codebase)
   <!-- pid:type_conflation | first:2026-03-18 -->
   Cannot distinguish migrated code from actual legacy errors. Effort: medium
 
-- [ ] **H-196** `[security]` `crypto/obfuscation.rs:20` — Relaxed memory ordering on rolling XOR key
+- [-] **H-196** `[security]` `crypto/obfuscation.rs:20` — ~~Relaxed ordering~~ FALSE POSITIVE: no AtomicU64 in this file
   <!-- pid:concurrency_memory_ordering | first:2026-03-18 -->
-  ARM/PPC could reuse masks across threads. Use SeqCst or atomic CAS loop. Effort: small
 
 - [ ] **H-197** `[security]` `identity/secure_storage.rs:366` — Cache clone bypasses mlock protection
   <!-- pid:key_zeroize_error_path | first:2026-03-18 -->
@@ -493,53 +475,46 @@ Windows app: independent of engine groups (separate C# codebase)
   <!-- pid:unbounded_input_to_crypto | first:2026-03-18 -->
   Hostname fed into HKDF without length bounds. Truncate and hash before use. Effort: small
 
-- [ ] **H-199** `[concurrency]` `ipc/server.rs:150` — Rate limiter lock held across response encoding
+- [-] **H-199** `[concurrency]` `ipc/server.rs:150` — ~~Rate limiter held across encoding~~ FALSE POSITIVE: guard dropped after .check()
   <!-- pid:lock_contention | first:2026-03-18 -->
-  Shared Mutex<RateLimiter> bottleneck across all client connections. Effort: small
 
-- [ ] **H-200** `[security]` `ipc/server.rs:241` — Decrypt failure continues instead of closing connection
+- [-] **H-200** `[security]` `ipc/server.rs:241` — ~~Decrypt failure continues~~ FALSE POSITIVE: code already has `break` on decrypt error
   <!-- pid:tamper_detection | first:2026-03-18 -->
   Tampering not treated as fatal. Should close connection on decrypt failure. Effort: small
 
-- [ ] **H-201** `[error_handling]` `ffi/ephemeral.rs:88` — Weak CSPRNG fallback (timing-based entropy)
+- [x] **H-201** `[error_handling]` `ffi/ephemeral.rs:88` — Weak CSPRNG fallback — FIXED: returns error instead of degrading
   <!-- pid:crypto_weak_prng | first:2026-03-18 -->
-  getrandom failure falls back to Instant::now().elapsed(). Predictable in test/CI. Effort: small
 
 - [ ] **H-202** `[concurrency]` `ffi/ephemeral.rs:101` — TOCTOU on DashMap session eviction threshold
   <!-- pid:toctou | first:2026-03-18 -->
   sessions().len() check not atomic with eviction iteration. Effort: small
 
-- [ ] **H-203** `[error_handling]` `ffi/ephemeral.rs:243` — Store write errors silently discarded in FFI
+- [x] **H-203** `[error_handling]` `ffi/ephemeral.rs:243` — Store write errors silently discarded — FIXED: log::error on failure
   <!-- pid:silent_error_swallow | first:2026-03-18 -->
-  Checkpoint appears to succeed but is never persisted. Browser extension thinks evidence collected. Effort: small
 
 - [ ] **H-204** `[concurrency]` `ffi/sentinel.rs:138` — OnceLock race leaks tokio tasks on concurrent start
   <!-- pid:resource_leak | first:2026-03-18 -->
   Two concurrent ffi_sentinel_start() calls create two Sentinels, one leaked with spawned tasks. Effort: medium
 
-- [ ] **H-205** `[security]` `ffi/attestation.rs:99` — Unbounded base64 decode (memory DoS)
+- [x] **H-205** `[security]` `ffi/attestation.rs:99` — Unbounded base64 decode (memory DoS) — FIXED: added 4KB cap
   <!-- pid:no_size_limit | first:2026-03-18 -->
   No size limit on challenge_b64. 1GB string = 1GB allocation. Challenge should be ~32 bytes. Effort: small
 
-- [ ] **H-206** `[security]` `ffi/helpers.rs:34` — Signing key file read without size limit
+- [x] **H-206** `[security]` `ffi/helpers.rs:34` — Signing key file read without size limit — FIXED: added 1KB cap
   <!-- pid:no_size_limit | first:2026-03-18 -->
   Symlink to large file causes DoS. Check metadata().len() < 64 before read. Effort: small
 
-- [ ] **H-207** `[error_handling]` `ffi/steganography_ffi.rs:182` — Unwrap on path components in FFI
+- [-] **H-207** `[error_handling]` `ffi/steganography_ffi.rs:182` — ~~Path component unwrap~~ FALSE POSITIVE: already uses unwrap_or_default
   <!-- pid:unwrap_in_ffi | first:2026-03-18 -->
-  file_stem()/extension() unwrap will panic on malformed paths, crashing app. Effort: small
 
-- [ ] **H-208** `[security]` `ffi/writersproof_ffi.rs:139` — API key not zeroized on runtime creation error
+- [x] **H-208** `[security]` `ffi/writersproof_ffi.rs:139` — API key not zeroized on error — FIXED: Zeroizing<String> wrapper
   <!-- pid:key_zeroize_error_path | first:2026-03-18 -->
-  API key exposed in Result error path. Wrap in Zeroizing<String>. Effort: small
 
-- [ ] **H-209** `[error_handling]` `ffi/evidence.rs:273` — Error message confusion (encoding vs write failure)
+- [-] **H-209** `[error_handling]` `ffi/evidence.rs:273` — ~~Error message confusion~~ FALSE POSITIVE: separate match arms already distinguish
   <!-- pid:error_message_confusion | first:2026-03-18 -->
-  'Failed to encode CBOR' message when actual failure is disk write. Effort: small
 
-- [ ] **H-210** `[error_handling]` `evidence/builder/setters.rs:331` — i32::try_from fallback silently caps to MAX
+- [x] **H-210** `[error_handling]` `evidence/builder/setters.rs:331` — i32 overflow silently capped — FIXED: log::warn on overflow
   <!-- pid:overflow_silent | first:2026-03-18 -->
-  Ratchet index exceeding i32::MAX silently capped. Signature verification may use wrong key. Effort: small
 
 - [ ] **H-211** `[error_handling]` `evidence/wire_conversion.rs:51` — Empty chain produces valid wire packet
   <!-- pid:unvalidated_invariant | first:2026-03-18 -->
@@ -549,7 +524,7 @@ Windows app: independent of engine groups (separate C# codebase)
   <!-- pid:sec_signature_scope | first:2026-03-18 -->
   Active TODO documenting signature binding gap. Related to C-037. Effort: large
 
-- [ ] **H-213** `[code_quality]` `mmr/proof.rs:275` — RangeProof doesn't validate sibling_path exhaustion
+- [x] **H-213** `[code_quality]` `mmr/proof.rs:275` — RangeProof doesn't validate sibling_path exhaustion — FIXED: added post-loop check
   <!-- pid:input_validation | first:2026-03-18 -->
   Partial proof path may verify if early levels hash out by chance. Effort: small
 
@@ -561,13 +536,11 @@ Windows app: independent of engine groups (separate C# codebase)
   <!-- pid:panic_in_library | first:2026-03-18 -->
   Library function panics on resource failure (OOM). Return Result instead. Effort: medium
 
-- [ ] **H-216** `[error_handling]` `research/collector.rs:185` — Silent error on directory removal blocks re-uploads
+- [x] **H-216** `[error_handling]` `research/collector.rs:185` — Silent directory removal error — FIXED: log::warn on failure
   <!-- pid:silent_error_swallow | first:2026-03-18 -->
-  let _ = fs::remove_dir_all() discards error. Orphaned directory blocks pipeline. Effort: small
 
-- [ ] **H-217** `[error_handling]` `engine.rs:252` — File watcher setup failure silent (engine non-functional)
+- [-] **H-217** `[error_handling]` `engine.rs:252` — ~~Watcher setup silent~~ FALSE POSITIVE: errors propagated with ?
   <!-- pid:silent_error_swallow | first:2026-03-18 -->
-  Engine reports successful start but watcher fails. Evidence collection silently stalls. Effort: medium
 
 - [ ] **H-218** `[concurrency]` `engine.rs:373` — Session samples cleared while monitor records (race)
   <!-- pid:race_condition | first:2026-03-18 -->
@@ -577,37 +550,31 @@ Windows app: independent of engine groups (separate C# codebase)
   <!-- pid:missing_bounds_check | first:2026-03-18 -->
   data[20..52] access panics if constant is wrong. Add bounds assertion. Effort: small
 
-- [ ] **H-220** `[security]` `cmd_identity.rs:30` — Recovery phrase read without echo suppression
+- [x] **H-220** `[security]` `cmd_identity.rs:30` — Recovery phrase echo — FIXED: dialoguer::Password for TTY input
   <!-- pid:credential_exposure | first:2026-03-18 -->
-  read_line() echoes recovery phrase on TTY. Use getpass or termios to suppress echo. Effort: small
 
 ---
 
 ### Audit Run 5 — HIGH (CLI) (2026-03-18)
 
-- [ ] **H-221** `[security]` `cmd_export.rs:335` — Session ID path traversal in find_matching_session
+- [-] **H-221** `[security]` `cmd_export.rs:335` — ~~Session ID path traversal~~ FALSE POSITIVE: validate_session_id() already rejects
   <!-- pid:path_traversal | first:2026-03-18 -->
-  session_id with `../` could access parent dirs via tracking_dir.join(). Effort: small
 
-- [ ] **H-222** `[error_handling]` `cmd_track.rs:357` — Mutex::lock().unwrap() in finalize_session
+- [-] **H-222** `[error_handling]` `cmd_track.rs:357` — ~~Mutex unwrap~~ FALSE POSITIVE: already uses map_err pattern
   <!-- pid:lock_unwrap | first:2026-03-18 -->
-  Cleanup handler should be panic-safe. Effort: medium
 
-- [ ] **H-223** `[error_handling]` `cmd_track.rs:325,360` — Silent error on capture.stop() and thread join
+- [x] **H-223** `[error_handling]` `cmd_track.rs:325,360` — Silent capture/join errors — FIXED: log + panic extraction
   <!-- pid:silent_error_swallow | first:2026-03-18 -->
-  Keystroke capture thread failure not surfaced to user. Effort: small
 
 - [ ] **H-224** `[concurrency]` `cmd_track.rs:478` — Lock contention on JitterSession in hot keystroke loop
   <!-- pid:lock_contention | first:2026-03-18 -->
   Arc<Mutex> locked every 250ms + by keystroke thread. VDF compute stalls keystrokes. Effort: medium
 
-- [ ] **H-225** `[security]` `native_messaging_host.rs:376` — Hex decode length not validated before ct_eq
+- [-] **H-225** `[security]` `native_messaging_host.rs:376` — ~~Hex decode before ct_eq~~ FALSE POSITIVE: len!=32 short-circuits before ct_eq
   <!-- pid:missing_validation | first:2026-03-18 -->
-  Empty vec from invalid hex → ct_eq always fails silently instead of rejecting. Effort: small
 
-- [ ] **H-226** `[security]` `native_messaging_host.rs:238` — CSPRNG failure panics via expect()
+- [x] **H-226** `[security]` `native_messaging_host.rs:238` — CSPRNG panic via expect() — FIXED: returns Response::Error
   <!-- pid:panic_on_crypto | first:2026-03-18 -->
-  Native messaging host cannot recover. Return error response instead. Effort: small
 
 - [ ] **H-227** `[error_handling]` `cmd_fingerprint.rs:132` — Profile not found vs storage error conflated
   <!-- pid:error_conflation | first:2026-03-18 -->
