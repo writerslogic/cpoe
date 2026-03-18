@@ -170,9 +170,18 @@ pub fn load_did(dir: &Path) -> Result<String> {
 }
 
 pub fn write_restrictive(path: &Path, data: &[u8]) -> Result<()> {
-    fs::write(path, data).map_err(|e| anyhow!("write {}: {}", path.display(), e))?;
-    cpop_engine::restrict_permissions(path, 0o600)
-        .map_err(|e| anyhow!("chmod {}: {}", path.display(), e))?;
+    // Write to temp file first, set permissions, then atomic rename.
+    // This prevents a window where the file exists with wrong permissions.
+    let tmp = path.with_extension("tmp");
+    fs::write(&tmp, data).map_err(|e| anyhow!("write {}: {}", tmp.display(), e))?;
+    cpop_engine::restrict_permissions(&tmp, 0o600).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        anyhow!("chmod {}: {}", tmp.display(), e)
+    })?;
+    fs::rename(&tmp, path).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        anyhow!("rename {} → {}: {}", tmp.display(), path.display(), e)
+    })?;
     Ok(())
 }
 

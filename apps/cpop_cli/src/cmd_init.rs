@@ -51,10 +51,7 @@ pub(crate) fn cmd_init() -> Result<()> {
         seed.zeroize();
         let pub_key = priv_key.verifying_key();
 
-        fs::write(&key_path, priv_key.to_bytes())?;
-        if let Err(e) = cpop_engine::restrict_permissions(&key_path, 0o600) {
-            eprintln!("Warning: could not restrict key permissions: {e}");
-        }
+        crate::util::write_restrictive(&key_path, &priv_key.to_bytes())?;
         fs::write(key_path.with_extension("pub"), pub_key.to_bytes())?;
 
         println!("  Public key: {}...", hex::encode(&pub_key.to_bytes()[..8]));
