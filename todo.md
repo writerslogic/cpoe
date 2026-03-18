@@ -243,7 +243,7 @@ Windows app: independent of engine groups (separate C# codebase)
 
 ### Residual Systemic (2026-03-12)
 
-- [ ] **SYS-032** `nan_inf_residual` — 6+ files — HIGH
+- [x] **SYS-032** `nan_inf_residual` — 6+ files — HIGH
   <!-- pid:nan_inf_residual | verified:true | first:2026-03-12 | last:2026-03-12 -->
   Residual NaN/Inf-unguarded patterns missed by original SYS-016 fix.
   Files: `platform/linux.rs:859`, `platform/synthetic.rs:115`, `rfc/biology.rs:558,364,370`, `forensics/cross_modal.rs:310`
@@ -306,7 +306,7 @@ Windows app: independent of engine groups (separate C# codebase)
   <!-- pid:sec_no_real_signing | verified:true | first:2026-03-02 | revalidated:2026-03-03 -->
   Hardware trust boundary violated. Fix: Implement TPM2_Sign. Effort: large
 
-- [ ] **C-034** `[error_handling]` `tpm/windows/provider.rs:587,589` + `tpm/windows/commands.rs:90` — `TPMError::CommunicationError` variant does not exist in enum
+- [x] **C-034** `[error_handling]` `tpm/windows/provider.rs:587,589` + `tpm/windows/commands.rs:90` — `TPMError::CommunicationError` variant does not exist in enum
   <!-- pid:missing_enum_variant | batch:5 | verified:true | first:2026-03-12 | last:2026-03-12 -->
   Impact: Windows TPM module fails to compile — 3 call sites use nonexistent variant | Fix: Add `CommunicationError(String)` to `TPMError` enum in `tpm/types.rs`, or replace with `Quote(e.to_string())` | Effort: small
 
@@ -330,7 +330,7 @@ Windows app: independent of engine groups (separate C# codebase)
   Impact: DoS via memory exhaustion on IPC server.
   Fix: Validate message structure before full allocation; use streaming deserialization or size-gated buffer pool. Effort: medium
 
-- [ ] **C-039** `[concurrency]` `sentinel/core.rs:324` — RwLock write held across .await in keystroke hot path
+- [-] **C-039** `[concurrency]` `sentinel/core.rs:324` — RwLock write held across .await in keystroke hot path
   <!-- pid:lock_held_await | verified:true | first:2026-03-18 | last:2026-03-18 -->
   `voice_collector.write_recover()` held while processing keystroke. Violates Tokio safety. Potential deadlock in async context.
   Impact: Runtime deadlock if future is suspended with lock held.
@@ -407,11 +407,11 @@ Windows app: independent of engine groups (separate C# codebase)
 
 ### Audit Run 5 — HIGH (2026-03-18)
 
-- [ ] **H-181** `[security]` `sentinel/core.rs:155` — SigningKey set without validation
+- [x] **H-181** `[security]` `sentinel/core.rs:155` — SigningKey set without validation
   <!-- pid:missing_validation | first:2026-03-18 -->
   No length/format check on raw SigningKey. Malformed key causes silent failures downstream. Effort: small
 
-- [ ] **H-182** `[concurrency]` `sentinel/core.rs:334` — Mouse idle stats RwLock write held across .await
+- [-] **H-182** `[concurrency]` `sentinel/core.rs:334` — Mouse idle stats RwLock write held across .await
   <!-- pid:lock_held_await | first:2026-03-18 -->
   Mouse event processing may hold write lock across async boundary. Effort: medium
 
@@ -422,11 +422,11 @@ Windows app: independent of engine groups (separate C# codebase)
 - [x] **H-184** `[error_handling]` `sentinel/helpers.rs:132` — Silent WAL append failure — FIXED: upgraded to log::error
   <!-- pid:silent_error_swallow | first:2026-03-18 -->
 
-- [ ] **H-185** `[concurrency]` `sentinel/helpers.rs:227` — Lock drop + re-acquire race (TOCTOU)
+- [x] **H-185** `[concurrency]` `sentinel/helpers.rs:227` — Lock drop + re-acquire race (TOCTOU)
   <!-- pid:toctou | first:2026-03-18 -->
   sessions_map dropped then end_session_sync() re-acquires. Another thread could insert between. Effort: small
 
-- [ ] **H-186** `[error_handling]` `sentinel/core.rs:522` — WAL::open() failure continues session without persistent proof
+- [x] **H-186** `[error_handling]` `sentinel/core.rs:522` — WAL::open() failure continues session without persistent proof
   <!-- pid:silent_error_swallow | first:2026-03-18 -->
   Evidence loss if WAL init fails. No fallback or user notification. Effort: medium
 
@@ -434,7 +434,7 @@ Windows app: independent of engine groups (separate C# codebase)
   <!-- pid:lock_contention | first:2026-03-18 -->
   Slow focus event (file hashing) blocks keystroke/mouse/idle processing. Effort: large
 
-- [ ] **H-188** `[security]` `ipc/messages.rs:54` — Windows path validation bypassed by UNC paths
+- [x] **H-188** `[security]` `ipc/messages.rs:54` — Windows path validation bypassed by UNC paths
   <!-- pid:path_traversal | first:2026-03-18 -->
   Hardcoded prefix checks don't catch `\\?\C:\Windows` or UNC paths. Effort: medium
 
@@ -442,11 +442,11 @@ Windows app: independent of engine groups (separate C# codebase)
   <!-- pid:toctou | first:2026-03-18 -->
   Race between read+remove+create. Use flock(2) or atomic create+lock. Effort: medium
 
-- [ ] **H-190** `[security]` `sentinel/helpers.rs:407` — Windows path validation missing
+- [x] **H-190** `[security]` `sentinel/helpers.rs:407` — Windows path validation missing
   <!-- pid:path_traversal | first:2026-03-18 -->
   Parent directory validation only runs on Unix. Windows has no equivalent check. Effort: small
 
-- [ ] **H-191** `[security]` `war/appraisal.rs:118` — Hardware attestation falsely affirmed with empty data
+- [x] **H-191** `[security]` `war/appraisal.rs:118` — Hardware attestation falsely affirmed with empty data
   <!-- pid:validation_gap | first:2026-03-18 -->
   `.any()` checks existence but not non-empty content. Effort: small
 
@@ -456,11 +456,11 @@ Windows app: independent of engine groups (separate C# codebase)
 - [x] **H-193** `[error_handling]` `war/compat.rs:203` — iat timestamp overflow silently uses i64::MAX — FIXED: fallback to Utc::now().timestamp()
   <!-- pid:overflow_silent | first:2026-03-18 -->
 
-- [ ] **H-194** `[error_handling]` `rfc_conversions.rs:150` — z_score masks zero std_error as 0.001
+- [x] **H-194** `[error_handling]` `rfc_conversions.rs:150` — z_score masks zero std_error as 0.001
   <!-- pid:silent_fallback | first:2026-03-18 -->
   Artificially inflated z-score if std_error is 0. False affirmation of Galton validity. Effort: small
 
-- [ ] **H-195** `[error_handling]` `error.rs:217` — From<String> and From<&str> both create Error::Legacy
+- [-] **H-195** `[error_handling]` `error.rs:217` — From<String> and From<&str> both create Error::Legacy
   <!-- pid:type_conflation | first:2026-03-18 -->
   Cannot distinguish migrated code from actual legacy errors. Effort: medium
 
@@ -485,14 +485,14 @@ Windows app: independent of engine groups (separate C# codebase)
 - [x] **H-201** `[error_handling]` `ffi/ephemeral.rs:88` — Weak CSPRNG fallback — FIXED: returns error instead of degrading
   <!-- pid:crypto_weak_prng | first:2026-03-18 -->
 
-- [ ] **H-202** `[concurrency]` `ffi/ephemeral.rs:101` — TOCTOU on DashMap session eviction threshold
+- [-] **H-202** `[concurrency]` `ffi/ephemeral.rs:101` — TOCTOU on DashMap session eviction threshold
   <!-- pid:toctou | first:2026-03-18 -->
   sessions().len() check not atomic with eviction iteration. Effort: small
 
 - [x] **H-203** `[error_handling]` `ffi/ephemeral.rs:243` — Store write errors silently discarded — FIXED: log::error on failure
   <!-- pid:silent_error_swallow | first:2026-03-18 -->
 
-- [ ] **H-204** `[concurrency]` `ffi/sentinel.rs:138` — OnceLock race leaks tokio tasks on concurrent start
+- [-] **H-204** `[concurrency]` `ffi/sentinel.rs:138` — OnceLock race leaks tokio tasks on concurrent start
   <!-- pid:resource_leak | first:2026-03-18 -->
   Two concurrent ffi_sentinel_start() calls create two Sentinels, one leaked with spawned tasks. Effort: medium
 
@@ -532,7 +532,7 @@ Windows app: independent of engine groups (separate C# codebase)
   <!-- pid:performance_memalloc | first:2026-03-18 -->
   Pre-allocate and reuse single HashMap across levels. Effort: medium
 
-- [ ] **H-215** `[error_handling]` `vdf/swf_argon2.rs:482` — .expect() on CBOR in fiat_shamir_challenge
+- [x] **H-215** `[error_handling]` `vdf/swf_argon2.rs:482` — .expect() on CBOR in fiat_shamir_challenge
   <!-- pid:panic_in_library | first:2026-03-18 -->
   Library function panics on resource failure (OOM). Return Result instead. Effort: medium
 
@@ -576,7 +576,7 @@ Windows app: independent of engine groups (separate C# codebase)
 - [x] **H-226** `[security]` `native_messaging_host.rs:238` — CSPRNG panic via expect() — FIXED: returns Response::Error
   <!-- pid:panic_on_crypto | first:2026-03-18 -->
 
-- [ ] **H-227** `[error_handling]` `cmd_fingerprint.rs:132` — Profile not found vs storage error conflated
+- [x] **H-227** `[error_handling]` `cmd_fingerprint.rs:132` — Profile not found vs storage error conflated
   <!-- pid:error_conflation | first:2026-03-18 -->
   Undistinguished error types. Effort: small
 
@@ -735,31 +735,31 @@ Windows app: independent of engine groups (separate C# codebase)
 
 #### Security
 
-- [ ] **H-154** `[security]` `mmr/proof.rs:214` — RangeProof::verify() does not check leaf_indices for duplicates; HashMap silently deduplicates
+- [x] **H-154** `[security]` `mmr/proof.rs:214` — RangeProof::verify() does not check leaf_indices for duplicates; HashMap silently deduplicates
   <!-- pid:missing_bounds_check | batch:13 | verified:true | first:2026-03-12 | last:2026-03-12 -->
   Impact: Attacker could submit duplicate leaf indices to satisfy count check, weakening range proof integrity | Fix: `if leaf_indices.len() != leaf_indices.iter().collect::<HashSet<_>>().len() { return Err(InvalidProof) }` | Effort: small
 
-- [ ] **H-155** `[security]` `mmr/proof.rs:317` — Multiple remaining peaks not validated as single root after Merkle reconstruction
+- [x] **H-155** `[security]` `mmr/proof.rs:317` — Multiple remaining peaks not validated as single root after Merkle reconstruction
   <!-- pid:missing_validation | batch:13 | verified:true | first:2026-03-12 | last:2026-03-12 -->
   Impact: Proof could fraudulently claim disjoint subtrees form a single peak | Fix: Add `if current.len() != 1 { return Err(InvalidProof) }` before `values().next()` | Effort: small
 
-- [ ] **H-156** `[security]` `checkpoint/chain.rs:178` — `commit_entangled()` does not validate `jitter_session_id` is non-empty
+- [x] **H-156** `[security]` `checkpoint/chain.rs:178` — `commit_entangled()` does not validate `jitter_session_id` is non-empty
   <!-- pid:input_validation | batch:13 | verified:true | first:2026-03-12 | last:2026-03-12 -->
   Impact: Empty session IDs weaken forensic binding; upstream assumes uniqueness | Fix: `if jitter_session_id.is_empty() { return Err(Error::checkpoint("empty session_id")) }` | Effort: small
 
-- [ ] **H-157** `[security]` `sealed_identity/store.rs:236` — Derived seed not zeroized in reseal fallback path
+- [x] **H-157** `[security]` `sealed_identity/store.rs:236` — Derived seed not zeroized in reseal fallback path
   <!-- pid:key_zeroize_residual | batch:10 | verified:true | first:2026-03-12 | last:2026-03-12 -->
   Impact: PUF-derived seed persists in heap on unseal failure | Fix: Wrap in `Zeroizing<Vec<u8>>` | Effort: small
 
-- [ ] **H-158** `[security]` `identity/secure_storage.rs:358` — Seed cache returns unzeroized `Vec<u8>` copies via `to_vec()`
+- [x] **H-158** `[security]` `identity/secure_storage.rs:358` — Seed cache returns unzeroized `Vec<u8>` copies via `to_vec()`
   <!-- pid:key_zeroize_residual | batch:14 | verified:true | first:2026-03-12 | last:2026-03-12 -->
   Impact: Callers receive raw seed bytes without zeroization guarantee | Fix: Return `Zeroizing<Vec<u8>>` from `load_seed()` | Effort: small
 
-- [ ] **H-159** `[security]` `crypto/anti_analysis.rs:48` — macOS `is_debugger_present()` returns hardcoded `false`
+- [x] **H-159** `[security]` `crypto/anti_analysis.rs:48` — macOS `is_debugger_present()` returns hardcoded `false`
   <!-- pid:incomplete_impl | batch:15 | verified:true | first:2026-03-12 | last:2026-03-12 -->
   Impact: Anti-debugging defense completely bypassed on macOS | Fix: Implement via `sysctl` P_TRACED flag check | Effort: medium
 
-- [ ] **H-160** `[security]` `crypto/mem.rs:32` — `mlock()` failure silently ignored with `let _`
+- [x] **H-160** `[security]` `crypto/mem.rs:32` — `mlock()` failure silently ignored with `let _`
   <!-- pid:error_swallow | batch:15 | verified:true | first:2026-03-12 | last:2026-03-12 -->
   Impact: Key material may be paged to disk without warning | Fix: `if libc::mlock(...) != 0 { log::warn!("mlock failed") }` | Effort: small
 
@@ -767,7 +767,7 @@ Windows app: independent of engine groups (separate C# codebase)
   <!-- pid:key_derivation_entropy | batch:15 | verified:true | first:2026-03-12 | last:2026-03-12 -->
   Impact: If `document_id` is guessable (common filenames), key derivation is weakened | Fix: Add per-instance random nonce to key derivation | Effort: medium
 
-- [ ] **H-162** `[security]` `crypto/obfuscation.rs:30` — Serde serialization outputs plaintext, defeating obfuscation
+- [-] **H-162** `[security]` `crypto/obfuscation.rs:30` — Serde serialization outputs plaintext, defeating obfuscation
   <!-- pid:obfuscation_transparency | batch:15 | verified:true | first:2026-03-12 | last:2026-03-12 -->
   Impact: Obfuscated data stored as plaintext on disk | Fix: Add `#[serde(skip)]` or custom encrypted serialization | Effort: small
 
@@ -779,13 +779,13 @@ Windows app: independent of engine groups (separate C# codebase)
   <!-- pid:symlink_traversal | batch:9 | verified:true | first:2026-03-12 | last:2026-03-12 -->
   Impact: Symlink traversal between IPC validation and sentinel processing | Fix: `Path::canonicalize()` during IPC validation | Effort: medium
 
-- [ ] **H-165** `[security]` `checkpoint/chain.rs:400` — `verify_hash_chain()` accepts mixed genesis modes without enforcement
+- [-] **H-165** `[security]` `checkpoint/chain.rs:400` — `verify_hash_chain()` accepts mixed genesis modes without enforcement
   <!-- pid:integrity_binding | batch:13 | verified:true | first:2026-03-12 | last:2026-03-12 -->
   Impact: Entangled chain could have legacy all-zeros genesis, weakening mode integrity | Fix: Check entanglement_mode consistency with genesis prev_hash | Effort: medium
 
 #### Performance
 
-- [ ] **H-166** `[performance]` `vdf/swf_argon2.rs:333` — O(n²) linear search via `indices.contains()` in Fiat-Shamir index sampling
+- [x] **H-166** `[performance]` `vdf/swf_argon2.rs:333` — O(n²) linear search via `indices.contains()` in Fiat-Shamir index sampling
   <!-- pid:perf_quadratic_search | batch:14 | verified:true | first:2026-03-12 | last:2026-03-12 -->
   Impact: For k=100 (MAXIMUM tier), 5050 comparisons per proof | Fix: Use `HashSet` for O(1) lookups | Effort: small
 
