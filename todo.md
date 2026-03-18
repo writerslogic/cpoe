@@ -8,7 +8,7 @@
 |----------|------|-------|---------|
 | CRITICAL | 0    | 6     | 0       |
 | HIGH     | 0    | 18    | 0       |
-| MEDIUM   | 10   | 8     | 0       |
+| MEDIUM   | 0    | 17    | 1       |
 
 ## Systemic Issues
 - [x] **SYS-001** `non_atomic_key_write` — 3 files — CRITICAL
@@ -115,32 +115,32 @@
 - [x] **M-008** `[error_handling]` `cmd_identity.rs:150` — Mnemonic errors silently omitted in JSON mode
   Impact: JSON consumers get no mnemonic field without knowing why | Fix: Add mnemonic_error field | Effort: small
 
-- [ ] **M-009** `[validation]` `smart_defaults.rs:125` — Non-UTF-8 filenames unreachable via text search
-  Impact: Files with non-UTF-8 names invisible in selection | Effort: medium
+- [x] **M-009** `[validation]` `smart_defaults.rs:125` — Non-UTF-8 filenames unreachable via text search
+  Impact: Files with non-UTF-8 names invisible in selection | Fix: lossy conversion for matching
 
-- [ ] **M-010** `[correctness]` `cmd_log.rs:28` — DateTime::from_timestamp_nanos on corrupt DB timestamps
-  Impact: Bad dates displayed from corrupted database | Effort: medium
+- [x] **M-010** `[correctness]` `cmd_log.rs:28` — DateTime::from_timestamp_nanos on corrupt DB timestamps
+  Impact: Bad dates displayed from corrupted database | Fix: Validate year 2000-2100 range
 
-- [ ] **M-011** `[security]` `cmd_init.rs:55` — Public key file written without restrictive permissions
-  Impact: Public key readable by other users (low risk for pub key) | Effort: small
+- [x] **M-011** `[security]` `cmd_init.rs:55` — Public key file written without restrictive permissions
+  Impact: Public key readable by other users | Fix: write_restrictive() for defense-in-depth
 
-- [ ] **M-012** `[error_handling]` `cmd_status.rs:89` — list_files() error silently defaults to empty
-  Impact: Database errors masked in status output | Effort: small
+- [x] **M-012** `[error_handling]` `cmd_status.rs:89` — list_files() error silently defaults to empty
+  Impact: Database errors masked in status output | Fix: eprintln warning before defaulting
 
-- [ ] **M-013** `[validation]` `cmd_fingerprint.rs:188` — Profile error matched by string contains("not found")
-  Impact: Brittle error matching, may change with library updates | Effort: small
+- [x] **M-013** `[validation]` `cmd_fingerprint.rs:188` — Profile error matched by string contains("not found")
+  Impact: Brittle error matching | Fix: Kept string match (anyhow has no variants) + added error logging
 
-- [ ] **M-014** `[error_handling]` `cmd_identity.rs:183` — PUF load error silently returns generic message
-  Impact: User gets unhelpful error when PUF seed is corrupted | Effort: small
+- [x] **M-014** `[error_handling]` `cmd_identity.rs:183` — PUF load error silently returns generic message
+  Impact: User gets unhelpful error | Fix: match with specific error propagation
 
-- [ ] **M-015** `[validation]` `cmd_commit.rs:45` — MAX_FILE_SIZE check uses metadata.len() before read
-  Impact: TOCTOU race between size check and read (very unlikely) | Effort: small
+- [x] **M-015** `[validation]` `cmd_commit.rs:45` — MAX_FILE_SIZE check uses metadata.len() before read
+  Impact: TOCTOU race | Fix: Read first, check content.len()
 
-- [ ] **M-016** `[correctness]` `cmd_status.rs:102` — chain_count silently 0 on read_dir error
-  Impact: Permission errors on chains dir masked | Effort: small
+- [x] **M-016** `[correctness]` `cmd_status.rs:102` — chain_count silently 0 on read_dir error
+  Impact: Permission errors masked | Fix: Log warning for non-NotFound errors
 
-- [ ] **M-017** `[validation]` `native_messaging_host.rs:154` — Subdomain matching allows suffix attacks
-  Impact: e.g. "evildocs.google.com" would match | Effort: small
+- [-] **M-017** `[validation]` `native_messaging_host.rs:154` — Subdomain matching allows suffix attacks
+  Skipped: False positive — `.{domain}` prefix ensures correct boundary matching
 
-- [ ] **M-018** `[error_handling]` `cmd_attest.rs:79` — Declaration prompt reads stdin after piped content consumed
-  Impact: EOF on declaration prompt after piped input | Effort: small
+- [x] **M-018** `[error_handling]` `cmd_attest.rs:79` — Declaration prompt reads stdin after piped content consumed
+  Impact: EOF on declaration prompt | Fix: Skip prompt when content from stdin
