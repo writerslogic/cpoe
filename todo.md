@@ -6,12 +6,12 @@
 ## Summary
 | Severity | Open | Fixed | Skipped |
 |----------|------|-------|---------|
-| CRITICAL | 6    | 0     | 0       |
+| CRITICAL | 0    | 6     | 0       |
 | HIGH     | 18   | 0     | 0       |
 | MEDIUM   | 18   | 0     | 0       |
 
 ## Systemic Issues
-- [ ] **SYS-001** `non_atomic_key_write` — 3 files — CRITICAL
+- [x] **SYS-001** `non_atomic_key_write` — 3 files — CRITICAL
   Files: `cmd_identity.rs:92`, `cmd_init.rs:54`, `util.rs:172`
   fs::write() then restrict_permissions() is non-atomic. If chmod fails, key file is world-readable.
   Fix: Write to temp file with restrictive umask, then atomic rename.
@@ -25,13 +25,13 @@
   Errors converted to defaults or logged without propagation.
 
 ## Critical
-- [ ] **C-001** `[security]` `cmd_track.rs:1266` — Export paths relative, arbitrary file write if CWD controlled
+- [x] **C-001** `[security]` `cmd_track.rs:1266` — Export paths relative, arbitrary file write if CWD controlled
   Impact: Evidence files written to attacker-controlled location | Fix: tracking_dir.join() | Effort: small
 
-- [ ] **C-002** `[security]` `native_messaging_host.rs:381` — hex::decode error returns empty vec, bypassing commitment
+- [x] **C-002** `[security]` `native_messaging_host.rs:381` — hex::decode error returns empty vec, bypassing commitment
   Impact: Browser commitment chain bypass | Fix: Return error on decode failure | Effort: small
 
-- [ ] **C-003** `[security]` `native_messaging_host.rs:608` — Division by zero in compute_jitter_stats
+- [x] **C-003** `[security]` `native_messaging_host.rs:608` — Division by zero in compute_jitter_stats
   Impact: NaN/panic | Fix: Guard with is_empty() | Effort: small
 
 ## High
