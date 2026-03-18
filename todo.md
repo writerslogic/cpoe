@@ -200,7 +200,7 @@ Windows app: independent of engine groups (separate C# codebase)
   Files: `anchors/ethereum.rs:117`, `anchors/bitcoin.rs:51`, `anchors/rfc3161.rs:27`, `anchors/ots.rs:232`, `anchors/notary.rs:29`, `writersproof/client.rs:40`
   Fix: Extract shared `JsonRpcClient` trait and `fn send_authenticated_request()` helper. Effort: medium
 
-- [ ] **SYS-025** `serde_helper_duplication` — 5+ files — HIGH
+- [x] **SYS-025** `serde_helper_duplication` — 5+ files — HIGH
   <!-- pid:duplicated_logic | verified:true | first:2026-03-11 -->
   Identical hex/base64 serde modules duplicated across crate boundaries.
   Files: `rfc/serde_helpers.rs` (120L), `rfc/wire_types/serde_helpers.rs` (104L), `evidence/serde_helpers.rs` (62L), `protocol/baseline.rs:123` (serde_bytes_opt), `anchors/types.rs:148,171,191` (3 near-identical modules)
@@ -216,13 +216,13 @@ Windows app: independent of engine groups (separate C# codebase)
   - IPC path validation lists duplicated for Unix/Windows in `ipc/messages.rs:38,64`
   Fix: Extract `wal_append_session_event()`, `IpcTransport` trait, `query_ax_attribute()`, `setup_daemon_common()`. Effort: medium
 
-- [ ] **SYS-027** `double_iteration_patterns` — 6+ files — MEDIUM
+- [x] **SYS-027** `double_iteration_patterns` — 6+ files — MEDIUM
   <!-- pid:collect_then_iter | verified:true | first:2026-03-11 -->
   Collections iterated multiple times where a single pass suffices.
   Files: `forensics/velocity.rs:23` (clone+sort 2x), `forensics/analysis.rs:53` (sort 2x), `presence/verifier.rs:70` (count 2x), `fingerprint/activity.rs:326` (3 passes in from_samples), `evidence/packet.rs:299` (count+hash), `c2pa.rs:623` (count+contains)
   Fix: Consolidate into single-pass accumulators. Effort: small per-file
 
-- [ ] **SYS-028** `war_profile_duplication` — 2 files — HIGH
+- [x] **SYS-028** `war_profile_duplication` — 2 files — HIGH
   <!-- pid:duplicated_logic | verified:true | first:2026-03-11 -->
   WAR trust vector mapping, attestation tier derivation, and EAR data preparation duplicated between VC and C2PA profiles.
   Files: `war/profiles/vc.rs:96,125`, `war/profiles/c2pa.rs:86,129,134`
@@ -234,7 +234,7 @@ Windows app: independent of engine groups (separate C# codebase)
   Files: `fingerprint/activity.rs:751` (normalize/merge), `jitter/profile.rs:100` (cosine similarity), `fingerprint/voice.rs:432` (bhattacharyya with f32→f64 alloc), `evidence/builder.rs:551` (5x select_nth_unstable)
   Fix: Consolidate into `analysis::stats` module with `normalize_histogram()`, `histogram_similarity()`, `compute_percentiles()`. Effort: medium
 
-- [ ] **SYS-030** `config_defaults_boilerplate` — 2 files — MEDIUM
+- [x] **SYS-030** `config_defaults_boilerplate` — 2 files — MEDIUM
   <!-- pid:duplicated_logic | verified:true | first:2026-03-11 -->
   168 lines of trivial `default_*()` functions in `config/defaults.rs`, each duplicated via `impl Default` in `config/types.rs` (7 structs, ~70 lines of boilerplate).
   Fix: Use `#[serde(default = "fn")]` on fields directly; eliminate manual `impl Default` blocks. Effort: small
