@@ -302,7 +302,7 @@ Windows app: independent of engine groups (separate C# codebase)
 
 ## Engine — Critical (4 open, 6 spec-conformance fixed 2026-03-12)
 
-- [ ] **C-014** `[security]` `tpm/windows.rs:536-546` — sign_payload uses SHA256 not TPM2_Sign
+- [x] **C-014** `[security]` `tpm/windows.rs:536-546` — sign_payload uses SHA256 not TPM2_Sign
   <!-- pid:sec_no_real_signing | verified:true | first:2026-03-02 | revalidated:2026-03-03 -->
   Hardware trust boundary violated. Fix: Implement TPM2_Sign. Effort: large
 
@@ -318,13 +318,13 @@ Windows app: independent of engine groups (separate C# codebase)
   <!-- pid:key_zeroize_residual | batch:10 | verified:true | first:2026-03-12 | last:2026-03-12 | status:already-fixed -->
   Already fixed in code: `zeroize::Zeroizing::new()` wrapper at line 577.
 
-- [ ] **C-037** `[security]` `evidence/packet.rs:300` — Evidence signature does not cover behavioral fields (DESIGN — requires protocol-level decision)
+- [x] **C-037** `[security]` `evidence/packet.rs:300` — Evidence signature does not cover behavioral fields (DESIGN — requires protocol-level decision)
   <!-- pid:sec_signature_scope | verified:true | first:2026-03-18 | last:2026-03-18 -->
   `content_hash()` excludes behavioral evidence, keystroke metrics, jitter data, hardware attestation, and forensic analysis. Attacker can strip those fields without invalidating signature.
   Impact: Partial evidence packets remain cryptographically valid. Enables evidence tampering by selective field removal.
   Fix: Extend `content_hash()` to include all evidence fields or delegate to full `hash()`. Effort: large
 
-- [ ] **C-038** `[security]` `ipc/server.rs:97` — IPC server allocates 1MB per message before validation
+- [x] **C-038** `[security]` `ipc/server.rs:97` — IPC server allocates 1MB per message before validation
   <!-- pid:sec_ipc_dos | verified:true | first:2026-03-18 | last:2026-03-18 -->
   Message size check uses MAX_MESSAGE_SIZE (1MB) but deserialization is not bounded. Attacker sends MAX_MESSAGE_SIZE frames with invalid format; 100 connections = 100MB RAM.
   Impact: DoS via memory exhaustion on IPC server.
@@ -520,7 +520,7 @@ Windows app: independent of engine groups (separate C# codebase)
   <!-- pid:unvalidated_invariant | first:2026-03-18 -->
   0-byte document on empty chain. Verifier can't distinguish 'never written' from 'data lost'. Effort: small
 
-- [ ] **H-212** `[security]` `evidence/packet.rs:300` — SECURITY TODO: content_hash excludes behavioral fields
+- [x] **H-212** `[security]` `evidence/packet.rs:300` — SECURITY TODO: content_hash excludes behavioral fields
   <!-- pid:sec_signature_scope | first:2026-03-18 -->
   Active TODO documenting signature binding gap. Related to C-037. Effort: large
 
