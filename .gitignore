@@ -15,6 +15,7 @@
 # IDEs / editors
 ###############################################################################
 .DS_Store
+.!*!.DS_Store
 .idea/
 .vscode/
 *.swp
@@ -55,6 +56,7 @@ vendor/
 # Supabase (deployment config — keep private)
 supabase/
 todo.md
+apps/*/Cargo.lock
 docs/demo-script.md
 apps/cpop_macos/
 apps/cpop_windows/
