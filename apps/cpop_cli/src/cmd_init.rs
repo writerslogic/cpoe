@@ -69,7 +69,7 @@ pub(crate) fn cmd_init() -> Result<()> {
             .map_err(|e| anyhow!("master identity derivation: {}", e))?;
 
         let identity_path = dir.join("identity.json");
-        let did = format!("did:key:z{}", hex::encode(&identity.public_key));
+        let did = crate::util::ed25519_pubkey_to_did_key(&identity.public_key);
         let identity_data = serde_json::json!({
             "version": 1,
             "fingerprint": identity.fingerprint,

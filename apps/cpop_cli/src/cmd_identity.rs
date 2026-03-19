@@ -50,7 +50,7 @@ pub(crate) fn cmd_identity(
             derive_master_identity(&puf).map_err(|e| anyhow!("derive identity: {}", e))?;
 
         let identity_path = dir.join("identity.json");
-        let did = format!("did:key:z{}", hex::encode(&identity.public_key));
+        let did = crate::util::ed25519_pubkey_to_did_key(&identity.public_key);
         let identity_data = serde_json::json!({
             "version": 1,
             "fingerprint": identity.fingerprint,
@@ -130,7 +130,11 @@ pub(crate) fn cmd_identity(
         .get("did")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
-        .unwrap_or_else(|| format!("did:key:z{}", pub_key));
+        .unwrap_or_else(|| {
+            hex::decode(pub_key)
+                .map(|bytes| crate::util::ed25519_pubkey_to_did_key(&bytes))
+                .unwrap_or_else(|_| format!("did:key:{}", pub_key))
+        });
 
     if json {
         let mut output = serde_json::json!({
