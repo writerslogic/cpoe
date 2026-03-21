@@ -551,6 +551,124 @@ pub fn ffi_export_c2pa_manifest(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ffi::system::ffi_init;
+    use tempfile::TempDir;
+
+    fn setup_temp_data_dir() -> TempDir {
+        let dir = TempDir::new().expect("create temp dir");
+        std::env::set_var("CPOP_DATA_DIR", dir.path());
+        dir
+    }
+
+    #[test]
+    fn checkpoint_success_returns_hash() {
+        let _lock = crate::ffi::helpers::lock_ffi_env();
+        let dir = setup_temp_data_dir();
+
+        let init = ffi_init();
+        assert!(init.success, "init failed: {:?}", init.error_message);
+
+        let file_path = dir.path().join("doc.txt");
+        std::fs::write(&file_path, "Hello, CPOP!").expect("write test file");
+
+        let result = ffi_create_checkpoint(file_path.to_string_lossy().to_string(), String::new());
+        assert!(
+            result.success,
+            "checkpoint failed: {:?}",
+            result.error_message
+        );
+        // Message should contain the hex-encoded content hash prefix.
+        let msg = result.message.unwrap();
+        assert!(
+            msg.starts_with("Checkpoint created:"),
+            "unexpected message: {msg}"
+        );
+    }
+
+    #[test]
+    fn checkpoint_missing_file_returns_error() {
+        let _lock = crate::ffi::helpers::lock_ffi_env();
+        let dir = setup_temp_data_dir();
+
+        let init = ffi_init();
+        assert!(init.success);
+
+        let bogus = dir.path().join("nonexistent.txt");
+        let result = ffi_create_checkpoint(bogus.to_string_lossy().to_string(), String::new());
+        assert!(!result.success);
+        assert!(result.error_message.is_some());
+    }
+
+    #[test]
+    fn checkpoint_with_tool_declaration_message() {
+        let _lock = crate::ffi::helpers::lock_ffi_env();
+        let dir = setup_temp_data_dir();
+
+        let init = ffi_init();
+        assert!(init.success, "init failed: {:?}", init.error_message);
+
+        let file_path = dir.path().join("assisted.txt");
+        std::fs::write(&file_path, "Content created with AI tools").expect("write file");
+
+        let result = ffi_create_checkpoint(
+            file_path.to_string_lossy().to_string(),
+            "[tool:ai:ChatGPT]".to_string(),
+        );
+        assert!(
+            result.success,
+            "checkpoint with tool declaration failed: {:?}",
+            result.error_message
+        );
+    }
+
+    #[test]
+    fn compact_ref_empty_before_checkpoint() {
+        let _lock = crate::ffi::helpers::lock_ffi_env();
+        let dir = setup_temp_data_dir();
+
+        let init = ffi_init();
+        assert!(init.success);
+
+        let file_path = dir.path().join("no_checkpoints.txt");
+        std::fs::write(&file_path, "nothing yet").expect("write file");
+
+        let compact = ffi_get_compact_ref(file_path.to_string_lossy().to_string());
+        assert!(
+            compact.is_empty(),
+            "expected empty compact ref, got: {compact}"
+        );
+    }
+
+    #[test]
+    fn compact_ref_nonempty_after_checkpoint() {
+        let _lock = crate::ffi::helpers::lock_ffi_env();
+        let _data_dir = setup_temp_data_dir();
+
+        let init = ffi_init();
+        assert!(init.success);
+
+        // Use a separate temp file outside the data dir to avoid path canonicalization issues
+        let file_dir = TempDir::new().expect("create file dir");
+        let file_path = file_dir.path().join("tracked.txt");
+        std::fs::write(&file_path, "tracked content").expect("write file");
+
+        let canonical = file_path.canonicalize().expect("canonicalize");
+        let path_str = canonical.to_string_lossy().to_string();
+
+        let cp = ffi_create_checkpoint(path_str.clone(), "initial".to_string());
+        assert!(cp.success, "checkpoint failed: {:?}", cp.error_message);
+
+        let compact = ffi_get_compact_ref(path_str);
+        assert!(
+            compact.starts_with("writerslogic:"),
+            "expected compact ref prefix, got: {compact}"
+        );
+    }
+}
+
 /// Decode evidence bytes into the protocol-level EvidencePacket for C2PA.
 ///
 /// Returns an error if any hash field fails to decode — never silently

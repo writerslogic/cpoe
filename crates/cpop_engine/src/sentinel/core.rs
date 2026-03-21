@@ -242,23 +242,34 @@ impl Sentinel {
             "Keystroke capture not supported on this platform"
         ));
 
-        if let Ok(mut keystroke_capture) = keystroke_capture_result {
-            if let Ok(sync_rx) = keystroke_capture.start() {
-                let sync_rx: std::sync::mpsc::Receiver<crate::platform::KeystrokeEvent> = sync_rx;
-                let handle = std::thread::spawn(move || {
-                    while keystroke_running.load(Ordering::SeqCst) {
-                        match sync_rx.recv_timeout(std::time::Duration::from_millis(100)) {
-                            Ok(event) => {
-                                if keystroke_tx.blocking_send(event).is_err() {
-                                    log::debug!("keystroke channel full, dropping event");
+        match keystroke_capture_result {
+            Ok(mut keystroke_capture) => match keystroke_capture.start() {
+                Ok(sync_rx) => {
+                    let sync_rx: std::sync::mpsc::Receiver<crate::platform::KeystrokeEvent> =
+                        sync_rx;
+                    let handle = std::thread::spawn(move || {
+                        while keystroke_running.load(Ordering::SeqCst) {
+                            match sync_rx.recv_timeout(std::time::Duration::from_millis(100)) {
+                                Ok(event) => {
+                                    if keystroke_tx.blocking_send(event).is_err() {
+                                        log::debug!("keystroke channel full, dropping event");
+                                    }
                                 }
+                                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                             }
-                            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
-                            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                         }
-                    }
-                });
-                self.bridge_threads.lock_recover().push(handle);
+                    });
+                    self.bridge_threads.lock_recover().push(handle);
+                }
+                Err(e) => {
+                    log::warn!("Keystroke capture failed to start: {e}; running in degraded mode");
+                }
+            },
+            Err(e) => {
+                log::warn!(
+                    "Keystroke capture unavailable: {e}; running in degraded mode (focus-only)"
+                );
             }
         }
 
@@ -273,23 +284,31 @@ impl Sentinel {
         #[cfg(target_os = "windows")]
         let mouse_capture_result = crate::platform::windows::WindowsMouseCapture::new();
 
-        if let Ok(mut mouse_capture) = mouse_capture_result {
-            if let Ok(sync_rx) = mouse_capture.start() {
-                let sync_rx: std::sync::mpsc::Receiver<crate::platform::MouseEvent> = sync_rx;
-                let handle = std::thread::spawn(move || {
-                    while mouse_running.load(Ordering::SeqCst) {
-                        match sync_rx.recv_timeout(std::time::Duration::from_millis(100)) {
-                            Ok(event) => {
-                                if mouse_tx.blocking_send(event).is_err() {
-                                    log::debug!("mouse channel full, dropping event");
+        match mouse_capture_result {
+            Ok(mut mouse_capture) => match mouse_capture.start() {
+                Ok(sync_rx) => {
+                    let sync_rx: std::sync::mpsc::Receiver<crate::platform::MouseEvent> = sync_rx;
+                    let handle = std::thread::spawn(move || {
+                        while mouse_running.load(Ordering::SeqCst) {
+                            match sync_rx.recv_timeout(std::time::Duration::from_millis(100)) {
+                                Ok(event) => {
+                                    if mouse_tx.blocking_send(event).is_err() {
+                                        log::debug!("mouse channel full, dropping event");
+                                    }
                                 }
+                                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                             }
-                            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
-                            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                         }
-                    }
-                });
-                self.bridge_threads.lock_recover().push(handle);
+                    });
+                    self.bridge_threads.lock_recover().push(handle);
+                }
+                Err(e) => {
+                    log::warn!("Mouse capture failed to start: {e}; running in degraded mode");
+                }
+            },
+            Err(e) => {
+                log::warn!("Mouse capture unavailable: {e}; running in degraded mode (focus-only)");
             }
         }
 

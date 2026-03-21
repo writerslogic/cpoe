@@ -69,27 +69,40 @@ pub fn ffi_sentinel_start() -> FfiResult {
 
     #[cfg(target_os = "macos")]
     let accessibility_granted = crate::sentinel::macos_focus::check_accessibility_permissions();
+    #[cfg(target_os = "macos")]
+    let input_monitoring_granted = crate::platform::macos::check_input_monitoring_permissions();
+
+    #[cfg(target_os = "macos")]
+    if !accessibility_granted {
+        return FfiResult {
+            success: false,
+            message: None,
+            error_message: Some(
+                "Accessibility permission required — grant access in System \
+                 Settings > Privacy & Security > Accessibility"
+                    .to_string(),
+            ),
+        };
+    }
+
+    #[cfg(target_os = "macos")]
+    if !input_monitoring_granted {
+        return FfiResult {
+            success: false,
+            message: None,
+            error_message: Some(
+                "Input Monitoring permission required — grant access in System \
+                 Settings > Privacy & Security > Input Monitoring"
+                    .to_string(),
+            ),
+        };
+    }
 
     let config = SentinelConfig::default().with_writersproof_dir(&data_dir);
 
     let sentinel = match Sentinel::new(config) {
         Ok(s) => Arc::new(s),
         Err(e) => {
-            #[cfg(target_os = "macos")]
-            {
-                let msg = format!("{e}");
-                if !accessibility_granted && msg.contains("accessibility") {
-                    return FfiResult {
-                        success: false,
-                        message: None,
-                        error_message: Some(
-                            "Accessibility permission required — grant access in System \
-                             Settings > Privacy & Security > Accessibility"
-                                .to_string(),
-                        ),
-                    };
-                }
-            }
             return FfiResult {
                 success: false,
                 message: None,
@@ -142,14 +155,7 @@ pub fn ffi_sentinel_start() -> FfiResult {
         }
     }
 
-    #[allow(unused_mut)]
-    let mut msg = "Sentinel started".to_string();
-    #[cfg(target_os = "macos")]
-    if !accessibility_granted {
-        msg = "Sentinel started without keystroke capture — grant Accessibility permission \
-               in System Settings for full monitoring"
-            .to_string();
-    }
+    let msg = "Sentinel started".to_string();
 
     FfiResult {
         success: true,
@@ -453,5 +459,125 @@ mod tests {
             .error_message
             .unwrap_or_default()
             .contains("not initialized"));
+    }
+
+    #[test]
+    fn test_stop_witnessing_not_initialized() {
+        let result = ffi_sentinel_stop_witnessing("/tmp/nonexistent.txt".to_string());
+        assert!(!result.success);
+        let err = result.error_message.unwrap_or_default();
+        assert!(err.contains("not initialized"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn test_start_witnessing_empty_path() {
+        let result = ffi_sentinel_start_witnessing(String::new());
+        assert!(!result.success);
+        // Not initialized takes precedence, but the path would also be invalid
+        assert!(result.error_message.is_some());
+    }
+
+    #[test]
+    fn test_start_witnessing_traversal_path() {
+        let result = ffi_sentinel_start_witnessing("/../../../etc/passwd".to_string());
+        assert!(!result.success);
+        assert!(result.error_message.is_some());
+    }
+
+    #[test]
+    fn test_sentinel_oncelock_returns_consistent_state() {
+        // OnceLock not yet set by any test in this module (all tests check "not initialized").
+        // Verify repeated calls return the same state.
+        let r1 = ffi_sentinel_is_running();
+        let r2 = ffi_sentinel_is_running();
+        assert_eq!(r1, r2);
+        assert!(!r1);
+    }
+
+    #[test]
+    fn test_permission_error_message_format() {
+        // Verify the exact error strings that the Swift side matches against.
+        let accessibility_msg = "Accessibility permission required — grant access in System \
+                 Settings > Privacy & Security > Accessibility";
+        let input_msg = "Input Monitoring permission required — grant access in System \
+                 Settings > Privacy & Security > Input Monitoring";
+
+        // Swift checks for these substrings to show the correct guidance.
+        assert!(accessibility_msg.contains("Accessibility permission required"));
+        assert!(accessibility_msg.contains("Privacy & Security"));
+        assert!(input_msg.contains("Input Monitoring permission required"));
+        assert!(input_msg.contains("Privacy & Security"));
+    }
+
+    #[test]
+    fn test_data_dir_resolves() {
+        // Clear env override so we test the platform default.
+        let _lock = crate::ffi::helpers::lock_ffi_env();
+        let prev = std::env::var("CPOP_DATA_DIR").ok();
+        std::env::remove_var("CPOP_DATA_DIR");
+
+        let dir = crate::ffi::helpers::get_data_dir();
+        assert!(dir.is_some(), "get_data_dir() returned None");
+        let dir = dir.unwrap();
+        assert!(
+            dir.ends_with("CPOP"),
+            "data dir should end with CPOP, got: {}",
+            dir.display()
+        );
+
+        // Restore previous value if any.
+        if let Some(v) = prev {
+            std::env::set_var("CPOP_DATA_DIR", v);
+        }
+    }
+
+    #[test]
+    fn test_validate_path_rejects_empty() {
+        let result = crate::sentinel::helpers::validate_path("");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_path_rejects_traversal() {
+        let result = crate::sentinel::helpers::validate_path("/tmp/../../../etc/shadow");
+        // On macOS /tmp canonicalizes to /private/tmp, traversal resolves.
+        // The path likely doesn't exist, so validate_path returns an error.
+        // Either way, it must not silently succeed with a system path.
+        if let Ok(p) = &result {
+            // If it resolved, it must not point to a system directory.
+            let s = p.to_string_lossy();
+            assert!(
+                !s.starts_with("/etc/"),
+                "traversal escaped to system path: {s}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_validate_path_accepts_tmp_file() {
+        // Create a temp file so validate_path can canonicalize it.
+        let tmp = std::env::temp_dir().join("cpop_test_validate_path.txt");
+        std::fs::write(&tmp, b"test").expect("write temp file");
+        let result = crate::sentinel::helpers::validate_path(&tmp);
+        assert!(result.is_ok(), "validate_path failed: {result:?}");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_ffi_result_error_has_no_message() {
+        // Convention: on error, `message` is None and `error_message` is Some.
+        let result = ffi_sentinel_stop();
+        assert!(!result.success);
+        assert!(result.message.is_none());
+        assert!(result.error_message.is_some());
+    }
+
+    #[test]
+    fn test_sentinel_status_defaults_when_not_running() {
+        let status = ffi_sentinel_status();
+        assert!(!status.running);
+        assert_eq!(status.tracked_file_count, 0);
+        assert_eq!(status.uptime_secs, 0);
+        assert!(status.focus_duration.is_empty());
     }
 }

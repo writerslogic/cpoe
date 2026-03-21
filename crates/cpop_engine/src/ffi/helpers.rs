@@ -9,7 +9,23 @@ use zeroize::Zeroizing;
 /// Maximum Shannon entropy for the edit-position histogram (log2(20 bins)).
 pub const ENTROPY_NORMALIZATION_FACTOR: f64 = 4.321928;
 
+/// Shared lock for tests that modify `CPOP_DATA_DIR`.
+/// All FFI test modules must use this to avoid env var races.
+/// Uses a helper that recovers from poisoned state (previous test panics).
+#[cfg(test)]
+pub static FFI_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+pub fn lock_ffi_env() -> std::sync::MutexGuard<'static, ()> {
+    FFI_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 pub(crate) fn get_data_dir() -> Option<PathBuf> {
+    if let Ok(dir) = std::env::var("CPOP_DATA_DIR") {
+        return Some(PathBuf::from(dir));
+    }
     #[cfg(target_os = "macos")]
     {
         dirs::home_dir().map(|h| h.join("Library/Application Support/CPOP"))

@@ -305,3 +305,198 @@ pub fn ffi_get_identity_mnemonic() -> FfiResult {
         },
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ffi::evidence::ffi_create_checkpoint;
+    use tempfile::TempDir;
+
+    /// Point CPOP_DATA_DIR at a fresh temp directory and return the TempDir guard.
+    fn setup_temp_data_dir() -> TempDir {
+        let dir = TempDir::new().expect("create temp dir");
+        std::env::set_var("CPOP_DATA_DIR", dir.path());
+        dir
+    }
+
+    // ── ffi_init ────────────────────────────────────────────────────────
+
+    #[test]
+    fn init_creates_signing_key_and_db() {
+        let _lock = crate::ffi::helpers::lock_ffi_env();
+        let dir = setup_temp_data_dir();
+
+        let result = ffi_init();
+        assert!(
+            result.success,
+            "ffi_init failed: {:?}",
+            result.error_message
+        );
+
+        assert!(
+            dir.path().join("signing_key").exists(),
+            "signing_key not created"
+        );
+        assert!(
+            dir.path().join("events.db").exists(),
+            "events.db not created"
+        );
+    }
+
+    #[test]
+    fn init_is_idempotent() {
+        let _lock = crate::ffi::helpers::lock_ffi_env();
+        let _dir = setup_temp_data_dir();
+
+        let first = ffi_init();
+        assert!(
+            first.success,
+            "first init failed: {:?}",
+            first.error_message
+        );
+
+        let second = ffi_init();
+        assert!(
+            second.success,
+            "second init failed: {:?}",
+            second.error_message
+        );
+    }
+
+    #[test]
+    fn init_signing_key_has_correct_length() {
+        let _lock = crate::ffi::helpers::lock_ffi_env();
+        let dir = setup_temp_data_dir();
+
+        let result = ffi_init();
+        assert!(result.success);
+
+        let key_data = std::fs::read(dir.path().join("signing_key")).expect("read key");
+        assert_eq!(key_data.len(), 32, "Ed25519 seed should be 32 bytes");
+    }
+
+    // ── ffi_get_status ──────────────────────────────────────────────────
+
+    #[test]
+    fn status_before_init_shows_not_initialized() {
+        let _lock = crate::ffi::helpers::lock_ffi_env();
+        let _dir = setup_temp_data_dir();
+        // No ffi_init() — data dir exists but is empty.
+
+        let status = ffi_get_status();
+        assert!(!status.initialized);
+        assert_eq!(status.tracked_file_count, 0);
+        assert_eq!(status.total_checkpoints, 0);
+    }
+
+    #[test]
+    fn status_after_init_shows_initialized() {
+        let _lock = crate::ffi::helpers::lock_ffi_env();
+        let dir = setup_temp_data_dir();
+
+        let init = ffi_init();
+        assert!(init.success, "init failed: {:?}", init.error_message);
+
+        let status = ffi_get_status();
+        assert!(status.initialized);
+        assert_eq!(
+            status.data_dir,
+            dir.path().display().to_string(),
+            "data_dir should match temp path"
+        );
+        assert_eq!(status.tracked_file_count, 0);
+        assert_eq!(status.total_checkpoints, 0);
+        assert!(status.error_message.is_none());
+    }
+
+    // ── ffi_create_checkpoint ───────────────────────────────────────────
+
+    #[test]
+    fn create_checkpoint_for_temp_file() {
+        let _lock = crate::ffi::helpers::lock_ffi_env();
+        let dir = setup_temp_data_dir();
+
+        let init = ffi_init();
+        assert!(init.success, "init failed: {:?}", init.error_message);
+
+        // Create a file to checkpoint.
+        let file_path = dir.path().join("test_document.txt");
+        std::fs::write(&file_path, "Hello, CPOP!").expect("write test file");
+
+        let result = ffi_create_checkpoint(
+            file_path.to_string_lossy().to_string(),
+            "test checkpoint".to_string(),
+        );
+        assert!(
+            result.success,
+            "checkpoint failed: {:?}",
+            result.error_message
+        );
+        assert!(result.message.is_some());
+
+        // Status should now reflect the tracked file.
+        let status = ffi_get_status();
+        assert_eq!(status.tracked_file_count, 1);
+        assert_eq!(status.total_checkpoints, 1);
+    }
+
+    #[test]
+    fn create_checkpoint_missing_file_fails() {
+        let _lock = crate::ffi::helpers::lock_ffi_env();
+        let dir = setup_temp_data_dir();
+
+        let init = ffi_init();
+        assert!(init.success);
+
+        let bogus = dir.path().join("nonexistent.txt");
+        let result = ffi_create_checkpoint(bogus.to_string_lossy().to_string(), String::new());
+        assert!(!result.success);
+        assert!(result.error_message.is_some());
+    }
+
+    #[test]
+    fn create_checkpoint_with_tool_declaration() {
+        let _lock = crate::ffi::helpers::lock_ffi_env();
+        let dir = setup_temp_data_dir();
+
+        let init = ffi_init();
+        assert!(init.success, "init failed: {:?}", init.error_message);
+
+        let file_path = dir.path().join("ai_assisted.txt");
+        std::fs::write(&file_path, "Some content with AI assistance").expect("write test file");
+
+        let result = ffi_create_checkpoint(
+            file_path.to_string_lossy().to_string(),
+            "[tool:ai:ChatGPT]".to_string(),
+        );
+        assert!(
+            result.success,
+            "checkpoint with tool declaration failed: {:?}",
+            result.error_message
+        );
+    }
+
+    #[test]
+    fn create_multiple_checkpoints_increments_count() {
+        let _lock = crate::ffi::helpers::lock_ffi_env();
+        let dir = setup_temp_data_dir();
+
+        let init = ffi_init();
+        assert!(init.success);
+
+        let file_path = dir.path().join("multi.txt");
+        std::fs::write(&file_path, "version 1").expect("write v1");
+        let path_str = file_path.to_string_lossy().to_string();
+
+        let r1 = ffi_create_checkpoint(path_str.clone(), "v1".to_string());
+        assert!(r1.success, "cp1 failed: {:?}", r1.error_message);
+
+        std::fs::write(&file_path, "version 2 with more content").expect("write v2");
+        let r2 = ffi_create_checkpoint(path_str, "v2".to_string());
+        assert!(r2.success, "cp2 failed: {:?}", r2.error_message);
+
+        let status = ffi_get_status();
+        assert_eq!(status.tracked_file_count, 1);
+        assert_eq!(status.total_checkpoints, 2);
+    }
+}
