@@ -43,22 +43,13 @@ impl Block {
     pub fn decode_ascii(text: &str) -> Result<Self, String> {
         let lines: Vec<&str> = text.lines().collect();
 
-        // Accept CPOP WAR (current), POP WAR (previous), and legacy format
         let start = lines
             .iter()
-            .position(|l| {
-                l.contains("BEGIN CPOP WAR")
-                    || l.contains("BEGIN POP WAR")
-                    || l.contains("BEGIN WITNESSD AUTHORSHIP RECORD")
-            })
+            .position(|l| l.contains("BEGIN CPOP WAR"))
             .ok_or("missing WAR block header")?;
         let end = lines
             .iter()
-            .position(|l| {
-                l.contains("END CPOP WAR")
-                    || l.contains("END POP WAR")
-                    || l.contains("END WITNESSD AUTHORSHIP RECORD")
-            })
+            .position(|l| l.contains("END CPOP WAR"))
             .ok_or("missing WAR block footer")?;
 
         if start >= end {

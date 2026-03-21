@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use hex;
 use serde::{Deserialize, Serialize};
 
-/// WAR block format version.
+/// WAR (Written Authorship Report) block format version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Version {
     /// Legacy parallel computation (WAR/1.0)
@@ -35,7 +35,7 @@ impl Version {
     }
 }
 
-/// A WAR evidence block.
+/// A WAR (Written Authorship Report) evidence block.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
     pub version: Version,

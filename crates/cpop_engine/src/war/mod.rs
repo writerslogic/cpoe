@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
-//! WAR (CPOP Authorship Record) block encoding and verification.
+//! WAR (Written Authorship Report) block encoding and verification.
 //!
 //! PGP-style ASCII-armored evidence format -- human-readable and
 //! independently verifiable.
