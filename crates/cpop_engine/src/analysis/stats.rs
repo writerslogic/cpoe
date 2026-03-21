@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+// SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 /// Single-pass mean and sample standard deviation.
 pub fn mean_and_std_dev(data: &[f64]) -> (f64, f64) {

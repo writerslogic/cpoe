@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+// SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 //! Conversion from internal checkpoint chain to CDDL-conformant wire types.
 //!

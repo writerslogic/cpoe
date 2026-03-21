@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+// SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 //! C2PA assertion profile — projects an EAR token into a C2PA JUMBF assertion.
 

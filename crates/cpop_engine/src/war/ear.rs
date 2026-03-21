@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+// SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 //! EAR (Entity Attestation Result) types per draft-ietf-rats-ear.
 //!

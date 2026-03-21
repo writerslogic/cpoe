@@ -3,7 +3,7 @@ name = "cpop_engine"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
-license.workspace = true
+license = "SSPL-1.0"
 repository.workspace = true
 description = "Cryptographic engine for high-integrity document witnessing"
 readme = "README.md"
@@ -106,6 +106,10 @@ typeshare = "1.0.5"
 # CPOP Protocol
 cpop-protocol = "0.2"
 
+# PDF report generation
+printpdf = "0.7"
+qrcode = "0.14"
+
 # Unix Specific
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.29", features = ["signal", "process", "socket", "user", "fs"] }
@@ -140,12 +144,13 @@ libc = "0.2"
 x11rb = { version = "0.13", features = ["allow-unsafe-code"], optional = true }
 
 [features]
-default = []
+default = ["cpop_jitter"]
 cargo-clippy = []
 secure-enclave = []
 cpop_jitter = ["dep:cpop-jitter"]
 x11 = ["x11rb"]  # Enable X11 focus detection on Linux
 ffi = ["dep:uniffi", "uniffi/cli"]  # UniFFI bindings for Swift (macOS GUI)
+test-utils = []  # Expose internal helpers for integration tests
 
 [build-dependencies]
 uniffi = { version = "0.28", features = ["build"], optional = true }

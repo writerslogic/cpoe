@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+// SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 //! Typing dynamics fingerprint (IKI distribution, zone usage, pause
 //! signatures, circadian patterns, session characteristics).

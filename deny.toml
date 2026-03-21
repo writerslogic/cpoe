@@ -30,6 +30,11 @@ confidence-threshold = 0.8
 allow = ["GPL-3.0-only"]
 crates = ["cpop_cli"]
 
+# The engine is SSPL-1.0
+[[licenses.exceptions]]
+allow = ["SSPL-1.0"]
+crates = ["cpop_engine"]
+
 [bans]
 multiple-versions = "warn"
 wildcards = "allow"

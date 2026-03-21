@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+// SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 use ed25519_dalek::{Signature, Verifier as _, VerifyingKey};
 use sha2::{Digest, Sha256};

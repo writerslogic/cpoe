@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+// SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 //! Ethereum anchor provider -- submits content hashes to a smart contract
 //! via EIP-155 signed transactions with automatic nonce/gas management.

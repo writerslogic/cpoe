@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+// SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 //! Labyrinth structure analysis via Takens' delay-coordinate embedding.
 //! RFC draft-condrey-rats-pop-01 §5.4.

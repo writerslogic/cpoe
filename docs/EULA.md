@@ -15,7 +15,7 @@ This Agreement supplements the Apple Media Services Terms and Conditions. In the
 
 "Content Hash" means a one-way cryptographic digest (SHA-256 or equivalent) of document content that cannot be reversed to recover the original content.
 
-"WritersProof Service" means the optional cloud infrastructure operated by CPOP at writersproof.com for transparency log anchoring, remote attestation, and steganographic watermark signing.
+"WritersProof Service" means the optional cloud infrastructure operated by CPOP at writerslogic.com for transparency log anchoring, remote attestation, and steganographic watermark signing.
 
 "Pro Subscription" means a paid auto-renewable subscription that unlocks enhanced features including but not limited to advanced export tiers, steganographic watermarking, and WritersProof anchoring.
 
@@ -112,7 +112,7 @@ This Agreement supplements the Apple Media Services Terms and Conditions. In the
 
 8.2. Third-party services are governed by their own terms and privacy policies. CPOP is not responsible for the availability, accuracy, or conduct of any third-party service.
 
-8.3. The WritersProof Service (writersproof.com) is operated by CPOP and governed by separate terms of service available at https://writersproof.com/terms.
+8.3. The WritersProof Service (writerslogic.com) is operated by CPOP and governed by separate terms of service available at https://writerslogic.com/terms.
 
 
 9. DISCLAIMER OF WARRANTIES

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+// SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 use super::embedding::compute_watermark_tag;
 use super::types::{ZwcBinding, ZwcParams, ZwcVerification, ZWC_ALPHABET};

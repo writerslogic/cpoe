@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+// SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 use crate::analysis::stats::bhattacharyya_coefficient;
 use cpop_protocol::baseline::{BaselineDigest, SessionBehavioralSummary};
