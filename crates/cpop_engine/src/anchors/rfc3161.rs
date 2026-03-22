@@ -1,13 +1,13 @@
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+// SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 use super::{AnchorError, AnchorProvider, Proof, ProofStatus, ProviderType};
 use async_trait::async_trait;
 
 const DEFAULT_TSA_URLS: &[&str] = &[
-    "http://timestamp.digicert.com",
-    "http://timestamp.sectigo.com",
-    "http://tsa.starfieldtech.com",
-    "http://timestamp.globalsign.com/tsa/r6advanced1",
+    "https://timestamp.digicert.com",
+    "https://timestamp.sectigo.com",
+    "https://freetsa.org/tsr",
+    "https://timestamp.globalsign.com/tsa/r6advanced1",
 ];
 
 /// Anchor provider using RFC 3161 Time-Stamp Authorities.
@@ -24,7 +24,7 @@ impl Rfc3161Provider {
     }
 
     async fn request_timestamp(&self, url: &str, hash: &[u8; 32]) -> Result<Vec<u8>, AnchorError> {
-        let request = self.build_timestamp_request(hash)?;
+        let (request, nonce) = self.build_timestamp_request(hash)?;
 
         let response = self
             .client
@@ -60,11 +60,21 @@ impl Rfc3161Provider {
             .await
             .map_err(|e| AnchorError::Network(e.to_string()))?;
 
+        // H-051: Verify the nonce in the response matches the request nonce
+        let tst_info = extract_tst_info(&token)?;
+        let response_nonce = extract_nonce(&tst_info)
+            .ok_or_else(|| AnchorError::InvalidFormat("TSA response missing nonce".into()))?;
+        if response_nonce != nonce {
+            return Err(AnchorError::InvalidFormat(
+                "TSA response nonce does not match request nonce".into(),
+            ));
+        }
+
         Ok(token.to_vec())
     }
 
     #[allow(clippy::vec_init_then_push)]
-    fn build_timestamp_request(&self, hash: &[u8; 32]) -> Result<Vec<u8>, AnchorError> {
+    fn build_timestamp_request(&self, hash: &[u8; 32]) -> Result<(Vec<u8>, [u8; 8]), AnchorError> {
         let mut nonce = [0u8; 8];
         getrandom::getrandom(&mut nonce)
             .map_err(|_| AnchorError::Submission("Failed to generate nonce".into()))?;
@@ -108,7 +118,7 @@ impl Rfc3161Provider {
         }
         final_request.extend_from_slice(&request);
 
-        Ok(final_request)
+        Ok((final_request, nonce))
     }
 
     /// Extract timestamp, serial, and TSA name from a TimeStampResp (RFC 3161 s2.4.2).
@@ -346,6 +356,49 @@ fn extract_serial_number(tst_info: &[u8]) -> Option<String> {
     let kids = children(tst_info, inner_start, inner_end);
     if kids.len() > 3 && kids[3].tag == 0x02 {
         return Some(hex::encode(kids[3].content(tst_info)));
+    }
+    None
+}
+
+/// Extract `nonce` (INTEGER) from TSTInfo.
+///
+/// TSTInfo fields: version, policy, messageImprint, serialNumber, genTime, [accuracy],
+/// [ordering], [nonce]. The nonce is the first INTEGER (tag 0x02) after genTime (tag 0x18).
+fn extract_nonce(tst_info: &[u8]) -> Option<[u8; 8]> {
+    let outer = read_tlv(tst_info, 0)?;
+    let inner_start = if outer.tag == 0x30 {
+        outer.content_start
+    } else {
+        0
+    };
+    let inner_end = if outer.tag == 0x30 {
+        outer.content_end
+    } else {
+        tst_info.len()
+    };
+
+    let kids = children(tst_info, inner_start, inner_end);
+    // Walk past genTime (0x18) and find the next INTEGER (0x02) which is the nonce
+    let mut past_gentime = false;
+    for child in &kids {
+        if child.tag == 0x18 {
+            past_gentime = true;
+            continue;
+        }
+        if past_gentime && child.tag == 0x02 {
+            let content = child.content(tst_info);
+            if content.len() == 8 {
+                let mut nonce = [0u8; 8];
+                nonce.copy_from_slice(content);
+                return Some(nonce);
+            }
+            // Handle leading zero padding (DER INTEGER may have leading 0x00)
+            if content.len() == 9 && content[0] == 0x00 {
+                let mut nonce = [0u8; 8];
+                nonce.copy_from_slice(&content[1..]);
+                return Some(nonce);
+            }
+        }
     }
     None
 }

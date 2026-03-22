@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+// SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 //! Evidence packet builder with validation and claim generation.
 
@@ -83,6 +83,7 @@ impl Builder {
             dictation_events: Vec::new(),
             claims: Vec::new(),
             limitations: Vec::new(),
+            beacon_attestation: None,
         };
 
         if let Some(latest) = chain.latest() {

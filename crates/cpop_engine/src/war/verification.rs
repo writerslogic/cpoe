@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+// SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 use crate::declaration::Declaration;
 use crate::evidence::Packet;
@@ -39,6 +39,12 @@ impl Block {
                 all_passed = false;
             }
             checks.push(decl_check);
+
+            let beacon_check = verify_beacon_attestation(evidence);
+            if !beacon_check.passed {
+                all_passed = false;
+            }
+            checks.push(beacon_check);
         } else {
             checks.push(CheckResult {
                 name: "hash_chain".to_string(),
@@ -94,11 +100,14 @@ impl Block {
         };
 
         let signature = Signature::from_bytes(&self.seal.signature);
-        match public_key.verify_strict(&self.seal.h3, &signature) {
+        let mut msg = Vec::with_capacity(Block::SEAL_SIG_DST.len() + 32);
+        msg.extend_from_slice(Block::SEAL_SIG_DST);
+        msg.extend_from_slice(&self.seal.h3);
+        match public_key.verify_strict(&msg, &signature) {
             Ok(()) => CheckResult {
                 name: "seal_signature".to_string(),
                 passed: true,
-                message: "Ed25519 seal signature valid (H3 signed)".to_string(),
+                message: "Ed25519 seal signature valid (domain-separated H3)".to_string(),
             },
             Err(e) => CheckResult {
                 name: "seal_signature".to_string(),
@@ -186,13 +195,17 @@ pub fn compute_seal(packet: &Packet, declaration: &Declaration) -> Result<Seal, 
         .map(|j| j.jitter_hash)
         .unwrap_or([0u8; 32]);
 
-    let vdf_output = packet
+    let vdf_output = match packet
         .checkpoints
         .iter()
         .rev()
         .find_map(|cp| cp.vdf_output.as_ref())
-        .and_then(|o| hex::decode(o).ok())
-        .unwrap_or_else(|| vec![0u8; 32]);
+    {
+        Some(hex_str) => {
+            hex::decode(hex_str).map_err(|e| format!("invalid VDF output hex: {e}"))?
+        }
+        None => vec![0u8; 32],
+    };
 
     let declaration_bytes = declaration
         .encode()
@@ -205,11 +218,27 @@ pub fn compute_seal(packet: &Packet, declaration: &Declaration) -> Result<Seal, 
     h1_hasher.update(declaration_hash);
     let h1: [u8; 32] = h1_hasher.finalize().into();
 
+    // Beacon attestation binding: include WritersProof counter-signature in H2
+    // when present. When absent, the hash computation is identical to the pre-beacon
+    // code path — ensuring backward compatibility with existing evidence.
+    // If beacon_attestation is Some but wp_signature is malformed, fail hard —
+    // silent fallback would allow beacon stripping attacks.
+    let beacon_sig = match &packet.beacon_attestation {
+        Some(b) => Some(
+            hex::decode(&b.wp_signature)
+                .map_err(|e| format!("invalid beacon wp_signature hex: {e}"))?,
+        ),
+        None => None,
+    };
+
     let mut h2_hasher = Sha256::new();
     h2_hasher.update(b"witnessd-seal-h2-v1");
     h2_hasher.update(h1);
     h2_hasher.update(jitter_hash);
     h2_hasher.update(&declaration.author_public_key);
+    if let Some(ref sig) = beacon_sig {
+        h2_hasher.update(sig);
+    }
     let h2: [u8; 32] = h2_hasher.finalize().into();
 
     let mut h3_hasher = Sha256::new();
@@ -219,10 +248,14 @@ pub fn compute_seal(packet: &Packet, declaration: &Declaration) -> Result<Seal, 
     h3_hasher.update(&doc_hash);
     let h3: [u8; 32] = h3_hasher.finalize().into();
 
-    let mut public_key = [0u8; 32];
-    if declaration.author_public_key.len() == 32 {
-        public_key.copy_from_slice(&declaration.author_public_key);
+    if declaration.author_public_key.len() != 32 {
+        return Err(format!(
+            "author_public_key must be 32 bytes, got {}",
+            declaration.author_public_key.len()
+        ));
     }
+    let mut public_key = [0u8; 32];
+    public_key.copy_from_slice(&declaration.author_public_key);
 
     Ok(Seal {
         h1,
@@ -410,6 +443,107 @@ pub fn verify_declaration(evidence: &Packet) -> CheckResult {
             name: "declaration".to_string(),
             passed: false,
             message: "Missing declaration".to_string(),
+        },
+    }
+}
+
+/// WritersProof Root CA public key (Ed25519, 32 bytes hex).
+/// kid: e58a2aacaad69b37 | Valid: 2026-03-19 to 2036-03-18
+const WRITERSPROOF_CA_PUBKEY_HEX: &str =
+    "b48f36054b9160dff06ac4329898523f441914442958a01e84b719ac539ca053";
+
+/// Verify the WritersProof beacon counter-signature if present.
+///
+/// When `beacon_attestation` is present, the `wp_signature` must be a valid
+/// Ed25519 signature by the WritersProof CA over the beacon bundle.
+/// If no beacon attestation is present, this check passes (beacons are optional).
+pub fn verify_beacon_attestation(evidence: &Packet) -> CheckResult {
+    let attestation = match &evidence.beacon_attestation {
+        Some(a) => a,
+        None => {
+            return CheckResult {
+                name: "beacon_attestation".to_string(),
+                passed: true,
+                message: "No beacon attestation present (optional)".to_string(),
+            };
+        }
+    };
+
+    // Decode the WritersProof CA public key
+    let ca_pubkey_bytes = match hex::decode(WRITERSPROOF_CA_PUBKEY_HEX) {
+        Ok(b) if b.len() == 32 => b,
+        _ => {
+            return CheckResult {
+                name: "beacon_attestation".to_string(),
+                passed: false,
+                message: "Internal error: invalid CA public key".to_string(),
+            };
+        }
+    };
+    // Safety: ca_pubkey_bytes is exactly 32 bytes (validated above)
+    let ca_key_array: &[u8; 32] = ca_pubkey_bytes.as_slice().try_into().unwrap();
+    let ca_verifying_key = match VerifyingKey::from_bytes(ca_key_array) {
+        Ok(key) => key,
+        Err(e) => {
+            return CheckResult {
+                name: "beacon_attestation".to_string(),
+                passed: false,
+                message: format!("Invalid CA public key: {e}"),
+            };
+        }
+    };
+
+    // Decode the counter-signature
+    let sig_bytes = match hex::decode(&attestation.wp_signature) {
+        Ok(b) if b.len() == 64 => b,
+        Ok(b) => {
+            return CheckResult {
+                name: "beacon_attestation".to_string(),
+                passed: false,
+                message: format!(
+                    "Invalid beacon signature length: expected 64, got {}",
+                    b.len()
+                ),
+            };
+        }
+        Err(e) => {
+            return CheckResult {
+                name: "beacon_attestation".to_string(),
+                passed: false,
+                message: format!("Invalid beacon signature hex: {e}"),
+            };
+        }
+    };
+    // Safety: sig_bytes is exactly 64 bytes (validated above)
+    let signature = Signature::from_bytes(sig_bytes.as_slice().try_into().unwrap());
+
+    // Reconstruct the signed message: checkpoint_hash || drand fields || nist fields || fetched_at.
+    // This must match what WritersProof signed server-side.
+    // NOTE: String fields (drand_randomness, nist_output_value, fetched_at) are
+    // encoded via `.as_bytes()` which returns their UTF-8 representation. Both
+    // client and server MUST use identical UTF-8 encoding for signature agreement.
+    let mut signed_msg = Vec::new();
+    // Use the document hash as the checkpoint binding (the field sent in BeaconRequest)
+    signed_msg.extend_from_slice(evidence.document.final_hash.as_bytes());
+    signed_msg.extend_from_slice(&attestation.drand_round.to_be_bytes());
+    signed_msg.extend_from_slice(attestation.drand_randomness.as_bytes());
+    signed_msg.extend_from_slice(&attestation.nist_pulse_index.to_be_bytes());
+    signed_msg.extend_from_slice(attestation.nist_output_value.as_bytes());
+    signed_msg.extend_from_slice(attestation.fetched_at.as_bytes());
+
+    match ca_verifying_key.verify_strict(&signed_msg, &signature) {
+        Ok(()) => CheckResult {
+            name: "beacon_attestation".to_string(),
+            passed: true,
+            message: format!(
+                "Beacon attestation valid: drand round {}, NIST pulse {}",
+                attestation.drand_round, attestation.nist_pulse_index
+            ),
+        },
+        Err(e) => CheckResult {
+            name: "beacon_attestation".to_string(),
+            passed: false,
+            message: format!("Beacon counter-signature verification failed: {e}"),
         },
     }
 }

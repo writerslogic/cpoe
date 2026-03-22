@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+// SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 //! Main orchestration functions for forensic analysis.
 
@@ -145,7 +145,11 @@ pub fn analyze_forensics_ext(
 
         let iki_intervals: Vec<f64> = samples
             .windows(2)
-            .map(|w| (w[1].timestamp_ns - w[0].timestamp_ns) as f64)
+            .filter_map(|w| {
+                w[1].timestamp_ns
+                    .checked_sub(w[0].timestamp_ns)
+                    .map(|d| d as f64)
+            })
             .filter(|&d| d > 0.0)
             .collect();
         if iki_intervals.len() >= MIN_IKI_FOR_HURST {

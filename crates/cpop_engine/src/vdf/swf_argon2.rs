@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+// SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 //! Argon2id-based Sequential Work Function (SWF) per draft-condrey-rats-pop.
 //!
@@ -530,7 +530,8 @@ fn select_indices(sample_seed: &[u8; 32], num_leaves: u64, count: usize) -> Vec<
 fn padding_value(steps: u64) -> [u8; 32] {
     let mut h = Sha256::new();
     h.update([0x02u8]);
-    h.update(((steps + 1) as u32).to_be_bytes());
+    let padded = steps.saturating_add(1).min(u32::MAX as u64) as u32;
+    h.update(padded.to_be_bytes());
     h.finalize().into()
 }
 

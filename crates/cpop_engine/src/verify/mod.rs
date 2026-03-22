@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+// SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 //! Full verification pipeline for evidence packets.
 //!
@@ -127,20 +127,47 @@ pub fn full_verify(packet: &Packet, opts: &VerifyOptions) -> FullVerificationRes
         warnings.push("No declaration present".to_string());
     }
 
-    // Phase 4: HMAC seal re-derivation
-    let seals = verify_seals(packet, &mut warnings);
-
-    // Phase 5: Duration cross-check
-    let duration = verify_duration(packet, &opts.vdf_params, &mut warnings);
-
-    // Phase 6: Key provenance
-    let key_provenance = verify_key_provenance(packet, &mut warnings);
-
-    // Phases 2+3: Forensic analysis
-    let (forensics, per_checkpoint) = if opts.run_forensics {
-        run_forensics(packet, &mut warnings)
+    // Short-circuit: if structural verification failed, skip all subsequent phases
+    // to avoid producing misleading "valid" results on tampered evidence.
+    let (seals, duration, key_provenance, forensics, per_checkpoint) = if !structural {
+        (
+            SealVerification {
+                jitter_tag_valid: None,
+                entangled_binding_valid: None,
+                checkpoints_checked: 0,
+            },
+            DurationCheck {
+                plausible: false,
+                computed_min_seconds: 0.0,
+                claimed_seconds: 0.0,
+                ratio: 0.0,
+            },
+            KeyProvenanceCheck {
+                hierarchy_consistent: None,
+                signing_key_consistent: false,
+                ratchet_monotonic: false,
+            },
+            None,
+            None,
+        )
     } else {
-        (None, None)
+        // Phase 4: HMAC seal re-derivation
+        let seals = verify_seals_structural(packet, &mut warnings);
+
+        // Phase 5: Duration cross-check
+        let duration = verify_duration(packet, &opts.vdf_params, &mut warnings);
+
+        // Phase 6: Key provenance
+        let key_provenance = verify_key_provenance(packet, &mut warnings);
+
+        // Phases 2+3: Forensic analysis
+        let (forensics, per_checkpoint) = if opts.run_forensics {
+            run_forensics(packet, &mut warnings)
+        } else {
+            (None, None)
+        };
+
+        (seals, duration, key_provenance, forensics, per_checkpoint)
     };
 
     // Compute overall verdict
@@ -167,8 +194,13 @@ pub fn full_verify(packet: &Packet, opts: &VerifyOptions) -> FullVerificationRes
     }
 }
 
-/// Phase 4: Re-derive HMAC seals and compare against stored values.
-fn verify_seals(packet: &Packet, warnings: &mut Vec<String>) -> SealVerification {
+/// Phase 4: Structural seal verification.
+///
+/// NOTE: Full HMAC re-derivation requires the session key which is not available
+/// during third-party verification. This check validates structural presence only.
+/// Full seal verification is performed by the original author's engine which has
+/// access to the session key material.
+fn verify_seals_structural(packet: &Packet, warnings: &mut Vec<String>) -> SealVerification {
     let mut jitter_tag_valid: Option<bool> = None;
     let entangled_binding_valid: Option<bool> = None;
     let mut checkpoints_checked = 0;
@@ -228,6 +260,18 @@ fn verify_duration(
     vdf_params: &vdf::Parameters,
     warnings: &mut Vec<String>,
 ) -> DurationCheck {
+    if vdf_params.iterations_per_second == 0 {
+        warnings.push(
+            "VDF iterations_per_second is zero — duration check cannot be performed".to_string(),
+        );
+        return DurationCheck {
+            computed_min_seconds: 0.0,
+            claimed_seconds: 0.0,
+            ratio: 0.0,
+            plausible: false,
+        };
+    }
+
     let total_iterations: u64 = packet
         .checkpoints
         .iter()
@@ -253,11 +297,15 @@ fn verify_duration(
     let ratio = if computed_min_seconds > 0.0 {
         claimed_seconds / computed_min_seconds
     } else {
-        1.0 // No VDF data → assume plausible
+        1.0
     };
 
     let plausible = if computed_min_seconds > 0.0 {
         (SWF_DURATION_RATIO_MIN..=SWF_DURATION_RATIO_MAX).contains(&ratio)
+    } else if packet.checkpoints.len() > 1 {
+        // Multi-checkpoint packet should have VDF proof data
+        warnings.push("Expected VDF proof data not found".to_string());
+        false
     } else {
         true
     };
@@ -318,12 +366,14 @@ fn verify_key_provenance(packet: &Packet, warnings: &mut Vec<String>) -> KeyProv
             }
         }
 
-        // Check ratchet key indices are strictly monotonic and non-negative
+        // Single pass: check ratchet indices are strictly monotonic, non-negative,
+        // and reference valid ratchet keys.
         let mut prev_index = -1i64;
         for sig in &kh.checkpoint_signatures {
             let idx = sig.ratchet_index as i64;
             if idx < 0 {
                 ratchet_monotonic = false;
+                signing_key_consistent = false;
                 warnings.push(format!(
                     "Ratchet index negative ({}) at checkpoint {}",
                     idx, sig.ordinal
@@ -339,32 +389,17 @@ fn verify_key_provenance(packet: &Packet, warnings: &mut Vec<String>) -> KeyProv
                 break;
             }
             prev_index = idx;
-        }
 
-        // Check signing key consistency: all checkpoint signatures should use
-        // ratchet keys derived from the same session key
-        if kh.checkpoint_signatures.len() > 1 {
-            // Verify each signature references a valid ratchet key
-            for sig in &kh.checkpoint_signatures {
-                if sig.ratchet_index < 0 {
-                    signing_key_consistent = false;
-                    warnings.push(format!(
-                        "Checkpoint {} has negative ratchet index {}",
-                        sig.ordinal, sig.ratchet_index
-                    ));
-                    break;
-                }
-                let idx = sig.ratchet_index as usize;
-                if idx >= kh.ratchet_public_keys.len() {
-                    signing_key_consistent = false;
-                    warnings.push(format!(
-                        "Checkpoint {} references ratchet index {} but only {} keys exist",
-                        sig.ordinal,
-                        idx,
-                        kh.ratchet_public_keys.len()
-                    ));
-                    break;
-                }
+            let uidx = sig.ratchet_index as usize;
+            if uidx >= kh.ratchet_public_keys.len() {
+                signing_key_consistent = false;
+                warnings.push(format!(
+                    "Checkpoint {} references ratchet index {} but only {} keys exist",
+                    sig.ordinal,
+                    uidx,
+                    kh.ratchet_public_keys.len()
+                ));
+                break;
             }
         }
     } else {
@@ -461,6 +496,16 @@ fn run_forensics(
         return (None, None);
     }
 
+    // Skip forensic analysis when all events have synthetic zero timestamps —
+    // they carry no meaningful timing information and produce misleading results.
+    let all_zero_timestamps = !events.is_empty() && events.iter().all(|e| e.timestamp_ns == 0);
+    if all_zero_timestamps && jitter_samples.is_empty() {
+        warnings.push(
+            "All events have timestamp_ns=0 (synthetic); skipping forensic analysis".to_string(),
+        );
+        return (None, None);
+    }
+
     let forensics = analyze_forensics_ext(
         &events,
         &regions,
@@ -527,8 +572,17 @@ fn compute_verdict(
     }
 
     // Key provenance failure → likely synthetic
-    if key_provenance.hierarchy_consistent == Some(false) || !key_provenance.ratchet_monotonic {
+    if key_provenance.hierarchy_consistent == Some(false)
+        || !key_provenance.ratchet_monotonic
+        || !key_provenance.signing_key_consistent
+    {
         return ForensicVerdict::V4LikelySynthetic;
+    }
+
+    // Duration suspicious (> 3x) → suspicious — check before forensics deferral
+    // so an inflated duration cannot be masked by a passing forensic verdict.
+    if !duration.plausible && duration.ratio > SWF_DURATION_RATIO_MAX {
+        return ForensicVerdict::V3Suspicious;
     }
 
     // Per-checkpoint flags → suspicious
@@ -543,7 +597,7 @@ fn compute_verdict(
         return fm.map_to_protocol_verdict();
     }
 
-    // Duration suspicious (> 3x) → suspicious
+    // Duration implausible for other reasons (e.g., missing VDF data) → suspicious
     if !duration.plausible {
         return ForensicVerdict::V3Suspicious;
     }
@@ -631,6 +685,7 @@ mod tests {
             dictation_events: vec![],
             claims: vec![],
             limitations: vec![],
+            beacon_attestation: None,
         }
     }
 

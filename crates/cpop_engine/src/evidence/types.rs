@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+// SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 //! Core evidence types: structs, enums, and trait implementations.
 
@@ -149,6 +149,12 @@ pub struct Packet {
     pub dictation_events: Vec<DictationEvent>,
     pub claims: Vec<Claim>,
     pub limitations: Vec<String>,
+    /// WritersProof temporal beacon attestation.
+    /// Contains drand + NIST beacon values fetched and counter-signed by WritersProof.
+    /// The `wp_signature` is included in the H2 seal computation — evidence signed
+    /// with a beacon attestation produces a different seal than evidence without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub beacon_attestation: Option<WpBeaconAttestation>,
 }
 
 /// Key hierarchy snapshot proving session certificate chain and ratchet state.
@@ -174,6 +180,32 @@ pub struct CheckpointSignature {
     pub checkpoint_hash: String,
     pub ratchet_index: i32,
     pub signature: String,
+}
+
+/// WritersProof temporal beacon attestation.
+///
+/// Contains drand and NIST beacon values fetched and counter-signed by WritersProof.
+/// The `wp_signature` field is an Ed25519 signature over:
+/// `(checkpoint_hash || drand_round || drand_randomness || nist_pulse_index || nist_output_value || fetched_at)`
+///
+/// This signature is included in the H2 seal hash, making evidence with beacon
+/// attestation cryptographically distinct from evidence without it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WpBeaconAttestation {
+    /// drand League of Entropy round number.
+    pub drand_round: u64,
+    /// drand randomness output (hex-encoded, 32 bytes).
+    pub drand_randomness: String,
+    /// NIST Randomness Beacon pulse index.
+    pub nist_pulse_index: u64,
+    /// NIST beacon output value (hex-encoded, 64 bytes).
+    pub nist_output_value: String,
+    /// NIST pulse timestamp (RFC 3339).
+    pub nist_timestamp: String,
+    /// When WritersProof fetched the beacon values (RFC 3339).
+    pub fetched_at: String,
+    /// WritersProof Ed25519 counter-signature over the bundle (hex-encoded, 64 bytes).
+    pub wp_signature: String,
 }
 
 /// Time-bounded context annotation (e.g. break, research, revision).

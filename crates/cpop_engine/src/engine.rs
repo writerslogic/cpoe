@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+// SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 use crate::config::CpopConfig;
 use crate::identity::SecureStorage;
@@ -65,6 +65,7 @@ struct EngineInner {
     #[cfg(target_os = "macos")]
     keystroke_monitor: Mutex<Option<platform::macos::KeystrokeMonitor>>,
     watcher: Mutex<Option<RecommendedWatcher>>,
+    watcher_thread: Mutex<Option<std::thread::JoinHandle<()>>>,
     file_sizes: Mutex<HashMap<PathBuf, i64>>,
     /// Maps content hash → (last known path, timestamp_ns) for rename detection.
     content_hash_map: Mutex<HashMap<[u8; 32], (PathBuf, i64)>>,
@@ -122,6 +123,7 @@ impl Engine {
             #[cfg(target_os = "macos")]
             keystroke_monitor: Mutex::new(None),
             watcher: Mutex::new(None),
+            watcher_thread: Mutex::new(None),
             file_sizes: Mutex::new(HashMap::new()),
             content_hash_map: Mutex::new(HashMap::new()),
             device_id,
@@ -150,7 +152,11 @@ impl Engine {
     /// Pause monitoring: stop file watcher and keystroke capture.
     pub fn pause(&self) -> Result<()> {
         self.inner.running.store(false, Ordering::SeqCst);
+        // Drop the watcher first so the channel closes and the thread unblocks.
         *self.inner.watcher.lock_recover() = None;
+        if let Some(handle) = self.inner.watcher_thread.lock_recover().take() {
+            let _ = handle.join();
+        }
         #[cfg(target_os = "macos")]
         {
             *self.inner.keystroke_monitor.lock_recover() = None;
@@ -227,6 +233,17 @@ impl Engine {
     }
 }
 
+impl Drop for Engine {
+    fn drop(&mut self) {
+        self.inner.running.store(false, Ordering::SeqCst);
+        // Drop the watcher first so the channel closes and the thread unblocks.
+        *self.inner.watcher.lock_recover() = None;
+        if let Some(handle) = self.inner.watcher_thread.lock_recover().take() {
+            let _ = handle.join();
+        }
+    }
+}
+
 fn start_file_watcher(inner: &Arc<EngineInner>, watch_dirs: Vec<PathBuf>) -> Result<()> {
     let (tx, rx) = mpsc::channel();
     let mut watcher: RecommendedWatcher = RecommendedWatcher::new(tx, notify::Config::default())?;
@@ -238,7 +255,7 @@ fn start_file_watcher(inner: &Arc<EngineInner>, watch_dirs: Vec<PathBuf>) -> Res
     }
 
     let inner_clone = Arc::clone(inner);
-    std::thread::spawn(move || {
+    let handle = std::thread::spawn(move || {
         while inner_clone.running.load(Ordering::SeqCst) {
             let event = match rx.recv() {
                 Ok(event) => event,
@@ -260,6 +277,7 @@ fn start_file_watcher(inner: &Arc<EngineInner>, watch_dirs: Vec<PathBuf>) -> Res
     });
 
     *inner.watcher.lock_recover() = Some(watcher);
+    *inner.watcher_thread.lock_recover() = Some(handle);
     Ok(())
 }
 

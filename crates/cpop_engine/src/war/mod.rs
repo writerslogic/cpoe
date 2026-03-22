@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+// SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 //! WAR (Written Authorship Report) block encoding and verification.
 //!
@@ -153,10 +153,21 @@ impl Block {
         Ok(block)
     }
 
+    /// Domain separation tag for WAR seal signatures.
+    /// Prevents cross-protocol confusion by ensuring a signature produced
+    /// for the WAR seal cannot be misinterpreted in any other context.
+    const SEAL_SIG_DST: &'static [u8] = b"cpop-war-seal-v1";
+
     /// Sign the WAR block's seal with the given signer (software or hardware).
+    ///
+    /// The signature covers `SEAL_SIG_DST || H3` (domain-separated) to prevent
+    /// cross-protocol signature confusion.
     pub fn sign(&mut self, signer: &dyn EvidenceSigner) -> Result<(), String> {
+        let mut msg = Vec::with_capacity(Self::SEAL_SIG_DST.len() + 32);
+        msg.extend_from_slice(Self::SEAL_SIG_DST);
+        msg.extend_from_slice(&self.seal.h3);
         let signature_bytes = signer
-            .sign(&self.seal.h3)
+            .sign(&msg)
             .map_err(|e| format!("signing failed: {}", e))?;
 
         if signature_bytes.len() != 64 {
