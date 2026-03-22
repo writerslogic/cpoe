@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+// SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 use chrono::Utc;
 use hkdf::Hkdf;
@@ -77,7 +77,12 @@ impl SoftwarePUF {
                 if let Err(e) = crate::identity::SecureStorage::save_seed(&data) {
                     log::warn!("Failed to migrate PUF seed to secure storage: {e}");
                 } else {
-                    let _ = fs::remove_file(&self.seed_path);
+                    // Only delete the file if the keychain is actually functional.
+                    // When CPOP_NO_KEYCHAIN=1, save returns Ok but doesn't persist,
+                    // so the file must be kept as the only copy of the seed.
+                    if !crate::identity::SecureStorage::is_keychain_disabled() {
+                        let _ = fs::remove_file(&self.seed_path);
+                    }
                 }
                 self.seed = std::mem::take(&mut *data);
                 self.device_id = self.compute_device_id();
@@ -87,15 +92,18 @@ impl SoftwarePUF {
 
         let seed = self.generate_seed()?;
 
+        // Always write to file to ensure persistence when keychain is
+        // disabled or unavailable. SecureStorage is an additional copy.
+        if let Some(parent) = self.seed_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let tmp_path = self.seed_path.with_extension("tmp");
+        fs::write(&tmp_path, &seed)?;
+        crate::crypto::restrict_permissions(&tmp_path, 0o600)?;
+        fs::rename(tmp_path, &self.seed_path)?;
+
         if let Err(e) = crate::identity::SecureStorage::save_seed(&seed) {
             log::warn!("Secure storage unavailable ({e}), using file-based storage");
-            if let Some(parent) = self.seed_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            let tmp_path = self.seed_path.with_extension("tmp");
-            fs::write(&tmp_path, &seed)?;
-            crate::crypto::restrict_permissions(&tmp_path, 0o600)?;
-            fs::rename(tmp_path, &self.seed_path)?;
         }
 
         self.seed = seed;
@@ -178,15 +186,17 @@ impl SoftwarePUF {
             Sha256::digest(&entropy).to_vec()
         };
 
+        // Always write to the file to ensure recovery survives even when
+        // SecureStorage silently no-ops (e.g., CPOP_NO_KEYCHAIN=1).
+        if let Some(parent) = seed_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(seed_path, &seed)?;
+        crate::crypto::restrict_permissions(seed_path, 0o600)?;
+
+        // Also persist to SecureStorage if available (additional copy).
         if let Err(e) = crate::identity::SecureStorage::save_seed(&seed) {
             log::warn!("Secure storage unavailable ({e}), using file-based storage");
-            if let Some(parent) = seed_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            fs::write(seed_path, &seed)?;
-            crate::crypto::restrict_permissions(seed_path, 0o600)?;
-        } else if seed_path.exists() {
-            let _ = fs::remove_file(seed_path);
         }
 
         Self::new_with_path(seed_path)

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+// SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 use super::error::{Result, SentinelError};
 use super::focus::SentinelFocusTracker;
@@ -39,6 +39,12 @@ pub struct Sentinel {
     mouse_stego_engine: Arc<RwLock<crate::platform::MouseStegoEngine>>,
     session_nonce: Arc<RwLock<Option<[u8; 32]>>>,
     bridge_threads: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
+    /// Handle for the main event loop task; aborted on Drop if stop() was never called.
+    event_loop_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    /// Whether keystroke capture is active (false = degraded/focus-only mode).
+    pub(crate) keystroke_capture_active: Arc<AtomicBool>,
+    /// Last paste character count reported by the host app.
+    last_paste_chars: Arc<std::sync::atomic::AtomicI64>,
 }
 
 impl Sentinel {
@@ -54,7 +60,7 @@ impl Sentinel {
         use rand::RngCore;
         rand::rng().fill_bytes(&mut mouse_stego_seed);
 
-        Ok(Self {
+        let sentinel = Self {
             config: Arc::new(config),
             sessions: Arc::new(RwLock::new(HashMap::new())),
             shadow: Arc::new(shadow),
@@ -73,7 +79,12 @@ impl Sentinel {
             ))),
             session_nonce: Arc::new(RwLock::new(None)),
             bridge_threads: Arc::new(Mutex::new(Vec::new())),
-        })
+            event_loop_handle: Arc::new(Mutex::new(None)),
+            keystroke_capture_active: Arc::new(AtomicBool::new(false)),
+            last_paste_chars: Arc::new(std::sync::atomic::AtomicI64::new(0)),
+        };
+        mouse_stego_seed.zeroize();
+        Ok(sentinel)
     }
 
     /// Return the session nonce, generating one if not yet set.
@@ -93,6 +104,9 @@ impl Sentinel {
     /// Clear the session nonce so a new one will be generated on next access.
     pub fn reset_nonce(&self) {
         let mut nonce_lock = self.session_nonce.write_recover();
+        if let Some(ref mut nonce) = *nonce_lock {
+            nonce.zeroize();
+        }
         *nonce_lock = None;
     }
 
@@ -115,6 +129,20 @@ impl Sentinel {
         self.activity_accumulator
             .read_recover()
             .current_fingerprint()
+    }
+
+    /// Return the current keystroke count from the activity accumulator.
+    pub fn keystroke_count(&self) -> u64 {
+        self.activity_accumulator
+            .read_recover()
+            .to_session_summary()
+            .keystroke_count
+    }
+
+    /// Inject a jitter sample into the activity accumulator (for testing).
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn inject_sample(&self, sample: &crate::jitter::SimpleJitterSample) {
+        self.activity_accumulator.write_recover().add_sample(sample);
     }
 
     /// Return the current voice fingerprint, if collection is enabled.
@@ -140,15 +168,13 @@ impl Sentinel {
         &self.mouse_stego_engine
     }
 
-    fn update_mouse_stego_seed(&self) {
-        let guard = self.signing_key.read_recover();
-        if let Some(key) = guard.as_ref() {
-            let mut seed = key.to_bytes();
-            let mut engine = self.mouse_stego_engine.write_recover();
-            engine.reset();
-            *engine = crate::platform::MouseStegoEngine::new(seed);
-            seed.zeroize();
-        }
+    /// Update the mouse stego engine from the given key bytes (avoids re-acquiring signing_key lock).
+    fn update_mouse_stego_seed_from(&self, key_bytes: &[u8; 32]) {
+        let mut seed = *key_bytes;
+        let mut engine = self.mouse_stego_engine.write_recover();
+        engine.reset();
+        *engine = crate::platform::MouseStegoEngine::new(seed);
+        seed.zeroize();
     }
 
     /// Set the Ed25519 signing key and update the mouse stego seed.
@@ -159,8 +185,11 @@ impl Sentinel {
             log::warn!("Rejected all-zero signing key — likely uninitialized");
             return;
         }
+        let mut key_bytes = key.to_bytes();
         *self.signing_key.write_recover() = Some(key);
-        self.update_mouse_stego_seed();
+        // Update stego seed without re-acquiring the signing_key lock
+        self.update_mouse_stego_seed_from(&key_bytes);
+        key_bytes.zeroize();
     }
 
     /// Set the signing key from raw HMAC key bytes (must be exactly 32 bytes).
@@ -173,9 +202,11 @@ impl Sentinel {
                     return;
                 }
             };
+            let mut seed_copy = bytes;
             *self.signing_key.write_recover() = Some(SigningKey::from_bytes(&bytes));
             bytes.zeroize();
-            self.update_mouse_stego_seed();
+            self.update_mouse_stego_seed_from(&seed_copy);
+            seed_copy.zeroize();
         } else {
             log::warn!("HMAC key length {} is not 32 bytes, ignoring", key.len());
         }
@@ -242,9 +273,11 @@ impl Sentinel {
             "Keystroke capture not supported on this platform"
         ));
 
+        let keystroke_active = Arc::clone(&self.keystroke_capture_active);
         match keystroke_capture_result {
             Ok(mut keystroke_capture) => match keystroke_capture.start() {
                 Ok(sync_rx) => {
+                    keystroke_active.store(true, Ordering::SeqCst);
                     let sync_rx: std::sync::mpsc::Receiver<crate::platform::KeystrokeEvent> =
                         sync_rx;
                     let handle = std::thread::spawn(move || {
@@ -317,7 +350,8 @@ impl Sentinel {
         let mouse_idle_stats = Arc::clone(&self.mouse_idle_stats);
         let mouse_stego_engine = Arc::clone(&self.mouse_stego_engine);
 
-        tokio::spawn(async move {
+        let event_loop_handle_ref = Arc::clone(&self.event_loop_handle);
+        let handle = tokio::spawn(async move {
             let mut debounce_timer: Option<tokio::time::Instant> = None;
             let mut pending_focus: Option<FocusEvent> = None;
             let mut idle_check_interval = interval(Duration::from_secs(60));
@@ -335,11 +369,17 @@ impl Sentinel {
                         if event.timestamp_ns == last_keystroke_ts_ns {
                             continue;
                         }
-                        last_keystroke_ts_ns = event.timestamp_ns;
 
+                        // Compute inter-keystroke duration BEFORE updating last_keystroke_ts_ns
+                        let duration_since_last_ns: u64 = if last_keystroke_ts_ns > 0 {
+                            event.timestamp_ns.saturating_sub(last_keystroke_ts_ns).max(0) as u64
+                        } else {
+                            0
+                        };
+                        last_keystroke_ts_ns = event.timestamp_ns;
                         let sample = crate::jitter::SimpleJitterSample {
                             timestamp_ns: event.timestamp_ns,
-                            duration_since_last_ns: 0,
+                            duration_since_last_ns,
                             zone: event.zone,
                         };
                         // RwLock::write() per keystroke: at human typing speeds (5-10 Hz)
@@ -417,6 +457,11 @@ impl Sentinel {
             end_all_sessions_sync(&sessions, &shadow, &session_events_tx);
         });
 
+        // Store the event loop handle so it can be aborted on Drop
+        if let Ok(mut guard) = event_loop_handle_ref.lock() {
+            *guard = Some(handle);
+        }
+
         Ok(())
     }
 
@@ -445,6 +490,21 @@ impl Sentinel {
     /// Return `true` if the sentinel event loop is active.
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::SeqCst)
+    }
+
+    /// Whether keystroke capture is active (false = degraded/focus-only mode).
+    pub fn is_keystroke_capture_active(&self) -> bool {
+        self.keystroke_capture_active.load(Ordering::SeqCst)
+    }
+
+    /// Record a paste event from the host app.
+    pub fn set_last_paste_chars(&self, chars: i64) {
+        self.last_paste_chars.store(chars, Ordering::SeqCst);
+    }
+
+    /// Read and clear the last paste character count.
+    pub fn take_last_paste_chars(&self) -> i64 {
+        self.last_paste_chars.swap(0, Ordering::SeqCst)
     }
 
     /// Return a snapshot of all active document sessions.
@@ -544,8 +604,14 @@ impl Sentinel {
         let mut session_id_bytes = [0u8; 32];
         let hex_str = &session.session_id[..64.min(session.session_id.len())];
         if hex::decode_to_slice(hex_str, &mut session_id_bytes).is_ok() {
-            if let Some(key) = self.signing_key.read_recover().clone() {
-                match Wal::open(&wal_path, session_id_bytes, key) {
+            if let Some(ref key) = *self.signing_key.read_recover() {
+                // Copy key bytes for Wal::open (which takes SigningKey by value)
+                // and zeroize the intermediate copy. SigningKey::from_bytes produces
+                // a value whose Drop impl zeroizes internal state.
+                let mut key_bytes = key.to_bytes();
+                let wal_key = SigningKey::from_bytes(&key_bytes);
+                key_bytes.zeroize();
+                match Wal::open(&wal_path, session_id_bytes, wal_key) {
                     Ok(wal) => {
                         let payload = create_session_start_payload(&session);
                         if let Err(e) = wal.append(EntryType::SessionStart, payload) {
@@ -688,5 +754,16 @@ impl Sentinel {
             updated_digest.confidence_tier
         );
         Ok(())
+    }
+}
+
+impl Drop for Sentinel {
+    fn drop(&mut self) {
+        // Abort the event loop task if stop() was never called
+        if let Ok(mut guard) = self.event_loop_handle.lock() {
+            if let Some(handle) = guard.take() {
+                handle.abort();
+            }
+        }
     }
 }

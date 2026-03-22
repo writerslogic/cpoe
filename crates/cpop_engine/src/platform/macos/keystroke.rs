@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+// SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 //! Keystroke monitoring with CGEventTap: KeystrokeMonitor and MacOSKeystrokeCapture.
 
@@ -19,6 +19,15 @@ pub struct RunLoopHandle(pub(super) *mut std::ffi::c_void);
 unsafe impl Send for RunLoopHandle {}
 unsafe impl Sync for RunLoopHandle {}
 
+/// Holds CF objects created by CGEventTap so they can be released on shutdown.
+struct EventTapResources {
+    run_loop: *mut std::ffi::c_void,
+    tap: *mut std::ffi::c_void,
+    source: *mut std::ffi::c_void,
+}
+unsafe impl Send for EventTapResources {}
+unsafe impl Sync for EventTapResources {}
+
 #[derive(Debug, Clone)]
 pub struct KeystrokeInfo {
     pub timestamp_ns: i64,
@@ -36,6 +45,7 @@ pub struct KeystrokeMonitor {
     verified_count: Arc<AtomicU64>,
     rejected_count: Arc<AtomicU64>,
     run_loop: Arc<Mutex<Option<RunLoopHandle>>>,
+    tap_resources: Arc<Mutex<Option<EventTapResources>>>,
 }
 
 impl KeystrokeMonitor {
@@ -143,8 +153,12 @@ impl KeystrokeMonitor {
 
         let run_loop: Arc<Mutex<Option<RunLoopHandle>>> = Arc::new(Mutex::new(None));
         let run_loop_clone = Arc::clone(&run_loop);
+        let tap_resources: Arc<Mutex<Option<EventTapResources>>> = Arc::new(Mutex::new(None));
+        let tap_resources_clone = Arc::clone(&tap_resources);
 
-        let on_keystroke = Mutex::new(on_keystroke);
+        // H-070: No Mutex around on_keystroke — the callback is only ever invoked
+        // from the single run-loop thread, so &mut access is safe without locking.
+        let mut on_keystroke = on_keystroke;
 
         let thread = std::thread::spawn(move || {
             let mut tap_cb: TapCallback =
@@ -165,9 +179,7 @@ impl KeystrokeMonitor {
 
                         ks_count.fetch_add(1, Ordering::SeqCst);
 
-                        if let Ok(mut handler) = on_keystroke.lock() {
-                            handler(event, verification);
-                        }
+                        on_keystroke(event, verification);
                     }
                 });
 
@@ -198,6 +210,14 @@ impl KeystrokeMonitor {
                 if let Ok(mut rl) = run_loop_clone.lock() {
                     *rl = Some(RunLoopHandle(rl_ref));
                 }
+                // H-071: Store tap and source for cleanup in stop()/Drop
+                if let Ok(mut res) = tap_resources_clone.lock() {
+                    *res = Some(EventTapResources {
+                        run_loop: rl_ref,
+                        tap,
+                        source,
+                    });
+                }
                 CFRunLoopAddSource(rl_ref, source, kCFRunLoopCommonModes);
                 // Signal ready only after run_loop handle is stored (C-002 fix)
                 let _ = ready_tx.send(Ok(()));
@@ -213,6 +233,7 @@ impl KeystrokeMonitor {
                 verified_count,
                 rejected_count,
                 run_loop,
+                tap_resources,
             }),
             Ok(Err(err)) => Err(err),
             Err(_) => Err(anyhow!("Failed to initialize CGEventTap thread")),
@@ -234,7 +255,15 @@ impl KeystrokeMonitor {
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
-        if let Some(p) = ptr {
+        // H-071: Release tap, source, and run loop after thread has exited
+        if let Some(res) = self.tap_resources.lock().ok().and_then(|mut r| r.take()) {
+            unsafe {
+                CFRelease(res.source);
+                CFRelease(res.tap);
+                CFRelease(res.run_loop);
+            }
+        } else if let Some(p) = ptr {
+            // Fallback: release run loop if tap_resources wasn't populated
             unsafe {
                 CFRelease(p);
             }
@@ -257,6 +286,7 @@ pub struct MacOSKeystrokeCapture {
     verified_hardware: Arc<AtomicU64>,
     rejected_synthetic: Arc<AtomicU64>,
     run_loop: Arc<Mutex<Option<RunLoopHandle>>>,
+    tap_resources: Arc<Mutex<Option<EventTapResources>>>,
 }
 
 impl MacOSKeystrokeCapture {
@@ -270,6 +300,7 @@ impl MacOSKeystrokeCapture {
             verified_hardware: Arc::new(AtomicU64::new(0)),
             rejected_synthetic: Arc::new(AtomicU64::new(0)),
             run_loop: Arc::new(Mutex::new(None)),
+            tap_resources: Arc::new(Mutex::new(None)),
         })
     }
 }
@@ -289,6 +320,7 @@ impl KeystrokeCapture for MacOSKeystrokeCapture {
         let rejected_synthetic = Arc::clone(&self.rejected_synthetic);
         let strict = self.strict_mode;
         let run_loop = Arc::clone(&self.run_loop);
+        let tap_resources = Arc::clone(&self.tap_resources);
 
         running.store(true, Ordering::SeqCst);
 
@@ -366,6 +398,14 @@ impl KeystrokeCapture for MacOSKeystrokeCapture {
                 if let Ok(mut rl) = run_loop.lock() {
                     *rl = Some(RunLoopHandle(rl_ref));
                 }
+                // H-072: Store tap and source for cleanup in stop()/Drop
+                if let Ok(mut res) = tap_resources.lock() {
+                    *res = Some(EventTapResources {
+                        run_loop: rl_ref,
+                        tap,
+                        source,
+                    });
+                }
                 CFRunLoopAddSource(rl_ref, source, kCFRunLoopCommonModes);
                 // Signal ready only after run_loop handle is stored (C-002 fix)
                 let _ = ready_tx.send(Ok(()));
@@ -409,7 +449,14 @@ impl KeystrokeCapture for MacOSKeystrokeCapture {
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
-        if let Some(p) = ptr {
+        // H-072: Release tap, source, and run loop after thread has exited
+        if let Some(res) = self.tap_resources.lock().ok().and_then(|mut r| r.take()) {
+            unsafe {
+                CFRelease(res.source);
+                CFRelease(res.tap);
+                CFRelease(res.run_loop);
+            }
+        } else if let Some(p) = ptr {
             unsafe {
                 CFRelease(p);
             }

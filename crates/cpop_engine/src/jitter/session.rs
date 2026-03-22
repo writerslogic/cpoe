@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+// SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 //! Jitter chain (Layer 4a) - Go parity.
 //!
@@ -327,10 +327,37 @@ impl Session {
 
         // Atomic write: write to .tmp then rename for crash safety
         let tmp_path = path.as_ref().with_extension("tmp");
-        fs::write(&tmp_path, &*bytes).map_err(|e| Error::validation(e.to_string()))?;
 
-        crate::crypto::restrict_permissions(&tmp_path, 0o600)
-            .map_err(|e| Error::validation(e.to_string()))?;
+        // Create file with restrictive permissions from the start (unix).
+        // On non-unix platforms, permissions are set after write which leaves a brief
+        // window where the file may be world-readable (OS limitation).
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut f = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&tmp_path)
+                .or_else(|_| {
+                    // If file already exists (e.g. leftover from crash), remove and retry
+                    let _ = fs::remove_file(&tmp_path);
+                    fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .mode(0o600)
+                        .open(&tmp_path)
+                })
+                .map_err(|e| Error::validation(e.to_string()))?;
+            std::io::Write::write_all(&mut f, &*bytes)
+                .map_err(|e| Error::validation(e.to_string()))?;
+        }
+        #[cfg(not(unix))]
+        {
+            fs::write(&tmp_path, &*bytes).map_err(|e| Error::validation(e.to_string()))?;
+            crate::crypto::restrict_permissions(&tmp_path, 0o600)
+                .map_err(|e| Error::validation(e.to_string()))?;
+        }
 
         fs::rename(&tmp_path, path.as_ref()).map_err(|e| Error::validation(e.to_string()))?;
         Ok(())

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+// SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 use super::{
     default_pcr_selection, Attestation, Binding, Capabilities, PcrSelection, PcrValue, Provider,
@@ -41,6 +41,16 @@ struct LinuxState {
     ak_handle: Option<KeyHandle>,
     ak_public: Vec<u8>,
     counter_init: bool,
+}
+
+impl Drop for LinuxState {
+    fn drop(&mut self) {
+        if let Some(handle) = self.ak_handle.take() {
+            if let Err(e) = self.context.flush_context(handle.into()) {
+                log::warn!("Failed to flush AK handle on drop: {e}");
+            }
+        }
+    }
 }
 
 /// Linux TPM 2.0 provider via tss-esapi.
@@ -136,9 +146,15 @@ impl Provider for LinuxTpmProvider {
             .marshall()
             .map_err(|_| TpmError::Quote("sig marshal".into()))?;
 
+        // Compute device_id inline to avoid re-acquiring the lock (self.device_id() would deadlock)
+        let device_id = match get_device_id(&mut state) {
+            Ok(id) => format!("tpm-{}", hex::encode(&id[..8])),
+            Err(_) => "tpm-unknown".to_string(),
+        };
+
         Ok(Quote {
             provider_type: "tpm2-linux".to_string(),
-            device_id: self.device_id(),
+            device_id,
             timestamp: Utc::now(),
             nonce: nonce.to_vec(),
             attested_data: attest_data,
@@ -155,7 +171,12 @@ impl Provider for LinuxTpmProvider {
 
         let timestamp = Utc::now();
         let data_hash = Sha256::digest(data).to_vec();
-        let payload = super::build_binding_payload(&data_hash, &timestamp, &self.device_id());
+        // Compute device_id inline to avoid deadlock (self.device_id() re-acquires inner lock)
+        let dev_id = match get_device_id(&mut state) {
+            Ok(id) => format!("tpm-{}", hex::encode(&id[..8])),
+            Err(_) => "tpm-unknown".to_string(),
+        };
+        let payload = super::build_binding_payload(&data_hash, &timestamp, &dev_id);
 
         let digest = Sha256::digest(&payload);
 
@@ -246,41 +267,56 @@ impl Provider for LinuxTpmProvider {
         let mut state = self.inner.lock_recover();
         let pcrs = default_pcr_selection();
         let srk = create_srk(&mut state)?;
+        let srk_handle = srk.key_handle;
 
-        let session = create_policy_session(&mut state, &pcrs)?;
+        // Inner closure so SRK handle is flushed on both success and error paths.
+        let result = (|| -> Result<(Vec<u8>, PolicySession), TpmError> {
+            let session = create_policy_session(&mut state, &pcrs)?;
 
-        let sealing_public = create_sealing_public()?;
+            // Apply the PCR policy session before creating the sealed object
+            state.context.set_sessions((Some(session), None, None));
 
-        let result = state
-            .context
-            .create(
-                srk.key_handle,
-                sealing_public,
-                None,
-                Some(
-                    SensitiveData::try_from(data.to_vec())
-                        .map_err(|_| TpmError::Sealing("data".into()))?,
-                ),
-                None,
-                None,
-            )
-            .map_err(|_| TpmError::Sealing("create".into()))?;
+            let sealing_public = create_sealing_public()?;
 
-        let pub_bytes = result
-            .out_public
-            .marshall()
-            .map_err(|_| TpmError::Sealing("public".into()))?;
-        let priv_bytes = result.out_private.value().to_vec();
+            let result = state
+                .context
+                .create(
+                    srk_handle,
+                    sealing_public,
+                    None,
+                    Some(
+                        SensitiveData::try_from(data.to_vec())
+                            .map_err(|_| TpmError::Sealing("data".into()))?,
+                    ),
+                    None,
+                    None,
+                )
+                .map_err(|_| TpmError::Sealing("create".into()))?;
 
-        let mut sealed = Vec::with_capacity(8 + pub_bytes.len() + priv_bytes.len());
-        sealed.extend_from_slice(&(pub_bytes.len() as u32).to_be_bytes());
-        sealed.extend_from_slice(&pub_bytes);
-        sealed.extend_from_slice(&(priv_bytes.len() as u32).to_be_bytes());
-        sealed.extend_from_slice(&priv_bytes);
+            // Clear sessions after sealing
+            state.context.clear_sessions();
 
-        if let Err(e) = state.context.flush_context(srk.key_handle.into()) {
+            let pub_bytes = result
+                .out_public
+                .marshall()
+                .map_err(|_| TpmError::Sealing("public".into()))?;
+            let priv_bytes = result.out_private.value().to_vec();
+
+            let mut sealed = Vec::with_capacity(8 + pub_bytes.len() + priv_bytes.len());
+            sealed.extend_from_slice(&(pub_bytes.len() as u32).to_be_bytes());
+            sealed.extend_from_slice(&pub_bytes);
+            sealed.extend_from_slice(&(priv_bytes.len() as u32).to_be_bytes());
+            sealed.extend_from_slice(&priv_bytes);
+
+            Ok((sealed, session))
+        })();
+
+        // Always flush SRK handle, regardless of success or failure.
+        if let Err(e) = state.context.flush_context(srk_handle.into()) {
             log::warn!("Failed to flush SRK context after seal: {e}");
         }
+
+        let (sealed, session) = result?;
         let session_handle: SessionHandle = session.into();
         if let Err(e) = state.context.flush_context(session_handle.into()) {
             log::warn!("Failed to flush session context after seal: {e}");
@@ -314,35 +350,44 @@ impl Provider for LinuxTpmProvider {
             Private::try_from(priv_bytes).map_err(|_| TpmError::Unsealing("private".into()))?;
 
         let srk = create_srk(&mut state)?;
+        let srk_handle = srk.key_handle;
 
-        let load_handle = state
-            .context
-            .load(srk.key_handle, private, public)
-            .map_err(|_| TpmError::Unsealing("load".into()))?;
+        // Inner closure so SRK handle is flushed on both success and error paths.
+        let result = (|| -> Result<(Vec<u8>, KeyHandle, PolicySession), TpmError> {
+            let load_handle = state
+                .context
+                .load(srk_handle, private, public)
+                .map_err(|_| TpmError::Unsealing("load".into()))?;
 
-        let session = create_policy_session(&mut state, &default_pcr_selection())?;
+            let session = create_policy_session(&mut state, &default_pcr_selection())?;
 
-        state.context.set_sessions((Some(session), None, None));
+            state.context.set_sessions((Some(session), None, None));
 
-        let unsealed = state
-            .context
-            .unseal(load_handle.into())
-            .map_err(|_| TpmError::Unsealing("unseal".into()))?;
+            let unsealed = state
+                .context
+                .unseal(load_handle.into())
+                .map_err(|_| TpmError::Unsealing("unseal".into()))?;
 
-        state.context.clear_sessions();
+            state.context.clear_sessions();
 
+            Ok((unsealed.value().to_vec(), load_handle, session))
+        })();
+
+        // Always flush SRK handle, regardless of success or failure.
+        if let Err(e) = state.context.flush_context(srk_handle.into()) {
+            log::warn!("Failed to flush SRK context after unseal: {e}");
+        }
+
+        let (data, load_handle, session) = result?;
         if let Err(e) = state.context.flush_context(load_handle.into()) {
             log::warn!("Failed to flush object context after unseal: {e}");
-        }
-        if let Err(e) = state.context.flush_context(srk.key_handle.into()) {
-            log::warn!("Failed to flush SRK context after unseal: {e}");
         }
         let session_handle: SessionHandle = session.into();
         if let Err(e) = state.context.flush_context(session_handle.into()) {
             log::warn!("Failed to flush session context after unseal: {e}");
         }
 
-        Ok(unsealed.value().to_vec())
+        Ok(data)
     }
 }
 
@@ -377,9 +422,14 @@ fn create_ak(state: &mut LinuxState) -> Result<(KeyHandle, Vec<u8>), TpmError> {
         .build()
         .map_err(|_| TpmError::NotAvailable)?;
 
+    // Generate random auth value so the AK is not deterministic / unprotected.
+    let mut auth_bytes = [0u8; 32];
+    getrandom::getrandom(&mut auth_bytes).map_err(|_| TpmError::NotAvailable)?;
+    let auth = Auth::try_from(auth_bytes.to_vec()).map_err(|_| TpmError::NotAvailable)?;
+
     let result = state
         .context
-        .create_primary(Hierarchy::Endorsement, public, None, None, None, None)
+        .create_primary(Hierarchy::Endorsement, public, Some(auth), None, None, None)
         .map_err(|_| TpmError::NotAvailable)?;
 
     let pub_bytes = result

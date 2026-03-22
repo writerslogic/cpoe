@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+// SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 use super::*;
 use crate::config::SentinelConfig;
@@ -40,6 +40,15 @@ fn test_document_session() {
     session.focus_lost();
     assert!(!session.is_focused());
     assert!(session.total_focus_ms >= 0);
+}
+
+#[test]
+fn test_sentinel_keystroke_capture_defaults_inactive() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config = SentinelConfig::default().with_writersproof_dir(dir.path());
+    let sentinel = Sentinel::new(config).expect("sentinel creation");
+    // Before start(), keystroke capture should be inactive
+    assert!(!sentinel.is_keystroke_capture_active());
 }
 
 #[test]

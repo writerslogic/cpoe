@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+// SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 use std::path::Path;
 use std::time::Duration;
@@ -26,6 +26,10 @@ impl SessionManager {
     ) -> Result<Self, KeyHierarchyError> {
         let identity = derive_master_identity(puf.as_ref())?;
         let document_path = document_path.into();
+        let document_path = std::fs::canonicalize(&document_path)
+            .unwrap_or_else(|_| std::path::PathBuf::from(&document_path))
+            .to_string_lossy()
+            .to_string();
         let doc_hash = crate::crypto::hash_file(Path::new(&document_path))?;
 
         let session = start_session(puf.as_ref(), doc_hash)?;
@@ -54,6 +58,8 @@ impl SessionManager {
         let document_path = document_path.into();
         let doc_hash = crate::crypto::hash_file(Path::new(&document_path))?;
 
+        // SigningKey implements Zeroize on Drop — it is automatically zeroized
+        // when this binding goes out of scope at the end of this function.
         let master_key = sealed
             .unseal_master_key()
             .map_err(|e| KeyHierarchyError::Crypto(format!("unseal master key: {}", e)))?;

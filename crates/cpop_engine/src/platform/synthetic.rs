@@ -1,17 +1,18 @@
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+// SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 //! Statistical synthetic event detection (cross-platform).
 //!
 //! Detects automated/injected keystrokes via:
 //! - Coefficient of Variation (CV) -- robotic timing (CV < 0.15)
-//! - Inter-Key Interval (IKI) -- superhuman speed (< 20ms)
+//! - Inter-Key Interval (IKI) -- superhuman speed (< 35ms)
 //! - Timing pattern repetition -- replay attacks
 
 use super::{KeystrokeEvent, RejectionReasons, SyntheticStats};
 use std::collections::VecDeque;
 
 const MIN_HUMAN_CV: f64 = 0.15;
-const MIN_HUMAN_IKI_MS: f64 = 20.0;
+const EXTREME_ROBOTIC_CV: f64 = 0.05;
+const MIN_HUMAN_IKI_MS: f64 = 35.0;
 const ANALYSIS_WINDOW_SIZE: usize = 50;
 const MIN_SAMPLES_FOR_ANALYSIS: usize = 10;
 const MAX_PATTERN_REPETITION_RATIO: f64 = 0.8;
@@ -82,6 +83,9 @@ impl StatisticalAnomalyDetector {
 
         if cv < MIN_HUMAN_CV {
             flags.robotic_timing = true;
+            if cv < EXTREME_ROBOTIC_CV {
+                flags.extreme_robotic_timing = true;
+            }
             self.rejection_reasons.statistical_robotic += 1;
         }
 
@@ -232,16 +236,20 @@ impl StatisticalResult {
 /// Flags indicating detected anomalies.
 #[derive(Debug, Clone, Default)]
 pub struct AnomalyFlags {
-    /// IKI < 20ms
+    /// IKI < 35ms
     pub superhuman_speed: bool,
     /// CV < 0.15
     pub robotic_timing: bool,
+    /// CV < 0.05 (extreme machine precision)
+    pub extreme_robotic_timing: bool,
     pub replay_pattern: bool,
 }
 
 impl AnomalyFlags {
     pub fn has_critical_anomaly(&self) -> bool {
-        self.superhuman_speed || (self.robotic_timing && self.replay_pattern)
+        self.superhuman_speed
+            || self.extreme_robotic_timing
+            || (self.robotic_timing && self.replay_pattern)
     }
 
     pub fn has_any_anomaly(&self) -> bool {

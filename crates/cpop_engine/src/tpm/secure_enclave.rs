@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+// SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 use super::{Attestation, Binding, Capabilities, Provider, Quote, TpmError};
 use crate::DateTimeNanosExt;
@@ -101,8 +101,30 @@ pub struct SecureEnclaveProvider {
     cached_public_key: Vec<u8>,
 }
 
+// SAFETY: SecKeyRef (Security.framework key objects) are thread-safe for signing
+// operations per Apple documentation. The Mutex<SecureEnclaveState> provides
+// exclusive access to mutable state.
 unsafe impl Send for SecureEnclaveProvider {}
 unsafe impl Sync for SecureEnclaveProvider {}
+
+impl Drop for SecureEnclaveState {
+    fn drop(&mut self) {
+        // Release the primary signing key reference.
+        if !self.key_ref.is_null() {
+            unsafe {
+                core_foundation_sys::base::CFRelease(self.key_ref as *mut std::ffi::c_void);
+            }
+        }
+        // Release the attestation key reference, if present.
+        if let Some(att_ref) = self.attestation_key_ref {
+            if !att_ref.is_null() {
+                unsafe {
+                    core_foundation_sys::base::CFRelease(att_ref as *mut std::ffi::c_void);
+                }
+            }
+        }
+    }
+}
 
 /// Initialize the Secure Enclave provider, returning `None` if unavailable.
 pub fn try_init() -> Option<SecureEnclaveProvider> {

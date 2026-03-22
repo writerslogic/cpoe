@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
+// SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 //! Writing style fingerprint (word length, punctuation, MinHash n-grams,
 //! correction patterns). No raw text is ever stored.
@@ -343,7 +343,11 @@ impl VoiceCollector {
     }
 
     /// Process a keystroke, updating word/ngram/punctuation/backspace stats.
+    /// No-op if consent has not been given on the underlying fingerprint.
     pub fn record_keystroke(&mut self, keycode: u16, char_value: Option<char>) {
+        if !self.fingerprint.consent_given {
+            return;
+        }
         if is_backspace_keycode(keycode) {
             self.handle_backspace();
             return;
@@ -405,6 +409,9 @@ impl VoiceCollector {
     }
 
     fn add_to_ngram_buffer(&mut self, c: char) {
+        if !self.fingerprint.consent_given {
+            return;
+        }
         self.ngram_buffer
             .push_back(c.to_lowercase().next().unwrap_or(c));
         if self.ngram_buffer.len() > NGRAM_SIZE {
@@ -538,6 +545,7 @@ mod tests {
     #[test]
     fn test_voice_collector() {
         let mut collector = VoiceCollector::new();
+        collector.fingerprint.consent_given = true;
 
         for c in "hello".chars() {
             collector.record_keystroke(0, Some(c));
