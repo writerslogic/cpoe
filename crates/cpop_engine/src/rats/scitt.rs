@@ -7,6 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::error::Result;
 use crate::evidence::WpBeaconAttestation;
 
 /// CPOP evidence media type used as the SCITT payload content type.
@@ -59,7 +60,7 @@ pub fn evidence_to_signed_statement(evidence_cbor: &[u8], doc_hash: &[u8; 32]) -
 /// This is a bridge for migrating from proprietary beacons to standards-based receipts.
 /// The beacon's counter-signature and timestamp map onto the receipt fields;
 /// the drand round and NIST pulse are CBOR-encoded as the receipt body.
-pub fn beacon_to_receipt_format(beacon: &WpBeaconAttestation) -> TransparencyReceipt {
+pub fn beacon_to_receipt_format(beacon: &WpBeaconAttestation) -> Result<TransparencyReceipt> {
     // Encode the beacon's randomness proofs as a minimal CBOR map for the receipt body.
     let mut buf = Vec::new();
     ciborium::into_writer(
@@ -89,11 +90,11 @@ pub fn beacon_to_receipt_format(beacon: &WpBeaconAttestation) -> TransparencyRec
     )
     .expect("CBOR serialization of beacon fields should not fail");
 
-    TransparencyReceipt {
+    Ok(TransparencyReceipt {
         receipt_cbor: buf,
         registered_at: beacon.fetched_at.clone(),
         service_id: "writersproof-beacon-v1".to_string(),
-    }
+    })
 }
 
 #[cfg(test)]
@@ -136,7 +137,7 @@ mod tests {
             wp_signature: "cc".repeat(64),
         };
 
-        let receipt = beacon_to_receipt_format(&beacon);
+        let receipt = beacon_to_receipt_format(&beacon).unwrap();
 
         assert_eq!(receipt.registered_at, "2026-03-24T00:00:01Z");
         assert_eq!(receipt.service_id, "writersproof-beacon-v1");
@@ -192,7 +193,7 @@ mod tests {
             wp_signature: "ff".repeat(64),
         };
 
-        let receipt = beacon_to_receipt_format(&beacon);
+        let receipt = beacon_to_receipt_format(&beacon).unwrap();
 
         // registered_at comes from fetched_at.
         assert_eq!(receipt.registered_at, "2026-03-25T12:00:05Z");
