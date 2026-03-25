@@ -92,52 +92,53 @@ pub fn decode_eat_cwt(bytes: &[u8]) -> Result<EarToken> {
 
 /// Serialize an `EarToken` into a CBOR map Value.
 fn ear_to_cbor_map(ear: &EarToken) -> Result<Value> {
-    let mut map: Vec<(Value, Value)> = Vec::new();
+    let vid_map: Vec<(Value, Value)> = vec![
+        (
+            Value::Text("build".to_string()),
+            Value::Text(ear.ear_verifier_id.build.clone()),
+        ),
+        (
+            Value::Text("developer".to_string()),
+            Value::Text(ear.ear_verifier_id.developer.clone()),
+        ),
+    ];
 
-    // CWT standard claims
-    map.push((
-        Value::Integer(CWT_ISS.into()),
-        Value::Text("cpop-engine".to_string()),
-    ));
-    map.push((
-        Value::Integer(CWT_SUB.into()),
-        Value::Text("pop-attestation".to_string()),
-    ));
-    map.push((
-        Value::Integer(CWT_KEY_IAT.into()),
-        Value::Integer(ear.iat.into()),
-    ));
+    let submods_map: Vec<(Value, Value)> = ear
+        .submods
+        .iter()
+        .map(|(name, appraisal)| (Value::Text(name.clone()), appraisal_to_cbor(appraisal)))
+        .collect();
 
-    // EAT profile
-    map.push((
-        Value::Integer(CWT_KEY_EAT_PROFILE.into()),
-        Value::Text(ear.eat_profile.clone()),
-    ));
-
-    // Verifier ID (1004)
-    let mut vid_map: Vec<(Value, Value)> = Vec::new();
-    vid_map.push((
-        Value::Text("build".to_string()),
-        Value::Text(ear.ear_verifier_id.build.clone()),
-    ));
-    vid_map.push((
-        Value::Text("developer".to_string()),
-        Value::Text(ear.ear_verifier_id.developer.clone()),
-    ));
-    map.push((
-        Value::Integer(EAR_KEY_VERIFIER_ID.into()),
-        Value::Map(vid_map),
-    ));
-
-    // Submods (266)
-    let mut submods_map: Vec<(Value, Value)> = Vec::new();
-    for (name, appraisal) in &ear.submods {
-        submods_map.push((Value::Text(name.clone()), appraisal_to_cbor(appraisal)));
-    }
-    map.push((
-        Value::Integer(CWT_KEY_SUBMODS.into()),
-        Value::Map(submods_map),
-    ));
+    let map: Vec<(Value, Value)> = vec![
+        // CWT standard claims
+        (
+            Value::Integer(CWT_ISS.into()),
+            Value::Text("cpop-engine".to_string()),
+        ),
+        (
+            Value::Integer(CWT_SUB.into()),
+            Value::Text("pop-attestation".to_string()),
+        ),
+        (
+            Value::Integer(CWT_KEY_IAT.into()),
+            Value::Integer(ear.iat.into()),
+        ),
+        // EAT profile
+        (
+            Value::Integer(CWT_KEY_EAT_PROFILE.into()),
+            Value::Text(ear.eat_profile.clone()),
+        ),
+        // Verifier ID (1004)
+        (
+            Value::Integer(EAR_KEY_VERIFIER_ID.into()),
+            Value::Map(vid_map),
+        ),
+        // Submods (266)
+        (
+            Value::Integer(CWT_KEY_SUBMODS.into()),
+            Value::Map(submods_map),
+        ),
+    ];
 
     Ok(Value::Map(map))
 }
