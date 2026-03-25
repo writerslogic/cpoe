@@ -242,6 +242,14 @@ pub fn appraise(packet: &Packet, policy: &AppraisalPolicy) -> Result<EarToken> {
         pop_forensic_summary: None,
         pop_chain_length: Some(packet.checkpoints.len() as u64),
         pop_chain_duration: Some(packet.total_elapsed_time().as_secs()),
+        pop_process_start: packet
+            .checkpoints
+            .first()
+            .map(|cp| cp.timestamp.to_rfc3339()),
+        pop_process_end: packet
+            .checkpoints
+            .last()
+            .map(|cp| cp.timestamp.to_rfc3339()),
         pop_absence_claims: None,
         pop_warnings: if warnings.is_empty() {
             None

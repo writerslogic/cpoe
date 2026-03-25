@@ -193,6 +193,8 @@ impl AttestationResultWireExt for AttestationResultWire {
             pop_forensic_summary: self.forensic_summary.clone(),
             pop_chain_length: Some(self.chain_length),
             pop_chain_duration: Some(self.chain_duration),
+            pop_process_start: None,
+            pop_process_end: None,
             pop_absence_claims: self.absence_claims.clone(),
             pop_warnings: self.warnings.clone(),
         };

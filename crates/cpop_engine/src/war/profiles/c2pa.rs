@@ -33,6 +33,12 @@ pub struct C2paAssertionData {
     pub chain_length: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chain_duration_secs: Option<u64>,
+    /// RFC 3339 timestamp when the creation process began (C2PA PR #2009 processStart).
+    #[serde(rename = "processStart", skip_serializing_if = "Option::is_none")]
+    pub process_start: Option<String>,
+    /// RFC 3339 timestamp when the creation process ended (C2PA PR #2009 processEnd).
+    #[serde(rename = "processEnd", skip_serializing_if = "Option::is_none")]
+    pub process_end: Option<String>,
     pub verifier_id: VerifierIdJson,
 }
 
@@ -96,6 +102,8 @@ pub fn to_c2pa_assertion(ear: &EarToken) -> Result<C2paAssertion> {
             evidence_ref,
             chain_length: appr.pop_chain_length,
             chain_duration_secs: appr.pop_chain_duration,
+            process_start: appr.pop_process_start.clone(),
+            process_end: appr.pop_process_end.clone(),
             verifier_id: VerifierIdJson {
                 build: ear.ear_verifier_id.build.clone(),
                 developer: ear.ear_verifier_id.developer.clone(),

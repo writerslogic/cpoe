@@ -260,6 +260,14 @@ pub struct EarAppraisal {
     /// Warning messages
     #[serde(rename = "70009", default, skip_serializing_if = "Option::is_none")]
     pub pop_warnings: Option<Vec<String>>,
+
+    /// Process start time (RFC 3339) per C2PA PR #2009 processStart metadata
+    #[serde(rename = "70010", default, skip_serializing_if = "Option::is_none")]
+    pub pop_process_start: Option<String>,
+
+    /// Process end time (RFC 3339) per C2PA PR #2009 processEnd metadata
+    #[serde(rename = "70011", default, skip_serializing_if = "Option::is_none")]
+    pub pop_process_end: Option<String>,
 }
 
 /// EAR token per draft-ietf-rats-ear, carrying one or more appraisals.
