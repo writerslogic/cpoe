@@ -170,7 +170,7 @@ fn print_json_result(
         "structural": result.structural,
         "signature": result.signature,
         "seals": {
-            "jitter_tag_valid": result.seals.jitter_tag_valid,
+            "jitter_tag_present": result.seals.jitter_tag_present,
             "entangled_binding_valid": result.seals.entangled_binding_valid,
             "checkpoints_checked": result.seals.checkpoints_checked,
         },
@@ -252,7 +252,7 @@ fn print_human_result(
         Some(false) => println!("  {} Packet signature", status_icon(false)),
         None => println!("  [--] Packet signature (unsigned)"),
     }
-    match result.seals.jitter_tag_valid {
+    match result.seals.jitter_tag_present {
         Some(v) => println!("  {} Jitter seal", status_icon(v)),
         None => println!("  [--] Jitter seal (not present)"),
     }
@@ -585,7 +585,7 @@ fn verify_db(file_path: &PathBuf, key: Option<PathBuf>, out: &OutputMode) -> Res
     }
     let hmac_key = derive_hmac_key(&key_data[..32]);
 
-    match SecureStore::open(file_path, hmac_key) {
+    match SecureStore::open(file_path, hmac_key.to_vec()) {
         Ok(_) => {
             if out.json {
                 println!(

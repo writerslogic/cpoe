@@ -102,7 +102,7 @@ pub(crate) fn cmd_init() -> Result<()> {
         let hmac_key = if let Ok(Some(key)) = SecureStorage::load_hmac_key() {
             key.to_vec()
         } else {
-            derive_hmac_key(&priv_key.to_bytes())
+            derive_hmac_key(&priv_key.to_bytes()).to_vec()
         };
         let _db = SecureStore::open(&db_path, hmac_key).context("create database")?;
         println!("  Database: events.db");

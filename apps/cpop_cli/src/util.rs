@@ -122,7 +122,7 @@ pub fn open_secure_store() -> Result<SecureStore> {
         eprintln!("Warning: HMAC key migration: {}", e);
     }
 
-    SecureStore::open(&db_path, (*hmac_key).clone()).map_err(|e| anyhow!("Database error: {}", e))
+    SecureStore::open(&db_path, (*hmac_key).to_vec()).map_err(|e| anyhow!("Database error: {}", e))
 }
 
 pub fn get_device_id() -> Result<[u8; 16]> {

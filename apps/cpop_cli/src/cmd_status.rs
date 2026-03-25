@@ -74,17 +74,16 @@ pub(crate) fn cmd_status(out: &OutputMode) -> Result<()> {
             let signing_key_path = dir.join("signing_key");
             if signing_key_path.exists() {
                 fs::read(&signing_key_path)
-                    .map(Zeroizing::new)
                     .ok()
                     .filter(|k| k.len() >= 32)
-                    .map(|k| Zeroizing::new(derive_hmac_key(&k[..32])))
+                    .map(|k| derive_hmac_key(&k[..32]))
             } else {
                 None
             }
         };
 
         if let Some(hmac_key) = hmac_key {
-            match SecureStore::open(&db_path, hmac_key.to_vec()) {
+            match SecureStore::open(&db_path, (*hmac_key).clone()) {
                 Ok(store) => {
                     let files = store.list_files().unwrap_or_else(|e| {
                         eprintln!("Warning: list_files: {}", e);
