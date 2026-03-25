@@ -66,7 +66,7 @@ const KEY_MIN_JITTER_SAMPLES: &str = "min-jitter-samples";
 
 impl CpopReferenceValues {
     /// Serialize to a CBOR map with string keys.
-    pub fn to_cbor(&self) -> Vec<u8> {
+    pub fn to_cbor(&self) -> Result<Vec<u8>> {
         let map = Value::Map(vec![
             (
                 Value::Text(KEY_MIN_ENTROPY_BITS.to_string()),
@@ -107,8 +107,10 @@ impl CpopReferenceValues {
         ]);
 
         let mut buf = Vec::new();
-        ciborium::into_writer(&map, &mut buf).expect("CBOR serialization of map cannot fail");
-        buf
+        ciborium::into_writer(&map, &mut buf).map_err(|e| {
+            crate::error::Error::evidence(format!("CoRIM CBOR serialization failed: {e}"))
+        })?;
+        Ok(buf)
     }
 
     /// Deserialize from a CBOR map with string keys.
@@ -226,7 +228,7 @@ mod tests {
     #[test]
     fn test_corim_cbor_roundtrip() {
         let original = CpopReferenceValues::default();
-        let cbor_bytes = original.to_cbor();
+        let cbor_bytes = original.to_cbor().expect("serialize");
         assert!(!cbor_bytes.is_empty());
 
         let decoded = CpopReferenceValues::from_cbor(&cbor_bytes).expect("roundtrip decode failed");
@@ -245,7 +247,7 @@ mod tests {
             min_jitter_samples: 500,
         };
 
-        let cbor_bytes = custom.to_cbor();
+        let cbor_bytes = custom.to_cbor().expect("serialize");
         let decoded = CpopReferenceValues::from_cbor(&cbor_bytes).expect("roundtrip decode failed");
         assert_eq!(decoded, custom);
     }
@@ -283,7 +285,7 @@ mod tests {
             synthetic_threshold_ms: 5.0,
             min_jitter_samples: 2000,
         };
-        let cbor = custom.to_cbor();
+        let cbor = custom.to_cbor().expect("serialize");
         let decoded = CpopReferenceValues::from_cbor(&cbor).expect("custom roundtrip");
         assert!((decoded.min_entropy_bits - 7.5).abs() < f64::EPSILON);
         assert_eq!(decoded.vdf_duration_bounds, (0.1, 10.0));
