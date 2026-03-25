@@ -473,17 +473,48 @@ pub fn ffi_sentinel_witnessing_status() -> FfiWitnessingStatus {
     // take_last_paste_chars atomically reads and clears the value.
     let host_paste_chars = sentinel.take_last_paste_chars();
 
+    // Per-document jitter cadence score (available before checkpoints exist).
+    let doc_samples = sentinel.document_jitter_samples(&session.path);
+    let cadence_score = if doc_samples.len() >= 20 {
+        crate::forensics::assessment::compute_cadence_score(
+            &crate::forensics::cadence::analyze_cadence(&doc_samples),
+        )
+    } else {
+        0.0
+    };
+
+    // Focus-switching penalties from per-document focus records.
+    let focus = crate::forensics::analysis::analyze_focus_patterns(
+        &session.focus_switches,
+        session.total_focus_ms,
+    );
+    let focus_penalty = if focus.reading_pattern_detected {
+        0.15
+    } else if focus.ai_app_switch_count > 3 {
+        0.10
+    } else {
+        0.0
+    };
+
     let (checkpoint_count, forensic_score, store_paste_chars) =
         match crate::ffi::helpers::open_store() {
             Ok(store) => {
                 let events = store.get_events_for_file(&session.path).unwrap_or_default();
                 let count = events.len() as u64;
-                let score = if events.len() >= 2 {
+                let store_score = if events.len() >= 2 {
                     let profile = crate::forensics::ForensicEngine::evaluate_authorship(
                         &session.path,
                         &events,
                     );
                     profile.metrics.edit_entropy / crate::ffi::helpers::ENTROPY_NORMALIZATION_FACTOR
+                } else {
+                    0.0
+                };
+                // Blend: use store score when available, fall back to cadence score.
+                let score = if store_score > 0.0 {
+                    (store_score - focus_penalty).clamp(0.0, 1.0)
+                } else if cadence_score > 0.0 {
+                    (cadence_score - focus_penalty).clamp(0.0, 1.0)
                 } else {
                     0.0
                 };
@@ -494,7 +525,15 @@ pub fn ffi_sentinel_witnessing_status() -> FfiWitnessingStatus {
                     .unwrap_or(0);
                 (count, score, paste)
             }
-            Err(_) => (0, 0.0, 0),
+            Err(_) => {
+                // No store; use cadence score if available.
+                let score = if cadence_score > 0.0 {
+                    (cadence_score - focus_penalty).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                (0, score, 0)
+            }
         };
 
     // Prefer host-reported paste (real-time) over store-derived (checkpoint-time)

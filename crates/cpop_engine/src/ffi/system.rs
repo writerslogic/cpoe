@@ -171,7 +171,35 @@ pub fn ffi_list_tracked_files() -> Vec<FfiTrackedFile> {
     // Include sentinel auto-detected sessions that don't yet have checkpoints
     let sentinel_opt = crate::ffi::sentinel::get_sentinel();
     if let Some(sentinel) = sentinel_opt.as_ref() {
-        for session in sentinel.sessions() {
+        let all_sessions = sentinel.sessions();
+        {
+            use std::io::Write;
+            let debug_path = std::env::var("CPOP_DATA_DIR")
+                .map(|d| format!("{}/list_debug.txt", d))
+                .unwrap_or_else(|_| "/tmp/cpop_list_debug.txt".to_string());
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&debug_path)
+            {
+                let _ = writeln!(
+                    f,
+                    "sentinel sessions: {} store files: {}",
+                    all_sessions.len(),
+                    result.len()
+                );
+                for s in &all_sessions {
+                    let _ = writeln!(
+                        f,
+                        "  session: path={} keystrokes={} seen={}",
+                        s.path,
+                        s.keystroke_count,
+                        seen_paths.contains(&s.path)
+                    );
+                }
+            }
+        }
+        for session in all_sessions {
             if session.path.starts_with("shadow://") {
                 continue; // Skip browser shadow sessions
             }
@@ -183,11 +211,35 @@ pub fn ffi_list_tracked_files() -> Vec<FfiTrackedFile> {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos() as i64)
                 .unwrap_or(0);
+            // Compute forensic score from per-document jitter samples.
+            let doc_samples = sentinel.document_jitter_samples(&session.path);
+            let cadence_score = if doc_samples.len() >= 20 {
+                crate::forensics::assessment::compute_cadence_score(
+                    &crate::forensics::cadence::analyze_cadence(&doc_samples),
+                )
+            } else {
+                0.0
+            };
+
+            // Apply focus-switching penalties.
+            let focus = crate::forensics::analysis::analyze_focus_patterns(
+                &session.focus_switches,
+                session.total_focus_ms,
+            );
+            let focus_penalty = if focus.reading_pattern_detected {
+                0.15
+            } else if focus.ai_app_switch_count > 3 {
+                0.10
+            } else {
+                0.0
+            };
+            let forensic_score = (cadence_score - focus_penalty).clamp(0.0, 1.0);
+
             result.push(FfiTrackedFile {
                 path: session.path.clone(),
                 last_checkpoint_ns: elapsed_ns,
                 checkpoint_count: 0,
-                forensic_score: 0.0,
+                forensic_score,
                 risk_level: "pending".to_string(),
                 keystroke_count: session.keystroke_count,
             });
