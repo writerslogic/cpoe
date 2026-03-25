@@ -8,27 +8,24 @@ use super::PdfFonts;
 use crate::report::types::*;
 use printpdf::*;
 
-/// Split text into lines at char boundaries, respecting a max byte width.
-fn wrap_text_lines(text: &str, max_bytes: usize) -> Vec<&str> {
+/// Split text into lines using word boundaries, respecting a max character width.
+fn wrap_text_lines(text: &str, max_chars: usize) -> Vec<String> {
     let mut lines = Vec::new();
-    let mut start = 0;
-    let mut last_break = 0;
-    for (i, _) in text.char_indices() {
-        if i - start >= max_bytes {
-            let end = if last_break > start { last_break } else { i };
-            lines.push(&text[start..end]);
-            start = end;
-            while start < text.len() && text.as_bytes()[start] == b' ' {
-                start += 1;
-            }
-            last_break = start;
-        }
-        if text.as_bytes().get(i) == Some(&b' ') {
-            last_break = i;
+    let mut current_line = String::new();
+
+    for word in text.split_whitespace() {
+        if current_line.is_empty() {
+            current_line.push_str(word);
+        } else if current_line.len() + 1 + word.len() > max_chars {
+            lines.push(std::mem::take(&mut current_line));
+            current_line.push_str(word);
+        } else {
+            current_line.push(' ');
+            current_line.push_str(word);
         }
     }
-    if start < text.len() {
-        lines.push(&text[start..]);
+    if !current_line.is_empty() {
+        lines.push(current_line);
     }
     lines
 }
@@ -328,7 +325,7 @@ pub fn draw_page1(
     for line in wrap_text_lines(decl_text, 90) {
         text(
             layer,
-            line,
+            &line,
             7.0,
             MARGIN_LEFT + 3.0,
             dy,
@@ -974,7 +971,7 @@ pub fn draw_page3(layer: &PdfLayerReference, r: &WarReport, fonts: &PdfFonts) {
         for line in wrap_text_lines(analyzed, 100) {
             text(
                 layer,
-                line,
+                &line,
                 6.0,
                 MARGIN_LEFT + 3.0,
                 ty,
