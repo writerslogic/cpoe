@@ -16,10 +16,10 @@
 
 ## Critical
 
-- [ ] **C-001** `[security]` `cpop_google_workspace/src/Settings.ts:121` — API key stored in plaintext UserProperties. Any script editor can extract all user API keys.
+- [x] **C-001** `[security]` `cpop_google_workspace/src/Settings.ts:121` — API key stored in plaintext UserProperties. Any script editor can extract all user API keys.
   Impact: API key exposure. Fix: OAuth token exchange or client-side encryption. Effort: large
 
-- [ ] **C-002** `[security]` `cpop_google_workspace/src/Code.ts:321-322` — Stego HMAC tag and embedding seed in DocumentProperties, readable by any document editor.
+- [x] **C-002** `[security]` `cpop_google_workspace/src/Code.ts:321-322` — Stego HMAC tag and embedding seed in DocumentProperties, readable by any document editor.
   Impact: Watermark forgery. Fix: Store seed server-side only. Effort: large
 
 ---
@@ -36,12 +36,12 @@
 - [ ] **H-005** `cpop_engine/src/sentinel/core.rs:782` — HMAC key escapes `Zeroizing` wrapper via `mem::take`.
 
 ### Marketplace (TypeScript)
-- [ ] **H-006** `cpop_google_workspace/src/WritersProofClient.ts:168` — User email sent to API without consent.
-- [ ] **H-007** `cpop_atlassian/src/services/WritersProofClient.ts:136` — Error bodies leak to Confluence UI.
-- [ ] **H-008** `cpop_google_workspace/src/WritersProofClient.ts:381` — Error bodies leak to Google Workspace notifications.
-- [ ] **H-009** `cpop_atlassian/src/resolvers/index.ts` — No page edit permission check on resolver invocations.
-- [ ] **H-010** `cpop_google_workspace/src/Settings.ts:79` — Tier enforcement client-side only; trivially bypassable.
-- [ ] **H-011** `cpop_google_workspace/src/Code.ts:598` — `downloadUrl` from API used as open-link without full validation.
+- [x] **H-006** `cpop_google_workspace/src/WritersProofClient.ts:168` — User email sent to API without consent.
+- [x] **H-007** `cpop_atlassian/src/services/WritersProofClient.ts:136` — Error bodies leak to Confluence UI.
+- [x] **H-008** `cpop_google_workspace/src/WritersProofClient.ts:381` — Error bodies leak to Google Workspace notifications.
+- [x] **H-009** `cpop_atlassian/src/resolvers/index.ts` — No page edit permission check on resolver invocations.
+- [x] **H-010** `cpop_google_workspace/src/Settings.ts:79` — Tier enforcement client-side only; trivially bypassable.
+- [x] **H-011** `cpop_google_workspace/src/Code.ts:598` — `downloadUrl` from API used as open-link without full validation.
 
 ---
 
@@ -75,14 +75,14 @@
 - [ ] **M-023** `mmr/mmr.rs:344` — `find_peaks` could infinite loop on malformed size.
 
 ### Marketplace
-- [ ] **M-024** `cpop_atlassian/src/resolvers/index.ts:163` — Race condition in session state read-modify-write.
-- [ ] **M-025** `cpop_google_workspace/src/Code.ts:424` — No input validation on AI tool name.
-- [ ] **M-026** `cpop_google_workspace/src/Code.ts:758` — Unbounded polling document list in ScriptProperties.
-- [ ] **M-027** `cpop_google_workspace/src/Code.ts:346` — Stego tag verified from editable DocumentProperties.
-- [ ] **M-028** `cpop_atlassian/src/services/WritersProofClient.ts:47` — Session ID not validated before URL path interpolation.
-- [ ] **M-029** `cpop_atlassian/src/services/WritersProofClient.ts:63` — Evidence ID not validated before URL interpolation.
-- [ ] **M-030** `cpop_google_workspace/src/Code.ts:550` — API key validation too permissive.
-- [ ] **M-031** `cpop_google_workspace/src/Settings.ts:79` — Tier stored locally without server verification.
+- [x] **M-024** `cpop_atlassian/src/resolvers/index.ts:163` — Race condition in session state read-modify-write.
+- [x] **M-025** `cpop_google_workspace/src/Code.ts:424` — No input validation on AI tool name.
+- [x] **M-026** `cpop_google_workspace/src/Code.ts:758` — Unbounded polling document list in ScriptProperties.
+- [x] **M-027** `cpop_google_workspace/src/Code.ts:346` — Stego tag verified from editable DocumentProperties.
+- [x] **M-028** `cpop_atlassian/src/services/WritersProofClient.ts:47` — Session ID not validated before URL path interpolation.
+- [x] **M-029** `cpop_atlassian/src/services/WritersProofClient.ts:63` — Evidence ID not validated before URL interpolation.
+- [x] **M-030** `cpop_google_workspace/src/Code.ts:550` — API key validation too permissive.
+- [x] **M-031** `cpop_google_workspace/src/Settings.ts:79` — Tier stored locally without server verification.
 
 ---
 
@@ -104,7 +104,7 @@
 - [ ] **L-011** `ffi/ephemeral.rs:119` — `.len()` checks bytes but error says "chars".
 
 ### Marketplace
-- [ ] **L-012** `cpop_atlassian/resolvers/index.ts:212` — Console logs may contain session IDs.
-- [ ] **L-013** `cpop_google_workspace/CardBuilder.ts:734` — API key masking reveals too much for short keys.
-- [ ] **L-014** `cpop_atlassian/resolvers/index.ts` — No rate limiting on resolver invocations.
-- [ ] **L-015** `cpop_google_workspace/Code.ts:652` — Polling jitter uses Math.random (appropriate).
+- [x] **L-012** `cpop_atlassian/resolvers/index.ts:212` — Console logs may contain session IDs.
+- [x] **L-013** `cpop_google_workspace/CardBuilder.ts:734` — API key masking reveals too much for short keys.
+- [x] **L-014** `cpop_atlassian/resolvers/index.ts` — No rate limiting on resolver invocations.
+- [x] **L-015** `cpop_google_workspace/Code.ts:652` — Polling jitter uses Math.random (appropriate).
