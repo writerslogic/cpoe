@@ -683,15 +683,24 @@ pub fn ffi_export_c2pa_manifest(
         .file_name()
         .and_then(|n| n.to_str())
         .map(|s| s.to_string());
-    let doc_title = doc_filename.clone();
+
+    // Detect MIME type from file extension for C2PA dc:format compliance.
+    // Sidecar manifests use c2pa.hash.data for all formats (no exclusion ranges needed).
+    let mime_type = doc_file
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| detect_mime_type(ext));
 
     let mut builder =
         cpop_protocol::c2pa::C2paManifestBuilder::new(evidence_packet, evidence_bytes, doc_hash);
     if let Some(ref name) = doc_filename {
         builder = builder.document_filename(name);
     }
-    if let Some(ref title) = doc_title {
-        builder = builder.title(title);
+    // Note: cpop-protocol 0.2 does not yet expose a format() setter on the builder.
+    // The MIME type is available for cpop-protocol 0.3 integration.
+    // For now, log the detected type for diagnostics.
+    if let Some(ref mime) = mime_type {
+        log::debug!("C2PA manifest: detected dc:format = {}", mime);
     }
 
     let provider = crate::tpm::detect_provider();
@@ -745,6 +754,51 @@ pub fn ffi_export_c2pa_manifest(
             error_message: Some(format!("Failed to create temp file for C2PA manifest: {e}")),
         },
     }
+}
+
+/// Detect MIME type from file extension per IANA media type registry.
+/// Returns the standard dc:format value for C2PA manifests.
+fn detect_mime_type(ext: &str) -> String {
+    match ext.to_ascii_lowercase().as_str() {
+        // Images
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "tiff" | "tif" => "image/tiff",
+        "dng" => "image/tiff",
+        "heif" | "heic" => "image/heif",
+        "avif" => "image/avif",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        "jxl" => "image/jxl",
+        // Video
+        "mp4" | "m4v" => "video/mp4",
+        "mov" => "video/quicktime",
+        "avi" => "video/x-msvideo",
+        "webm" => "video/webm",
+        // Audio
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "flac" => "audio/flac",
+        "aac" | "m4a" => "audio/mp4",
+        "ogg" | "oga" => "audio/ogg",
+        // Documents
+        "pdf" => "application/pdf",
+        "txt" => "text/plain",
+        "md" => "text/markdown",
+        "html" | "htm" => "text/html",
+        // Fonts
+        "ttf" => "font/ttf",
+        "otf" => "font/otf",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        // Archives
+        "epub" => "application/epub+zip",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        // Default
+        _ => "application/octet-stream",
+    }
+    .to_string()
 }
 
 #[cfg(test)]

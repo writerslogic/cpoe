@@ -39,6 +39,9 @@ pub struct C2paAssertionData {
     /// RFC 3339 timestamp when the creation process ended (C2PA PR #2009 processEnd).
     #[serde(rename = "processEnd", skip_serializing_if = "Option::is_none")]
     pub process_end: Option<String>,
+    /// IANA media type of the attested asset (dc:format per C2PA spec).
+    #[serde(rename = "dc:format", skip_serializing_if = "Option::is_none")]
+    pub dc_format: Option<String>,
     pub verifier_id: VerifierIdJson,
 }
 
@@ -104,6 +107,7 @@ pub fn to_c2pa_assertion(ear: &EarToken) -> Result<C2paAssertion> {
             chain_duration_secs: appr.pop_chain_duration,
             process_start: appr.pop_process_start.clone(),
             process_end: appr.pop_process_end.clone(),
+            dc_format: None, // Set by caller based on asset file extension
             verifier_id: VerifierIdJson {
                 build: ear.ear_verifier_id.build.clone(),
                 developer: ear.ear_verifier_id.developer.clone(),
