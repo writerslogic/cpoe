@@ -181,6 +181,7 @@ pub struct FfiWitnessingStatus {
     pub checkpoint_count: u64,
     pub forensic_score: f64,
     pub last_paste_chars: i64,
+    pub event_confidence: f64,
     /// Whether keystroke capture is active. When false, the sentinel is running
     /// in degraded (focus-only) mode — keystrokes are not being counted.
     pub keystroke_capture_active: bool,

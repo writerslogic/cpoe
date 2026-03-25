@@ -124,6 +124,7 @@ pub struct DocumentSession {
     pub focus_switches: Vec<FocusSwitchRecord>,
     pub(crate) has_focus: bool,
     pub(crate) focus_started: Option<Instant>,
+    pub event_validation: crate::forensics::event_validation::EventValidationState,
 }
 
 impl DocumentSession {
@@ -156,6 +157,7 @@ impl DocumentSession {
             focus_switches: Vec::new(),
             has_focus: false,
             focus_started: None,
+            event_validation: Default::default(),
         }
     }
 
@@ -179,6 +181,10 @@ impl DocumentSession {
 
     pub fn is_focused(&self) -> bool {
         self.has_focus
+    }
+
+    pub fn average_event_confidence(&self) -> f64 {
+        self.event_validation.average_confidence()
     }
 
     /// Includes currently active focus interval if focused.

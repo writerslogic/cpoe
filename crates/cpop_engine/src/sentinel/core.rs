@@ -455,6 +455,20 @@ impl Sentinel {
                                 if session.jitter_samples.len() < MAX_DOCUMENT_JITTER_SAMPLES {
                                     session.jitter_samples.push(sample.clone());
                                 }
+
+                                let validation = crate::forensics::validate_keystroke_event(
+                                    event.timestamp_ns,
+                                    event.keycode,
+                                    sample.zone,
+                                    0, // PID already verified by CGEventTap
+                                    None,
+                                    session.has_focus,
+                                    &mut session.event_validation,
+                                );
+                                if validation.confidence < 0.1 {
+                                    session.keystroke_count -= 1;
+                                    session.jitter_samples.pop();
+                                }
                             }
                         }
 

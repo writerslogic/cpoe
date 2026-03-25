@@ -406,6 +406,7 @@ pub fn ffi_sentinel_witnessing_status() -> FfiWitnessingStatus {
                 checkpoint_count: 0,
                 forensic_score: 0.0,
                 last_paste_chars: 0,
+                event_confidence: 1.0,
                 keystroke_capture_active: false,
                 error_message: None,
             };
@@ -434,6 +435,7 @@ pub fn ffi_sentinel_witnessing_status() -> FfiWitnessingStatus {
                 checkpoint_count: 0,
                 forensic_score: 0.0,
                 last_paste_chars: 0,
+                event_confidence: 1.0,
                 keystroke_capture_active: capture_active,
                 error_message: None,
             };
@@ -476,9 +478,7 @@ pub fn ffi_sentinel_witnessing_status() -> FfiWitnessingStatus {
     // Per-document jitter cadence score (available before checkpoints exist).
     let doc_samples = sentinel.document_jitter_samples(&session.path);
     let cadence_score = if doc_samples.len() >= 20 {
-        crate::forensics::assessment::compute_cadence_score(
-            &crate::forensics::cadence::analyze_cadence(&doc_samples),
-        )
+        crate::forensics::compute_cadence_score(&crate::forensics::analyze_cadence(&doc_samples))
     } else {
         0.0
     };
@@ -553,6 +553,7 @@ pub fn ffi_sentinel_witnessing_status() -> FfiWitnessingStatus {
         checkpoint_count,
         forensic_score,
         last_paste_chars,
+        event_confidence: session.average_event_confidence(),
         keystroke_capture_active: capture_active,
         error_message: None,
     }
@@ -663,6 +664,23 @@ pub fn ffi_sentinel_inject_keystroke(
             // Store jitter sample for per-document forensic analysis
             if session.jitter_samples.len() < crate::sentinel::types::MAX_DOCUMENT_JITTER_SAMPLES {
                 session.jitter_samples.push(sample.clone());
+            }
+
+            let validation = crate::forensics::validate_keystroke_event(
+                timestamp_ns,
+                keycode,
+                zone,
+                source_pid,
+                None, // frontmost_pid not available in FFI path
+                session.has_focus,
+                &mut session.event_validation,
+            );
+            // Drop events with very low confidence (likely synthetic injection)
+            if validation.confidence < 0.1 {
+                session.keystroke_count -= 1; // undo the increment
+                if !session.jitter_samples.is_empty() {
+                    session.jitter_samples.pop(); // undo the push
+                }
             }
         }
     }
