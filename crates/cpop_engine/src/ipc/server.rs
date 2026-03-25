@@ -8,6 +8,7 @@ use super::crypto::{
 use super::messages::{
     IpcErrorCode, IpcMessage, IpcMessageHandler, MAX_CONCURRENT_CONNECTIONS, MAX_MESSAGE_SIZE,
 };
+use super::rbac::{check_authorization, required_role, IpcRole};
 use crate::MutexRecover;
 use anyhow::{anyhow, Result};
 use std::path::PathBuf;
@@ -35,6 +36,7 @@ async fn handle_connection_inner<S: tokio::io::AsyncRead + tokio::io::AsyncWrite
     handler: Arc<dyn IpcMessageHandler>,
     transport_label: &str,
     shared_rate_limiter: &Arc<Mutex<RateLimiter>>,
+    client_role: IpcRole,
 ) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -180,6 +182,33 @@ async fn handle_connection_inner<S: tokio::io::AsyncRead + tokio::io::AsyncWrite
                     let error_response = IpcMessage::Error {
                         code: IpcErrorCode::InternalError,
                         message: format!("Rate limit exceeded for operation: {}", key),
+                    };
+                    if let Ok(response_bytes) = encode_message_json(&error_response) {
+                        if let Some(ref session) = secure_session {
+                            let _ = send_encrypted(stream, session, &response_bytes).await;
+                        } else if let Ok(len_bytes) = len_to_u32(response_bytes.len()) {
+                            let _ = stream.write_all(&len_bytes).await;
+                            let _ = stream.write_all(&response_bytes).await;
+                        }
+                    }
+                    continue;
+                }
+
+                let msg_required_role = required_role(&msg);
+                if !check_authorization(client_role, msg_required_role) {
+                    log::warn!(
+                        "IPC: unauthorized {:?} for role {:?} on {} (requires {:?})",
+                        msg,
+                        client_role,
+                        transport_label,
+                        msg_required_role
+                    );
+                    let error_response = IpcMessage::Error {
+                        code: IpcErrorCode::PermissionDenied,
+                        message: format!(
+                            "Insufficient permissions: requires {:?}, client has {:?}",
+                            msg_required_role, client_role
+                        ),
                     };
                     if let Ok(response_bytes) = encode_message_json(&error_response) {
                         if let Some(ref session) = secure_session {
@@ -505,6 +534,7 @@ async fn handle_connection<H: IpcMessageHandler>(
         handler as Arc<dyn IpcMessageHandler>,
         "unix-socket",
         &rate_limiter,
+        IpcRole::default(),
     )
     .await;
 }
@@ -625,6 +655,7 @@ async fn handle_windows_connection<H: IpcMessageHandler>(
         handler as Arc<dyn IpcMessageHandler>,
         "named-pipe",
         &rate_limiter,
+        IpcRole::default(),
     )
     .await;
 }

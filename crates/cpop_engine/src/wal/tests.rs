@@ -294,3 +294,104 @@ fn test_wal_truncate_empty() {
     let _ = wal.close();
     let _ = fs::remove_file(&path);
 }
+
+#[test]
+fn test_wal_rotate_if_needed_no_rotation() {
+    let path = temp_wal_path();
+    let session_id = [20u8; 32];
+    let signing_key = test_signing_key();
+
+    let wal = Wal::open(&path, session_id, signing_key).expect("open wal");
+    wal.append(EntryType::Heartbeat, vec![1, 2, 3])
+        .expect("append");
+
+    // Threshold much larger than current size; no rotation should occur.
+    let result = wal.rotate_if_needed(256 * 1024 * 1024).expect("rotate");
+    assert!(result.is_none());
+    assert_eq!(wal.entry_count(), 1);
+
+    let _ = wal.close();
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
+fn test_wal_rotate_if_needed_triggers() {
+    let dir = std::env::temp_dir().join(format!("wal-rot-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("test.wal");
+    let session_id = [21u8; 32];
+    let signing_key = test_signing_key();
+
+    let wal = Wal::open(&path, session_id, signing_key.clone()).expect("open wal");
+    wal.append(EntryType::Heartbeat, vec![1; 1024])
+        .expect("append");
+    let size_before = wal.size();
+
+    // Set threshold to 1 byte so rotation is forced.
+    let archive = wal.rotate_if_needed(1).expect("rotate");
+    assert!(archive.is_some());
+    let archive_path = archive.unwrap();
+    assert!(archive_path.exists());
+    assert!(archive_path.to_string_lossy().ends_with(".archive"));
+
+    // After rotation, WAL should be fresh (header only, 0 entries).
+    assert_eq!(wal.entry_count(), 0);
+    assert!(wal.size() < size_before);
+
+    // Can still append to the new WAL.
+    wal.append(EntryType::Heartbeat, vec![2; 64])
+        .expect("append after rotate");
+    assert_eq!(wal.entry_count(), 1);
+    let verification = wal.verify().expect("verify");
+    assert!(verification.valid);
+
+    let _ = wal.close();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_wal_list_and_prune_archives() {
+    let dir = std::env::temp_dir().join(format!("wal-prune-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&dir).unwrap();
+
+    // Create fake archive files with ordered timestamps.
+    for i in 1..=5 {
+        let name = format!("test.wal.{}.archive", i);
+        fs::write(dir.join(&name), b"fake").unwrap();
+    }
+
+    let archives = Wal::list_archives(&dir);
+    assert_eq!(archives.len(), 5);
+
+    // Prune to keep only 2 most recent.
+    Wal::prune_archives(&dir, 2);
+
+    let remaining = Wal::list_archives(&dir);
+    assert_eq!(remaining.len(), 2);
+    // The two newest (timestamps 4 and 5) should survive.
+    assert!(remaining[0].to_string_lossy().contains(".4.archive"));
+    assert!(remaining[1].to_string_lossy().contains(".5.archive"));
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_wal_rotate_closed_wal_fails() {
+    let path = temp_wal_path();
+    let session_id = [22u8; 32];
+    let signing_key = test_signing_key();
+
+    let wal = Wal::open(&path, session_id, signing_key).expect("open wal");
+    wal.append(EntryType::Heartbeat, vec![1; 1024])
+        .expect("append");
+    wal.close().expect("close");
+
+    let result = wal.rotate_if_needed(1);
+    assert!(result.is_err());
+    match result {
+        Err(WalError::Closed) => {}
+        other => panic!("Expected WalError::Closed, got {:?}", other),
+    }
+
+    let _ = fs::remove_file(&path);
+}

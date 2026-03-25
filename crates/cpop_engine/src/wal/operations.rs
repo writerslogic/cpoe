@@ -386,6 +386,91 @@ impl Wal {
         state.path.clone()
     }
 
+    /// Rotate the WAL if it exceeds `max_size_bytes`.
+    ///
+    /// Renames the current WAL to `{name}.{timestamp_nanos}.archive`, then
+    /// creates a fresh WAL with a new header. Returns `Some(archive_path)` if
+    /// rotation occurred, `None` otherwise.
+    pub fn rotate_if_needed(&self, max_size_bytes: u64) -> Result<Option<PathBuf>, WalError> {
+        let mut state = self.inner.lock_recover();
+        if state.byte_count < max_size_bytes {
+            return Ok(None);
+        }
+        if state.closed {
+            return Err(WalError::Closed);
+        }
+
+        // Flush before archiving.
+        state.file.sync_all()?;
+
+        let timestamp = now_nanos();
+        let archive_name = format!(
+            "{}.{}.archive",
+            state
+                .path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "wal".to_string()),
+            timestamp
+        );
+        let archive_path = state
+            .path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(archive_name);
+
+        fs::rename(&state.path, &archive_path)?;
+
+        // Create a fresh WAL file.
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&state.path)?;
+        crate::crypto::restrict_permissions(&state.path, 0o600)?;
+
+        state.file = file;
+        state.next_sequence = 0;
+        state.last_hash = [0u8; 32];
+        state.cumulative_hasher = Hasher::new();
+        state.entry_count = 0;
+        state.byte_count = 0;
+
+        Self::write_header(&mut state)?;
+        state.byte_count = HEADER_SIZE as u64;
+        state.file.seek(SeekFrom::Start(HEADER_SIZE as u64))?;
+
+        Ok(Some(archive_path))
+    }
+
+    /// List WAL archive files in the given directory, sorted oldest-first.
+    pub fn list_archives(wal_dir: &Path) -> Vec<PathBuf> {
+        let mut archives: Vec<PathBuf> = fs::read_dir(wal_dir)
+            .into_iter()
+            .flatten()
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.to_string_lossy().ends_with(".archive"))
+            .collect();
+        archives.sort();
+        archives
+    }
+
+    /// Keep only the `max_archives` most recent archive files; delete the rest.
+    pub fn prune_archives(wal_dir: &Path, max_archives: usize) {
+        let archives = Self::list_archives(wal_dir);
+        if archives.len() <= max_archives {
+            return;
+        }
+        let to_remove = archives.len() - max_archives;
+        for path in archives.into_iter().take(to_remove) {
+            if let Err(e) = fs::remove_file(&path) {
+                log::warn!("Failed to prune WAL archive {}: {}", path.display(), e);
+            }
+        }
+    }
+
     pub fn exists(path: impl AsRef<Path>) -> bool {
         path.as_ref().exists()
     }

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
+pub mod rbac;
 pub mod secure_channel;
 #[cfg(unix)]
 pub mod unix_socket;
@@ -15,5 +16,6 @@ mod tests;
 
 pub use async_client::{AsyncIpcClient, AsyncIpcClientError};
 pub use messages::{IpcErrorCode, IpcMessage, IpcMessageHandler};
+pub use rbac::{check_authorization, required_role, IpcRole};
 pub use server::IpcServer;
 pub use sync_client::IpcClient;
