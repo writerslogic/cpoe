@@ -1651,3 +1651,1235 @@ fn test_subcommand_help() {
         stdout
     );
 }
+
+// ===========================================================================
+// Concurrent and stress scenarios
+// ===========================================================================
+
+#[test]
+fn test_concurrent_commits_different_files() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    let files: Vec<_> = (0..3)
+        .map(|i| {
+            let p = data.join(format!("concurrent_{}.txt", i));
+            fs::write(&p, format!("Concurrent file {} content here", i)).unwrap();
+            p
+        })
+        .collect();
+
+    let handles: Vec<_> = files
+        .iter()
+        .enumerate()
+        .map(|(i, f)| {
+            let data_path = data.to_path_buf();
+            let file_path = f.to_string_lossy().to_string();
+            std::thread::spawn(move || {
+                let (stdout, stderr, code) = run_cpop(
+                    &data_path,
+                    &["commit", &file_path, "-m", &format!("Thread {}", i)],
+                );
+                (stdout, stderr, code)
+            })
+        })
+        .collect();
+
+    let mut successes = 0;
+    for h in handles {
+        let (stdout, stderr, code) = h.join().expect("thread panicked");
+        if code == 0 && stdout.contains("Checkpoint #1") {
+            successes += 1;
+        } else {
+            // SQLite busy is acceptable for concurrent writes
+            assert!(
+                stderr.contains("locked") || stderr.contains("busy") || code != 0,
+                "Unexpected failure: stdout={}, stderr={}",
+                stdout,
+                stderr
+            );
+        }
+    }
+    assert!(
+        successes >= 1,
+        "At least one concurrent commit should succeed"
+    );
+}
+
+#[test]
+fn test_many_commits_single_file() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    let doc = data.join("many_commits.txt");
+    let commit_count = 20;
+
+    for i in 1..=commit_count {
+        let content = format!(
+            "Revision {} with unique text to differentiate each version",
+            i
+        );
+        fs::write(&doc, &content).unwrap();
+        run_cpop_ok(
+            data,
+            &["commit", doc.to_str().unwrap(), "-m", &format!("Rev {}", i)],
+        );
+    }
+
+    let stdout = run_cpop_ok(data, &["log", doc.to_str().unwrap(), "--json"]);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("log --json should parse: {}\nGot: {}", e, stdout));
+    assert_eq!(
+        parsed.get("checkpoint_count").and_then(|v| v.as_u64()),
+        Some(commit_count),
+        "Should have {} checkpoints",
+        commit_count
+    );
+}
+
+#[test]
+fn test_large_commit_message() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    let doc = data.join("longmsg.txt");
+    fs::write(&doc, "Content for long message test").unwrap();
+
+    let long_msg = "A".repeat(1000);
+    let stdout = run_cpop_ok(data, &["commit", doc.to_str().unwrap(), "-m", &long_msg]);
+    assert!(
+        stdout.contains("Checkpoint #1"),
+        "Commit with 1000-char message should succeed. Got: {}",
+        stdout
+    );
+
+    let log_out = run_cpop_ok(data, &["log", doc.to_str().unwrap()]);
+    assert!(
+        log_out.contains(&long_msg[..50]),
+        "Log should contain the long message. Got: {}",
+        &log_out[..200.min(log_out.len())]
+    );
+}
+
+#[test]
+fn test_unicode_commit_message() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    let doc = data.join("unicode_msg.txt");
+    fs::write(&doc, "Content for unicode message test").unwrap();
+
+    let msg = "Draft with CJK chars and emoji: \u{1F4DD}\u{4E2D}\u{6587}\u{65E5}\u{672C}\u{8A9E}";
+    let stdout = run_cpop_ok(data, &["commit", doc.to_str().unwrap(), "-m", msg]);
+    assert!(
+        stdout.contains("Checkpoint #1"),
+        "Commit with unicode message should succeed. Got: {}",
+        stdout
+    );
+
+    let log_out = run_cpop_ok(data, &["log", doc.to_str().unwrap()]);
+    assert!(
+        log_out.contains("\u{4E2D}\u{6587}"),
+        "Log should preserve CJK characters. Got: {}",
+        log_out
+    );
+}
+
+#[test]
+fn test_repeated_track_same_file() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    let doc = data.join("repeat_track.txt");
+    fs::write(&doc, "Content version 1").unwrap();
+
+    let stdout1 = run_cpop_ok(data, &["commit", doc.to_str().unwrap(), "-m", "First"]);
+    assert!(stdout1.contains("Checkpoint #1"));
+
+    // Commit same file again (effectively "tracking" it twice)
+    fs::write(&doc, "Content version 2").unwrap();
+    let stdout2 = run_cpop_ok(data, &["commit", doc.to_str().unwrap(), "-m", "Second"]);
+    assert!(
+        stdout2.contains("Checkpoint #2"),
+        "Repeated commit should increment checkpoint. Got: {}",
+        stdout2
+    );
+}
+
+// ===========================================================================
+// Export deep testing
+// ===========================================================================
+
+#[test]
+fn test_export_after_file_deleted() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    let doc = data.join("will_delete.txt");
+    create_min_checkpoints(data, &doc);
+
+    // Delete the original file
+    fs::remove_file(&doc).unwrap();
+
+    // Export should fail because file no longer exists for canonicalize
+    let out_path = data.join("deleted.evidence.json");
+    let (_, stderr, code) = run_cpop_with_stdin(
+        data,
+        &[
+            "export",
+            doc.to_str().unwrap(),
+            "-f",
+            "json",
+            "-o",
+            out_path.to_str().unwrap(),
+            "--no-beacons",
+        ],
+        Some("n\nDecl\n"),
+    );
+    assert_ne!(
+        code, 0,
+        "Export after file deletion should fail. stderr: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains("resolve") || stderr.contains("not found") || stderr.contains("No such"),
+        "Should indicate file not found. stderr: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_export_tier_basic() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    let doc = data.join("tier_basic.txt");
+    create_min_checkpoints(data, &doc);
+
+    let out = data.join("tier_basic.json");
+    run_cpop_ok_with_stdin(
+        data,
+        &[
+            "export",
+            doc.to_str().unwrap(),
+            "-t",
+            "basic",
+            "-f",
+            "json",
+            "-o",
+            out.to_str().unwrap(),
+            "--no-beacons",
+        ],
+        Some("n\nBasic tier declaration\n"),
+    );
+    assert!(out.exists(), "Basic tier export should produce a file");
+    let content = fs::read_to_string(&out).unwrap();
+    let _: serde_json::Value =
+        serde_json::from_str(&content).expect("Basic tier output should be valid JSON");
+}
+
+#[test]
+fn test_export_tier_standard() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    let doc = data.join("tier_standard.txt");
+    create_min_checkpoints(data, &doc);
+
+    let out = data.join("tier_standard.json");
+    run_cpop_ok_with_stdin(
+        data,
+        &[
+            "export",
+            doc.to_str().unwrap(),
+            "-t",
+            "standard",
+            "-f",
+            "json",
+            "-o",
+            out.to_str().unwrap(),
+            "--no-beacons",
+        ],
+        Some("n\nStandard tier declaration\n"),
+    );
+    assert!(out.exists(), "Standard tier export should produce a file");
+}
+
+#[test]
+fn test_export_tier_enhanced() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    let doc = data.join("tier_enhanced.txt");
+    create_min_checkpoints(data, &doc);
+
+    let out = data.join("tier_enhanced.json");
+    run_cpop_ok_with_stdin(
+        data,
+        &[
+            "export",
+            doc.to_str().unwrap(),
+            "-t",
+            "enhanced",
+            "-f",
+            "json",
+            "-o",
+            out.to_str().unwrap(),
+            "--no-beacons",
+        ],
+        Some("n\nEnhanced tier declaration\n"),
+    );
+    assert!(out.exists(), "Enhanced tier export should produce a file");
+}
+
+#[test]
+fn test_export_stego_flag() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    let doc = data.join("stego_test.txt");
+    // Stego requires at least 64 words; write enough content for each version
+    let long_text = |ver: u32| -> String {
+        let base =
+            "The quick brown fox jumps over the lazy dog and continues to run across the meadow ";
+        format!("Version {} {}", ver, base.repeat(10))
+    };
+    fs::write(&doc, long_text(1)).unwrap();
+    run_cpop_ok(data, &["commit", doc.to_str().unwrap(), "-m", "Draft 1"]);
+    fs::write(&doc, long_text(2)).unwrap();
+    run_cpop_ok(data, &["commit", doc.to_str().unwrap(), "-m", "Draft 2"]);
+    fs::write(&doc, long_text(3)).unwrap();
+    run_cpop_ok(data, &["commit", doc.to_str().unwrap(), "-m", "Draft 3"]);
+
+    let out = data.join("stego_test.json");
+    let (_stdout, stderr, code) = run_cpop_with_stdin(
+        data,
+        &[
+            "export",
+            doc.to_str().unwrap(),
+            "-f",
+            "json",
+            "-o",
+            out.to_str().unwrap(),
+            "--stego",
+            "--no-beacons",
+        ],
+        Some("n\nStego declaration\n"),
+    );
+    // --stego should be accepted without crashing (may warn about missing API key)
+    assert!(
+        code == 0
+            || stderr.contains("API")
+            || stderr.contains("stego")
+            || stderr.contains("watermark")
+            || stderr.contains("validation"),
+        "Stego flag should be accepted or give a clear warning. exit={}, stderr={}",
+        code,
+        stderr
+    );
+    if code == 0 {
+        assert!(out.exists(), "Stego export should produce a file");
+    }
+}
+
+#[test]
+fn test_export_no_beacons_flag() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    let doc = data.join("no_beacons.txt");
+    create_min_checkpoints(data, &doc);
+
+    let out = data.join("no_beacons.json");
+    let (_stdout, stderr, _) = run_cpop_with_stdin(
+        data,
+        &[
+            "export",
+            doc.to_str().unwrap(),
+            "-f",
+            "json",
+            "-o",
+            out.to_str().unwrap(),
+            "--no-beacons",
+        ],
+        Some("n\nNo beacons declaration\n"),
+    );
+    // Should mention that beacons are skipped
+    let combined = format!("{}{}", _stdout, stderr);
+    assert!(
+        combined.contains("beacon") || combined.contains("Beacon") || out.exists(),
+        "No-beacons flag should be acknowledged. stdout={}, stderr={}",
+        _stdout,
+        stderr
+    );
+}
+
+#[test]
+fn test_export_beacon_timeout_flag() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    let doc = data.join("beacon_timeout.txt");
+    create_min_checkpoints(data, &doc);
+
+    let out = data.join("beacon_timeout.json");
+    let (_stdout, stderr, code) = run_cpop_with_stdin(
+        data,
+        &[
+            "export",
+            doc.to_str().unwrap(),
+            "-f",
+            "json",
+            "-o",
+            out.to_str().unwrap(),
+            "--beacon-timeout",
+            "5",
+            "--no-beacons",
+        ],
+        Some("n\nBeacon timeout declaration\n"),
+    );
+    assert_eq!(
+        code, 0,
+        "Export with beacon-timeout should succeed. stderr: {}",
+        stderr
+    );
+    assert!(out.exists());
+}
+
+#[test]
+fn test_export_json_structure() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    let doc = data.join("json_structure.txt");
+    create_min_checkpoints(data, &doc);
+
+    let out = data.join("structure.json");
+    run_cpop_ok_with_stdin(
+        data,
+        &[
+            "export",
+            doc.to_str().unwrap(),
+            "-f",
+            "json",
+            "-o",
+            out.to_str().unwrap(),
+            "--no-beacons",
+        ],
+        Some("n\nStructure test\n"),
+    );
+
+    let content = fs::read_to_string(&out).unwrap();
+    let parsed: serde_json::Value =
+        serde_json::from_str(&content).expect("Export should be valid JSON");
+    let obj = parsed.as_object().expect("Should be a JSON object");
+
+    // Check for key top-level fields
+    assert!(
+        obj.contains_key("checkpoints") || obj.contains_key("events"),
+        "Evidence JSON should have checkpoints or events. Keys: {:?}",
+        obj.keys().collect::<Vec<_>>()
+    );
+    assert!(
+        obj.contains_key("declaration"),
+        "Evidence JSON should have declaration. Keys: {:?}",
+        obj.keys().collect::<Vec<_>>()
+    );
+    assert!(
+        obj.contains_key("document") || obj.contains_key("file_path") || obj.contains_key("title"),
+        "Evidence JSON should have document info. Keys: {:?}",
+        obj.keys().collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_export_c2pa_has_process_timestamps() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    let doc = data.join("c2pa_timestamps.txt");
+    create_min_checkpoints(data, &doc);
+
+    let out = data.join("timestamps.c2pa.json");
+    run_cpop_ok_with_stdin(
+        data,
+        &[
+            "export",
+            doc.to_str().unwrap(),
+            "-f",
+            "c2pa",
+            "-o",
+            out.to_str().unwrap(),
+            "--no-beacons",
+        ],
+        Some("n\nC2PA timestamps\n"),
+    );
+
+    let content = fs::read_to_string(&out).unwrap();
+    let parsed: serde_json::Value =
+        serde_json::from_str(&content).expect("C2PA should be valid JSON");
+    // C2PA should contain process timestamps
+    let json_str = serde_json::to_string(&parsed).unwrap();
+    assert!(
+        json_str.contains("processStart")
+            || json_str.contains("process_start")
+            || json_str.contains("when")
+            || json_str.contains("timestamp"),
+        "C2PA export should contain timestamp-related fields. Got keys: {:?}",
+        parsed.as_object().map(|o| o.keys().collect::<Vec<_>>())
+    );
+}
+
+// ===========================================================================
+// Verify deep testing
+// ===========================================================================
+
+#[test]
+fn test_verify_shows_checkpoint_count() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    let doc = data.join("verify_count.txt");
+    create_min_checkpoints(data, &doc);
+
+    let evidence = data.join("verify_count.json");
+    run_cpop_ok_with_stdin(
+        data,
+        &[
+            "export",
+            doc.to_str().unwrap(),
+            "-f",
+            "json",
+            "-o",
+            evidence.to_str().unwrap(),
+            "--no-beacons",
+        ],
+        Some("n\nDecl\n"),
+    );
+
+    let (stdout, _, _) = run_cpop(data, &["verify", evidence.to_str().unwrap()]);
+    assert!(
+        stdout.contains("3") || stdout.contains("checkpoint"),
+        "Verify output should mention checkpoint count or number 3. Got: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_verify_shows_document_name() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    let doc = data.join("verify_docname.txt");
+    create_min_checkpoints(data, &doc);
+
+    let evidence = data.join("verify_docname.json");
+    run_cpop_ok_with_stdin(
+        data,
+        &[
+            "export",
+            doc.to_str().unwrap(),
+            "-f",
+            "json",
+            "-o",
+            evidence.to_str().unwrap(),
+            "--no-beacons",
+        ],
+        Some("n\nDecl\n"),
+    );
+
+    let (stdout, _, _) = run_cpop(data, &["verify", evidence.to_str().unwrap()]);
+    assert!(
+        stdout.contains("verify_docname") || stdout.contains("Document"),
+        "Verify output should mention the document name. Got: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_verify_wrong_format() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    let txt_file = data.join("plaintext.txt");
+    fs::write(&txt_file, "This is a plain text file, not evidence").unwrap();
+
+    let (_, stderr, code) = run_cpop(data, &["verify", txt_file.to_str().unwrap()]);
+    assert_ne!(code, 0, "Verify of .txt file should fail");
+    assert!(
+        stderr.to_lowercase().contains("unknown")
+            || stderr.to_lowercase().contains("format")
+            || stderr.to_lowercase().contains("expected"),
+        "Should mention unknown format. stderr: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_verify_empty_json_object() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    let empty_json = data.join("empty_obj.json");
+    fs::write(&empty_json, "{}").unwrap();
+
+    let (_, stderr, code) = run_cpop(data, &["verify", empty_json.to_str().unwrap()]);
+    assert_ne!(code, 0, "Verify of empty JSON object should fail");
+    assert!(
+        stderr.contains("Error")
+            || stderr.to_lowercase().contains("missing")
+            || stderr.to_lowercase().contains("parse"),
+        "Should indicate parse/missing field error. stderr: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_verify_valid_packet_structure() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    let doc = data.join("roundtrip_verify.txt");
+    create_min_checkpoints(data, &doc);
+
+    let evidence = data.join("roundtrip_verify.json");
+    run_cpop_ok_with_stdin(
+        data,
+        &[
+            "export",
+            doc.to_str().unwrap(),
+            "-f",
+            "json",
+            "-o",
+            evidence.to_str().unwrap(),
+            "--no-beacons",
+        ],
+        Some("n\nDecl\n"),
+    );
+
+    let (stdout, _, _) = run_cpop(data, &["verify", evidence.to_str().unwrap()]);
+    assert!(
+        stdout.contains("Verified") || stdout.contains("Structural") || stdout.contains("pass"),
+        "Export-then-verify should confirm validity. Got: {}",
+        stdout
+    );
+}
+
+// ===========================================================================
+// Config deep testing
+// ===========================================================================
+
+#[test]
+fn test_config_set_and_get_multiple() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    // Set multiple config values
+    run_cpop_ok(data, &["config", "set", "sentinel.auto_start", "true"]);
+    run_cpop_ok(
+        data,
+        &["config", "set", "sentinel.heartbeat_interval_secs", "30"],
+    );
+    run_cpop_ok(data, &["config", "set", "privacy.hash_urls", "true"]);
+
+    // Verify all values persisted
+    let stdout = run_cpop_ok(data, &["config", "show"]);
+    assert!(
+        stdout.contains("auto_start: true"),
+        "auto_start should be true. Got: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("heartbeat_interval_secs: 30"),
+        "heartbeat should be 30. Got: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("hash_urls: true"),
+        "hash_urls should be true. Got: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_config_set_invalid_key() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    let (_, stderr, code) = run_cpop(data, &["config", "set", "nonexistent.fake_key", "value"]);
+    assert_ne!(code, 0, "Setting invalid config key should fail");
+    assert!(
+        stderr.to_lowercase().contains("unknown") || stderr.contains("Error"),
+        "Should mention unknown key. stderr: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_config_reset_to_default() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    // Set a non-default value
+    run_cpop_ok(
+        data,
+        &["config", "set", "sentinel.heartbeat_interval_secs", "120"],
+    );
+    let stdout = run_cpop_ok(data, &["config", "show"]);
+    assert!(stdout.contains("heartbeat_interval_secs: 120"));
+
+    // Set it back to default
+    run_cpop_ok(
+        data,
+        &["config", "set", "sentinel.heartbeat_interval_secs", "10"],
+    );
+    let stdout = run_cpop_ok(data, &["config", "show"]);
+    assert!(
+        stdout.contains("heartbeat_interval_secs: 10"),
+        "Config should be reset to default. Got: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_config_set_boolean_variants() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    // Test various boolean representations
+    run_cpop_ok(data, &["config", "set", "sentinel.auto_start", "1"]);
+    let stdout = run_cpop_ok(data, &["config", "show"]);
+    assert!(
+        stdout.contains("auto_start: true"),
+        "1 should map to true. Got: {}",
+        stdout
+    );
+
+    run_cpop_ok(data, &["config", "set", "sentinel.auto_start", "no"]);
+    let stdout = run_cpop_ok(data, &["config", "show"]);
+    assert!(
+        stdout.contains("auto_start: false"),
+        "no should map to false. Got: {}",
+        stdout
+    );
+
+    run_cpop_ok(data, &["config", "set", "sentinel.auto_start", "yes"]);
+    let stdout = run_cpop_ok(data, &["config", "show"]);
+    assert!(
+        stdout.contains("auto_start: true"),
+        "yes should map to true. Got: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_config_data_dir_shown() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    let stdout = run_cpop_ok(data, &["config", "show"]);
+    assert!(
+        stdout.contains("Data directory") || stdout.contains("data_dir"),
+        "Config show should display data directory. Got: {}",
+        stdout
+    );
+}
+
+// ===========================================================================
+// Identity deep testing
+// ===========================================================================
+
+#[test]
+fn test_identity_show_did() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    let stdout = run_cpop_ok(data, &["identity", "--did"]);
+    assert!(
+        stdout.contains("did:key:z"),
+        "DID should start with did:key:z. Got: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_identity_show_fingerprint() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    let stdout = run_cpop_ok(data, &["identity", "--fingerprint"]);
+    let trimmed = stdout.trim();
+    // Fingerprint should be hex or contain hex-like characters
+    assert!(!trimmed.is_empty(), "Fingerprint should produce output");
+    // Check it contains hex-like characters (at least some hex digits)
+    let has_hex = trimmed.chars().any(|c| c.is_ascii_hexdigit());
+    assert!(
+        has_hex,
+        "Fingerprint should contain hex characters. Got: {}",
+        trimmed
+    );
+}
+
+#[test]
+fn test_identity_mnemonic_backup() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    let stdout = run_cpop_ok(data, &["identity", "--mnemonic"]);
+    // Filter only lines that look like mnemonic words (all alphabetic, lowercase)
+    let mnemonic_words: Vec<&str> = stdout
+        .split_whitespace()
+        .filter(|w| !w.is_empty() && w.chars().all(|c| c.is_ascii_lowercase()))
+        .collect();
+    // BIP-39 mnemonic should be 24 words (or at least 12)
+    assert!(
+        mnemonic_words.len() >= 12,
+        "Mnemonic should have at least 12 words, got {}. Output: {}",
+        mnemonic_words.len(),
+        stdout
+    );
+}
+
+#[test]
+fn test_identity_persistence() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    let did1 = run_cpop_ok(data, &["identity", "--did"]);
+    let did2 = run_cpop_ok(data, &["identity", "--did"]);
+    assert_eq!(
+        did1.trim(),
+        did2.trim(),
+        "DID should be stable across invocations"
+    );
+
+    let fp1 = run_cpop_ok(data, &["identity", "--fingerprint"]);
+    let fp2 = run_cpop_ok(data, &["identity", "--fingerprint"]);
+    assert_eq!(
+        fp1.trim(),
+        fp2.trim(),
+        "Fingerprint should be stable across invocations"
+    );
+}
+
+// ===========================================================================
+// Link deep testing
+// ===========================================================================
+
+#[test]
+fn test_link_requires_tracked_source() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    let source = data.join("untracked_source.txt");
+    let derivative = data.join("derivative.pdf");
+    fs::write(&source, "Source content").unwrap();
+    fs::write(&derivative, "Derivative content").unwrap();
+
+    let (_, stderr, code) = run_cpop(
+        data,
+        &[
+            "link",
+            source.to_str().unwrap(),
+            derivative.to_str().unwrap(),
+        ],
+    );
+    assert_ne!(code, 0, "Link with untracked source should fail");
+    assert!(
+        stderr.contains("evidence")
+            || stderr.contains("Track")
+            || stderr.contains("track")
+            || stderr.contains("No"),
+        "Should mention missing evidence chain. stderr: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_link_derivative_must_exist() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    let source = data.join("link_src.txt");
+    create_min_checkpoints(data, &source);
+
+    let (_, stderr, code) = run_cpop(
+        data,
+        &[
+            "link",
+            source.to_str().unwrap(),
+            "/nonexistent/derivative.pdf",
+        ],
+    );
+    assert_ne!(code, 0, "Link with nonexistent derivative should fail");
+    assert!(
+        stderr.contains("not found") || stderr.contains("Error") || stderr.contains("No such"),
+        "Should mention file not found. stderr: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_link_shows_in_log() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    let source = data.join("link_log_src.txt");
+    create_min_checkpoints(data, &source);
+
+    let derivative = data.join("link_log_deriv.pdf");
+    fs::write(&derivative, "PDF derivative content").unwrap();
+
+    run_cpop_ok(
+        data,
+        &[
+            "link",
+            source.to_str().unwrap(),
+            derivative.to_str().unwrap(),
+            "-m",
+            "Export link",
+        ],
+    );
+
+    let stdout = run_cpop_ok(data, &["log", source.to_str().unwrap(), "--json"]);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("log --json should parse: {}\nGot: {}", e, stdout));
+    assert_eq!(
+        parsed.get("checkpoint_count").and_then(|v| v.as_u64()),
+        Some(4),
+        "Should have 4 checkpoints (3 original + 1 link). Got: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_link_to_self() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    let doc = data.join("self_link.txt");
+    create_min_checkpoints(data, &doc);
+
+    // Linking a file to itself; should either error or succeed gracefully
+    let (stdout, stderr, code) = run_cpop(
+        data,
+        &["link", doc.to_str().unwrap(), doc.to_str().unwrap()],
+    );
+    // Accept either outcome: success (creates a self-referential link) or error
+    assert!(
+        code == 0 || stderr.contains("Error"),
+        "Link to self should handle gracefully. exit={}, stdout={}, stderr={}",
+        code,
+        stdout,
+        stderr
+    );
+}
+
+// ===========================================================================
+// Daemon/presence help
+// ===========================================================================
+
+#[test]
+fn test_daemon_help() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+
+    let stdout = run_cpop_ok(data, &["start", "--help"]);
+    assert!(
+        stdout.contains("daemon")
+            || stdout.contains("start")
+            || stdout.contains("Daemon")
+            || stdout.contains("Start")
+            || stdout.contains("sentinel"),
+        "start --help should show daemon usage. Got: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_presence_help() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+
+    let stdout = run_cpop_ok(data, &["presence", "--help"]);
+    assert!(
+        stdout.contains("presence") || stdout.contains("Presence") || stdout.contains("challenge"),
+        "presence --help should show usage. Got: {}",
+        stdout
+    );
+}
+
+// ===========================================================================
+// Error recovery
+// ===========================================================================
+
+#[test]
+fn test_corrupted_database() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    // Create a valid checkpoint first
+    let doc = data.join("corrupt_db.txt");
+    fs::write(&doc, "Content before corruption").unwrap();
+    run_cpop_ok(data, &["commit", doc.to_str().unwrap(), "-m", "Before"]);
+
+    // Corrupt the database file
+    let db_path = data.join("events.db");
+    if db_path.exists() {
+        fs::write(&db_path, "CORRUPTED DATABASE CONTENT").unwrap();
+    }
+
+    // Subsequent operations should fail gracefully, not panic
+    let (_, stderr, code) = run_cpop(
+        data,
+        &["commit", doc.to_str().unwrap(), "-m", "After corruption"],
+    );
+    assert_ne!(code, 0, "Commit on corrupted DB should fail");
+    assert!(
+        stderr.contains("Error")
+            || stderr.to_lowercase().contains("database")
+            || stderr.to_lowercase().contains("corrupt")
+            || stderr.to_lowercase().contains("not a database"),
+        "Should report database error. stderr: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_permission_denied_data_dir() {
+    // Skip on non-unix platforms
+    if !cfg!(unix) {
+        return;
+    }
+
+    let dir = tempdir().unwrap();
+    let data = dir.path().join("readonly_data");
+    fs::create_dir_all(&data).unwrap();
+    init_cpop(&data);
+
+    // Make data dir read-only
+    let mut perms = fs::metadata(&data).unwrap().permissions();
+    use std::os::unix::fs::PermissionsExt;
+    perms.set_mode(0o444);
+    fs::set_permissions(&data, perms).unwrap();
+
+    let doc = dir.path().join("readonly_test.txt");
+    fs::write(&doc, "Content for readonly test").unwrap();
+
+    let (_, stderr, code) = run_cpop(
+        &data,
+        &["commit", doc.to_str().unwrap(), "-m", "Should fail"],
+    );
+
+    // Restore permissions for cleanup
+    let mut perms = fs::metadata(&data).unwrap().permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&data, perms).unwrap();
+
+    assert_ne!(code, 0, "Commit with read-only data dir should fail");
+    assert!(
+        stderr.to_lowercase().contains("permission")
+            || stderr.to_lowercase().contains("denied")
+            || stderr.to_lowercase().contains("read-only")
+            || stderr.contains("Error"),
+        "Should mention permission error. stderr: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_missing_data_dir_recovery() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    let doc = data.join("recovery_test.txt");
+    fs::write(&doc, "Content before data dir removal").unwrap();
+    run_cpop_ok(data, &["commit", doc.to_str().unwrap(), "-m", "Before"]);
+
+    // Remove the database but keep the data dir
+    let db_path = data.join("events.db");
+    if db_path.exists() {
+        fs::remove_file(&db_path).unwrap();
+    }
+
+    // Should recover (recreate DB) or give a clear error
+    fs::write(&doc, "Content after recovery").unwrap();
+    let (stdout, stderr, code) = run_cpop(
+        data,
+        &["commit", doc.to_str().unwrap(), "-m", "After recovery"],
+    );
+    // Accept either: recovery (new checkpoint #1) or clear error
+    assert!(
+        (code == 0 && stdout.contains("Checkpoint #1"))
+            || stderr.contains("Error")
+            || stderr.contains("HMAC"),
+        "Should recover or give clear error. exit={}, stdout={}, stderr={}",
+        code,
+        stdout,
+        stderr
+    );
+}
+
+// ===========================================================================
+// Commit JSON output
+// ===========================================================================
+
+#[test]
+fn test_commit_json_output() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    let doc = data.join("commit_json.txt");
+    fs::write(&doc, "Content for JSON commit output test").unwrap();
+
+    let stdout = run_cpop_ok(
+        data,
+        &[
+            "commit",
+            doc.to_str().unwrap(),
+            "-m",
+            "JSON commit",
+            "--json",
+        ],
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("commit --json should be valid JSON: {}\nGot: {}", e, stdout));
+    assert_eq!(
+        parsed.get("checkpoint").and_then(|v| v.as_u64()),
+        Some(1),
+        "JSON commit should report checkpoint 1"
+    );
+    assert!(
+        parsed.get("content_hash").is_some(),
+        "JSON commit should include content_hash"
+    );
+    assert!(
+        parsed.get("event_hash").is_some(),
+        "JSON commit should include event_hash"
+    );
+    assert!(
+        parsed.get("vdf_iterations").is_some(),
+        "JSON commit should include vdf_iterations"
+    );
+}
+
+#[test]
+fn test_commit_quiet_mode() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    let doc = data.join("quiet_commit.txt");
+    fs::write(&doc, "Content for quiet commit").unwrap();
+
+    let stdout = run_cpop_ok(
+        data,
+        &["commit", doc.to_str().unwrap(), "-m", "Quiet", "--quiet"],
+    );
+    assert!(
+        stdout.trim().is_empty(),
+        "Quiet mode should produce no stdout. Got: {}",
+        stdout
+    );
+}
+
+// ===========================================================================
+// Export invalid tier
+// ===========================================================================
+
+#[test]
+fn test_export_invalid_tier() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    let doc = data.join("bad_tier.txt");
+    create_min_checkpoints(data, &doc);
+
+    let out = data.join("bad_tier.json");
+    let (_, stderr, code) = run_cpop_with_stdin(
+        data,
+        &[
+            "export",
+            doc.to_str().unwrap(),
+            "-t",
+            "nonexistent",
+            "-f",
+            "json",
+            "-o",
+            out.to_str().unwrap(),
+            "--no-beacons",
+        ],
+        Some("n\nDecl\n"),
+    );
+    assert_ne!(code, 0, "Export with invalid tier should fail");
+    assert!(
+        stderr.to_lowercase().contains("tier")
+            || stderr.to_lowercase().contains("unknown")
+            || stderr.contains("Error"),
+        "Should mention invalid tier. stderr: {}",
+        stderr
+    );
+}
+
+// ===========================================================================
+// Blocked file extension
+// ===========================================================================
+
+#[test]
+fn test_commit_blocked_extension() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    init_cpop(data);
+
+    let exe_file = data.join("malware.exe");
+    fs::write(&exe_file, "pretend binary").unwrap();
+
+    let (_, stderr, code) = run_cpop(
+        data,
+        &["commit", exe_file.to_str().unwrap(), "-m", "Should fail"],
+    );
+    assert_ne!(code, 0, "Commit of .exe should be blocked");
+    assert!(
+        stderr.to_lowercase().contains("not a supported")
+            || stderr.to_lowercase().contains("blocked")
+            || stderr.contains("Error"),
+        "Should mention unsupported file type. stderr: {}",
+        stderr
+    );
+}
