@@ -24,6 +24,24 @@ pub fn handle_focus_event_sync(
     wal_dir: &Path,
     session_events_tx: &broadcast::Sender<SessionEvent>,
 ) {
+    {
+        use std::io::Write;
+        let debug_path = std::env::var("CPOP_DATA_DIR")
+            .map(|d| format!("{}/event_debug.txt", d))
+            .unwrap_or_else(|_| "/tmp/cpop_event_debug.txt".to_string());
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&debug_path)
+        {
+            let _ = writeln!(
+                f,
+                "HANDLE_FOCUS: type={:?} bundle={} path={:?} shadow={}",
+                event.event_type, event.app_bundle_id, event.path, event.shadow_id
+            );
+        }
+    }
+
     if !config.is_app_allowed(&event.app_bundle_id, &event.app_name) {
         let path_to_unfocus = {
             let focus = current_focus.read_recover();
@@ -42,6 +60,23 @@ pub fn handle_focus_event_sync(
                 if !event.shadow_id.is_empty() {
                     format!("shadow://{}", event.shadow_id)
                 } else {
+                    {
+                        use std::io::Write;
+                        let debug_path = std::env::var("CPOP_DATA_DIR")
+                            .map(|d| format!("{}/event_debug.txt", d))
+                            .unwrap_or_else(|_| "/tmp/cpop_event_debug.txt".to_string());
+                        if let Ok(mut f) = std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(&debug_path)
+                        {
+                            let _ = writeln!(
+                                f,
+                                "DROPPED: empty path and empty shadow_id for {}",
+                                event.app_bundle_id
+                            );
+                        }
+                    }
                     return;
                 }
             } else {
@@ -61,9 +96,34 @@ pub fn handle_focus_event_sync(
                 }
             };
 
-            if let Some(path) = path_to_unfocus {
-                unfocus_document_sync(&path, sessions, session_events_tx);
+            if let Some(ref path) = path_to_unfocus {
+                // Record a focus switch on the old document before unfocusing it
+                {
+                    let mut sessions_map = sessions.write_recover();
+                    if let Some(session) = sessions_map.get_mut(path.as_str()) {
+                        session.focus_switches.push(FocusSwitchRecord {
+                            lost_at: SystemTime::now(),
+                            regained_at: None,
+                            target_app: event.app_name.clone(),
+                            target_bundle_id: event.app_bundle_id.clone(),
+                        });
+                    }
+                }
+                unfocus_document_sync(path, sessions, session_events_tx);
                 *current_focus.write_recover() = None;
+            }
+
+            // If this document is regaining focus, stamp regained_at on its
+            // most recent open switch record.
+            {
+                let mut sessions_map = sessions.write_recover();
+                if let Some(session) = sessions_map.get_mut(doc_path.as_str()) {
+                    if let Some(last) = session.focus_switches.last_mut() {
+                        if last.regained_at.is_none() {
+                            last.regained_at = Some(SystemTime::now());
+                        }
+                    }
+                }
             }
 
             focus_document_sync(
@@ -112,6 +172,14 @@ pub fn focus_document_sync(
     wal_dir: &Path,
     session_events_tx: &broadcast::Sender<SessionEvent>,
 ) {
+    // Skip directories and paths that don't look like documents
+    if !path.starts_with("shadow://") {
+        let p = std::path::Path::new(path);
+        if p.is_dir() || p.extension().is_none() {
+            return;
+        }
+    }
+
     let key = signing_key.read_recover().clone();
     let mut sessions_map = sessions.write_recover();
 
@@ -149,6 +217,24 @@ pub fn focus_document_sync(
 
     session.focus_gained();
     session.window_title = event.window_title.clone();
+
+    {
+        use std::io::Write;
+        let debug_path = std::env::var("CPOP_DATA_DIR")
+            .map(|d| format!("{}/event_debug.txt", d))
+            .unwrap_or_else(|_| "/tmp/cpop_event_debug.txt".to_string());
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&debug_path)
+        {
+            let _ = writeln!(
+                f,
+                "SESSION_FOCUSED: path={} focus_count={}",
+                path, session.focus_count,
+            );
+        }
+    }
 
     let _ = session_events_tx.send(SessionEvent {
         event_type: SessionEventType::Focused,

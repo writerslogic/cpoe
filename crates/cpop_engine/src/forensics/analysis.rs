@@ -19,10 +19,11 @@ use super::types::{
 };
 use super::velocity::{compute_session_stats, count_sessions_sorted};
 
-use super::types::{CheckpointFlags, PerCheckpointResult};
+use super::types::{CheckpointFlags, FocusMetrics, PerCheckpointResult};
 use crate::analysis::labyrinth::{analyze_labyrinth, LabyrinthParams};
 use crate::analysis::{analyze_iki_compression, analyze_lyapunov, analyze_snr};
 use crate::evidence::CheckpointProof;
+use crate::sentinel::types::FocusSwitchRecord;
 
 const PERPLEXITY_ANOMALY_THRESHOLD: f64 = 15.0;
 const MIN_IKI_FOR_HURST: usize = 50;
@@ -368,4 +369,112 @@ pub fn per_checkpoint_flags(
         pct_flagged,
         suspicious,
     }
+}
+
+/// Bundle IDs of known AI assistant apps.
+const AI_APP_BUNDLE_IDS: &[&str] = &["chatgpt", "claude", "openai", "copilot", "bard", "gemini"];
+
+/// Browser bundle IDs that may indicate quick AI/reference lookups.
+const BROWSER_BUNDLE_IDS: &[&str] = &[
+    "com.apple.Safari",
+    "com.google.Chrome",
+    "org.mozilla.firefox",
+    "com.microsoft.edgemac",
+    "com.brave.Browser",
+];
+
+/// Short away duration threshold (seconds) for browser-as-AI-reference heuristic.
+const BROWSER_SHORT_AWAY_SEC: f64 = 30.0;
+
+/// Short switch threshold (seconds) for reading-pattern detection.
+const READING_PATTERN_SWITCH_SEC: f64 = 10.0;
+
+/// Minimum repeated short switches to the same app to flag a reading pattern.
+const READING_PATTERN_MIN_REPEATS: usize = 3;
+
+/// Analyze focus-switching patterns for cognitive vs. transcriptive signals.
+pub fn analyze_focus_patterns(
+    switches: &[FocusSwitchRecord],
+    total_session_ms: i64,
+) -> FocusMetrics {
+    if switches.is_empty() || total_session_ms <= 0 {
+        return FocusMetrics::default();
+    }
+
+    let switch_count = switches.len();
+    let mut total_away_sec = 0.0;
+    let mut completed_count = 0usize;
+    let mut ai_app_switch_count = 0usize;
+
+    for sw in switches {
+        let away_sec = sw
+            .regained_at
+            .and_then(|r| r.duration_since(sw.lost_at).ok())
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0);
+
+        if sw.regained_at.is_some() {
+            total_away_sec += away_sec;
+            completed_count += 1;
+        }
+
+        let bid_lower = sw.target_bundle_id.to_lowercase();
+        let app_lower = sw.target_app.to_lowercase();
+
+        let is_ai_app = AI_APP_BUNDLE_IDS
+            .iter()
+            .any(|pat| bid_lower.contains(pat) || app_lower.contains(pat));
+
+        let is_browser_short = BROWSER_BUNDLE_IDS
+            .iter()
+            .any(|b| bid_lower == b.to_lowercase())
+            && away_sec > 0.0
+            && away_sec < BROWSER_SHORT_AWAY_SEC;
+
+        if is_ai_app || is_browser_short {
+            ai_app_switch_count += 1;
+        }
+    }
+
+    let total_session_sec = total_session_ms as f64 / 1000.0;
+    let out_of_focus_ratio = (total_away_sec / total_session_sec).min(1.0);
+    let avg_away_duration_sec = if completed_count > 0 {
+        total_away_sec / completed_count as f64
+    } else {
+        0.0
+    };
+
+    // Detect reading pattern: repeated short switches to the same app.
+    let reading_pattern_detected = detect_reading_pattern(switches);
+
+    FocusMetrics {
+        switch_count,
+        out_of_focus_ratio,
+        ai_app_switch_count,
+        avg_away_duration_sec,
+        reading_pattern_detected,
+    }
+}
+
+/// Detect a copy-reference workflow: frequent short switches (<10s) to the same app.
+fn detect_reading_pattern(switches: &[FocusSwitchRecord]) -> bool {
+    // Group completed short switches by target bundle ID.
+    let mut short_counts: HashMap<&str, usize> = HashMap::new();
+    for sw in switches {
+        let away_sec = sw
+            .regained_at
+            .and_then(|r| r.duration_since(sw.lost_at).ok())
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(f64::MAX);
+
+        if away_sec < READING_PATTERN_SWITCH_SEC {
+            *short_counts
+                .entry(sw.target_bundle_id.as_str())
+                .or_insert(0) += 1;
+        }
+    }
+
+    short_counts
+        .values()
+        .any(|&count| count >= READING_PATTERN_MIN_REPEATS)
 }
