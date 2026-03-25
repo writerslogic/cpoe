@@ -9,7 +9,8 @@ use crate::analysis::BehavioralFingerprint;
 use crate::jitter::SimpleJitterSample;
 
 use super::assessment::{
-    compute_assessment_score, detect_anomalies, determine_assessment, determine_risk_level,
+    apply_focus_penalties, compute_assessment_score, detect_anomalies, determine_assessment,
+    determine_risk_level,
 };
 use super::cadence::analyze_cadence;
 use super::topology::compute_primary_metrics;
@@ -258,6 +259,7 @@ pub fn analyze_forensics_ext(
         events.len(),
         metrics.biological_cadence_score,
     );
+    apply_focus_penalties(&mut metrics.assessment_score, &metrics.focus);
 
     metrics.risk_level = determine_risk_level(metrics.assessment_score, events.len());
 

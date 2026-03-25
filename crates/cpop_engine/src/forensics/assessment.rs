@@ -6,10 +6,10 @@ use chrono::DateTime;
 use std::collections::HashMap;
 
 use super::types::{
-    Anomaly, AnomalyType, Assessment, CadenceMetrics, EventData, PrimaryMetrics, RegionData,
-    RiskLevel, Severity, ALERT_THRESHOLD, MIN_EVENTS_FOR_ANALYSIS, MIN_EVENTS_FOR_ASSESSMENT,
-    THRESHOLD_GAP_HOURS, THRESHOLD_HIGH_VELOCITY_BPS, THRESHOLD_LOW_ENTROPY,
-    THRESHOLD_MONOTONIC_APPEND,
+    Anomaly, AnomalyType, Assessment, CadenceMetrics, EventData, FocusMetrics, PrimaryMetrics,
+    RegionData, RiskLevel, Severity, ALERT_THRESHOLD, MIN_EVENTS_FOR_ANALYSIS,
+    MIN_EVENTS_FOR_ASSESSMENT, THRESHOLD_GAP_HOURS, THRESHOLD_HIGH_VELOCITY_BPS,
+    THRESHOLD_LOW_ENTROPY, THRESHOLD_MONOTONIC_APPEND,
 };
 
 /// Max Shannon entropy for 20-bin edit-position histogram: log2(20).
@@ -63,6 +63,39 @@ const SUSPICIOUS_INDICATOR_COUNT: usize = 2;
 const SUSPICIOUS_INDICATOR_CRITICAL: usize = 3;
 /// Maximum inter-event delta (seconds) for velocity anomaly detection.
 const VELOCITY_WINDOW_SEC: f64 = 60.0;
+
+/// IKI autocorrelation above which typing rhythm is suspiciously uniform.
+const IKI_AUTOCORR_TRANSCRIPTIVE: f64 = 0.3;
+/// Maximum penalty for high IKI autocorrelation.
+const IKI_AUTOCORR_PENALTY: f64 = 0.15;
+/// Correction ratio below which lack of edits is penalized.
+const CORRECTION_RATIO_LOW: f64 = 0.02;
+/// Penalty for suspiciously low correction ratio.
+const LOW_CORRECTION_PENALTY: f64 = 0.1;
+/// Minimum events before correction ratio penalty applies.
+const CORRECTION_MIN_EVENTS: usize = 50;
+/// Post-pause CV above which variable thinking is rewarded.
+const POST_PAUSE_CV_REWARD_THRESHOLD: f64 = 0.25;
+/// Reward for high post-pause CV.
+const POST_PAUSE_CV_REWARD: f64 = 0.05;
+/// Deep-thought pause fraction above which reward applies.
+const DEEP_PAUSE_REWARD_THRESHOLD: f64 = 0.1;
+/// Reward for presence of deep thinking pauses.
+const DEEP_PAUSE_REWARD: f64 = 0.05;
+/// Cross-hand timing ratio below which uniform hand transitions are penalized.
+const CROSS_HAND_UNIFORM_THRESHOLD: f64 = 1.1;
+/// Penalty for uniform cross-hand timing.
+const CROSS_HAND_PENALTY: f64 = 0.1;
+/// Penalty for reading pattern detected in focus metrics.
+const FOCUS_READING_PENALTY: f64 = 0.15;
+/// AI app switch count above which penalty applies.
+const FOCUS_AI_SWITCH_THRESHOLD: usize = 3;
+/// Penalty for excessive AI app switches.
+const FOCUS_AI_SWITCH_PENALTY: f64 = 0.1;
+/// Out-of-focus ratio above which penalty applies.
+const FOCUS_OUT_OF_FOCUS_THRESHOLD: f64 = 0.5;
+/// Penalty for excessive out-of-focus time.
+const FOCUS_OUT_OF_FOCUS_PENALTY: f64 = 0.1;
 
 /// Detect anomalies in editing patterns (topology + temporal).
 pub fn detect_anomalies(
@@ -270,6 +303,34 @@ pub fn compute_assessment_score(
             / BIOLOGICAL_CADENCE_THRESHOLD;
     }
 
+    // Penalty: high IKI autocorrelation (rhythmic/transcriptive typing)
+    if cadence.iki_autocorrelation > IKI_AUTOCORR_TRANSCRIPTIVE {
+        score -= IKI_AUTOCORR_PENALTY * (cadence.iki_autocorrelation - IKI_AUTOCORR_TRANSCRIPTIVE)
+            / (1.0 - IKI_AUTOCORR_TRANSCRIPTIVE);
+    }
+
+    // Penalty: low correction ratio (no edits/revisions)
+    if cadence.correction_ratio < CORRECTION_RATIO_LOW && event_count >= CORRECTION_MIN_EVENTS {
+        score -= LOW_CORRECTION_PENALTY;
+    }
+
+    // Reward: high post-pause CV (variable thinking patterns)
+    if cadence.post_pause_cv > POST_PAUSE_CV_REWARD_THRESHOLD {
+        score += POST_PAUSE_CV_REWARD;
+    }
+
+    // Reward: deep thinking pauses present
+    if cadence.pause_depth_distribution[2] > DEEP_PAUSE_REWARD_THRESHOLD {
+        score += DEEP_PAUSE_REWARD;
+    }
+
+    // Penalty: low cross-hand timing ratio (uniform timing across hand transitions)
+    if cadence.cross_hand_timing_ratio > 0.0
+        && cadence.cross_hand_timing_ratio < CROSS_HAND_UNIFORM_THRESHOLD
+    {
+        score -= CROSS_HAND_PENALTY;
+    }
+
     score.clamp(0.0, 1.0)
 }
 
@@ -292,6 +353,22 @@ pub fn compute_cadence_score(cadence: &CadenceMetrics) -> f64 {
     }
 
     score.clamp(0.0, 1.0)
+}
+
+/// Apply focus-switching penalties to an assessment score.
+///
+/// Call after `compute_assessment_score` when `FocusMetrics` are available.
+pub fn apply_focus_penalties(score: &mut f64, focus: &FocusMetrics) {
+    if focus.reading_pattern_detected {
+        *score -= FOCUS_READING_PENALTY;
+    }
+    if focus.ai_app_switch_count > FOCUS_AI_SWITCH_THRESHOLD {
+        *score -= FOCUS_AI_SWITCH_PENALTY;
+    }
+    if focus.out_of_focus_ratio > FOCUS_OUT_OF_FOCUS_THRESHOLD {
+        *score -= FOCUS_OUT_OF_FOCUS_PENALTY;
+    }
+    *score = score.clamp(0.0, 1.0);
 }
 
 /// Map assessment score to risk level.
