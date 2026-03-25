@@ -74,6 +74,11 @@ pub struct Block {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_secs: Option<u64>,
 
+    /// RFC 3161 timestamp response token (DER-encoded TimeStampResp).
+    /// Included in COSE_Sign1 unprotected headers for C2PA manifest interop.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rfc3161_timestamp: Option<Vec<u8>>,
+
     // ── Internal / non-serialized fields ──
     /// Not included in ASCII output.
     #[serde(skip_serializing_if = "Option::is_none")]

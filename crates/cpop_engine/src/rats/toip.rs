@@ -94,7 +94,7 @@ pub fn writersproof_egf() -> EcosystemGovernanceFramework {
                 minimum_requirements: vec![
                     "Ed25519 identity key".to_string(),
                     "Checkpoint chain with VDF proofs".to_string(),
-                    "Behavioral entropy above 1.5 bits".to_string(),
+                    "Behavioral entropy above 2.0 bits".to_string(),
                 ],
             },
             AssuranceLevel {

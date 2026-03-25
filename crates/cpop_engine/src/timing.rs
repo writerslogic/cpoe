@@ -17,6 +17,13 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::time::{Duration, Instant};
 
+/// Per-tier entropy thresholds from draft-condrey-rats-pop.
+pub const ENTROPY_THRESHOLD_BASIC: f64 = 2.0;
+/// Standard tier entropy threshold (bits).
+pub const ENTROPY_THRESHOLD_STANDARD: f64 = 3.0;
+/// Enhanced tier entropy threshold (bits).
+pub const ENTROPY_THRESHOLD_ENHANCED: f64 = 3.0;
+
 /// Configuration for behavioral checkpoint timing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -34,7 +41,7 @@ impl Default for Config {
             min_keystroke_interval: 50,
             max_keystroke_interval: 500,
             pause_threshold_secs: 5.0,
-            entropy_threshold_bits: 32.0,
+            entropy_threshold_bits: ENTROPY_THRESHOLD_STANDARD,
             size_delta_threshold: 256,
             max_time_interval_secs: 300.0,
         }

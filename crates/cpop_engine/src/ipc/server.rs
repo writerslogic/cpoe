@@ -88,13 +88,23 @@ async fn handle_connection_inner<S: tokio::io::AsyncRead + tokio::io::AsyncWrite
     };
 
     let mut len_buf = [0u8; 4];
+    /// Idle timeout for IPC connections: close after this many seconds of no messages.
+    const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
     loop {
         let msg_len = {
-            match stream.read_exact(&mut len_buf).await {
-                Ok(_) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                Err(_) => break,
+            match tokio::time::timeout(IDLE_TIMEOUT, stream.read_exact(&mut len_buf)).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                Ok(Err(_)) => break,
+                Err(_) => {
+                    log::info!(
+                        "IPC: idle timeout ({}s) on {}, closing connection",
+                        IDLE_TIMEOUT.as_secs(),
+                        transport_label
+                    );
+                    break;
+                }
             }
             let len = u32::from_le_bytes(len_buf) as usize;
             if len > MAX_MESSAGE_SIZE {

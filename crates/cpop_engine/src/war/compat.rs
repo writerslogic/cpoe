@@ -128,6 +128,7 @@ impl Block {
             score: None,
             checkpoints: None,
             duration_secs: None,
+            rfc3161_timestamp: None,
             evidence: None,
             signed,
             verifier_nonce: None,

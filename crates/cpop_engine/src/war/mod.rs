@@ -107,6 +107,7 @@ impl Block {
             score: None, // Set during forensic analysis or export
             checkpoints,
             duration_secs,
+            rfc3161_timestamp: None,
             evidence: Some(Box::new(packet.clone())),
             signed: false,
             verifier_nonce: packet.verifier_nonce,

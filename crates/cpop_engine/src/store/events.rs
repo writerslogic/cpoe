@@ -259,6 +259,119 @@ impl SecureStore {
         Ok(count)
     }
 
+    /// Export all events for a given device identity (GDPR Article 15 DSAR).
+    ///
+    /// Returns every `SecureEvent` associated with the given `device_id`,
+    /// ordered by insertion, for data subject access request fulfillment.
+    pub fn export_all_events_for_identity(
+        &self,
+        device_id: &[u8; 16],
+    ) -> anyhow::Result<Vec<SecureEvent>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, device_id, machine_id, timestamp_ns, file_path, content_hash, file_size, size_delta,
+                    previous_hash, event_hash, context_type, context_note, vdf_input, vdf_output,
+                    vdf_iterations, forensic_score, is_paste, hardware_counter, input_method
+             FROM secure_events WHERE device_id = ? ORDER BY id ASC",
+        )?;
+
+        let rows = stmt.query_map([&device_id[..]], |row| {
+            let device_id_bytes: Vec<u8> = row.get(1)?;
+            let content_hash: Vec<u8> = row.get(5)?;
+            let previous_hash: Vec<u8> = row.get(8)?;
+            let event_hash: Vec<u8> = row.get(9)?;
+            let vdf_input: Option<Vec<u8>> = row.get(12)?;
+            let vdf_output: Option<Vec<u8>> = row.get(13)?;
+
+            Ok(SecureEvent {
+                id: Some(row.get(0)?),
+                device_id: device_id_bytes.try_into().map_err(|_| {
+                    rusqlite::Error::InvalidColumnType(
+                        1,
+                        "device_id".into(),
+                        rusqlite::types::Type::Blob,
+                    )
+                })?,
+                machine_id: row.get(2)?,
+                timestamp_ns: row.get(3)?,
+                file_path: row.get(4)?,
+                content_hash: content_hash.try_into().map_err(|_| {
+                    rusqlite::Error::InvalidColumnType(
+                        5,
+                        "content_hash".into(),
+                        rusqlite::types::Type::Blob,
+                    )
+                })?,
+                file_size: row.get(6)?,
+                size_delta: row.get(7)?,
+                previous_hash: previous_hash.try_into().map_err(|_| {
+                    rusqlite::Error::InvalidColumnType(
+                        8,
+                        "previous_hash".into(),
+                        rusqlite::types::Type::Blob,
+                    )
+                })?,
+                event_hash: event_hash.try_into().map_err(|_| {
+                    rusqlite::Error::InvalidColumnType(
+                        9,
+                        "event_hash".into(),
+                        rusqlite::types::Type::Blob,
+                    )
+                })?,
+                context_type: row.get(10)?,
+                context_note: row.get(11)?,
+                vdf_input: vdf_input
+                    .map(|v| {
+                        v.try_into().map_err(|_| {
+                            rusqlite::Error::InvalidColumnType(
+                                12,
+                                "vdf_input".into(),
+                                rusqlite::types::Type::Blob,
+                            )
+                        })
+                    })
+                    .transpose()?,
+                vdf_output: vdf_output
+                    .map(|v| {
+                        v.try_into().map_err(|_| {
+                            rusqlite::Error::InvalidColumnType(
+                                13,
+                                "vdf_output".into(),
+                                rusqlite::types::Type::Blob,
+                            )
+                        })
+                    })
+                    .transpose()?,
+                vdf_iterations: u64::try_from(row.get::<_, i64>(14)?).unwrap_or(0),
+                forensic_score: row.get(15)?,
+                is_paste: row.get::<_, i32>(16)? != 0,
+                hardware_counter: row
+                    .get::<_, Option<i64>>(17)?
+                    .map(|v| u64::try_from(v).unwrap_or(0)),
+                input_method: row.get(18)?,
+            })
+        })?;
+
+        rows.map(|r| r.map_err(anyhow::Error::from)).collect()
+    }
+
+    /// Check retention policy and prune events older than `retention_days`.
+    ///
+    /// Returns the number of payload rows pruned. Logs the count at info level.
+    pub fn enforce_retention(&self, retention_days: u32) -> anyhow::Result<usize> {
+        if retention_days == 0 {
+            return Err(anyhow::anyhow!("retention_days must be > 0"));
+        }
+        let count = self.prune_payloads(retention_days as i64)?;
+        if count > 0 {
+            log::info!(
+                "Retention purge: pruned payloads from {} events older than {} days",
+                count,
+                retention_days
+            );
+        }
+        Ok(count)
+    }
+
     /// Null out context notes and VDF data for events older than `days_to_keep`.
     ///
     /// Pruned fields (`vdf_input`, `vdf_output`) are NOT included in event HMAC

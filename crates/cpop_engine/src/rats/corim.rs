@@ -16,7 +16,7 @@ use ciborium::Value;
 #[derive(Debug, Clone, PartialEq)]
 pub struct CpopReferenceValues {
     /// Minimum accumulated entropy bits per checkpoint trigger.
-    /// Source: `timing::Config::entropy_threshold_bits` (32.0).
+    /// Source: `timing::ENTROPY_THRESHOLD_STANDARD` (3.0) per draft-condrey-rats-pop.
     pub min_entropy_bits: f64,
     /// VDF timing bounds: (min_ratio, max_ratio) of claimed duration.
     /// Source: `verify::SWF_DURATION_RATIO_MIN` (0.5), `SWF_DURATION_RATIO_MAX` (3.0).
@@ -42,7 +42,7 @@ pub struct CpopReferenceValues {
 impl Default for CpopReferenceValues {
     fn default() -> Self {
         Self {
-            min_entropy_bits: 32.0,
+            min_entropy_bits: crate::timing::ENTROPY_THRESHOLD_STANDARD,
             vdf_duration_bounds: (0.5, 3.0),
             min_checkpoints_standard: 3,
             min_checkpoints_enhanced: 3,
@@ -208,8 +208,8 @@ mod tests {
     fn test_default_reference_values() {
         let rv = CpopReferenceValues::default();
         // Values must match the hardcoded constants in the codebase:
-        // timing::Config::entropy_threshold_bits
-        assert_eq!(rv.min_entropy_bits, 32.0);
+        // timing::ENTROPY_THRESHOLD_STANDARD (draft-condrey-rats-pop)
+        assert_eq!(rv.min_entropy_bits, 3.0);
         // verify::SWF_DURATION_RATIO_MIN / SWF_DURATION_RATIO_MAX
         assert_eq!(rv.vdf_duration_bounds, (0.5, 3.0));
         // war::appraisal::MIN_CHECKPOINTS
