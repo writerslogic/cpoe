@@ -116,6 +116,11 @@ pub const K_CG_HEAD_INSERT_EVENT_TAP: u32 = 0;
 pub const K_CG_EVENT_TAP_OPTION_LISTEN_ONLY: u32 = 0x00000001;
 pub const K_CG_EVENT_KEY_DOWN: u32 = 10;
 pub const K_CG_EVENT_MOUSE_MOVED: u32 = 5;
+/// macOS sends this event_type when it disables the tap due to callback latency.
+pub const K_CG_EVENT_TAP_DISABLED_BY_TIMEOUT: u32 = 0xFFFFFFFE;
+/// macOS sends this when the tap is disabled by user input (rare).
+#[allow(dead_code)]
+pub const K_CG_EVENT_TAP_DISABLED_BY_USER_INPUT: u32 = 0xFFFFFFFF;
 
 pub const fn cg_event_mask_bit(event_type: u32) -> u64 {
     1u64 << event_type

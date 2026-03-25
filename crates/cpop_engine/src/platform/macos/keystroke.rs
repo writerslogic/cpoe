@@ -7,11 +7,39 @@ use super::synthetic::verify_event_source;
 use super::{EventVerificationResult, HidDeviceInfo, KeystrokeEvent, SyntheticStats};
 use crate::platform::KeystrokeCapture;
 use anyhow::{anyhow, Result};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 
 use crate::jitter::SimpleJitterSession;
 use crate::DateTimeNanosExt;
+
+/// Global counter for debug file writes (only write every 100th keystroke).
+static DEBUG_KEYSTROKE_COUNTER: AtomicU64 = AtomicU64::new(0);
+/// Global counter for tap-disabled-by-timeout events (for diagnostics).
+static TAP_DISABLED_COUNT: AtomicU64 = AtomicU64::new(0);
+
+/// Write a debug line to `$CPOP_DATA_DIR/keystroke_debug.txt` (append mode).
+/// Only writes every 100th call to avoid I/O overhead in the hot path.
+fn debug_write_keystroke(tag: &str, count: u64) {
+    let n = DEBUG_KEYSTROKE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    if n % 100 != 0 {
+        return;
+    }
+    let dir = match std::env::var("CPOP_DATA_DIR") {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+    let path = std::path::Path::new(&dir).join("keystroke_debug.txt");
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        use std::io::Write;
+        let now = chrono::Utc::now();
+        let _ = writeln!(f, "[{now}] {tag}: event #{n}, total_count={count}");
+    }
+}
 
 /// Thread-safe handle to a CFRunLoop that can be stopped from another thread.
 /// SAFETY: CFRunLoopStop is documented as thread-safe in Apple's documentation.
@@ -156,13 +184,32 @@ impl KeystrokeMonitor {
         let tap_resources: Arc<Mutex<Option<EventTapResources>>> = Arc::new(Mutex::new(None));
         let tap_resources_clone = Arc::clone(&tap_resources);
 
-        // H-070: No Mutex around on_keystroke — the callback is only ever invoked
+        // Shared pointer so the callback can re-enable the tap after timeout.
+        let tap_ptr = Arc::new(AtomicPtr::new(std::ptr::null_mut()));
+        let tap_ptr_cb = Arc::clone(&tap_ptr);
+
+        // H-070: No Mutex around on_keystroke; the callback is only ever invoked
         // from the single run-loop thread, so &mut access is safe without locking.
         let mut on_keystroke = on_keystroke;
 
         let thread = std::thread::spawn(move || {
             let mut tap_cb: TapCallback =
                 Box::new(move |event: *mut std::ffi::c_void, event_type: u32| {
+                    // macOS disables the tap when the callback is too slow.
+                    // Re-enable it immediately.
+                    if event_type == K_CG_EVENT_TAP_DISABLED_BY_TIMEOUT {
+                        let ptr: *mut std::ffi::c_void = tap_ptr_cb.load(Ordering::SeqCst);
+                        if !ptr.is_null() {
+                            unsafe { CGEventTapEnable(ptr, true) };
+                        }
+                        let n = TAP_DISABLED_COUNT.fetch_add(1, Ordering::Relaxed);
+                        log::warn!(
+                            "CGEventTap disabled by timeout, re-enabled (count={})",
+                            n + 1
+                        );
+                        return;
+                    }
+
                     if event_type == K_CG_EVENT_KEY_DOWN {
                         let verification = unsafe { verify_event_source(event) };
 
@@ -177,7 +224,8 @@ impl KeystrokeMonitor {
                             }
                         }
 
-                        ks_count.fetch_add(1, Ordering::SeqCst);
+                        let count = ks_count.fetch_add(1, Ordering::SeqCst) + 1;
+                        debug_write_keystroke("tap_cb", count);
 
                         on_keystroke(event, verification);
                     }
@@ -197,6 +245,9 @@ impl KeystrokeMonitor {
                     let _ = ready_tx.send(Err(anyhow!("Failed to create CGEventTap")));
                     return;
                 }
+
+                // Store tap pointer so the callback can re-enable after timeout.
+                tap_ptr.store(tap, Ordering::SeqCst);
 
                 let source = CFMachPortCreateRunLoopSource(std::ptr::null_mut(), tap, 0);
                 if source.is_null() {
@@ -226,7 +277,7 @@ impl KeystrokeMonitor {
             }
         });
 
-        match ready_rx.recv() {
+        match ready_rx.recv_timeout(std::time::Duration::from_secs(5)) {
             Ok(Ok(())) => Ok(Self {
                 thread: Some(thread),
                 keystroke_count,
@@ -236,7 +287,7 @@ impl KeystrokeMonitor {
                 tap_resources,
             }),
             Ok(Err(err)) => Err(err),
-            Err(_) => Err(anyhow!("Failed to initialize CGEventTap thread")),
+            Err(_) => Err(anyhow!("CGEventTap initialization timed out after 5s")),
         }
     }
 
@@ -324,12 +375,31 @@ impl KeystrokeCapture for MacOSKeystrokeCapture {
 
         running.store(true, Ordering::SeqCst);
 
+        // Shared pointer so the callback can re-enable the tap after timeout.
+        let tap_ptr = Arc::new(AtomicPtr::new(std::ptr::null_mut()));
+        let tap_ptr_cb = Arc::clone(&tap_ptr);
+
         let (ready_tx, ready_rx) = mpsc::channel();
 
         let thread = std::thread::spawn(move || {
             let mut tap_cb: TapCallback =
                 Box::new(move |event: *mut std::ffi::c_void, event_type: u32| {
                     if !running.load(Ordering::SeqCst) {
+                        return;
+                    }
+
+                    // macOS disables the tap when the callback is too slow.
+                    // Re-enable it immediately.
+                    if event_type == K_CG_EVENT_TAP_DISABLED_BY_TIMEOUT {
+                        let ptr: *mut std::ffi::c_void = tap_ptr_cb.load(Ordering::SeqCst);
+                        if !ptr.is_null() {
+                            unsafe { CGEventTapEnable(ptr, true) };
+                        }
+                        let n = TAP_DISABLED_COUNT.fetch_add(1, Ordering::Relaxed);
+                        log::warn!(
+                            "CGEventTap disabled by timeout, re-enabled (count={})",
+                            n + 1
+                        );
                         return;
                     }
 
@@ -366,6 +436,10 @@ impl KeystrokeCapture for MacOSKeystrokeCapture {
                                 transport_type: None,
                             };
 
+                            debug_write_keystroke(
+                                "capture_tx",
+                                total_events.load(Ordering::Relaxed),
+                            );
                             let _ = tx.send(keystroke);
                         }
                     }
@@ -385,6 +459,9 @@ impl KeystrokeCapture for MacOSKeystrokeCapture {
                     let _ = ready_tx.send(Err(anyhow!("Failed to create CGEventTap")));
                     return;
                 }
+
+                // Store tap pointer so the callback can re-enable after timeout.
+                tap_ptr.store(tap, Ordering::SeqCst);
 
                 let source = CFMachPortCreateRunLoopSource(std::ptr::null_mut(), tap, 0);
                 if source.is_null() {
@@ -414,7 +491,7 @@ impl KeystrokeCapture for MacOSKeystrokeCapture {
             }
         });
 
-        match ready_rx.recv() {
+        match ready_rx.recv_timeout(std::time::Duration::from_secs(5)) {
             Ok(Ok(())) => {
                 self.thread = Some(thread);
                 Ok(rx)
@@ -427,7 +504,7 @@ impl KeystrokeCapture for MacOSKeystrokeCapture {
             Err(_) => {
                 self.running.store(false, Ordering::SeqCst);
                 self.sender = None;
-                Err(anyhow!("Failed to initialize CGEventTap thread"))
+                Err(anyhow!("CGEventTap initialization timed out after 5s"))
             }
         }
     }

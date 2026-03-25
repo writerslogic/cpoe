@@ -294,9 +294,30 @@ impl Sentinel {
                     let sync_rx: std::sync::mpsc::Receiver<crate::platform::KeystrokeEvent> =
                         sync_rx;
                     let handle = std::thread::spawn(move || {
+                        let mut bridge_count: u64 = 0;
                         while keystroke_running.load(Ordering::SeqCst) {
                             match sync_rx.recv_timeout(std::time::Duration::from_millis(100)) {
                                 Ok(event) => {
+                                    bridge_count += 1;
+                                    // Debug: log every 100th event to file
+                                    if bridge_count % 100 == 0 {
+                                        if let Ok(dir) = std::env::var("CPOP_DATA_DIR") {
+                                            let path = std::path::Path::new(&dir)
+                                                .join("keystroke_debug.txt");
+                                            if let Ok(mut f) = std::fs::OpenOptions::new()
+                                                .create(true)
+                                                .append(true)
+                                                .open(&path)
+                                            {
+                                                use std::io::Write;
+                                                let _ = writeln!(
+                                                    f,
+                                                    "[{}] bridge: forwarded #{bridge_count}",
+                                                    chrono::Utc::now()
+                                                );
+                                            }
+                                        }
+                                    }
                                     if let Err(e) = keystroke_tx.try_send(event) {
                                         match e {
                                             tokio::sync::mpsc::error::TrySendError::Full(_) => {
