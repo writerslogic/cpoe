@@ -181,15 +181,11 @@ const ALLOWED_DOMAINS: &[&str] = &[
 ];
 
 /// Check whether a document URL is from an allowed domain.
+/// Only exact matches are accepted; arbitrary subdomains are not allowed.
 fn is_domain_allowed(document_url: &str) -> bool {
     if let Ok(url) = url::Url::parse(document_url) {
         if let Some(host) = url.host_str() {
-            ALLOWED_DOMAINS.iter().any(|d| {
-                host == *d
-                    || (host.len() > d.len()
-                        && host.ends_with(d)
-                        && host.as_bytes()[host.len() - d.len() - 1] == b'.')
-            })
+            ALLOWED_DOMAINS.iter().any(|d| host == *d)
         } else {
             false
         }
@@ -243,9 +239,15 @@ fn handle_start_session(document_url: String, document_title: String) -> Respons
         };
     }
 
-    let data_dir = dirs::data_local_dir()
-        .or_else(dirs::home_dir)
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let data_dir = match dirs::data_local_dir().or_else(dirs::home_dir) {
+        Some(dir) => dir,
+        None => {
+            return Response::Error {
+                message: "Cannot determine data directory: no home or local data dir".into(),
+                code: "NO_DATA_DIR".into(),
+            };
+        }
+    };
 
     let session_dir = data_dir.join("CPOP").join("browser-sessions");
     if let Err(e) = std::fs::create_dir_all(&session_dir) {
@@ -450,15 +452,8 @@ fn handle_checkpoint(
     // Ensure stored timestamp never goes backward even with tolerance.
     let now_ns = now_ns.max(session.last_checkpoint_ts + 1);
 
-    if char_count < session.last_char_count {
-        return Response::Error {
-            message: format!(
-                "Non-monotonic char_count: {} < previous {}",
-                char_count, session.last_char_count
-            ),
-            code: "CHAR_COUNT_NON_MONOTONIC".into(),
-        };
-    }
+    // Allow char_count to decrease (user may delete text or undo).
+    // This is normal editing behavior, not an integrity violation.
 
     if let Some(ref browser_commitment) = commitment {
         let expected = compute_commitment(

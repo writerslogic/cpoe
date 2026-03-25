@@ -50,7 +50,7 @@ fn verify_json(file_path: &PathBuf, output_war: Option<PathBuf>, out: &OutputMod
     let spec_warnings = check_spec_compliance(&raw_json);
 
     let packet: evidence::Packet =
-        serde_json::from_slice(&data).context("parse evidence packet")?;
+        serde_json::from_value(raw_json.clone()).context("parse evidence packet")?;
 
     let config = ensure_dirs()?;
     let vdf_params = load_vdf_params(&config);
@@ -67,7 +67,7 @@ fn verify_json(file_path: &PathBuf, output_war: Option<PathBuf>, out: &OutputMod
         write_war_appraisal(&packet, &war_path)?;
     }
 
-    let overall_valid = result.structural && result.signature != Some(false);
+    let overall_valid = result.structural && result.signature == Some(true);
 
     if out.json {
         print_json_result(file_path, &packet, &raw_json, &result, &spec_warnings);
@@ -160,8 +160,9 @@ fn print_json_result(
     result: &FullVerificationResult,
     spec_warnings: &[String],
 ) {
+    let signature_present = result.signature.is_some();
     let mut obj = serde_json::json!({
-        "valid": result.structural && result.signature != Some(false),
+        "valid": result.structural && result.signature == Some(true),
         "file": file_path.to_string_lossy(),
         "document": packet.document.title,
         "checkpoints": packet.checkpoints.len(),
@@ -169,6 +170,7 @@ fn print_json_result(
         "verdict": verdict_str(&result.verdict),
         "structural": result.structural,
         "signature": result.signature,
+        "signature_present": signature_present,
         "seals": {
             "jitter_tag_present": result.seals.jitter_tag_present,
             "entangled_binding_valid": result.seals.entangled_binding_valid,
@@ -465,6 +467,15 @@ fn verify_cpop(file_path: &PathBuf, out: &OutputMode) -> Result<()> {
 }
 
 fn verify_cwar(file_path: &PathBuf, out: &OutputMode) -> Result<()> {
+    const MAX_CWAR_SIZE: u64 = 50_000_000; // 50 MB
+    let meta = fs::metadata(file_path).context("stat WAR file")?;
+    if meta.len() > MAX_CWAR_SIZE {
+        return Err(anyhow!(
+            "WAR file too large ({} bytes, max {})",
+            meta.len(),
+            MAX_CWAR_SIZE
+        ));
+    }
     let data = fs::read_to_string(file_path).context("read WAR file")?;
     let war_block =
         war::Block::decode_ascii(&data).map_err(|e| anyhow!("parse WAR block: {}", e))?;

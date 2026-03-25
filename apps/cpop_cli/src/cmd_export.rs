@@ -1025,11 +1025,12 @@ async fn embed_steganographic_watermark(
     let mmr_root = latest.event_hash;
     let signing_key = crate::util::load_signing_key(dir)?;
     let hmac_key = Zeroizing::new({
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
-        hasher.update(b"witnessd-stego-key-v1");
-        hasher.update(signing_key.to_bytes());
-        let key: [u8; 32] = hasher.finalize().into();
+        use hkdf::Hkdf;
+        use sha2::Sha256;
+        let hk = Hkdf::<Sha256>::new(Some(b"witnessd-stego-key-v1"), &signing_key.to_bytes());
+        let mut key = [0u8; 32];
+        hk.expand(b"stego-hmac", &mut key)
+            .expect("32 bytes is a valid HKDF-SHA256 output length");
         key
     });
 
@@ -1347,7 +1348,7 @@ fn make_session(
 ) -> report::ReportSession {
     let first = &events[start_idx];
     let last = &events[end_idx];
-    let duration_ns = (last.timestamp_ns - first.timestamp_ns).max(0) as f64;
+    let duration_ns = last.timestamp_ns.saturating_sub(first.timestamp_ns).max(0) as f64;
     let duration_min = duration_ns / 60_000_000_000.0;
     let event_count = end_idx - start_idx + 1;
     let size_change: i64 = events[start_idx..=end_idx]

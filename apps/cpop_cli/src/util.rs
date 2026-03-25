@@ -8,7 +8,7 @@ use ed25519_dalek::SigningKey;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroize;
 
 /// 500 MB — maximum allowed file size.
 pub(crate) const MAX_FILE_SIZE: u64 = 500_000_000;
@@ -110,19 +110,18 @@ pub fn open_secure_store() -> Result<SecureStore> {
     let db_path = dir.join("events.db");
 
     if let Ok(Some(hmac_key)) = cpop_engine::identity::SecureStorage::load_hmac_key() {
-        let key_vec = Zeroizing::new(hmac_key.to_vec());
-        return SecureStore::open(&db_path, (*key_vec).clone())
+        return SecureStore::open(&db_path, hmac_key.to_vec())
             .map_err(|e| anyhow!("Database error: {}", e));
     }
 
     let signing_key = load_signing_key(&dir)?;
-    let hmac_key = Zeroizing::new(derive_hmac_key(&signing_key.to_bytes()));
+    let hmac_key = derive_hmac_key(&signing_key.to_bytes());
 
     if let Err(e) = cpop_engine::identity::SecureStorage::save_hmac_key(&hmac_key) {
         eprintln!("Warning: HMAC key migration: {}", e);
     }
 
-    SecureStore::open(&db_path, (*hmac_key).to_vec()).map_err(|e| anyhow!("Database error: {}", e))
+    SecureStore::open(&db_path, hmac_key.to_vec()).map_err(|e| anyhow!("Database error: {}", e))
 }
 
 pub fn get_device_id() -> Result<[u8; 16]> {
@@ -188,7 +187,7 @@ pub fn ed25519_pubkey_to_did_key(pubkey: &[u8]) -> String {
 pub fn write_restrictive(path: &Path, data: &[u8]) -> Result<()> {
     // Write to temp file first, set permissions, then atomic rename.
     // This prevents a window where the file exists with wrong permissions.
-    let tmp = path.with_extension("tmp");
+    let tmp = PathBuf::from(format!("{}.tmp", path.display()));
     fs::write(&tmp, data).map_err(|e| anyhow!("write {}: {}", tmp.display(), e))?;
     cpop_engine::restrict_permissions(&tmp, 0o600).map_err(|e| {
         let _ = fs::remove_file(&tmp);
