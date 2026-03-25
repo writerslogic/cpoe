@@ -1129,3 +1129,237 @@ fn test_entangled_commit_mixed_physics_and_none() {
     chain.verify().expect("verify mixed physics chain");
     drop(dir);
 }
+
+#[test]
+fn test_commit_entangled_with_lock() {
+    let (dir, path) = temp_document();
+    let mut chain = test_chain_entangled(&path);
+
+    // The entangled commit acquires an advisory file lock internally.
+    // Verify it succeeds (lock acquired and released) for a normal commit.
+    let cp = chain
+        .commit_entangled(
+            Some("locked commit".to_string()),
+            [0x11u8; 32],
+            "session-lock".to_string(),
+            20,
+            Duration::from_millis(10),
+            None,
+        )
+        .expect("entangled commit should acquire lock");
+
+    assert_eq!(cp.ordinal, 0);
+    assert!(cp.vdf.is_some());
+    assert!(cp.jitter_binding.is_some());
+    chain.verify().expect("verify after locked commit");
+    drop(dir);
+}
+
+#[test]
+fn test_commit_rfc_with_argon2() {
+    let (dir, path) = temp_document();
+    let mut chain = test_chain(&path);
+
+    let calibration = rfc::CalibrationAttestation::new(
+        1_000_000,
+        "test-hardware".to_string(),
+        vec![0u8; 64],
+        1700000000,
+    );
+
+    // First commit (ordinal 0): should produce argon2_swf
+    let cp0 = chain
+        .commit_rfc(
+            Some("RFC commit with Argon2".to_string()),
+            Duration::from_millis(10),
+            None,
+            None,
+            calibration.clone(),
+            None,
+        )
+        .expect("commit_rfc 0");
+
+    assert!(
+        cp0.argon2_swf.is_some(),
+        "genesis RFC commit should have Argon2id SWF proof"
+    );
+    let swf = cp0.argon2_swf.as_ref().unwrap();
+    assert_ne!(swf.merkle_root, [0u8; 32], "Merkle root should be non-zero");
+    assert_ne!(swf.input, [0u8; 32], "SWF input should be non-zero");
+
+    // Second commit with VDF
+    fs::write(&path, b"updated for argon2 test").expect("update");
+    let cp1 = chain
+        .commit_rfc(
+            None,
+            Duration::from_millis(10),
+            None,
+            None,
+            calibration,
+            None,
+        )
+        .expect("commit_rfc 1");
+
+    assert!(
+        cp1.argon2_swf.is_some(),
+        "second RFC commit should also have Argon2id SWF"
+    );
+    chain
+        .verify()
+        .expect("verify chain with Argon2id SWF proofs");
+    drop(dir);
+}
+
+#[test]
+fn test_verify_detailed_catches_tampered_hash() {
+    let (dir, path) = temp_document();
+    let mut chain = test_chain(&path);
+
+    chain
+        .commit_with_vdf_duration(None, Duration::from_millis(10))
+        .expect("commit 0");
+
+    fs::write(&path, b"updated").expect("update");
+    chain
+        .commit_with_vdf_duration(None, Duration::from_millis(10))
+        .expect("commit 1");
+
+    // Tamper with content_hash but do NOT recompute the checkpoint hash
+    chain.checkpoints[1].content_hash = [0xDE; 32];
+
+    let report = chain.verify_detailed();
+    assert!(
+        !report.valid,
+        "tampered content_hash should fail verification"
+    );
+    assert!(
+        report.errors.iter().any(|e| e.contains("hash mismatch")),
+        "should report hash mismatch, got: {:?}",
+        report.errors
+    );
+    drop(dir);
+}
+
+#[test]
+fn test_verify_detailed_catches_bad_signature() {
+    let (dir, path) = temp_document();
+    let mut chain = Chain::new(&path, test_vdf_params())
+        .expect("create chain")
+        .with_signature_policy(SignaturePolicy::Required);
+
+    chain
+        .commit_with_vdf_duration(None, Duration::from_millis(10))
+        .expect("commit 0");
+
+    // Attach a truncated signature (wrong length)
+    chain.checkpoints[0].signature = Some(vec![0xAA; 32]);
+    chain.checkpoints[0].hash = chain.checkpoints[0].compute_hash();
+
+    let report = chain.verify_detailed();
+    assert!(!report.valid);
+    assert!(
+        report
+            .errors
+            .iter()
+            .any(|e| e.contains("invalid Ed25519 signature length")),
+        "should reject wrong-length signature, got: {:?}",
+        report.errors
+    );
+    drop(dir);
+}
+
+#[test]
+fn test_save_load_roundtrip() {
+    let dir = TempDir::new().expect("create temp dir");
+    let canonical_dir = dir.path().canonicalize().expect("canonicalize");
+    let path = canonical_dir.join("roundtrip_doc.txt");
+    fs::write(&path, b"roundtrip content").expect("write");
+
+    let mut chain = test_chain(&path);
+    chain
+        .commit_with_vdf_duration(Some("first".to_string()), Duration::from_millis(10))
+        .expect("commit 0");
+
+    fs::write(&path, b"updated roundtrip content").expect("update");
+    chain
+        .commit_with_vdf_duration(Some("second".to_string()), Duration::from_millis(10))
+        .expect("commit 1");
+
+    let chain_path = canonical_dir.join("roundtrip_chain.json");
+    chain.save(&chain_path).expect("save");
+
+    let loaded = Chain::load(&chain_path).expect("load");
+    assert_eq!(loaded.document_id, chain.document_id);
+    assert_eq!(loaded.document_path, chain.document_path);
+    assert_eq!(loaded.checkpoints.len(), 2);
+    assert_eq!(loaded.entanglement_mode, chain.entanglement_mode);
+    assert_eq!(loaded.signature_policy, chain.signature_policy);
+
+    for i in 0..2 {
+        assert_eq!(loaded.checkpoints[i].ordinal, chain.checkpoints[i].ordinal);
+        assert_eq!(loaded.checkpoints[i].hash, chain.checkpoints[i].hash);
+        assert_eq!(
+            loaded.checkpoints[i].content_hash,
+            chain.checkpoints[i].content_hash
+        );
+        assert_eq!(
+            loaded.checkpoints[i].previous_hash,
+            chain.checkpoints[i].previous_hash
+        );
+        assert_eq!(loaded.checkpoints[i].message, chain.checkpoints[i].message);
+    }
+
+    loaded.verify().expect("loaded chain should verify");
+    drop(dir);
+}
+
+#[test]
+fn test_genesis_prev_hash_deterministic() {
+    let (dir, path) = temp_document();
+    let mut chain1 = test_chain(&path);
+    let mut chain2 = test_chain(&path);
+
+    let cp1 = chain1
+        .commit_with_vdf_duration(None, Duration::from_millis(10))
+        .expect("commit chain1");
+    let cp2 = chain2
+        .commit_with_vdf_duration(None, Duration::from_millis(10))
+        .expect("commit chain2");
+
+    // Same file content and path should produce the same genesis prev-hash
+    assert_eq!(
+        cp1.previous_hash, cp2.previous_hash,
+        "genesis prev-hash should be deterministic for the same document"
+    );
+    assert_ne!(
+        cp1.previous_hash, [0u8; 32],
+        "genesis prev-hash should not be zeros"
+    );
+    drop(dir);
+}
+
+#[test]
+fn test_chain_handles_empty_file() {
+    let dir = TempDir::new().expect("create temp dir");
+    let canonical_dir = dir.path().canonicalize().expect("canonicalize");
+    let path = canonical_dir.join("empty.txt");
+    fs::write(&path, b"").expect("write empty file");
+
+    let mut chain = test_chain(&path);
+    let cp = chain
+        .commit_with_vdf_duration(None, Duration::from_millis(10))
+        .expect("commit on empty file");
+
+    assert_eq!(cp.ordinal, 0);
+    assert_eq!(cp.content_size, 0);
+    assert_ne!(
+        cp.content_hash, [0u8; 32],
+        "hash of empty file should not be all-zeros"
+    );
+    assert_ne!(
+        cp.previous_hash, [0u8; 32],
+        "genesis prev-hash should not be zeros"
+    );
+    chain.verify().expect("verify chain with empty file");
+    drop(dir);
+}
