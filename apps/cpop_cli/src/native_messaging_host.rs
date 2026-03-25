@@ -247,7 +247,7 @@ fn handle_start_session(document_url: String, document_title: String) -> Respons
         Some(dir) => dir,
         None => {
             return Response::Error {
-                message: "Cannot determine data directory: no home or local data dir".into(),
+                message: "Cannot determine data directory: no home or local data dir found".into(),
                 code: "NO_DATA_DIR".into(),
             };
         }

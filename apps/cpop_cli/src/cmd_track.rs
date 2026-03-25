@@ -94,40 +94,10 @@ impl TrackTarget {
 
 fn classify_target(path: &Path) -> Result<TrackTarget> {
     if !path.exists() {
-        // If it looks like a file path, create it so tracking can begin,
-        // but only if it's inside the current directory.
-        let looks_like_file = path.extension().is_some();
-        if looks_like_file {
-            let cwd = std::env::current_dir().context("Cannot determine current directory")?;
-            let parent = path
-                .parent()
-                .filter(|p| !p.as_os_str().is_empty())
-                .unwrap_or(&cwd);
-            let canonical_parent = fs::canonicalize(parent).map_err(|_| {
-                anyhow!(
-                    "Parent directory does not exist: {}\n\nCreate it first.",
-                    parent.display()
-                )
-            })?;
-            let canonical_cwd = fs::canonicalize(&cwd)?;
-            if !canonical_parent.starts_with(&canonical_cwd) {
-                return Err(anyhow!(
-                    "Refusing to create file outside the current directory: {}\n\n\
-                     Create the file manually or run from its parent directory.",
-                    path.display()
-                ));
-            }
-            fs::File::create(path)
-                .with_context(|| format!("Cannot create file: {}", path.display()))?;
-            cpop_engine::restrict_permissions(path, 0o600)
-                .with_context(|| format!("set permissions: {}", path.display()))?;
-            eprintln!("Created new file: {}", path.display());
-        } else {
-            return Err(anyhow!(
-                "Not found: {}\n\nCheck that the path exists.",
-                path.display()
-            ));
-        }
+        return Err(anyhow!(
+            "Not found: {}\n\nCreate the file first, then track it.",
+            path.display()
+        ));
     }
 
     let abs = fs::canonicalize(path)
@@ -697,10 +667,9 @@ async fn cmd_track_start(
                             Ok(CheckpointResult::Created) => {
                                 *checkpoint_counts.entry(canonical.clone()).or_insert(0) += 1;
                                 last_checkpoint_map.insert(canonical.clone(), now);
-                                if last_checkpoint_map.len() > 100 {
-                                    let cutoff = Instant::now() - Duration::from_secs(60);
-                                    last_checkpoint_map.retain(|_, &mut v| v > cutoff);
-                                }
+                                // Clean stale entries on every checkpoint to prevent unbounded growth
+                                let cutoff = Instant::now() - Duration::from_secs(60);
+                                last_checkpoint_map.retain(|_, &mut v| v > cutoff);
                                 let total: u32 = checkpoint_counts.values().sum();
                                 let ks = session.lock().map(|s| s.keystroke_count()).unwrap_or(0);
                                 let file_display = if target.is_single_file() {

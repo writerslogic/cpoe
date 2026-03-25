@@ -27,9 +27,9 @@
 ## High
 
 ### CLI (Rust)
-- [ ] **H-001** `cpop_cli/src/native_messaging_host.rs:189` — Subdomain allowlist permissive (`evil.notion.so` passes).
-- [ ] **H-002** `cpop_cli/src/cmd_track.rs:96` — Auto-creates files at arbitrary paths without confirmation.
-- [ ] **H-003** `cpop_cli/src/cmd_export.rs:80` — `--no-beacons` and `--beacon-timeout` flags silently ignored (no-ops).
+- [x] **H-001** `cpop_cli/src/native_messaging_host.rs:189` — Subdomain allowlist permissive (`evil.notion.so` passes).
+- [x] **H-002** `cpop_cli/src/cmd_track.rs:96` — Auto-creates files at arbitrary paths without confirmation.
+- [x] **H-003** `cpop_cli/src/cmd_export.rs:80` — `--no-beacons` and `--beacon-timeout` flags silently ignored (no-ops).
 
 ### Engine (Rust)
 - [x] **H-004** `cpop_engine/src/tpm/secure_enclave.rs:1032` — `writersproof_dir()` panics on missing home directory.
@@ -48,23 +48,23 @@
 ## Medium
 
 ### CLI
-- [ ] **M-001** `native_messaging_host.rs:246` — Data dir falls back to CWD if home unavailable.
-- [ ] **M-002** `native_messaging_host.rs:453` — Rejects non-monotonic char count; breaks on delete/undo.
-- [ ] **M-003** `cmd_track.rs:606` — ctrlc handler failure silently discarded.
-- [ ] **M-004** `cmd_track.rs:640` — Symlink following may track unintended files.
-- [ ] **M-005** `cmd_export.rs:582` — TOCTOU: char_count computed from different file read than hash.
-- [ ] **M-006** `cmd_export.rs:1011` — Stego HMAC key uses SHA-256 not HKDF.
-- [ ] **M-007** `cmd_export.rs:1335` — Timestamp subtraction may underflow on unordered events.
-- [ ] **M-008** `util.rs:112` — HMAC key cloned out of Zeroizing wrapper.
-- [ ] **M-009** `util.rs:191` — `with_extension("tmp")` replaces extension; temp file collision.
-- [ ] **M-010** `cmd_verify.rs:46` — Evidence file deserialized twice.
-- [ ] **M-011** `cmd_verify.rs:70` — Unsigned packets pass as `"valid": true` in JSON output.
-- [ ] **M-012** `cmd_verify.rs:471` — No file size check on `.cwar` before read. Large file DoS.
-- [ ] **M-013** `cmd_config.rs:205` — EDITOR env var doesn't handle quoted paths.
-- [ ] **M-014** `cmd_config.rs:79` — Display shows "true" for integer config set to "1".
-- [ ] **M-015** `cmd_status.rs:130` — `catch_unwind` around TPM; false safety for FFI panics.
-- [ ] **M-016** `cmd_fingerprint.rs:186` — Error matching via string comparison.
-- [ ] **M-017** `cli.rs:116` — `beacon_timeout` no upper bound validation.
+- [x] **M-001** `native_messaging_host.rs:246` — Data dir falls back to CWD if home unavailable.
+- [x] **M-002** `native_messaging_host.rs:453` — Rejects non-monotonic char count; breaks on delete/undo.
+- [x] **M-003** `cmd_track.rs:606` — ctrlc handler failure silently discarded.
+- [x] **M-004** `cmd_track.rs:640` — Symlink following may track unintended files.
+- [x] **M-005** `cmd_export.rs:582` — TOCTOU: char_count computed from different file read than hash.
+- [x] **M-006** `cmd_export.rs:1011` — Stego HMAC key uses SHA-256 not HKDF.
+- [x] **M-007** `cmd_export.rs:1335` — Timestamp subtraction may underflow on unordered events.
+- [x] **M-008** `util.rs:112` — HMAC key cloned out of Zeroizing wrapper.
+- [x] **M-009** `util.rs:191` — `with_extension("tmp")` replaces extension; temp file collision.
+- [x] **M-010** `cmd_verify.rs:46` — Evidence file deserialized twice.
+- [x] **M-011** `cmd_verify.rs:70` — Unsigned packets pass as `"valid": true` in JSON output.
+- [x] **M-012** `cmd_verify.rs:471` — No file size check on `.cwar` before read. Large file DoS.
+- [x] **M-013** `cmd_config.rs:205` — EDITOR env var doesn't handle quoted paths.
+- [x] **M-014** `cmd_config.rs:79` — Display shows "true" for integer config set to "1".
+- [x] **M-015** `cmd_status.rs:130` — `catch_unwind` around TPM; false safety for FFI panics.
+- [x] **M-016** `cmd_fingerprint.rs:186` — Error matching via string comparison.
+- [x] **M-017** `cli.rs:116` — `beacon_timeout` no upper bound validation.
 
 ### Engine
 - [x] **M-018** `tpm/secure_enclave.rs:465` — Legacy v4 XOR seal non-authenticated, repeating keystream.
@@ -89,13 +89,13 @@
 ## Low
 
 ### CLI
-- [ ] **L-001** `cmd_track.rs:681` — `last_checkpoint_map` unbounded between cleanups.
-- [ ] **L-002** `cmd_export.rs:525` — Integer negation could use `.unsigned_abs()`.
-- [ ] **L-003** `util.rs:204` — `normalize_path` doesn't resolve `..` for non-existent paths.
-- [ ] **L-004** `cmd_verify.rs:387` — `write_war_appraisal` silently swallows errors.
-- [ ] **L-005** `cmd_log.rs:236` — Duplicate `#[test]` attribute.
-- [ ] **L-006** `cmd_fingerprint.rs:297` — Delete reads stdin in non-interactive contexts.
-- [ ] **L-007** `cmd_status.rs:76` — Derived HMAC key not zeroized.
+- [x] **L-001** `cmd_track.rs:681` — `last_checkpoint_map` unbounded between cleanups.
+- [x] **L-002** `cmd_export.rs:525` — Integer negation could use `.unsigned_abs()`.
+- [x] **L-003** `util.rs:204` — `normalize_path` doesn't resolve `..` for non-existent paths.
+- [x] **L-004** `cmd_verify.rs:387` — `write_war_appraisal` silently swallows errors.
+- [x] **L-005** `cmd_log.rs:236` — Duplicate `#[test]` attribute.
+- [x] **L-006** `cmd_fingerprint.rs:297` — Delete reads stdin in non-interactive contexts.
+- [x] **L-007** `cmd_status.rs:76` — Derived HMAC key not zeroized.
 
 ### Engine
 - [x] **L-008** `tpm/secure_enclave.rs:972` — `extract_public_key` leaks SecKeyRef.

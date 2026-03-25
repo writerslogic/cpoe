@@ -161,8 +161,10 @@ fn print_json_result(
     spec_warnings: &[String],
 ) {
     let signature_present = result.signature.is_some();
+    let signed = result.signature.is_some();
     let mut obj = serde_json::json!({
         "valid": result.structural && result.signature == Some(true),
+        "signed": signed,
         "file": file_path.to_string_lossy(),
         "document": packet.document.title,
         "checkpoints": packet.checkpoints.len(),
@@ -467,7 +469,7 @@ fn verify_cpop(file_path: &PathBuf, out: &OutputMode) -> Result<()> {
 }
 
 fn verify_cwar(file_path: &PathBuf, out: &OutputMode) -> Result<()> {
-    const MAX_CWAR_SIZE: u64 = 50_000_000; // 50 MB
+    const MAX_CWAR_SIZE: u64 = 10_000_000; // 10 MB
     let meta = fs::metadata(file_path).context("stat WAR file")?;
     if meta.len() > MAX_CWAR_SIZE {
         return Err(anyhow!(

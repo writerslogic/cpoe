@@ -114,7 +114,7 @@ pub enum Commands {
         #[arg(long)]
         no_beacons: bool,
         /// Beacon fetch timeout in seconds (1-120)
-        #[arg(long, default_value = "5", value_parser = clap::value_parser!(u64).range(1..=120))]
+        #[arg(long, default_value = "5", value_parser = clap::value_parser!(u64).range(1..=300))]
         beacon_timeout: u64,
     },
 

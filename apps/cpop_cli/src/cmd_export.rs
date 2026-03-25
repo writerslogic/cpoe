@@ -77,15 +77,11 @@ pub(crate) async fn cmd_export(
     beacon_timeout: u64,
     out: &OutputMode,
 ) -> Result<()> {
-    if no_beacons {
+    if no_beacons && !out.quiet && !out.json {
         eprintln!("Note: --no-beacons is set; beacon anchoring will be skipped.");
     }
-    if beacon_timeout != 30 {
-        if no_beacons {
-            eprintln!("Note: --beacon-timeout ignored when --no-beacons is set.");
-        } else {
-            eprintln!("Note: --beacon-timeout set to {}s.", beacon_timeout);
-        }
+    if beacon_timeout != 5 && !no_beacons && !out.quiet && !out.json {
+        eprintln!("Note: --beacon-timeout set to {}s.", beacon_timeout);
     }
     let abs_path = fs::canonicalize(file_path).map_err(|e| {
         anyhow!(
@@ -240,6 +236,29 @@ pub(crate) async fn cmd_export(
         tpm_device_id: &tpm_device_id,
         out,
     })?;
+
+    // Submit beacon anchor unless disabled.
+    if !no_beacons {
+        let beacon_result =
+            cpop_engine::ffi::beacon::ffi_submit_beacon(abs_path_str.clone(), beacon_timeout);
+        if beacon_result.success {
+            if !out.quiet && !out.json {
+                if let Some(ref url) = beacon_result.verification_url {
+                    println!("Beacon anchor submitted: {}", url);
+                } else {
+                    println!("Beacon anchor submitted.");
+                }
+            }
+        } else if !out.quiet && !out.json {
+            eprintln!(
+                "Warning: beacon submission failed: {}",
+                beacon_result
+                    .error_message
+                    .as_deref()
+                    .unwrap_or("unknown error")
+            );
+        }
+    }
 
     if out.json {
         let json_out = serde_json::json!({

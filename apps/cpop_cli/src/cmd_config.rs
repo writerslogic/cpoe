@@ -369,6 +369,10 @@ fn prompt_voice_consent(
 }
 
 /// Split EDITOR into command + args.
+///
+/// WARNING: This uses simple whitespace splitting and does not handle quoted
+/// paths (e.g. `EDITOR='"/Applications/My Editor.app/Contents/MacOS/editor" --wait'`).
+/// Users with spaces in their editor path should use a symlink or wrapper script.
 fn parse_editor_value(editor: &str) -> Result<(String, Vec<String>)> {
     let parts: Vec<String> = editor.split_whitespace().map(String::from).collect();
     let (cmd, args) = parts

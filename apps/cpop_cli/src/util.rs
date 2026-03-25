@@ -110,6 +110,9 @@ pub fn open_secure_store() -> Result<SecureStore> {
     let db_path = dir.join("events.db");
 
     if let Ok(Some(hmac_key)) = cpop_engine::identity::SecureStorage::load_hmac_key() {
+        // Clone out of Zeroizing: SecureStore::open takes Vec<u8> by value,
+        // so the inner vec must be copied. The Zeroizing wrapper still zeroes
+        // its copy on drop; SecureStore owns and zeroes the other.
         return SecureStore::open(&db_path, hmac_key.to_vec())
             .map_err(|e| anyhow!("Database error: {}", e));
     }
@@ -200,6 +203,8 @@ pub fn write_restrictive(path: &Path, data: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// WARNING: Does not resolve `..` for non-existent paths beyond lexical
+/// cleaning. Callers must validate against directory traversal attacks.
 pub fn normalize_path(path: &Path) -> Result<PathBuf> {
     let path_str = path.to_string_lossy();
     let expanded = if path_str.starts_with("~/") || path_str == "~" {
@@ -589,7 +594,7 @@ mod tests {
     fn test_write_restrictive_no_temp_file_on_failure() {
         let path = Path::new("/tmp/nonexistent_cpop_parent_dir_xyz/file.key");
         let _ = write_restrictive(path, b"data");
-        let tmp_path = path.with_extension("tmp");
+        let tmp_path = PathBuf::from(format!("{}.tmp", path.display()));
         assert!(
             !tmp_path.exists(),
             "temp file should be cleaned up on failure"

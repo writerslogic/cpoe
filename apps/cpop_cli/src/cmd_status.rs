@@ -129,30 +129,33 @@ pub(crate) fn cmd_status(out: &OutputMode) -> Result<()> {
 
     // NOTE: catch_unwind only catches Rust panics; FFI panics (e.g. from TPM
     // libraries) will abort the process regardless. This is a best-effort guard.
-    let (tpm_status, tpm_details) = match std::panic::catch_unwind(|| {
-        let provider = tpm::detect_provider();
-        let caps = provider.capabilities();
-        (provider.device_id().to_string(), caps)
-    }) {
-        Ok((device_id, caps)) => {
-            if caps.hardware_backed {
-                (
-                    "hardware-backed".to_string(),
-                    Some(serde_json::json!({
-                        "device_id": device_id,
-                        "supports_pcrs": caps.supports_pcrs,
-                        "supports_sealing": caps.supports_sealing,
-                        "supports_attestation": caps.supports_attestation,
-                        "monotonic_counter": caps.monotonic_counter,
-                        "secure_clock": caps.secure_clock,
-                    })),
-                )
-            } else {
-                ("software".to_string(), None)
+    // AssertUnwindSafe is acceptable here because we discard all captured state
+    // on panic and only use the returned values on the success path.
+    let (tpm_status, tpm_details) =
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let provider = tpm::detect_provider();
+            let caps = provider.capabilities();
+            (provider.device_id().to_string(), caps)
+        })) {
+            Ok((device_id, caps)) => {
+                if caps.hardware_backed {
+                    (
+                        "hardware-backed".to_string(),
+                        Some(serde_json::json!({
+                            "device_id": device_id,
+                            "supports_pcrs": caps.supports_pcrs,
+                            "supports_sealing": caps.supports_sealing,
+                            "supports_attestation": caps.supports_attestation,
+                            "monotonic_counter": caps.monotonic_counter,
+                            "secure_clock": caps.secure_clock,
+                        })),
+                    )
+                } else {
+                    ("software".to_string(), None)
+                }
             }
-        }
-        Err(_) => ("detection_failed".to_string(), None),
-    };
+            Err(_) => ("detection_failed".to_string(), None),
+        };
 
     if out.json {
         let files_json: Vec<serde_json::Value> = tracked_files
