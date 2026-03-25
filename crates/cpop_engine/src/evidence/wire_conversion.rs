@@ -282,6 +282,6 @@ fn checkpoint_to_wire(cp: &Checkpoint, use_entangled: bool) -> CheckpointWire {
         verifier_nonce: None,
     };
     // SHA-256(CBOR(checkpoint \ {8})) per spec
-    wire.checkpoint_hash = wire.compute_hash();
+    wire.checkpoint_hash = wire.compute_hash().expect("checkpoint hash computation");
     wire
 }

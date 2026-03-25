@@ -215,6 +215,49 @@ mod tests {
     }
 
     #[test]
+    fn test_toip_egf_has_three_tiers() {
+        let egf = writersproof_egf();
+        let names: Vec<&str> = egf
+            .assurance_levels
+            .iter()
+            .map(|l| l.name.as_str())
+            .collect();
+        assert_eq!(names.len(), 3);
+        assert!(names.contains(&"software_only"));
+        assert!(names.contains(&"hardware_assisted"));
+        assert!(names.contains(&"hardware_bound"));
+    }
+
+    #[test]
+    fn test_toip_trqp_query_structure() {
+        let query = TrqpQuery {
+            registry_uri: "https://trust.writersproof.com/v2".to_string(),
+            entity_did: "did:web:author.example.com".to_string(),
+            authorization: "issue_attestation".to_string(),
+            egf_uri: "urn:writersproof:egf:v1".to_string(),
+        };
+        // All fields populated.
+        assert!(!query.registry_uri.is_empty());
+        assert!(query.entity_did.starts_with("did:"));
+        assert!(!query.authorization.is_empty());
+        assert!(query.egf_uri.starts_with("urn:"));
+
+        let resp = TrqpResponse {
+            authorized: true,
+            entity_did: query.entity_did.clone(),
+            authorization: query.authorization.clone(),
+            egf_uri: query.egf_uri.clone(),
+            effective_from: Some("2026-01-01T00:00:00Z".to_string()),
+            effective_until: None,
+        };
+        // Response echoes query fields.
+        assert_eq!(resp.entity_did, query.entity_did);
+        assert_eq!(resp.authorization, query.authorization);
+        assert_eq!(resp.egf_uri, query.egf_uri);
+        assert!(resp.authorized);
+    }
+
+    #[test]
     fn test_trqp_response_authorized() {
         let resp = TrqpResponse {
             authorized: true,

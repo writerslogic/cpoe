@@ -108,6 +108,32 @@ mod tests {
     }
 
     #[test]
+    fn test_jpeg_trust_profile_indicators_present() {
+        let profile = cpop_trust_profile();
+        // All three required trust indicators must be present.
+        let types: Vec<&str> = profile
+            .trust_indicators
+            .iter()
+            .map(|i| i.indicator_type.as_str())
+            .collect();
+        assert!(
+            types.contains(&"process_evidence"),
+            "missing process_evidence"
+        );
+        assert!(
+            types.contains(&"identity_binding"),
+            "missing identity_binding"
+        );
+        assert!(types.contains(&"temporal_proof"), "missing temporal_proof");
+
+        // All indicators must have a non-empty description and valid source.
+        for indicator in &profile.trust_indicators {
+            assert!(!indicator.description.is_empty());
+            assert_eq!(indicator.source, "cpop_attestation");
+        }
+    }
+
+    #[test]
     fn test_profile_serialization_roundtrip() {
         let profile = cpop_trust_profile();
         let json = serde_json::to_string(&profile).expect("serialize");

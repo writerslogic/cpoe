@@ -165,6 +165,60 @@ mod tests {
     }
 
     #[test]
+    fn test_scitt_signed_statement_structure() {
+        let evidence = vec![0xD2, 0x84, 0x43, 0x50, 0x4F, 0x50];
+        let doc_hash = [0x42u8; 32];
+        let stmt = evidence_to_signed_statement(&evidence, &doc_hash);
+
+        // Envelope preserves exact evidence bytes.
+        assert_eq!(stmt.envelope, evidence);
+        // Content type is the CPOP media type.
+        assert_eq!(stmt.content_type, "application/vnd.writersproof.cpop+cbor");
+        // Subject is 64-char hex of the doc hash.
+        assert_eq!(stmt.subject.len(), 64);
+        assert!(stmt.subject.starts_with("42"));
+        assert!(stmt.subject.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn test_scitt_beacon_to_receipt() {
+        let beacon = WpBeaconAttestation {
+            drand_round: 99999,
+            drand_randomness: "deadbeef".repeat(8),
+            nist_pulse_index: 55555,
+            nist_output_value: "cafebabe".repeat(16),
+            nist_timestamp: "2026-03-25T12:00:00Z".to_string(),
+            fetched_at: "2026-03-25T12:00:05Z".to_string(),
+            wp_signature: "ff".repeat(64),
+        };
+
+        let receipt = beacon_to_receipt_format(&beacon);
+
+        // registered_at comes from fetched_at.
+        assert_eq!(receipt.registered_at, "2026-03-25T12:00:05Z");
+        // service_id is the beacon service identifier.
+        assert_eq!(receipt.service_id, "writersproof-beacon-v1");
+        // Receipt CBOR decodes to a map with 5 entries.
+        let val: ciborium::value::Value =
+            ciborium::de::from_reader(&receipt.receipt_cbor[..]).expect("valid CBOR");
+        let map = match val {
+            ciborium::value::Value::Map(m) => m,
+            _ => panic!("expected CBOR map in receipt"),
+        };
+        assert_eq!(map.len(), 5);
+
+        // Verify specific fields are present and correct.
+        let has_drand_round = map.iter().any(|(k, v)| {
+            matches!(k, ciborium::value::Value::Text(s) if s == "drand_round")
+                && matches!(v, ciborium::value::Value::Integer(i) if {
+                    let n: i128 = (*i).into();
+                    n == 99999
+                })
+        });
+        assert!(has_drand_round, "receipt should contain drand_round=99999");
+    }
+
+    #[test]
     fn test_signed_statement_serde_roundtrip() {
         let stmt = SignedStatement {
             envelope: vec![0x01, 0x02],

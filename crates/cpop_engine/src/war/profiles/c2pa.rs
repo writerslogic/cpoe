@@ -152,3 +152,80 @@ pub fn to_c2pa_action(
         parameters: Some(params),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::war::ear::{Ar4siStatus, EarAppraisal, EarToken, VerifierId};
+    use crate::war::profiles::standards::AiDisclosureLevel;
+    use chrono::Utc;
+    use std::collections::BTreeMap;
+
+    fn make_ear() -> EarToken {
+        let mut submods = BTreeMap::new();
+        submods.insert(
+            "pop".to_string(),
+            EarAppraisal {
+                ear_status: Ar4siStatus::Affirming,
+                ear_trustworthiness_vector: None,
+                ear_appraisal_policy_id: None,
+                pop_seal: None,
+                pop_evidence_ref: None,
+                pop_entropy_report: None,
+                pop_forgery_cost: None,
+                pop_forensic_summary: None,
+                pop_chain_length: Some(10),
+                pop_chain_duration: Some(7200),
+                pop_absence_claims: None,
+                pop_warnings: None,
+                pop_process_start: None,
+                pop_process_end: None,
+            },
+        );
+        EarToken {
+            eat_profile: "urn:ietf:params:rats:eat:profile:pop:1.0".to_string(),
+            iat: Utc::now().timestamp(),
+            ear_verifier_id: VerifierId::default(),
+            submods,
+        }
+    }
+
+    #[test]
+    fn test_c2pa_action_with_ai_disclosure() {
+        let ear = make_ear();
+
+        // No AI disclosure: humanCreation.
+        let action_none = to_c2pa_action(&ear, None).expect("action");
+        assert_eq!(
+            action_none.digital_source_type,
+            "http://cv.iptc.org/newscodes/digitalsourcetype/humanCreation"
+        );
+        assert_eq!(action_none.action, "c2pa.created");
+
+        // AI-assisted disclosure: compositeWithTrainedAlgorithmicMedia.
+        let assisted = AiDisclosureLevel::AiAssisted;
+        let action_assist = to_c2pa_action(&ear, Some(&assisted)).expect("action");
+        assert_eq!(
+            action_assist.digital_source_type,
+            "http://cv.iptc.org/newscodes/digitalsourcetype/compositeWithTrainedAlgorithmicMedia"
+        );
+
+        // AI-generated disclosure: trainedAlgorithmicMedia.
+        let generated = AiDisclosureLevel::AiGenerated;
+        let action_gen = to_c2pa_action(&ear, Some(&generated)).expect("action");
+        assert_eq!(
+            action_gen.digital_source_type,
+            "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia"
+        );
+    }
+
+    #[test]
+    fn test_c2pa_assertion_structure() {
+        let ear = make_ear();
+        let assertion = to_c2pa_assertion(&ear).expect("assertion");
+        assert_eq!(assertion.label, ASSERTION_LABEL);
+        assert_eq!(assertion.data.status, "affirming");
+        assert_eq!(assertion.data.chain_length, Some(10));
+        assert_eq!(assertion.data.chain_duration_secs, Some(7200));
+    }
+}

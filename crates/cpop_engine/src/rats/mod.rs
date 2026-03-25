@@ -142,6 +142,62 @@ mod tests {
     }
 
     #[test]
+    fn test_eat_cwt_includes_all_claims() {
+        let ear = test_ear_token();
+        let provider = SoftwareProvider::new();
+        let cwt_bytes = encode_eat_cwt(&ear, &provider).expect("encode");
+
+        // Decode payload from COSE_Sign1 and verify all EAR claims present.
+        let sign1 = coset::CoseSign1::from_slice(&cwt_bytes).expect("parse COSE_Sign1");
+        let payload = sign1.payload.expect("payload");
+        let value: ciborium::Value =
+            ciborium::from_reader(payload.as_slice()).expect("CBOR payload");
+        let map = match &value {
+            ciborium::Value::Map(m) => m,
+            _ => panic!("payload should be CBOR map"),
+        };
+
+        // Check CWT standard claims: iss(1), sub(2), iat(6).
+        let keys: Vec<i64> = map
+            .iter()
+            .filter_map(|(k, _)| match k {
+                ciborium::Value::Integer(i) => {
+                    let v: i128 = (*i).into();
+                    i64::try_from(v).ok()
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(keys.contains(&1), "missing CWT iss");
+        assert!(keys.contains(&2), "missing CWT sub");
+        assert!(keys.contains(&6), "missing CWT iat");
+        // EAT profile (265), verifier_id (1004), submods (266).
+        assert!(keys.contains(&265), "missing EAT profile");
+        assert!(keys.contains(&1004), "missing verifier ID");
+        assert!(keys.contains(&266), "missing submods");
+    }
+
+    #[test]
+    fn test_eat_cwt_cose_structure() {
+        let ear = test_ear_token();
+        let provider = SoftwareProvider::new();
+        let cwt_bytes = encode_eat_cwt(&ear, &provider).expect("encode");
+
+        // Must be a valid COSE_Sign1: 4-element CBOR array.
+        assert_eq!(
+            cwt_bytes[0], 0x84,
+            "COSE_Sign1 must start with 0x84 (4-element array)"
+        );
+
+        let sign1 = coset::CoseSign1::from_slice(&cwt_bytes).expect("parse as COSE_Sign1");
+        // Has protected headers, payload, and non-empty signature.
+        assert!(sign1.payload.is_some());
+        assert!(!sign1.signature.is_empty());
+        // Protected header contains algorithm.
+        assert!(sign1.protected.header.alg.is_some());
+    }
+
+    #[test]
     fn test_rats_types() {
         // RatsRole construction and labels
         assert_eq!(RatsRole::Attester.as_str(), "attester");

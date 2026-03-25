@@ -251,6 +251,50 @@ mod tests {
     }
 
     #[test]
+    fn test_corim_reference_values_match_codebase() {
+        let rv = CpopReferenceValues::default();
+        // Verify CoRIM defaults match the actual code constants they reference.
+        assert!(
+            (rv.min_entropy_bits - crate::timing::ENTROPY_THRESHOLD_STANDARD).abs() < f64::EPSILON,
+            "min_entropy_bits should match timing::ENTROPY_THRESHOLD_STANDARD"
+        );
+        // VDF bounds: verify::SWF_DURATION_RATIO_MIN / MAX
+        assert_eq!(rv.vdf_duration_bounds.0, 0.5);
+        assert_eq!(rv.vdf_duration_bounds.1, 3.0);
+        // war::appraisal::MIN_CHECKPOINTS
+        assert_eq!(rv.min_checkpoints_standard, 3);
+        // forensics::dictation thresholds
+        assert_eq!(rv.typing_rate_bounds.0, 40.0);
+        assert_eq!(rv.typing_rate_bounds.1, 200.0);
+        // platform::synthetic::MIN_HUMAN_IKI_MS
+        assert_eq!(rv.synthetic_threshold_ms, 35.0);
+        // config::FingerprintConfig::min_samples
+        assert_eq!(rv.min_jitter_samples, 100);
+    }
+
+    #[test]
+    fn test_corim_custom_values_roundtrip() {
+        let custom = CpopReferenceValues {
+            min_entropy_bits: 7.5,
+            vdf_duration_bounds: (0.1, 10.0),
+            min_checkpoints_standard: 50,
+            min_checkpoints_enhanced: 100,
+            typing_rate_bounds: (10.0, 500.0),
+            synthetic_threshold_ms: 5.0,
+            min_jitter_samples: 2000,
+        };
+        let cbor = custom.to_cbor();
+        let decoded = CpopReferenceValues::from_cbor(&cbor).expect("custom roundtrip");
+        assert!((decoded.min_entropy_bits - 7.5).abs() < f64::EPSILON);
+        assert_eq!(decoded.vdf_duration_bounds, (0.1, 10.0));
+        assert_eq!(decoded.min_checkpoints_standard, 50);
+        assert_eq!(decoded.min_checkpoints_enhanced, 100);
+        assert_eq!(decoded.typing_rate_bounds, (10.0, 500.0));
+        assert!((decoded.synthetic_threshold_ms - 5.0).abs() < f64::EPSILON);
+        assert_eq!(decoded.min_jitter_samples, 2000);
+    }
+
+    #[test]
     fn test_corim_from_cbor_rejects_non_map() {
         let not_a_map = {
             let mut buf = Vec::new();

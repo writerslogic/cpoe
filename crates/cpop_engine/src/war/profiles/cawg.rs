@@ -377,6 +377,56 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[test]
+    fn test_cawg_identity_assertion_structure() {
+        let ear = make_ear();
+        let assertion =
+            to_cawg_identity(&ear, "did:key:z6MkStructure").expect("identity assertion");
+        // Label must be "cawg.identity".
+        assert_eq!(assertion.signer_payload.sig_type, "cawg.identity");
+        // Credential must be ICA type with WritersProof provider.
+        match &assertion.signer_payload.credential {
+            CawgCredential::Ica { provider, claims } => {
+                assert_eq!(provider, "https://writersproof.com");
+                // Must contain at least did and attestation_status claims.
+                let claim_types: Vec<&str> = claims.iter().map(|c| c.claim_type.as_str()).collect();
+                assert!(claim_types.contains(&"did"));
+                assert!(claim_types.contains(&"attestation_status"));
+            }
+            _ => panic!("expected ICA credential type"),
+        }
+        // Padding should be empty by default.
+        assert!(assertion.pad1.is_empty());
+        assert!(assertion.pad2.is_empty());
+    }
+
+    #[test]
+    fn test_cawg_tdm_human_authored_notallowed() {
+        let decl = make_decl(Vec::new());
+        let tdm = to_cawg_tdm(&decl);
+        // Human-authored content: generative training is "notAllowed".
+        let gen = tdm
+            .entries
+            .iter()
+            .find(|e| e.use_type == "cawg.ai_generative_training")
+            .expect("missing generative training entry");
+        assert_eq!(gen.permission, "notAllowed");
+    }
+
+    #[test]
+    fn test_cawg_tdm_ai_generated_allowed() {
+        let decl = make_decl(vec![make_ai_tool(AiExtent::Substantial)]);
+        let tdm = to_cawg_tdm(&decl);
+        // AI-generated: all entries should be "allowed".
+        for entry in &tdm.entries {
+            assert_eq!(
+                entry.permission, "allowed",
+                "{} should be allowed for AI content",
+                entry.use_type
+            );
+        }
+    }
+
     // -- TDM assertion tests --
 
     #[test]

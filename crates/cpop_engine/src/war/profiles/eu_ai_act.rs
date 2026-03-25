@@ -190,6 +190,60 @@ mod tests {
     }
 
     #[test]
+    fn test_eu_ai_act_none_is_human() {
+        let decl = make_decl(Vec::new());
+        let c = Article50Compliance::from_declaration(&decl);
+        assert!(!c.ai_generated, "AiExtent::None should not be AI-generated");
+        assert_eq!(c.machine_readable_label, LABEL_HUMAN_AUTHORED);
+    }
+
+    #[test]
+    fn test_eu_ai_act_substantial_is_ai() {
+        let decl = make_decl(vec![make_ai_tool(AiExtent::Substantial)]);
+        let c = Article50Compliance::from_declaration(&decl);
+        assert!(
+            c.ai_generated,
+            "AiExtent::Substantial should be AI-generated"
+        );
+        assert_eq!(c.machine_readable_label, LABEL_AI_GENERATED);
+    }
+
+    #[test]
+    fn test_eu_ai_act_iptc_mapping() {
+        // None -> humanCreation
+        let decl_none = make_decl(Vec::new());
+        let c_none = Article50Compliance::from_declaration(&decl_none);
+        assert_eq!(
+            c_none.iptc_digital_source_type,
+            "http://cv.iptc.org/newscodes/digitalsourcetype/humanCreation"
+        );
+
+        // Minimal -> compositeWithTrainedAlgorithmicMedia
+        let decl_min = make_decl(vec![make_ai_tool(AiExtent::Minimal)]);
+        let c_min = Article50Compliance::from_declaration(&decl_min);
+        assert_eq!(
+            c_min.iptc_digital_source_type,
+            "http://cv.iptc.org/newscodes/digitalsourcetype/compositeWithTrainedAlgorithmicMedia"
+        );
+
+        // Moderate -> compositeWithTrainedAlgorithmicMedia
+        let decl_mod = make_decl(vec![make_ai_tool(AiExtent::Moderate)]);
+        let c_mod = Article50Compliance::from_declaration(&decl_mod);
+        assert_eq!(
+            c_mod.iptc_digital_source_type,
+            "http://cv.iptc.org/newscodes/digitalsourcetype/compositeWithTrainedAlgorithmicMedia"
+        );
+
+        // Substantial -> trainedAlgorithmicMedia
+        let decl_sub = make_decl(vec![make_ai_tool(AiExtent::Substantial)]);
+        let c_sub = Article50Compliance::from_declaration(&decl_sub);
+        assert_eq!(
+            c_sub.iptc_digital_source_type,
+            "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia"
+        );
+    }
+
+    #[test]
     fn test_article50_assessed_at_is_rfc3339() {
         let decl = make_decl(Vec::new());
         let c = Article50Compliance::from_declaration(&decl);
