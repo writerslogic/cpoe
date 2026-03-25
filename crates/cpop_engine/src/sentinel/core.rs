@@ -426,6 +426,13 @@ impl Sentinel {
                             collector.record_keystroke(event.keycode, event.char_value);
                         }
 
+                        // Attribute keystroke to the currently focused document
+                        if let Some(ref path) = *current_focus.read_recover() {
+                            if let Some(session) = sessions.write_recover().get_mut(path) {
+                                session.keystroke_count += 1;
+                            }
+                        }
+
                         last_keystroke_time = std::time::Instant::now();
                     }
 
