@@ -59,12 +59,12 @@ pub(crate) fn load_hmac_key() -> Option<Zeroizing<Vec<u8>>> {
         }
     }
     use std::io::Read;
-    let mut raw = Vec::new();
-    let key_data = Zeroizing::new({
+    let mut raw = Zeroizing::new(Vec::new());
+    {
         let mut f = key_file;
         f.read_to_end(&mut raw).ok()?;
-        raw
-    });
+    }
+    let key_data = raw;
     let seed = if key_data.len() >= 32 {
         &key_data[..32]
     } else {

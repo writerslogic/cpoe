@@ -292,11 +292,14 @@ fn verify_duration(
         0.0
     };
 
-    // Claimed elapsed time from first to last checkpoint
+    // Claimed elapsed time from min to max checkpoint timestamp
     let claimed_seconds = if packet.checkpoints.len() >= 2 {
-        let first = packet.checkpoints.first().unwrap();
-        let last = packet.checkpoints.last().unwrap();
-        (last.timestamp - first.timestamp).num_milliseconds().max(0) as f64 / 1000.0
+        let min_ts = packet.checkpoints.iter().map(|cp| cp.timestamp).min();
+        let max_ts = packet.checkpoints.iter().map(|cp| cp.timestamp).max();
+        match (min_ts, max_ts) {
+            (Some(min), Some(max)) => (max - min).num_milliseconds().max(0) as f64 / 1000.0,
+            _ => 0.0,
+        }
     } else {
         0.0
     };
@@ -347,12 +350,14 @@ fn verify_key_provenance(packet: &Packet, warnings: &mut Vec<String>) -> KeyProv
 
     if let Some(ref kh) = packet.key_hierarchy {
         // Verify master → session certificate chain
-        let master_ok = hex::decode(&kh.master_public_key)
-            .map(|b| b.len() == 32)
-            .unwrap_or(false);
-        let session_ok = hex::decode(&kh.session_public_key)
-            .map(|b| b.len() == 32)
-            .unwrap_or(false);
+        let master_bytes_opt = hex::decode(&kh.master_public_key)
+            .ok()
+            .filter(|b| b.len() == 32);
+        let session_bytes_opt = hex::decode(&kh.session_public_key)
+            .ok()
+            .filter(|b| b.len() == 32);
+        let master_ok = master_bytes_opt.is_some();
+        let session_ok = session_bytes_opt.is_some();
         let cert_ok = base64_decode_len(&kh.session_certificate) == Some(64);
 
         if !master_ok || !session_ok || !cert_ok {
@@ -360,11 +365,9 @@ fn verify_key_provenance(packet: &Packet, warnings: &mut Vec<String>) -> KeyProv
             hierarchy_consistent = Some(false);
         } else if let Some(ref doc_hash_hex) = kh.session_document_hash {
             // Verify the certificate signature only when document hash is available.
-            // Reuse decoded bytes from the length checks above (guaranteed Ok at this point).
-            let master_bytes = hex::decode(&kh.master_public_key)
-                .expect("master_ok guarantees valid hex with len==32");
-            let session_bytes = hex::decode(&kh.session_public_key)
-                .expect("session_ok guarantees valid hex with len==32");
+            // Use already-decoded bytes from the length checks above.
+            let master_bytes = master_bytes_opt.expect("master_ok is true");
+            let session_bytes = session_bytes_opt.expect("session_ok is true");
             let session_id_result = hex::decode(&kh.session_id).ok().filter(|b| b.len() == 32);
             let doc_hash_result = hex::decode(doc_hash_hex).ok().filter(|b| b.len() == 32);
             match (session_id_result, doc_hash_result) {
@@ -445,9 +448,12 @@ fn verify_key_provenance(packet: &Packet, warnings: &mut Vec<String>) -> KeyProv
     if let Some(ref pubkey) = packet.signing_public_key {
         if let Some(ref kh) = packet.key_hierarchy {
             // The packet signing key should match one of the ratchet keys
-            let pubkey_hex = hex::encode(pubkey);
-            let found = kh.ratchet_public_keys.iter().any(|k| k == &pubkey_hex)
-                || kh.session_public_key == pubkey_hex;
+            let pubkey_hex = hex::encode(pubkey).to_lowercase();
+            let found = kh
+                .ratchet_public_keys
+                .iter()
+                .any(|k| k.to_lowercase() == pubkey_hex)
+                || kh.session_public_key.to_lowercase() == pubkey_hex;
             if !found {
                 warnings
                     .push("Packet signing key does not match any key in the hierarchy".to_string());

@@ -301,11 +301,9 @@ fn process_file_event(inner: &Arc<EngineInner>, path: &Path) -> Result<()> {
         return Ok(());
     }
 
-    let metadata = fs::metadata(path)?;
-    let file_size = metadata.len() as i64;
-
-    // Hash the actual file that changed, not the bundle directory
-    let content_hash = crate::crypto::hash_file(path)?;
+    // Open once: get both hash and size from the same file handle to avoid TOCTOU.
+    let (content_hash, file_size_u64) = crate::crypto::hash_file_with_size(path)?;
+    let file_size = file_size_u64 as i64;
 
     // Group events under the project bundle path when inside .scriv/.scrivx
     let resolved_path = resolve_project_path(path);
@@ -339,12 +337,13 @@ fn process_file_event(inner: &Arc<EngineInner>, path: &Path) -> Result<()> {
                 log::info!("File rename detected: {} \u{2192} {}", old_str, new_str);
 
                 // Migrate stored events to the new path
-                if let Ok(count) = inner
+                match inner
                     .store
                     .lock_recover()
                     .update_file_path(&old_str, &new_str)
                 {
-                    log::info!("Updated {count} events from old path to new path");
+                    Ok(count) => log::info!("Updated {count} events from old path to new path"),
+                    Err(e) => log::warn!("Could not migrate file path: {e}"),
                 }
 
                 // Copy file_sizes entry from old path to new path

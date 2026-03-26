@@ -22,6 +22,13 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::time::interval;
 use zeroize::Zeroize;
 
+/// Sentinel source PID for events pre-verified by CGEventTap.
+///
+/// Negative value distinguishes pre-verified tap events from real PIDs (>0)
+/// and synthetic/injected events (0). The validation layer does not penalize
+/// negative PIDs.
+const CGEVENTTAP_VERIFIED_PID: i64 = -1;
+
 /// Core sentinel daemon for document focus tracking and session management.
 pub struct Sentinel {
     pub(crate) config: Arc<SentinelConfig>,
@@ -472,7 +479,7 @@ impl Sentinel {
                                     event.timestamp_ns,
                                     event.keycode,
                                     sample.zone,
-                                    1, // Non-zero: PID already verified by CGEventTap
+                                    CGEVENTTAP_VERIFIED_PID, // pre-verified by CGEventTap; negative PID not penalized
                                     None,
                                     session.has_focus,
                                     &mut session.event_validation,

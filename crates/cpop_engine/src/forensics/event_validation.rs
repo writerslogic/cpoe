@@ -182,6 +182,7 @@ pub fn validate_keystroke_event(
 
     // --- pid mismatch ---
     // Injected/synthetic events have pid 0; real keystrokes have a non-zero source pid.
+    // Negative PIDs indicate pre-verified tap sources (e.g., CGEventTap) and are not penalized.
     if source_pid == 0 {
         flags.pid_mismatch = true;
         confidence -= 0.40;

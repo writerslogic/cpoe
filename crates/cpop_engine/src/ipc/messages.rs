@@ -29,11 +29,29 @@ fn validate_ipc_path(path: &Path) -> Result<(), String> {
         }
     }
 
-    // Canonicalize to resolve symlinks before the prefix check. Fall back to the
-    // raw path when the target does not exist yet (e.g. a new document path).
+    // Canonicalize to resolve symlinks before the prefix check. Fall back to a
+    // logically-resolved path (collapsing any `.` and `..` components) when the
+    // target does not exist yet (e.g. a new document path). Using the raw path
+    // directly would allow `/etc/../home/user/evil` to bypass prefix checks.
     let canonical: std::borrow::Cow<'_, Path> = match std::fs::canonicalize(path) {
         Ok(p) => std::borrow::Cow::Owned(p),
-        Err(_) => std::borrow::Cow::Borrowed(path),
+        Err(_) => {
+            let mut stack: Vec<std::ffi::OsString> = Vec::new();
+            for component in path.components() {
+                match component {
+                    Component::ParentDir => {
+                        stack.pop();
+                    }
+                    Component::CurDir => {}
+                    other => stack.push(other.as_os_str().to_owned()),
+                }
+            }
+            let mut resolved = PathBuf::new();
+            for part in stack {
+                resolved.push(part);
+            }
+            std::borrow::Cow::Owned(resolved)
+        }
     };
 
     // First line of defense at IPC boundary; sentinel::validate_path() does a

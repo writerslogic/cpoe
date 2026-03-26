@@ -349,9 +349,12 @@ impl WritersProofClient {
             )));
         }
 
-        resp.json::<VerifyResponse>()
+        let mut response = resp
+            .json::<VerifyResponse>()
             .await
-            .map_err(|e| Error::crypto(format!("verify response parse failed: {e}")))
+            .map_err(|e| Error::crypto(format!("verify response parse failed: {e}")))?;
+        response.sanitize();
+        Ok(response)
     }
 
     /// Request a steganographic watermark signing from WritersProof.

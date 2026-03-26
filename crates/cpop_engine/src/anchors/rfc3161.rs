@@ -113,9 +113,11 @@ impl Rfc3161Provider {
             0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01,
         ];
 
+        // MessageImprint SEQUENCE wraps AlgorithmIdentifier (OID + NULL) + OCTET STRING (hash)
+        let mi_content_len = sha256_oid.len() + 2 + 2 + 32; // OID + NULL tag/len + OCTET STRING tag/len + hash
         let mut message_imprint = Vec::new();
         message_imprint.push(0x30);
-        message_imprint.push((sha256_oid.len() + 2) as u8);
+        message_imprint.push(mi_content_len as u8);
         message_imprint.extend_from_slice(sha256_oid);
         message_imprint.push(0x05);
         message_imprint.push(0x00);

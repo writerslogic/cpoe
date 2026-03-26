@@ -48,10 +48,17 @@ impl NotaryProvider {
             .await
             .map_err(|e| AnchorError::Network(e.to_string()))?;
 
-        let value: serde_json::Value = response
-            .json()
+        let bytes = response
+            .bytes()
             .await
             .map_err(|e| AnchorError::Network(e.to_string()))?;
+        if bytes.len() > 10_000_000 {
+            return Err(AnchorError::Network(
+                "response body exceeds 10 MB limit".into(),
+            ));
+        }
+        let value: serde_json::Value =
+            serde_json::from_slice(&bytes).map_err(|e| AnchorError::Network(e.to_string()))?;
 
         super::http::check_json_rpc_error(&value)?;
 
@@ -81,11 +88,12 @@ impl AnchorProvider for NotaryProvider {
             .await?;
 
         let id = response.get("id").and_then(|v| v.as_str()).unwrap_or("");
-        let proof_data = response
-            .get("proof")
-            .and_then(|v| v.as_str())
-            .and_then(|s| base64::engine::general_purpose::STANDARD.decode(s).ok())
-            .unwrap_or_default();
+        let proof_data = match response.get("proof").and_then(|v| v.as_str()) {
+            Some(s) => base64::engine::general_purpose::STANDARD
+                .decode(s)
+                .map_err(|e| AnchorError::InvalidFormat(format!("bad base64: {e}")))?,
+            None => vec![],
+        };
 
         Ok(Proof {
             id: if id.is_empty() {
