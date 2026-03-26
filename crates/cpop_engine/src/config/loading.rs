@@ -15,6 +15,7 @@ impl CpopConfig {
             let raw = fs::read_to_string(&config_path)?;
             let mut config: CpopConfig = serde_json::from_str(&raw)?;
             config.data_dir = data_dir.to_path_buf();
+            config.beacons.sanitize();
             config.validate()?;
             return Ok(config);
         }

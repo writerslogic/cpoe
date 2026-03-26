@@ -5,7 +5,7 @@
 //! Bridges `checkpoint::Chain` → `EvidencePacketWire` for spec-compliant
 //! CBOR export per draft-condrey-rats-pop.
 
-use uuid::Uuid;
+use sha2::{Digest, Sha256};
 
 use crate::checkpoint::{Chain, Checkpoint};
 use cpop_protocol::rfc::wire_types::checkpoint::CheckpointWire;
@@ -77,7 +77,15 @@ pub fn chain_to_wire(chain: &Chain) -> EvidencePacketWire {
     EvidencePacketWire {
         version: 1,
         profile_uri: PROFILE_URI.to_string(),
-        packet_id: *Uuid::new_v4().as_bytes(),
+        packet_id: {
+            let mut h = Sha256::new();
+            h.update(b"cpop-packet-id-v1");
+            h.update(content_hash);
+            let d = h.finalize();
+            let mut id = [0u8; 16];
+            id.copy_from_slice(&d[..16]);
+            id
+        },
         created: chrono::Utc::now().timestamp_millis() as u64,
         document,
         checkpoints,
@@ -255,7 +263,16 @@ fn checkpoint_to_wire(cp: &Checkpoint, use_entangled: bool) -> CheckpointWire {
 
     let mut wire = CheckpointWire {
         sequence: cp.ordinal,
-        checkpoint_id: *Uuid::new_v4().as_bytes(),
+        checkpoint_id: {
+            let mut h = Sha256::new();
+            h.update(b"cpop-checkpoint-id-v1");
+            h.update(cp.content_hash);
+            h.update(cp.ordinal.to_le_bytes());
+            let d = h.finalize();
+            let mut id = [0u8; 16];
+            id.copy_from_slice(&d[..16]);
+            id
+        },
         timestamp: cp.timestamp.timestamp_millis() as u64,
         content_hash: HashValue::sha256(cp.content_hash.to_vec()),
         char_count: cp.content_size,

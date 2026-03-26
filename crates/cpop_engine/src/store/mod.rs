@@ -26,7 +26,10 @@ pub struct SecureStore {
 impl SecureStore {
     /// Open or create a secure store at `path`, initializing schema and verifying integrity.
     pub fn open<P: AsRef<Path>>(path: P, hmac_key: Vec<u8>) -> anyhow::Result<Self> {
+        let path = path.as_ref();
         let conn = Connection::open(path)?;
+        #[cfg(unix)]
+        crate::crypto::restrict_permissions(path, 0o600)?;
 
         let _: String = conn.query_row("PRAGMA journal_mode=WAL", [], |row| row.get(0))?;
         conn.execute_batch("PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;")?;

@@ -187,6 +187,10 @@ pub const PROOF_ALGORITHM_ENTANGLED: u16 = 21;
 /// Hard upper bound on iterations to prevent unbounded computation.
 const MAX_ITERATIONS: u64 = 10_000_000;
 
+// Compile-time guard: the salt I2OSP(i, 4) encoding uses u32, so MAX_ITERATIONS
+// must not exceed u32::MAX to prevent silent truncation.
+const _: () = assert!(MAX_ITERATIONS <= u32::MAX as u64);
+
 /// Validate iteration bounds shared by compute and verify paths.
 fn validate_iterations(iterations: u64) -> Result<(), String> {
     if iterations == 0 {

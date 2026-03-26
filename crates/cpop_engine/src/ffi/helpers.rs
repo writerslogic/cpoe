@@ -48,14 +48,23 @@ pub(crate) fn load_hmac_key() -> Option<Zeroizing<Vec<u8>>> {
 
     let data_dir = get_data_dir()?;
     let key_path = data_dir.join("signing_key");
-    // Reject files >1KB to guard against symlink-to-large-file DoS
-    if let Ok(meta) = std::fs::metadata(&key_path) {
+    // Open the file first, then stat the handle to avoid a TOCTOU race between
+    // the metadata check and the subsequent read (the file could be swapped for
+    // a symlink pointing to a large file between the two syscalls).
+    let key_file = std::fs::File::open(&key_path).ok()?;
+    if let Ok(meta) = key_file.metadata() {
         if meta.len() > 1024 {
             log::error!("Signing key file too large: {} bytes", meta.len());
             return None;
         }
     }
-    let key_data = Zeroizing::new(std::fs::read(&key_path).ok()?);
+    use std::io::Read;
+    let mut raw = Vec::new();
+    let key_data = Zeroizing::new({
+        let mut f = key_file;
+        f.read_to_end(&mut raw).ok()?;
+        raw
+    });
     let seed = if key_data.len() >= 32 {
         &key_data[..32]
     } else {

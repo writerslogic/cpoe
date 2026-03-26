@@ -29,9 +29,16 @@ fn validate_ipc_path(path: &Path) -> Result<(), String> {
         }
     }
 
+    // Canonicalize to resolve symlinks before the prefix check. Fall back to the
+    // raw path when the target does not exist yet (e.g. a new document path).
+    let canonical: std::borrow::Cow<'_, Path> = match std::fs::canonicalize(path) {
+        Ok(p) => std::borrow::Cow::Owned(p),
+        Err(_) => std::borrow::Cow::Borrowed(path),
+    };
+
     // First line of defense at IPC boundary; sentinel::validate_path() does a
     // second check post-canonicalization.
-    if is_blocked_system_path(path)? {
+    if is_blocked_system_path(&canonical)? {
         return Err("Access to system directory denied".to_string());
     }
 

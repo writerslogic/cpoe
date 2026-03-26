@@ -99,6 +99,15 @@ pub struct VerifyResponse {
     pub war: Option<String>,
 }
 
+impl VerifyResponse {
+    /// Clamp fields to their valid ranges after deserialization.
+    /// `confidence` must be in [0.0, 1.0]; values outside this range indicate
+    /// a malformed or tampered server response.
+    pub fn sanitize(&mut self) {
+        self.confidence = self.confidence.clamp(0.0, 1.0);
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransparencyLogInfo {
     pub log_index: u64,

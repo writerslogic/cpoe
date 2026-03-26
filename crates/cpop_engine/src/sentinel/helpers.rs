@@ -467,7 +467,9 @@ fn wal_append_session_event(
     payload: Vec<u8>,
 ) {
     let mut session_id_bytes = [0u8; 32];
-    let hex_str = &session_id[..64.min(session_id.len())];
+    let hex_str = session_id
+        .get(..64.min(session_id.len()))
+        .unwrap_or(session_id);
     if hex::decode_to_slice(hex_str, &mut session_id_bytes).is_ok() {
         if let Some(key) = key {
             let wal_path = wal_dir.join(format!("{}.wal", session_id));

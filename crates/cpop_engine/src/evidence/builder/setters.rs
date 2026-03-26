@@ -516,7 +516,7 @@ impl Builder {
                 // Conservative lower bound: log2(n) bits from n independent samples.
                 // True Shannon entropy depends on the interval distribution, but
                 // log2(n) is a defensible minimum without distribution assumptions.
-                entropy_bits: (keystroke.samples.len() as f64).log2(),
+                entropy_bits: (intervals_us.len() as f64).log2(),
                 hurst_exponent,
             },
             binding_mac: {

@@ -48,8 +48,7 @@ impl CheckpointMmr {
     pub fn verify_checkpoint(&self, checkpoint_hash: &[u8; 32], leaf_ordinal: u64) -> Result<bool> {
         let leaf_index = self.mmr.get_leaf_index(leaf_ordinal).map_err(Error::from)?;
         let proof = self.mmr.generate_proof(leaf_index).map_err(Error::from)?;
-        let expected_leaf_hash = crate::mmr::hash_leaf(checkpoint_hash);
-        Ok(proof.leaf_hash == expected_leaf_hash)
+        Ok(proof.verify(checkpoint_hash).is_ok())
     }
 
     /// Return the current MMR root hash.

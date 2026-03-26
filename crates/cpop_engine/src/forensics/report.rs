@@ -4,6 +4,7 @@
 
 use chrono::Duration as ChronoDuration;
 
+use super::assessment::ENTROPY_NORMALIZATION;
 use super::types::{AuthorshipProfile, Severity};
 
 /// Generate a human-readable forensic report.
@@ -54,7 +55,7 @@ pub fn generate_report(profile: &AuthorshipProfile) -> String {
         interpret_monotonic_append(m.monotonic_append_ratio)
     ));
 
-    let max_entropy = 4.32; // log2(20) for 20 bins
+    let max_entropy = ENTROPY_NORMALIZATION;
     report.push_str(&format!(
         "Edit Entropy:             {:.3}  {}\n",
         m.edit_entropy,

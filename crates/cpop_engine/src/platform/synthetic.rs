@@ -46,7 +46,8 @@ impl StatisticalAnomalyDetector {
         let iki_ms = if let Some(last_ts) = self.last_timestamp_ns {
             let delta_ns = event.timestamp_ns - last_ts;
             if delta_ns <= 0 {
-                self.last_timestamp_ns = Some(event.timestamp_ns);
+                // Clock went backwards or duplicate timestamp; keep the last
+                // known-good reference and discard this event.
                 return StatisticalResult::Insufficient;
             }
             delta_ns as f64 / 1_000_000.0

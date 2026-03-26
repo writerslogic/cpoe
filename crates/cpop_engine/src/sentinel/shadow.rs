@@ -70,7 +70,7 @@ impl ShadowManager {
 
         fs::write(&shadow.path, content)?;
         shadow.updated_at = SystemTime::now();
-        shadow._size = content.len() as i64;
+        shadow._size = i64::try_from(content.len()).unwrap_or(i64::MAX);
 
         Ok(())
     }

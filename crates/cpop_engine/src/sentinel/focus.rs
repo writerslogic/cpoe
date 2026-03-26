@@ -122,9 +122,25 @@ impl<P: WindowProvider + ?Sized> SentinelFocusTracker for PollingSentinelFocusTr
                         last_app = current_app;
                         last_path = info.path.clone();
                     } else if info.path.is_some() && info.path != last_path {
-                        // App unchanged but document path resolved (AX query latency)
+                        // App unchanged but document path changed (intra-app document switch
+                        // or AX query latency resolving the path for the first time).
+                        // Send FocusLost for the old path first so the sentinel can close out
+                        // the previous document session before opening the new one.
                         let app_name = info.application.clone();
                         if config.is_app_allowed(&info.application, &app_name) {
+                            if let Some(ref old_path) = last_path {
+                                let _ = focus_tx
+                                    .send(FocusEvent {
+                                        event_type: FocusEventType::FocusLost,
+                                        path: old_path.clone(),
+                                        shadow_id: String::new(),
+                                        app_bundle_id: info.application.clone(),
+                                        app_name: info.application.clone(),
+                                        window_title: ObfuscatedString::default(),
+                                        timestamp: SystemTime::now(),
+                                    })
+                                    .await;
+                            }
                             let _ = focus_tx
                                 .send(FocusEvent {
                                     event_type: FocusEventType::FocusGained,

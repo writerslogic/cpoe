@@ -13,7 +13,7 @@ use super::types::{
 };
 
 /// Max Shannon entropy for 20-bin edit-position histogram: log2(20).
-const ENTROPY_NORMALIZATION: f64 = 4.321928;
+pub(crate) const ENTROPY_NORMALIZATION: f64 = 4.321928;
 /// Below this normalized entropy, editing pattern is suspiciously ordered.
 const LOW_ENTROPY_SCORE_THRESHOLD: f64 = 0.35;
 /// Monotonic append ratio above which penalty starts.

@@ -805,13 +805,7 @@ impl Chain {
         let data = serde_json::to_vec_pretty(self)
             .map_err(|e| Error::checkpoint(format!("failed to marshal chain: {e}")))?;
         // Atomic write: tmp + fsync + rename to avoid corrupt chain on crash
-        let rand_suffix: String = {
-            use std::collections::hash_map::RandomState;
-            use std::hash::{BuildHasher, Hasher};
-            let mut h = RandomState::new().build_hasher();
-            h.write_u64(std::process::id() as u64);
-            format!("{:016x}", h.finish())
-        };
+        let rand_suffix: String = format!("{:016x}", rand::random::<u64>());
         let tmp_name = format!(
             "{}.{}.tmp",
             path.display(),

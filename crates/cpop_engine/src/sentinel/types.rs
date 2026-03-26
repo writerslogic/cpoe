@@ -173,7 +173,8 @@ impl DocumentSession {
     pub fn focus_lost(&mut self) {
         if self.has_focus {
             if let Some(started) = self.focus_started.take() {
-                self.total_focus_ms += started.elapsed().as_millis() as i64;
+                self.total_focus_ms +=
+                    i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
             }
             self.has_focus = false;
         }

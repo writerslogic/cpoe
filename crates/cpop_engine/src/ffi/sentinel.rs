@@ -642,6 +642,15 @@ pub fn ffi_sentinel_inject_keystroke(
 
     // Compute inter-keystroke duration from timestamps (the Swift side
     // sends absolute timestamps; we need the delta for cadence analysis).
+    //
+    // Design limitation: LAST_INJECT_TS is process-global, not per-document.
+    // When the user switches between documents, the first keystroke in the new
+    // document will produce an inflated duration_since_last_ns spanning the idle
+    // period between documents. This causes the per-document cadence analysis to
+    // see one anomalously long inter-key interval at each document switch.
+    // Impact: negligible for typical use (one outlier per switch is filtered by
+    // the jitter analyzer's outlier rejection), but cadence scores near the
+    // boundary may be slightly penalized when documents are switched frequently.
     static LAST_INJECT_TS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
     let prev_ts = LAST_INJECT_TS.swap(timestamp_ns, std::sync::atomic::Ordering::Relaxed);
     let duration_since_last_ns = if prev_ts > 0 && timestamp_ns > prev_ts {
@@ -664,8 +673,12 @@ pub fn ffi_sentinel_inject_keystroke(
     if let Some(ref path) = sentinel.current_focus() {
         if let Some(session) = sentinel.sessions.write_recover().get_mut(path) {
             session.keystroke_count += 1;
-            // Store jitter sample for per-document forensic analysis
-            if session.jitter_samples.len() < crate::sentinel::types::MAX_DOCUMENT_JITTER_SAMPLES {
+            // Store jitter sample for per-document forensic analysis.
+            // Track whether the push actually occurred so the rollback below
+            // only pops when there is a matching push to undo.
+            let pushed =
+                session.jitter_samples.len() < crate::sentinel::types::MAX_DOCUMENT_JITTER_SAMPLES;
+            if pushed {
                 session.jitter_samples.push(sample.clone());
             }
 
@@ -681,7 +694,7 @@ pub fn ffi_sentinel_inject_keystroke(
             // Drop events with very low confidence (likely synthetic injection)
             if validation.confidence < 0.1 {
                 session.keystroke_count -= 1; // undo the increment
-                if !session.jitter_samples.is_empty() {
+                if pushed {
                     session.jitter_samples.pop(); // undo the push
                 }
             }

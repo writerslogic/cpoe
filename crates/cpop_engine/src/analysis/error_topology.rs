@@ -2,11 +2,17 @@
 
 //! Error topology analysis per RFC draft-condrey-rats-pop-01.
 //!
-//! Score = 0.4*rho_gap + 0.4*H + 0.2*adj_phys (threshold >= 0.75).
+//! Score = 0.4*rho_gap + 0.2*H + 0.4*adj_phys (threshold >= 0.75).
 //!
 //! Human error patterns show characteristic gap correlation (hesitation
 //! before errors, quick correction after), long-range dependence in error
 //! timing (Hurst), and physical key adjacency in mistyped characters.
+//!
+//! Note: the Hurst component uses a single-window R/S estimator
+//! (`log(R/S)/log(n)`), which is less accurate than the full multi-window
+//! R/S analysis in `analysis/hurst.rs`. Its weight is therefore reduced to
+//! 0.2 to limit the impact of single-window estimation error on the composite
+//! score. Consider wiring `analysis/hurst.rs` here for a future improvement.
 
 use std::collections::HashSet;
 
@@ -21,7 +27,7 @@ pub struct ErrorTopology {
     pub error_hurst: f64,
     /// Adjacent-key error rate
     pub adjacency_correlation: f64,
-    /// Weighted composite: 0.4*gap + 0.4*hurst + 0.2*adjacency
+    /// Weighted composite: 0.4*gap + 0.2*hurst + 0.4*adjacency
     pub score: f64,
     /// Passes RFC threshold (>= 0.75)
     pub is_valid: bool,
@@ -48,8 +54,11 @@ pub struct ErrorDistribution {
 impl ErrorTopology {
     pub const VALIDITY_THRESHOLD: f64 = 0.75;
     pub const WEIGHT_GAP: f64 = 0.4;
-    pub const WEIGHT_HURST: f64 = 0.4;
-    pub const WEIGHT_ADJACENCY: f64 = 0.2;
+    /// Reduced from 0.4 to 0.2 because the single-window R/S estimator is less
+    /// accurate than the multi-window analysis in `analysis/hurst.rs`. The
+    /// freed weight is redistributed to adjacency_correlation.
+    pub const WEIGHT_HURST: f64 = 0.2;
+    pub const WEIGHT_ADJACENCY: f64 = 0.4;
 
     pub fn compute_score(
         gap_correlation: f64,
@@ -438,7 +447,7 @@ mod tests {
     #[test]
     fn test_score_calculation() {
         let score = ErrorTopology::compute_score(0.8, 0.7, 0.6);
-        let expected = 0.4 * 0.8 + 0.4 * 0.7 + 0.2 * 0.6;
+        let expected = 0.4 * 0.8 + 0.2 * 0.7 + 0.4 * 0.6;
         assert!((score - expected).abs() < 0.001);
     }
 

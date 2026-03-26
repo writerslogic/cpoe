@@ -140,11 +140,18 @@ impl ContinuationSection {
     }
 
     /// Generate VDF input binding this packet to previous chain hash + series identity.
+    ///
+    /// Each variable-length field is prefixed with its 4-byte big-endian length to
+    /// prevent ambiguous concatenations (e.g. "ab"+"cd" == "a"+"bcd" without prefixes).
+    /// The optional `prev_packet_chain_hash` is included only when present; its presence
+    /// is unambiguous because the 0-length prefix is never written for the absent case.
     pub fn generate_vdf_context(&self, content_hash: &[u8]) -> Vec<u8> {
         let mut context = Vec::new();
 
         if let Some(ref prev_hash) = self.prev_packet_chain_hash {
-            context.extend_from_slice(prev_hash.as_bytes());
+            let bytes = prev_hash.as_bytes();
+            context.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
+            context.extend_from_slice(bytes);
         }
 
         context.extend_from_slice(content_hash);

@@ -316,7 +316,8 @@ impl DaemonManager {
         }
 
         if let Ok(state) = self.read_state() {
-            let started_at = UNIX_EPOCH + Duration::from_secs(state.started_at as u64);
+            let started_at =
+                UNIX_EPOCH + Duration::from_secs(u64::try_from(state.started_at).unwrap_or(0));
             status.started_at = Some(started_at);
             status.version = Some(state.version);
             status.identity = state.identity;

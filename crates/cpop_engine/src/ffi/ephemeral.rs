@@ -31,6 +31,9 @@ const MAX_STATEMENT_LEN: usize = 1000;
 const MAX_SNAPSHOTS: usize = 1000;
 /// Max jitter intervals per session (protocol limit).
 const MAX_JITTER_INTERVALS: usize = 1000;
+/// Maximum number of concurrent ephemeral sessions. Prevents unbounded memory growth
+/// from callers that start sessions without finalizing them.
+const MAX_CONCURRENT_SESSIONS: usize = 100;
 /// Sessions expire after 30 minutes of inactivity.
 const SESSION_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
@@ -128,6 +131,16 @@ pub fn ffi_start_ephemeral_session(context_label: String) -> FfiEphemeralSession
     }
 
     evict_stale_sessions();
+
+    if sessions().len() >= MAX_CONCURRENT_SESSIONS {
+        return FfiEphemeralSessionResult {
+            success: false,
+            session_id: String::new(),
+            error_message: Some(format!(
+                "Too many concurrent ephemeral sessions (max {MAX_CONCURRENT_SESSIONS})"
+            )),
+        };
+    }
 
     let now = Instant::now();
     let session_id = match generate_session_id(&context_label) {

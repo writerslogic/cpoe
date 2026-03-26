@@ -88,7 +88,12 @@ pub struct AccessLog {
 impl AccessLog {
     /// Open or create an access log database at `path`.
     pub fn open<P: AsRef<std::path::Path>>(path: P) -> anyhow::Result<Self> {
+        let path = path.as_ref();
         let conn = Connection::open(path)?;
+        #[cfg(unix)]
+        if path != std::path::Path::new(":memory:") {
+            crate::crypto::restrict_permissions(path, 0o600)?;
+        }
         let _: String = conn.query_row("PRAGMA journal_mode=WAL", [], |row| row.get(0))?;
         conn.execute_batch("PRAGMA busy_timeout=5000;")?;
 
