@@ -328,7 +328,7 @@ pub fn per_checkpoint_flags(
         let timing_cv = if event_count >= 2 {
             let intervals: Vec<f64> = interval_events
                 .windows(2)
-                .map(|w| (w[1].timestamp_ns - w[0].timestamp_ns) as f64)
+                .map(|w| w[1].timestamp_ns.saturating_sub(w[0].timestamp_ns) as f64)
                 .collect();
             let mean = intervals.iter().sum::<f64>() / intervals.len() as f64;
             if mean > 0.0 {

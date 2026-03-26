@@ -681,9 +681,19 @@ pub fn draw_page2(layer: &PdfLayerReference, r: &WarReport, fonts: &PdfFonts) {
                 FlagSignal::Neutral => "—",
             };
 
+            let category_display = if f.category.len() > 40 {
+                format!("{}...", &f.category[..40])
+            } else {
+                f.category.clone()
+            };
+            let flag_display = if f.flag.len() > 60 {
+                format!("{}...", &f.flag[..60])
+            } else {
+                f.flag.clone()
+            };
             text(
                 layer,
-                &f.category,
+                &category_display,
                 6.0,
                 MARGIN_LEFT + 2.0,
                 y,
@@ -692,7 +702,7 @@ pub fn draw_page2(layer: &PdfLayerReference, r: &WarReport, fonts: &PdfFonts) {
             );
             text(
                 layer,
-                &f.flag,
+                &flag_display,
                 6.0,
                 MARGIN_LEFT + 30.0,
                 y,

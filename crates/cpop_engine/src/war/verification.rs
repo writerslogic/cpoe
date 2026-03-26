@@ -32,7 +32,15 @@ impl Block {
                 },
             };
             if !key_check.passed {
-                all_passed = false;
+                checks.push(key_check);
+                // Key mismatch: skip signature verification entirely — the key we
+                // would verify against is untrusted, so the result is meaningless.
+                return VerificationReport {
+                    valid: false,
+                    checks,
+                    summary: "WAR block INVALID: failed checks: trusted_key".to_string(),
+                    details: self.build_forensic_details(),
+                };
             }
             checks.push(key_check);
         }

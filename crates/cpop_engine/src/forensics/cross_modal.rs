@@ -183,12 +183,17 @@ fn check_content_growth_rate(input: &CrossModalInput<'_>) -> CrossModalCheck {
         .map(|e| e.size_delta as i64)
         .filter(|&d| d > 0)
         .sum();
-    let numerator = if net_additions > 0 {
-        net_additions
-    } else {
-        input.document_length
-    };
-    let chars_per_sec = numerator as f64 / input.session_duration_sec;
+    // When net_additions is 0 but document_length > 0, the event stream shows no
+    // recorded growth despite an existing document — treat as suspicious.
+    if net_additions == 0 && input.document_length > 0 {
+        return CrossModalCheck {
+            name: "content_growth_rate".into(),
+            passed: false,
+            score: 0.3,
+            detail: "zero net additions with non-empty document".into(),
+        };
+    }
+    let chars_per_sec = net_additions as f64 / input.session_duration_sec;
     let passed = chars_per_sec <= MAX_SUSTAINED_CHARS_PER_SEC;
 
     let score = if chars_per_sec <= MAX_SUSTAINED_CHARS_PER_SEC {

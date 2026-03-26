@@ -132,8 +132,12 @@ impl SecureStore {
                     .try_into()
                     .map_err(|_| anyhow!("Invalid chain_hash length in integrity record"))?;
 
-                let expected_hmac =
-                    crypto::compute_integrity_hmac(&self.hmac_key, &chain_hash_arr, event_count);
+                let expected_hmac = crypto::compute_integrity_hmac(
+                    &self.hmac_key,
+                    &chain_hash_arr,
+                    event_count,
+                    last_verified_seq,
+                );
                 if stored_hmac.ct_eq(&expected_hmac).unwrap_u8() == 0 {
                     return Err(anyhow!("Integrity record HMAC mismatch"));
                 }
@@ -236,10 +240,17 @@ impl SecureStore {
                 }
 
                 // Persist the new high-water mark so the next open skips these rows.
+                // Recompute the HMAC to cover the updated last_verified_sequence.
                 if new_last_seq > last_verified_seq {
+                    let updated_hmac = crypto::compute_integrity_hmac(
+                        &self.hmac_key,
+                        &chain_hash_arr,
+                        event_count,
+                        new_last_seq,
+                    );
                     self.conn.execute(
-                        "UPDATE integrity SET last_verified_sequence = ?, last_verified = ? WHERE id = 1",
-                        params![new_last_seq, chrono::Utc::now().timestamp_nanos_safe()],
+                        "UPDATE integrity SET last_verified_sequence = ?, last_verified = ?, hmac = ? WHERE id = 1",
+                        params![new_last_seq, chrono::Utc::now().timestamp_nanos_safe(), &updated_hmac[..]],
                     )?;
                 }
 
@@ -248,7 +259,7 @@ impl SecureStore {
             Err(rusqlite::Error::QueryReturnedNoRows) => {
                 self.last_hash = [0u8; 32];
                 let initial_hmac =
-                    crypto::compute_integrity_hmac(&self.hmac_key, &self.last_hash, 0);
+                    crypto::compute_integrity_hmac(&self.hmac_key, &self.last_hash, 0, 0);
                 self.conn.execute(
                     "INSERT INTO integrity \
                         (id, chain_hash, event_count, last_verified, last_verified_sequence, hmac) \

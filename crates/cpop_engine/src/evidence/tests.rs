@@ -931,8 +931,8 @@ fn test_content_hash_stability() {
         .build()
         .expect("build");
 
-    let hash1 = packet.content_hash();
-    let hash2 = packet.content_hash();
+    let hash1 = packet.content_hash().expect("content_hash");
+    let hash2 = packet.content_hash().expect("content_hash");
     assert_eq!(hash1, hash2);
 }
 
@@ -947,8 +947,8 @@ fn test_signing_payload_without_nonce() {
         .build()
         .expect("build");
 
-    let content = packet.content_hash();
-    let payload = packet.signing_payload();
+    let content = packet.content_hash().expect("content_hash");
+    let payload = packet.signing_payload().expect("signing_payload");
     assert_eq!(content, payload);
 }
 
@@ -966,8 +966,8 @@ fn test_signing_payload_with_nonce() {
     let nonce: [u8; 32] = [0x42u8; 32];
     packet.set_verifier_nonce(nonce);
 
-    let content = packet.content_hash();
-    let payload = packet.signing_payload();
+    let content = packet.content_hash().expect("content_hash");
+    let payload = packet.signing_payload().expect("signing_payload");
     assert_ne!(content, payload);
 }
 
@@ -993,8 +993,8 @@ fn test_different_nonces_produce_different_payloads() {
     packet1.set_verifier_nonce(nonce1);
     packet2.set_verifier_nonce(nonce2);
 
-    let payload1 = packet1.signing_payload();
-    let payload2 = packet2.signing_payload();
+    let payload1 = packet1.signing_payload().expect("signing_payload");
+    let payload2 = packet2.signing_payload().expect("signing_payload");
     assert_ne!(payload1, payload2);
 }
 

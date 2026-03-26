@@ -101,12 +101,18 @@ pub fn compute_event_hmac(
     mac.finalize().into_bytes().into()
 }
 
-/// Compute HMAC-SHA256 integrity tag over chain hash and event count.
-pub fn compute_integrity_hmac(key: &[u8], chain_hash: &[u8; 32], event_count: i64) -> [u8; 32] {
+/// Compute HMAC-SHA256 integrity tag over chain hash, event count, and last verified sequence.
+pub fn compute_integrity_hmac(
+    key: &[u8],
+    chain_hash: &[u8; 32],
+    event_count: i64,
+    last_verified_sequence: i64,
+) -> [u8; 32] {
     let mut mac = HmacSha256::new_from_slice(key).expect("HMAC can take key of any size");
-    mac.update(b"witnessd-integrity-v1");
+    mac.update(b"witnessd-integrity-v2");
     mac.update(chain_hash);
     mac.update(&event_count.to_be_bytes());
+    mac.update(&last_verified_sequence.to_be_bytes());
 
     mac.finalize().into_bytes().into()
 }
@@ -383,8 +389,8 @@ mod tests {
         let chain_hash = [0xDD; 32];
         let event_count = 42i64;
 
-        let m1 = compute_integrity_hmac(key, &chain_hash, event_count);
-        let m2 = compute_integrity_hmac(key, &chain_hash, event_count);
+        let m1 = compute_integrity_hmac(key, &chain_hash, event_count, 0);
+        let m2 = compute_integrity_hmac(key, &chain_hash, event_count, 0);
         assert_eq!(m1, m2);
         assert_eq!(m1.len(), 32);
     }
@@ -392,8 +398,8 @@ mod tests {
     #[test]
     fn integrity_hmac_differs_with_key() {
         let chain_hash = [0xDD; 32];
-        let m1 = compute_integrity_hmac(b"key-1", &chain_hash, 10);
-        let m2 = compute_integrity_hmac(b"key-2", &chain_hash, 10);
+        let m1 = compute_integrity_hmac(b"key-1", &chain_hash, 10, 0);
+        let m2 = compute_integrity_hmac(b"key-2", &chain_hash, 10, 0);
         assert_ne!(m1, m2);
     }
 
@@ -401,8 +407,17 @@ mod tests {
     fn integrity_hmac_differs_with_count() {
         let key = b"same-key";
         let chain_hash = [0xDD; 32];
-        let m1 = compute_integrity_hmac(key, &chain_hash, 1);
-        let m2 = compute_integrity_hmac(key, &chain_hash, 2);
+        let m1 = compute_integrity_hmac(key, &chain_hash, 1, 0);
+        let m2 = compute_integrity_hmac(key, &chain_hash, 2, 0);
+        assert_ne!(m1, m2);
+    }
+
+    #[test]
+    fn integrity_hmac_differs_with_sequence() {
+        let key = b"same-key";
+        let chain_hash = [0xDD; 32];
+        let m1 = compute_integrity_hmac(key, &chain_hash, 10, 5);
+        let m2 = compute_integrity_hmac(key, &chain_hash, 10, 6);
         assert_ne!(m1, m2);
     }
 

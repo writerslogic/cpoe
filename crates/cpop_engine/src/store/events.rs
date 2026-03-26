@@ -67,8 +67,17 @@ impl SecureStore {
 
         let event_count: i64 =
             tx.query_row("SELECT COUNT(*) FROM secure_events", [], |row| row.get(0))?;
-        let new_integrity_hmac =
-            crypto::compute_integrity_hmac(&self.hmac_key, &e.event_hash, event_count);
+        let last_verified_seq: i64 = tx.query_row(
+            "SELECT last_verified_sequence FROM integrity WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )?;
+        let new_integrity_hmac = crypto::compute_integrity_hmac(
+            &self.hmac_key,
+            &e.event_hash,
+            event_count,
+            last_verified_seq,
+        );
         tx.execute(
             "UPDATE integrity SET chain_hash = ?, event_count = ?, last_verified = ?, hmac = ? WHERE id = 1",
             params![&e.event_hash[..], event_count, chrono::Utc::now().timestamp_nanos_safe(), &new_integrity_hmac[..]]

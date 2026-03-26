@@ -218,9 +218,13 @@ impl KeystrokeMonitor {
                                 rej_count.fetch_add(1, Ordering::SeqCst);
                                 return;
                             }
-                            EventVerificationResult::Hardware
-                            | EventVerificationResult::Suspicious => {
+                            EventVerificationResult::Hardware => {
                                 ver_count.fetch_add(1, Ordering::SeqCst);
+                            }
+                            EventVerificationResult::Suspicious => {
+                                // Suspicious events are forwarded but not counted as
+                                // verified hardware; the caller sees the verification
+                                // variant and can decide how to weight the event.
                             }
                         }
 
@@ -252,6 +256,7 @@ impl KeystrokeMonitor {
                 let source = CFMachPortCreateRunLoopSource(std::ptr::null_mut(), tap, 0);
                 if source.is_null() {
                     CFRelease(tap);
+                    tap_ptr.store(std::ptr::null_mut(), Ordering::SeqCst);
                     let _ = ready_tx.send(Err(anyhow!("Failed to create runloop source")));
                     return;
                 }
@@ -466,6 +471,7 @@ impl KeystrokeCapture for MacOSKeystrokeCapture {
                 let source = CFMachPortCreateRunLoopSource(std::ptr::null_mut(), tap, 0);
                 if source.is_null() {
                     CFRelease(tap);
+                    tap_ptr.store(std::ptr::null_mut(), Ordering::SeqCst);
                     let _ = ready_tx.send(Err(anyhow!("Failed to create runloop source")));
                     return;
                 }

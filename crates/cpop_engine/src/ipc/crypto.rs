@@ -158,21 +158,10 @@ impl SecureSession {
                 .map_err(|_| anyhow!("Invalid sequence number bytes"))?,
         );
 
-        // CAS atomically claims the sequence slot; no separate load+compare window.
-        // We don't know expected_seq until after CAS succeeds, so we derive it from
-        // the actual value. The CAS wins only if current == seq; after winning, verify
-        // seq matches what we expected via constant-time comparison to prevent timing leaks.
+        // Verify the wire sequence against the expected value using ct_eq before
+        // advancing the counter. This prevents a tampered packet from permanently
+        // consuming a sequence slot.
         let expected_seq = self.rx_sequence.load(Ordering::SeqCst);
-        self.rx_sequence
-            .compare_exchange(
-                expected_seq,
-                expected_seq + 2,
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-            )
-            .map_err(|_| anyhow!("rx_sequence CAS failed — concurrent decrypt detected"))?;
-
-        // After winning the CAS, verify the wire sequence matches expected using ct_eq.
         if seq
             .to_le_bytes()
             .ct_eq(&expected_seq.to_le_bytes())
@@ -193,6 +182,17 @@ impl SecureSession {
         if expected_nonce.ct_eq(wire_nonce).unwrap_u8() != 1 {
             return Err(anyhow!("Nonce mismatch (possible tampering)"));
         }
+
+        // Both sequence and nonce are valid; now atomically advance the counter.
+        // CAS wins only if no concurrent decrypt raced past us.
+        self.rx_sequence
+            .compare_exchange(
+                expected_seq,
+                expected_seq + 2,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            )
+            .map_err(|_| anyhow!("rx_sequence CAS failed — concurrent decrypt detected"))?;
         let nonce = AesNonce::from_slice(&expected_nonce);
         let ciphertext = &data[20..];
 

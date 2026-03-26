@@ -646,7 +646,9 @@ fn compute_verdict(
 
     // No VDF proof data present: without time-hardness evidence, the best
     // attainable verdict is V2LikelyHuman regardless of forensic score.
-    let no_vdf = duration.computed_min_seconds == 0.0 && !duration.plausible;
+    // This also covers zero-checkpoint packets where computed_min_seconds == 0.0
+    // and plausible == true (no checkpoints means no time-hardness proof at all).
+    let no_vdf = duration.computed_min_seconds == 0.0;
 
     // Defer to forensic analysis verdict if available, but respect the VDF cap.
     if let Some(fm) = forensics {

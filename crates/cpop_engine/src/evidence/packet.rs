@@ -12,7 +12,6 @@ use crate::error::Error;
 use crate::keyhierarchy;
 use crate::tpm;
 use crate::vdf;
-use crate::DateTimeNanosExt;
 use cpop_protocol::codec::{self, Format, CBOR_TAG_CPOP};
 use cpop_protocol::rfc;
 
@@ -322,7 +321,7 @@ impl Packet {
     /// Uses deterministic CBOR serialization of a clone with signature fields cleared,
     /// ensuring every evidence field (behavioral, keystroke, jitter, hardware, forensics,
     /// etc.) is covered. Stripping any field invalidates the signature.
-    pub fn content_hash(&self) -> [u8; 32] {
+    pub fn content_hash(&self) -> crate::error::Result<[u8; 32]> {
         // Clone and clear signature-related fields to break circular dependency
         let mut signable = self.clone();
         signable.verifier_nonce = None;
@@ -330,52 +329,28 @@ impl Packet {
         signable.signing_public_key = None;
 
         // Deterministic CBOR serialization covers ALL remaining fields
-        let data = match codec::cbor::encode(&signable) {
-            Ok(d) => d,
-            Err(_) => {
-                // Fallback: if CBOR encoding fails, hash the structural fields directly.
-                // This should never happen with a well-formed Packet.
-                log::error!("content_hash: CBOR encoding failed, using structural fallback");
-                return self.structural_hash();
-            }
-        };
+        let data = codec::cbor::encode(&signable)
+            .map_err(|e| Error::crypto(format!("content_hash: CBOR encoding failed: {e}")))?;
 
         let mut hasher = Sha256::new();
         hasher.update(b"witnessd-packet-content-v3");
         hasher.update(data);
-        hasher.finalize().into()
-    }
-
-    /// Fallback structural hash covering only core fields (used if CBOR encoding fails).
-    fn structural_hash(&self) -> [u8; 32] {
-        let mut hasher = Sha256::new();
-        hasher.update(b"witnessd-packet-content-v3-fallback");
-        hasher.update(self.version.to_be_bytes());
-        hasher.update(self.exported_at.timestamp_nanos_safe().to_be_bytes());
-        hasher.update((self.strength as i32).to_be_bytes());
-        hasher.update(self.document.final_hash.as_bytes());
-        hasher.update(self.document.final_size.to_be_bytes());
-        hasher.update(self.chain_hash.as_bytes());
-        hasher.update((self.checkpoints.len() as u64).to_be_bytes());
-        for cp in &self.checkpoints {
-            hasher.update(cp.hash.as_bytes());
-        }
-        hasher.finalize().into()
+        Ok(hasher.finalize().into())
     }
 
     /// Signing payload: `SHA-256(content_hash || nonce)` if nonce present,
     /// otherwise just `content_hash`.
-    pub fn signing_payload(&self) -> [u8; 32] {
-        let content = self.content_hash();
+    pub fn signing_payload(&self) -> crate::error::Result<[u8; 32]> {
+        let content = self.content_hash()?;
         match &self.verifier_nonce {
             Some(nonce) => {
                 let mut hasher = Sha256::new();
                 hasher.update(b"witnessd-nonce-binding-v1");
                 hasher.update(content);
                 hasher.update(nonce);
-                hasher.finalize().into()
+                Ok(hasher.finalize().into())
             }
-            None => content,
+            None => Ok(content),
         }
     }
 
@@ -388,7 +363,7 @@ impl Packet {
 
     /// Ed25519-sign the packet. Binds to verifier nonce if one is set.
     pub fn sign(&mut self, signing_key: &SigningKey) -> crate::error::Result<()> {
-        let payload = self.signing_payload();
+        let payload = self.signing_payload()?;
         let signature = signing_key.sign(&payload);
         self.packet_signature = Some(signature.to_bytes());
         self.signing_public_key = Some(signing_key.verifying_key().to_bytes());
@@ -434,7 +409,7 @@ impl Packet {
 
         let signature = Signature::from_bytes(&signature_bytes);
 
-        let payload = self.signing_payload();
+        let payload = self.signing_payload()?;
         public_key
             .verify(&payload, &signature)
             .map_err(|e| Error::signature(format!("signature verification failed: {e}")))?;

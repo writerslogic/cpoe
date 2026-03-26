@@ -410,9 +410,11 @@ fn load_counter(state: &mut SecureEnclaveState) -> Result<(), TpmError> {
             Ok(())
         }
         Ok(data) if data.len() == 8 => {
-            // Legacy format (no HMAC) — accept but re-save with HMAC on next write.
+            // Legacy format (no HMAC) — accept and immediately re-persist with HMAC
+            // to close the rollback window before any caller can act on the value.
             let bytes: [u8; 8] = data[0..8].try_into().expect("slice is exactly 8 bytes");
             state.counter = u64::from_be_bytes(bytes);
+            save_counter(state);
             Ok(())
         }
         Ok(data) => {

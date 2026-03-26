@@ -42,7 +42,7 @@ pub(super) fn write_header(html: &mut String, r: &WarReport) -> fmt::Result {
 }
 
 pub(super) fn write_verdict(html: &mut String, r: &WarReport) -> fmt::Result {
-    let color = r.verdict.css_color();
+    let color = sanitize_css_color(r.verdict.css_color());
     let lr_display = format_lr(r.likelihood_ratio);
     write!(
         html,
