@@ -1,16 +1,17 @@
 # CPOP Project Audit — Consolidated Findings
 
-**Updated**: 2026-03-24
-**Scope**: CLI (10 Rust files), Engine (10 Rust files), Atlassian (6 TS files), Google Workspace (6 TS files)
+**Updated**: 2026-03-25
+**Scope**: CLI (10 Rust files), Engine (55 Rust files), Atlassian (6 TS files), Google Workspace (6 TS files)
 **macOS app**: 381 findings fixed, 0 open (see apps/cpop_macos/audit-todo.md)
+**Engine deep audit**: 55 files audited, 120+ prior fixes applied, findings below are REMAINING issues
 
 ## Summary
 | Severity | Open | Component |
 |----------|------|-----------|
-| CRITICAL | 2    | Google Workspace |
-| HIGH     | 9    | CLI (3), Engine (0), Marketplace (6) |
-| MEDIUM   | 25   | CLI (17), Engine (0), Marketplace (8) |
-| LOW      | 11   | CLI (6), Engine (0), Marketplace (4) |
+| CRITICAL | 5    | Google Workspace (2), Engine (3) |
+| HIGH     | 60   | CLI (3), Engine (51), Marketplace (6) |
+| MEDIUM   | 120  | CLI (17), Engine (95), Marketplace (8) |
+| LOW      | 70   | CLI (6), Engine (60), Marketplace (4) |
 
 ---
 
@@ -108,3 +109,123 @@
 - [x] **L-013** `cpop_google_workspace/CardBuilder.ts:734` — API key masking reveals too much for short keys.
 - [x] **L-014** `cpop_atlassian/resolvers/index.ts` — No rate limiting on resolver invocations.
 - [x] **L-015** `cpop_google_workspace/Code.ts:652` — Polling jitter uses Math.random (appropriate).
+
+---
+
+## Engine Deep Audit (2026-03-25) — 55 files, 10 parallel agents
+
+### Critical (Engine)
+
+- [ ] **EC-001** `forensics/cadence.rs:49` — Unsigned subtraction on signed i64 timestamps; negative IKI corrupts all metrics. Use saturating_sub or cast to i128.
+- [ ] **EC-002** `forensics/dictation.rs:67` — `i64::saturating_sub` saturates to `i64::MIN` not 0 on inverted timestamps; negative duration treated as enormous negative.
+- [ ] **EC-003** `forensics/forgery_cost.rs:273` — `ln()` on geometric mean not fully guarded against subnormals; `ln(subnormal)` collapses geo_mean toward 0.
+
+### High (Engine)
+
+#### Security
+- [ ] **EH-001** `ipc/sync_client.rs:36,103` — `encoded.len() as u32` truncates silently; no outgoing message size check.
+- [ ] **EH-002** `ipc/sync_client.rs` — Protocol mismatch: sync client sends bincode; server only accepts SecureJson magic.
+- [ ] **EH-003** `ipc/messages.rs:36-63` — Hand-rolled path normalizer doesn't handle all Component types (Windows UNC).
+- [ ] **EH-004** `ipc/messages.rs:68-82` — `/usr/` not in Unix blocked prefix list.
+- [ ] **EH-005** `ipc/server.rs:394-396` — TOCTOU between remove_file and bind on Unix socket path.
+- [ ] **EH-006** `ipc/server.rs:450` — `Ordering::Relaxed` on connection counter insufficient for guard correctness.
+- [ ] **EH-007** `crypto/mem.rs:27-30` — ProtectedKey::new panic in lock_memory leaves stack copy unzeroized.
+- [ ] **EH-008** `crypto/mem.rs:89-92` — ProtectedBuf::new clone-then-zeroize; panic loses zeroize on input.
+- [ ] **EH-009** `crypto/obfuscated.rs:23-27` — mask_key stored in plaintext alongside masked_data; trivially recoverable.
+- [ ] **EH-010** `ffi/report.rs:156-166` — Identity signing key used as guilloche seed oracle; should use HKDF.
+- [ ] **EH-011** `ffi/beacon.rs:119-120` — checkpoint_hash and evidence_hash both carry event_hash; evidence binding broken.
+- [ ] **EH-012** `ffi/ephemeral.rs:245,523` — device_id and machine_id zero-filled in all persisted ephemeral events.
+- [ ] **EH-013** `ffi/evidence.rs:405,526` — device_id and machine_id zero-filled in link_derivative and create_checkpoint.
+- [ ] **EH-014** `writersproof/client.rs:115-131` — sign_payload Vec not zeroized after use; evidence CBOR left on heap.
+- [ ] **EH-015** `writersproof/queue.rs:52` — enqueue signature has no nonce/DST; deterministic replay risk.
+- [ ] **EH-016** `writersproof/queue.rs:76,190` — Non-atomic file writes violate RT-07; data loss on crash.
+- [ ] **EH-017** `store/access_log.rs:179-190` — Unknown DB action/result falls back to Read/Success; audit corruption.
+
+#### Correctness
+- [ ] **EH-018** `war/ear.rs:128-136` — overall_status min-over-i8 treats None=0 as worst; wrong direction.
+- [ ] **EH-019** `war/appraisal.rs:107` — Integer division masks implausible checkpoint density.
+- [ ] **EH-020** `war/appraisal.rs:264` — iat uses wall clock; EAR replay detection broken.
+- [ ] **EH-021** `trust_policy/evaluation.rs:43` — compute_score reads stale contribution field; wrong before evaluate().
+- [ ] **EH-022** `store/events.rs:68` — Full-table COUNT scan on every insert; O(n) per write.
+- [ ] **EH-023** `store/events.rs:103` — SQL LIMIT via format!() not parameterized query.
+- [ ] **EH-024** `evidence/wire_conversion.rs:20` — PROFILE_URI uses non-canonical form vs rats:eat: everywhere else.
+- [ ] **EH-025** `evidence/wire_conversion.rs:74` — attestation_tier hardcoded SoftwareOnly; ignores hardware evidence.
+- [ ] **EH-026** `evidence/rfc_conversion.rs:98-100` — Unit mismatch: raw microsecond std_dev in decibits field.
+- [ ] **EH-027** `evidence/rfc_conversion.rs:83-84` — CV guard max(1.0) ineffective for microsecond-scale means.
+- [ ] **EH-028** `evidence/builder/setters.rs:479` — select_nth_unstable_by percentile indices in wrong order; corrupts p25/p75.
+- [ ] **EH-029** `evidence/builder/setters.rs:524` — entropy_bits is -inf when intervals_us.len() == 1.
+- [ ] **EH-030** `baseline/digest.rs:40-45` — mean_iki computed from non-normalized histogram.
+- [ ] **EH-031** `baseline/verification.rs:30` — Similarity score can exceed 1.0 with unnormalized histograms.
+- [ ] **EH-032** `behavioral_fingerprint.rs:279` — Integer division truncation in forgery threshold check.
+- [ ] **EH-033** `iki_compression.rs:45` — Negative IKI values silently clamp to 0ms; inflates zero-byte frequency.
+- [ ] **EH-034** `perplexity.rs:47` — expect() panics on counts key missing when totals key exists.
+- [ ] **EH-035** `stats.rs:126-127` — Exact float equality check `ss_xx == 0.0` is brittle; near-zero produces garbage.
+- [ ] **EH-036** `comparison.rs:49-53` — safe_ln(0.0) = 0.0 creates false perfect similarity for zero-interval profiles.
+- [ ] **EH-037** `dictation.rs:56-63` — No penalty for extremely slow short utterances (WPM=0 blind spot).
+- [ ] **EH-038** `forgery_cost.rs:282-290` — partial_cmp unwrap_or(Equal) allows NaN to win weakest-link.
+- [ ] **EH-039** `topology.rs:99` — Zero-interval duplicate timestamps silently depress median_interval.
+- [ ] **EH-040** `continuation.rs:131` — u32 overflow in packet_sequence + 1 validation.
+- [ ] **EH-041** `keyhierarchy/migration.rs:78-98` — Expanded key second half not validated for consistency.
+- [ ] **EH-042** `checkpoint/chain.rs:281,356` — checkpoints.len() as u64 truncating cast on 32-bit.
+- [ ] **EH-043** `checkpoint_mmr.rs:39-44` — append_checkpoint has no rollback on sync failure; duplicate leaf.
+- [ ] **EH-044** `config/loading.rs:14-20` — TOCTOU between exists() and read_to_string on config file.
+- [ ] **EH-045** `ffi/attestation.rs:204,230` — sysctl/sw_vers spawned as child process; PATH injection risk.
+- [ ] **EH-046** `ffi/evidence.rs:34-40` — validate_path does not prevent overwriting key material files.
+- [ ] **EH-047** `ethereum.rs:63` — reqwest client has no timeout.
+- [ ] **EH-048** `ethereum.rs:44-54` — key_bytes heap copy not zeroized (SYS-033).
+- [ ] **EH-049** `declaration/builder.rs:140-145` — NaN passes per-field percentage check.
+- [ ] **EH-050** `steganography/extraction.rs:46` — verify hashes stripped text; no diagnostic if doc modified vs wrong key.
+- [ ] **EH-051** `steganography/embedding.rs:103` — Tag bytes cycle/repeat when zwc_count > 128.
+
+### Medium (Engine) — Top 50
+
+- [ ] **EM-001** `active_probes.rs:183-184` — Population variance instead of sample variance in std_error.
+- [ ] **EM-002** `behavioral_fingerprint.rs:127` — thinking_pause_frequency denominator off by 1.
+- [ ] **EM-003** `iki_compression.rs:34` — Unit mismatch risk (ns vs ms) with no runtime validation.
+- [ ] **EM-004** `perplexity.rs:58` — sample_count counts bytes not chars for multibyte UTF-8.
+- [ ] **EM-005** `snr.rs:46-49` — 50% overlapping windows inflate SNR by ~3dB.
+- [ ] **EM-006** `stats.rs:49-53` — bhattacharyya_coefficient silent length truncation on zip.
+- [ ] **EM-007** `stats.rs:71-75` — merge_histogram silently truncates mismatched lengths.
+- [ ] **EM-008** `ethereum.rs:254` — Gas price off-by-one; first attempt already bumped 10%.
+- [ ] **EM-009** `ethereum.rs:375` — confirmed_at is poll time not block timestamp.
+- [ ] **EM-010** `ethereum.rs:413` — verify() does not check tx.from address.
+- [ ] **EM-011** `types.rs:142` — Anchor.status never demotes from Confirmed to Failed.
+- [ ] **EM-012** `types.rs:161` — best_proof fallback returns failed/pending proofs.
+- [ ] **EM-013** `streaming.rs:23-24` — f64::MIN sentinel for max is confusing.
+- [ ] **EM-014** `verification.rs:34-36` — Undocumented: single-session baseline returns 1.0 for all metrics.
+- [ ] **EM-015** `checkpoint/chain.rs:598-609` — verify_detailed structural check only; deferred crypto not surfaced.
+- [ ] **EM-016** `checkpoint/types.rs:258-260` — NaN hurst_exponent hashed differently; breaks hash stability.
+- [ ] **EM-017** `config/defaults.rs:8-11` — default_data_dir panics on missing home directory.
+- [ ] **EM-018** `config/loading.rs:27-38` — Legacy config migration silently ignores parse errors.
+- [ ] **EM-019** `config/loading.rs:86-91` — persist() non-atomic write; crash = corrupt config.
+- [ ] **EM-020** `calibration/transport.rs:63` — latency_variance_us stores std_dev not variance.
+- [ ] **EM-021** `crypto/obfuscated.rs:11-18` — ROLLING_KEY race can produce duplicate keys.
+- [ ] **EM-022** `crypto/obfuscation.rs:29-33` — reveal() returns String; caller cannot zeroize.
+- [ ] **EM-023** `declaration/verification.rs:171-180` — entropy_bits is sample-count-dependent, not true entropy.
+- [ ] **EM-024** `evidence/builder/helpers.rs:173` — Plausibility upper bound 600 KPM contradicts "30-300" comment.
+- [ ] **EM-025** `evidence/types.rs:302` — CheckpointProof.hash naming confusion (chain hash vs content hash).
+- [ ] **EM-026** `evidence/wire_conversion.rs:293-302` — EditDelta always zero; verifiers expecting data get zeros.
+- [ ] **EM-027** `ffi/beacon.rs:66-81` — Four independent copies of load_signing_key; drift risk.
+- [ ] **EM-028** `ffi/ephemeral.rs:100-117` — Eviction scan skips sessions when len < 4.
+- [ ] **EM-029** `ffi/ephemeral.rs:122-131` — MAX_CONTEXT_LABEL_LEN checks bytes not chars.
+- [ ] **EM-030** `ffi/evidence.rs:973` — C2PA manifest created timestamp is current time, not evidence time.
+- [ ] **EM-031** `cadence.rs:87` — ikis.clone() for percentile computation doubles peak memory.
+- [ ] **EM-032** `cadence.rs:184` — Autocorrelation covariance summed over n-1 pairs divided by n.
+- [ ] **EM-033** `comparison.rs:95-98` — gaussian_similarity output not clamped; can exceed [0,1].
+- [ ] **EM-034** `comparison.rs:72` — Magic number 0.6 for is_consistent threshold.
+- [ ] **EM-035** `forgery_cost.rs:262-279` — Magic x100 multiplier for infinite-cost components.
+- [ ] **EM-036** `forgery_cost.rs:137` — Magic constant 0.1 for jitter cost per sample.
+- [ ] **EM-037** `ipc/messages.rs:108-125` — Windows device namespace `\\.\` not stripped.
+- [ ] **EM-038** `ipc/messages.rs:154` — Pulse jitter fields unvalidated; attacker-controlled.
+- [ ] **EM-039** `ipc/server.rs:437,510` — Rate limiter created fresh per run_* call.
+- [ ] **EM-040** `war/appraisal.rs:143` — HardwareHardened and HardwareBound produce identical scores.
+- [ ] **EM-041** `war/appraisal.rs:272` — Evidence reference hashed via non-deterministic JSON.
+- [ ] **EM-042** `war/ear.rs:155` — parse_header accepts arbitrary i8; bypasses AR4SI validation.
+- [ ] **EM-043** `trust_policy/evaluation.rs:155` — MinimumFactor checks any factor not named factor.
+- [ ] **EM-044** `store/events.rs:248` — update_file_path TOCTOU between check and UPDATE.
+- [ ] **EM-045** `store/events.rs:277` — 80-line row-mapping closure duplicated verbatim.
+- [ ] **EM-046** `store/access_log.rs:223` — CSV export doesn't quote action/result fields.
+- [ ] **EM-047** `store/access_log.rs:97` — No PRAGMA synchronous set; WAL alone insufficient for audit.
+- [ ] **EM-048** `collaboration.rs:123` — attestation_signature unvalidated; no verification method.
+- [ ] **EM-049** `continuation.rs:77` — packet_sequence increment no overflow check.
+- [ ] **EM-050** `writersproof/queue.rs:82-101` — list() loads unbounded queue into memory.
