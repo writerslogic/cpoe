@@ -75,12 +75,19 @@ pub(crate) fn start_session_inner(
         end_restart_count: None,
     };
 
-    let ratchet_init = hkdf_expand(session_seed.as_slice(), RATCHET_INIT_DOMAIN.as_bytes(), &[])?;
+    // Wrap in Zeroizing so the intermediate Vec<u8> is cleared after conversion
+    // to ProtectedKey (which owns its own zeroized copy). SYS-033 residual.
+    let ratchet_init = Zeroizing::new(hkdf_expand(
+        session_seed.as_slice(),
+        RATCHET_INIT_DOMAIN.as_bytes(),
+        &[],
+    )?);
+    let ratchet_key: crate::crypto::mem::ProtectedKey<32> = (*ratchet_init).into();
 
     Ok(Session {
         certificate,
         ratchet: RatchetState {
-            current: ratchet_init.into(),
+            current: ratchet_key,
             ordinal: 0,
             wiped: false,
         },
