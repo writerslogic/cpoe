@@ -472,7 +472,7 @@ impl Sentinel {
                                     event.timestamp_ns,
                                     event.keycode,
                                     sample.zone,
-                                    0, // PID already verified by CGEventTap
+                                    1, // Non-zero: PID already verified by CGEventTap
                                     None,
                                     session.has_focus,
                                     &mut session.event_validation,

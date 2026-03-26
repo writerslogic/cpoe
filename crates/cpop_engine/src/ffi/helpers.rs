@@ -191,16 +191,18 @@ pub(crate) fn open_store_at(db_path: &std::path::Path) -> Result<SecureStore, St
 
 /// Derive HMAC key directly from the signing_key file, bypassing keychain.
 pub(crate) fn derive_hmac_from_signing_key() -> Option<Zeroizing<Vec<u8>>> {
+    use std::io::Read;
     let data_dir = get_data_dir()?;
     let key_path = data_dir.join("signing_key");
-    if let Ok(meta) = std::fs::metadata(&key_path) {
-        if meta.len() > 1024 {
-            return None;
-        }
+    let mut key_file = std::fs::File::open(&key_path).ok()?;
+    let meta = key_file.metadata().ok()?;
+    if meta.len() > 1024 {
+        return None;
     }
-    let key_data = Zeroizing::new(std::fs::read(&key_path).ok()?);
-    if key_data.len() >= 32 {
-        Some(crate::crypto::derive_hmac_key(&key_data[..32]))
+    let mut buf = Zeroizing::new(Vec::with_capacity(meta.len() as usize));
+    key_file.read_to_end(&mut buf).ok()?;
+    if buf.len() >= 32 {
+        Some(crate::crypto::derive_hmac_key(&buf[..32]))
     } else {
         None
     }
