@@ -177,7 +177,18 @@ fn check_content_growth_rate(input: &CrossModalInput<'_>) -> CrossModalCheck {
         };
     }
 
-    let chars_per_sec = input.document_length as f64 / input.session_duration_sec;
+    let net_additions: i64 = input
+        .events
+        .iter()
+        .map(|e| e.size_delta as i64)
+        .filter(|&d| d > 0)
+        .sum();
+    let numerator = if net_additions > 0 {
+        net_additions
+    } else {
+        input.document_length
+    };
+    let chars_per_sec = numerator as f64 / input.session_duration_sec;
     let passed = chars_per_sec <= MAX_SUSTAINED_CHARS_PER_SEC;
 
     let score = if chars_per_sec <= MAX_SUSTAINED_CHARS_PER_SEC {

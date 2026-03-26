@@ -98,7 +98,7 @@ fn test_block_from_packet_signed() {
     assert!(block.signed);
     assert_ne!(block.seal.signature, [0u8; 64]);
 
-    let report = block.verify();
+    let report = block.verify(None);
     assert!(
         report.valid,
         "Signed block should verify: {}",
@@ -135,7 +135,7 @@ fn test_block_verification_unsigned() {
     let (packet, _dir) = create_test_evidence();
     let block = Block::from_packet(&packet).expect("create block");
 
-    let report = block.verify();
+    let report = block.verify(None);
 
     // Unsigned blocks must fail verification — accepting unsigned blocks
     // would allow forged evidence to bypass seal signature checks.
@@ -167,7 +167,7 @@ fn test_forensic_details() {
     let (packet, _dir) = create_test_evidence();
     let block = Block::from_packet(&packet).expect("create block");
 
-    let report = block.verify();
+    let report = block.verify(None);
     let details = &report.details;
 
     assert_eq!(details.version, "WAR/1.0");
@@ -304,7 +304,7 @@ fn test_forensic_details_with_verifier_nonce() {
     packet.verifier_nonce = Some(nonce);
 
     let block = Block::from_packet(&packet).expect("create block");
-    let report = block.verify();
+    let report = block.verify(None);
 
     assert!(report.details.has_verifier_nonce);
     assert!(report.details.verifier_nonce.is_some());
@@ -319,7 +319,7 @@ fn test_forensic_details_without_verifier_nonce() {
     let (packet, _dir) = create_test_evidence();
 
     let block = Block::from_packet(&packet).expect("create block");
-    let report = block.verify();
+    let report = block.verify(None);
 
     assert!(!report.details.has_verifier_nonce);
     assert!(report.details.verifier_nonce.is_none());

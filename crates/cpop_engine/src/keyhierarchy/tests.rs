@@ -2,6 +2,7 @@
 #![allow(clippy::needless_borrows_for_generic_args)]
 
 use super::*;
+use chrono::Utc;
 use tempfile::TempDir;
 
 fn test_puf() -> SoftwarePUF {
@@ -40,7 +41,17 @@ fn test_key_hierarchy_evidence_verification() {
 
 #[test]
 fn test_validate_cert_byte_lengths_invalid() {
-    let err = validate_cert_byte_lengths(&[1u8; 10], &[2u8; 32], &[3u8; 64]).unwrap_err();
+    let dummy_id = [0u8; 32];
+    let dummy_hash = [0u8; 32];
+    let err = validate_cert_byte_lengths(
+        &[1u8; 10],
+        &[2u8; 32],
+        &[3u8; 64],
+        &dummy_id,
+        Utc::now(),
+        &dummy_hash,
+    )
+    .unwrap_err();
     assert!(err.contains("invalid master public key size"));
 }
 
@@ -221,13 +232,33 @@ fn test_same_pubkey_same_fingerprint() {
 
 #[test]
 fn test_validate_cert_byte_lengths_invalid_session_pubkey() {
-    let err = validate_cert_byte_lengths(&[1u8; 32], &[2u8; 16], &[3u8; 64]).unwrap_err();
+    let dummy_id = [0u8; 32];
+    let dummy_hash = [0u8; 32];
+    let err = validate_cert_byte_lengths(
+        &[1u8; 32],
+        &[2u8; 16],
+        &[3u8; 64],
+        &dummy_id,
+        Utc::now(),
+        &dummy_hash,
+    )
+    .unwrap_err();
     assert!(err.contains("invalid session public key size"));
 }
 
 #[test]
 fn test_validate_cert_byte_lengths_invalid_cert_signature() {
-    let err = validate_cert_byte_lengths(&[1u8; 32], &[2u8; 32], &[3u8; 32]).unwrap_err();
+    let dummy_id = [0u8; 32];
+    let dummy_hash = [0u8; 32];
+    let err = validate_cert_byte_lengths(
+        &[1u8; 32],
+        &[2u8; 32],
+        &[3u8; 32],
+        &dummy_id,
+        Utc::now(),
+        &dummy_hash,
+    )
+    .unwrap_err();
     assert!(err.contains("invalid certificate signature size"));
 }
 
@@ -344,7 +375,7 @@ fn test_session_recovery_no_data() {
         certificate: SessionCertificate {
             session_id: [0u8; 32],
             session_pubkey: vec![],
-            created_at: chrono::Utc::now(),
+            created_at: Utc::now(),
             document_hash: [0u8; 32],
             master_pubkey: vec![],
             signature: [0u8; 64],
@@ -420,7 +451,7 @@ fn test_legacy_migration_invalid_sizes() {
     let migration = LegacyKeyMigration {
         legacy_public_key: vec![0u8; 16],
         new_master_public_key: vec![0u8; 32],
-        migration_timestamp: chrono::Utc::now(),
+        migration_timestamp: Utc::now(),
         transition_signature: [0u8; 64],
         version: VERSION,
     };

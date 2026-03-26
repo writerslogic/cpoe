@@ -358,24 +358,47 @@ fn verify_key_provenance(packet: &Packet, warnings: &mut Vec<String>) -> KeyProv
         if !master_ok || !session_ok || !cert_ok {
             warnings.push("Key hierarchy has invalid key/certificate lengths".to_string());
             hierarchy_consistent = Some(false);
-        } else {
-            // Verify the certificate signature.
+        } else if let Some(ref doc_hash_hex) = kh.session_document_hash {
+            // Verify the certificate signature only when document hash is available.
             // Reuse decoded bytes from the length checks above (guaranteed Ok at this point).
             let master_bytes = hex::decode(&kh.master_public_key)
                 .expect("master_ok guarantees valid hex with len==32");
             let session_bytes = hex::decode(&kh.session_public_key)
                 .expect("session_ok guarantees valid hex with len==32");
-            match crate::keyhierarchy::verification::validate_cert_byte_lengths(
-                &master_bytes,
-                &session_bytes,
-                &base64_decode(&kh.session_certificate),
-            ) {
-                Ok(()) => hierarchy_consistent = Some(true),
-                Err(e) => {
-                    warnings.push(format!("Key hierarchy certificate invalid: {}", e));
+            let session_id_result = hex::decode(&kh.session_id).ok().filter(|b| b.len() == 32);
+            let doc_hash_result = hex::decode(doc_hash_hex).ok().filter(|b| b.len() == 32);
+            match (session_id_result, doc_hash_result) {
+                (Some(sid_bytes), Some(dh_bytes)) => {
+                    let mut session_id_arr = [0u8; 32];
+                    let mut doc_hash_arr = [0u8; 32];
+                    session_id_arr.copy_from_slice(&sid_bytes);
+                    doc_hash_arr.copy_from_slice(&dh_bytes);
+                    match crate::keyhierarchy::verification::validate_cert_byte_lengths(
+                        &master_bytes,
+                        &session_bytes,
+                        &base64_decode(&kh.session_certificate),
+                        &session_id_arr,
+                        kh.session_started,
+                        &doc_hash_arr,
+                    ) {
+                        Ok(()) => hierarchy_consistent = Some(true),
+                        Err(e) => {
+                            warnings.push(format!("Key hierarchy certificate invalid: {}", e));
+                            hierarchy_consistent = Some(false);
+                        }
+                    }
+                }
+                _ => {
+                    warnings.push(
+                        "Key hierarchy session_id or session_document_hash has invalid length"
+                            .to_string(),
+                    );
                     hierarchy_consistent = Some(false);
                 }
             }
+        } else {
+            // No document hash available; skip signature verification, only length checks passed.
+            hierarchy_consistent = Some(true);
         }
 
         // Single pass: check ratchet indices are strictly monotonic, non-negative,

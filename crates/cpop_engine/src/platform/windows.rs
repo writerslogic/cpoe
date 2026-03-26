@@ -15,13 +15,15 @@ use anyhow::{anyhow, Result};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{mpsc, Arc, Mutex, RwLock};
 use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, GetForegroundWindow, GetMessageW, GetWindowTextW, GetWindowThreadProcessId,
-    SetWindowsHookExW, UnhookWindowsHookEx, HHOOK, KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG,
-    MSLLHOOKSTRUCT, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_MOUSEMOVE, WM_SYSKEYDOWN,
+    PostThreadMessageW, SetWindowsHookExW, UnhookWindowsHookEx, HHOOK, KBDLLHOOKSTRUCT,
+    LLKHF_INJECTED, MSG, MSLLHOOKSTRUCT, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_MOUSEMOVE,
+    WM_QUIT, WM_SYSKEYDOWN,
 };
 
 use crate::jitter::SimpleJitterSession;
@@ -144,7 +146,7 @@ fn looks_like_path(s: &str) -> bool {
     (s.len() > 2 && s.chars().nth(1) == Some(':'))
         || s.starts_with("\\\\")
         || s.contains('\\')
-        || (s.contains('.') && !s.contains(' '))
+        || s.contains('/')
 }
 
 /// Low-level keyboard hook monitor feeding a jitter session.
@@ -225,6 +227,8 @@ pub struct WindowsKeystrokeCapture {
     hook: Option<HookHandle>,
     strict_mode: bool,
     stats: Arc<RwLock<SyntheticStats>>,
+    pump_thread: Option<std::thread::JoinHandle<()>>,
+    pump_thread_id: Arc<std::sync::atomic::AtomicU32>,
 }
 
 static GLOBAL_SENDER: Mutex<Option<mpsc::Sender<KeystrokeEvent>>> = Mutex::new(None);
@@ -239,6 +243,8 @@ impl WindowsKeystrokeCapture {
             hook: None,
             strict_mode: true,
             stats: Arc::new(RwLock::new(SyntheticStats::default())),
+            pump_thread: None,
+            pump_thread_id: Arc::new(std::sync::atomic::AtomicU32::new(0)),
         })
     }
 }
@@ -264,7 +270,12 @@ impl KeystrokeCapture for WindowsKeystrokeCapture {
         }
 
         let running = Arc::clone(&self.running);
-        std::thread::spawn(move || {
+        let thread_id_store = Arc::clone(&self.pump_thread_id);
+        let handle = std::thread::spawn(move || {
+            // Record this thread's ID so stop() can post WM_QUIT to wake GetMessageW.
+            let tid = unsafe { GetCurrentThreadId() };
+            thread_id_store.store(tid, Ordering::SeqCst);
+
             let mut msg = MSG::default();
             while running.load(Ordering::SeqCst) {
                 unsafe {
@@ -274,6 +285,7 @@ impl KeystrokeCapture for WindowsKeystrokeCapture {
                 }
             }
         });
+        self.pump_thread = Some(handle);
 
         Ok(rx)
     }
@@ -291,6 +303,17 @@ impl KeystrokeCapture for WindowsKeystrokeCapture {
 
         *GLOBAL_SENDER.lock_recover() = None;
         *GLOBAL_STATS.lock_recover() = None;
+
+        // Post WM_QUIT to unblock GetMessageW in the pump thread, then join it.
+        let tid = self.pump_thread_id.load(Ordering::SeqCst);
+        if tid != 0 {
+            unsafe {
+                let _ = PostThreadMessageW(tid, WM_QUIT, WPARAM(0), LPARAM(0));
+            }
+        }
+        if let Some(handle) = self.pump_thread.take() {
+            let _ = handle.join();
+        }
 
         self.sender = None;
         Ok(())
@@ -469,6 +492,8 @@ pub struct WindowsMouseCapture {
     idle_only_mode: bool,
     keyboard_active: Arc<AtomicBool>,
     last_keystroke_time: Arc<RwLock<std::time::Instant>>,
+    pump_thread: Option<std::thread::JoinHandle<()>>,
+    pump_thread_id: Arc<std::sync::atomic::AtomicU32>,
 }
 
 impl WindowsMouseCapture {
@@ -482,6 +507,8 @@ impl WindowsMouseCapture {
             idle_only_mode: true,
             keyboard_active: Arc::new(AtomicBool::new(false)),
             last_keystroke_time: Arc::new(RwLock::new(std::time::Instant::now())),
+            pump_thread: None,
+            pump_thread_id: Arc::new(std::sync::atomic::AtomicU32::new(0)),
         })
     }
 
@@ -517,7 +544,12 @@ impl MouseCapture for WindowsMouseCapture {
         }
 
         let running = Arc::clone(&self.running);
-        std::thread::spawn(move || {
+        let thread_id_store = Arc::clone(&self.pump_thread_id);
+        let handle = std::thread::spawn(move || {
+            // Record this thread's ID so stop() can post WM_QUIT to wake GetMessageW.
+            let tid = unsafe { GetCurrentThreadId() };
+            thread_id_store.store(tid, Ordering::SeqCst);
+
             let mut msg = MSG::default();
             while running.load(Ordering::SeqCst) {
                 unsafe {
@@ -527,6 +559,7 @@ impl MouseCapture for WindowsMouseCapture {
                 }
             }
         });
+        self.pump_thread = Some(handle);
 
         Ok(rx)
     }
@@ -544,6 +577,17 @@ impl MouseCapture for WindowsMouseCapture {
 
         *MOUSE_GLOBAL_SENDER.lock_recover() = None;
         *MOUSE_GLOBAL_IDLE_STATS.lock_recover() = None;
+
+        // Post WM_QUIT to unblock GetMessageW in the pump thread, then join it.
+        let tid = self.pump_thread_id.load(Ordering::SeqCst);
+        if tid != 0 {
+            unsafe {
+                let _ = PostThreadMessageW(tid, WM_QUIT, WPARAM(0), LPARAM(0));
+            }
+        }
+        if let Some(handle) = self.pump_thread.take() {
+            let _ = handle.join();
+        }
 
         self.sender = None;
         Ok(())

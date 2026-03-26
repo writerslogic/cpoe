@@ -416,7 +416,37 @@ impl AnchorProvider for EthereumProvider {
             }
         }
 
-        Ok(receipt.get("blockNumber").is_some_and(|bn| !bn.is_null()))
+        if !receipt.get("blockNumber").is_some_and(|bn| !bn.is_null()) {
+            return Ok(false);
+        }
+
+        // Fetch the full transaction to verify calldata matches the anchored hash.
+        let tx = self
+            .rpc_call("eth_getTransactionByHash", serde_json::json!([txid]))
+            .await?;
+
+        if tx.is_null() {
+            return Ok(false);
+        }
+
+        let input_hex = tx.get("input").and_then(|v| v.as_str()).unwrap_or("");
+        let input_bytes = hex_to_bytes(input_hex)
+            .map_err(|e| AnchorError::InvalidFormat(format!("Invalid tx input: {e}")))?;
+
+        // Must be at least 4 bytes selector + 32 bytes hash parameter.
+        if input_bytes.len() < 36 {
+            return Ok(false);
+        }
+
+        if input_bytes[0..4] != ANCHOR_FUNCTION_SELECTOR {
+            return Ok(false);
+        }
+
+        if input_bytes[4..36] != proof.anchored_hash {
+            return Ok(false);
+        }
+
+        Ok(true)
     }
 }
 

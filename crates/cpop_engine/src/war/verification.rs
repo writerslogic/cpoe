@@ -11,9 +11,31 @@ use subtle::ConstantTimeEq;
 
 impl Block {
     /// Verify the WAR block and produce a verification report.
-    pub fn verify(&self) -> VerificationReport {
+    ///
+    /// When `expected_public_key` is `Some`, the seal's public key is compared
+    /// against it in constant time before running signature verification. Pass
+    /// `None` to skip the trusted-key check (self-consistency only).
+    pub fn verify(&self, expected_public_key: Option<&[u8]>) -> VerificationReport {
         let mut checks = Vec::new();
         let mut all_passed = true;
+
+        if let Some(trusted) = expected_public_key {
+            let key_matches = trusted.len() == self.seal.public_key.len()
+                && bool::from(trusted.ct_eq(&self.seal.public_key));
+            let key_check = CheckResult {
+                name: "trusted_key".to_string(),
+                passed: key_matches,
+                message: if key_matches {
+                    "Seal public key matches trusted key".to_string()
+                } else {
+                    "Seal public key does not match trusted key".to_string()
+                },
+            };
+            if !key_check.passed {
+                all_passed = false;
+            }
+            checks.push(key_check);
+        }
 
         let sig_check = self.verify_signature();
         if !sig_check.passed {

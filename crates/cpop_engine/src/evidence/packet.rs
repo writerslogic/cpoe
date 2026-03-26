@@ -124,12 +124,34 @@ impl Packet {
                 .decode(&kh.session_certificate)
                 .map_err(|e| Error::evidence(format!("invalid session_certificate base64: {e}")))?;
 
-            if let Err(err) =
-                keyhierarchy::validate_cert_byte_lengths(&master_pub, &session_pub, &cert_raw)
-            {
-                return Err(Error::evidence(format!(
-                    "key hierarchy verification failed: {err}"
-                )));
+            if let Some(ref doc_hash_hex) = kh.session_document_hash {
+                let session_id_bytes = hex::decode(&kh.session_id)
+                    .map_err(|e| Error::evidence(format!("invalid session_id hex: {e}")))?;
+                let doc_hash_bytes = hex::decode(doc_hash_hex).map_err(|e| {
+                    Error::evidence(format!("invalid session_document_hash hex: {e}"))
+                })?;
+                if session_id_bytes.len() != 32 {
+                    return Err(Error::evidence("session_id must be 32 bytes"));
+                }
+                if doc_hash_bytes.len() != 32 {
+                    return Err(Error::evidence("session_document_hash must be 32 bytes"));
+                }
+                let mut session_id_arr = [0u8; 32];
+                let mut doc_hash_arr = [0u8; 32];
+                session_id_arr.copy_from_slice(&session_id_bytes);
+                doc_hash_arr.copy_from_slice(&doc_hash_bytes);
+                if let Err(err) = keyhierarchy::validate_cert_byte_lengths(
+                    &master_pub,
+                    &session_pub,
+                    &cert_raw,
+                    &session_id_arr,
+                    kh.session_started,
+                    &doc_hash_arr,
+                ) {
+                    return Err(Error::evidence(format!(
+                        "key hierarchy verification failed: {err}"
+                    )));
+                }
             }
 
             for sig in &kh.checkpoint_signatures {

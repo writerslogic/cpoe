@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
-use super::error::Result;
+use super::error::{Result, SentinelError};
 use super::focus::{PollingSentinelFocusTracker, SentinelFocusTracker, WindowProvider};
 use super::types::*;
 use crate::config::SentinelConfig;
@@ -109,11 +109,10 @@ impl SentinelFocusTracker for StubSentinelFocusTracker {
     }
 
     fn focus_events(&self) -> Result<mpsc::Receiver<FocusEvent>> {
-        Ok(self.focus_rx.lock_recover().take().unwrap_or_else(|| {
-            log::error!("Focus receiver already consumed - returning dummy receiver");
-            let (_tx, rx) = mpsc::channel(1);
-            rx
-        }))
+        self.focus_rx
+            .lock_recover()
+            .take()
+            .ok_or_else(|| SentinelError::Channel("Focus receiver already consumed".into()))
     }
 
     fn change_events(&self) -> Result<mpsc::Receiver<ChangeEvent>> {

@@ -127,6 +127,26 @@ pub fn analyze_forensics_ext(
     document_text: Option<&str>,
     context: &AnalysisContext,
 ) -> ForensicMetrics {
+    analyze_forensics_ext_with_focus(
+        events,
+        regions,
+        jitter_samples,
+        perplexity_model,
+        document_text,
+        context,
+        None,
+    )
+}
+
+pub fn analyze_forensics_ext_with_focus(
+    events: &[EventData],
+    regions: &HashMap<i64, Vec<RegionData>>,
+    jitter_samples: Option<&[SimpleJitterSample]>,
+    perplexity_model: Option<&crate::analysis::perplexity::PerplexityModel>,
+    document_text: Option<&str>,
+    context: &AnalysisContext,
+    focus_metrics: Option<FocusMetrics>,
+) -> ForensicMetrics {
     let mut metrics = ForensicMetrics::default();
 
     if let (Some(model), Some(text)) = (perplexity_model, document_text) {
@@ -259,7 +279,10 @@ pub fn analyze_forensics_ext(
         events.len(),
         metrics.biological_cadence_score,
     );
-    apply_focus_penalties(&mut metrics.assessment_score, &metrics.focus);
+    if let Some(focus) = focus_metrics {
+        metrics.focus = focus;
+        apply_focus_penalties(&mut metrics.assessment_score, &metrics.focus);
+    }
 
     metrics.risk_level = determine_risk_level(metrics.assessment_score, events.len());
 

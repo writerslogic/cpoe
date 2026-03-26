@@ -150,12 +150,12 @@ impl MouseCapture for MacOSMouseCapture {
                     return;
                 }
 
-                let _ = ready_tx.send(Ok(()));
                 let rl_ref = CFRunLoopGetCurrent();
                 CFRetain(rl_ref);
                 if let Ok(mut rl) = run_loop.lock() {
                     *rl = Some(RunLoopHandle(rl_ref));
                 }
+                let _ = ready_tx.send(Ok(()));
                 CFRunLoopAddSource(rl_ref, source, kCFRunLoopCommonModes);
                 CGEventTapEnable(tap, true);
                 CFRunLoopRun();

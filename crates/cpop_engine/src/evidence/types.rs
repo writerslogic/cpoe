@@ -171,6 +171,10 @@ pub struct KeyHierarchyEvidencePacket {
     pub ratchet_count: i32,
     pub ratchet_public_keys: Vec<String>,
     pub checkpoint_signatures: Vec<CheckpointSignature>,
+    /// Hex-encoded initial document hash bound into the session certificate signature.
+    /// Required to reconstruct `build_cert_data` for signature verification.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_document_hash: Option<String>,
 }
 
 /// Signature binding a checkpoint hash to a ratchet key.

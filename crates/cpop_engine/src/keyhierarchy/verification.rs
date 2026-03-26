@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
+use chrono::{DateTime, Utc};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 
 use super::crypto::{build_cert_data, fingerprint_for_public_key};
@@ -164,11 +165,15 @@ pub fn verify_key_hierarchy(evidence: &KeyHierarchyEvidence) -> Result<(), KeyHi
 ///
 /// Checks that `master_pubkey` is 32 bytes, `session_pubkey` is 32 bytes,
 /// and `cert_signature` is 64 bytes, then performs Ed25519 signature
-/// verification of `session_pubkey` against `master_pubkey`.
+/// verification over `build_cert_data(session_id, session_pubkey, created_at, document_hash)`
+/// against `master_pubkey`, matching the signing path in `session.rs`.
 pub fn validate_cert_byte_lengths(
     master_pubkey: &[u8],
     session_pubkey: &[u8],
     cert_signature: &[u8],
+    session_id: &[u8; 32],
+    created_at: DateTime<Utc>,
+    document_hash: &[u8; 32],
 ) -> Result<(), String> {
     if master_pubkey.len() != 32 {
         return Err("invalid master public key size".to_string());
@@ -180,10 +185,11 @@ pub fn validate_cert_byte_lengths(
         return Err("invalid certificate signature size".to_string());
     }
 
+    let cert_data = build_cert_data(*session_id, session_pubkey, created_at, *document_hash);
     let vk = VerifyingKey::from_bytes(master_pubkey.try_into().expect("length checked"))
         .map_err(|e| format!("invalid master public key: {e}"))?;
     let sig = Signature::from_bytes(cert_signature.try_into().expect("length checked"));
-    vk.verify(session_pubkey, &sig)
+    vk.verify(&cert_data, &sig)
         .map_err(|e| format!("certificate signature verification failed: {e}"))?;
 
     Ok(())

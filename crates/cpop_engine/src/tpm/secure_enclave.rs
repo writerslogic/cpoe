@@ -467,29 +467,19 @@ fn save_counter(state: &SecureEnclaveState) {
 }
 
 impl SecureEnclaveProvider {
-    /// v4 format: XOR cipher, kept for backward compat only.
-    #[deprecated(note = "v4 XOR seal is unauthenticated; migrate to v5 AEAD")]
+    /// v4 format: XOR cipher. Rejected at unseal time because XOR provides no
+    /// authentication; a bitflipped ciphertext silently produces garbage plaintext.
+    /// Data sealed with v4 must be re-created with a v5 AEAD seal.
     fn unseal_v4_legacy(
         &self,
-        state: &SecureEnclaveState,
-        sealed: &[u8],
+        _state: &SecureEnclaveState,
+        _sealed: &[u8],
     ) -> Result<Vec<u8>, TpmError> {
-        log::warn!(
-            "Unsealing v4 legacy format (unauthenticated XOR cipher). \
-             Re-seal with v5 AEAD to upgrade."
+        log::error!(
+            "Refusing to unseal v4 legacy format: unauthenticated XOR cipher is \
+             insecure. Re-create sealed data using the current v5 AEAD format."
         );
-        if sealed.len() < 34 {
-            return Err(TpmError::SealedDataTooShort);
-        }
-        let nonce = &sealed[1..33];
-        let signature = sign(state, nonce)?;
-        let key_material = Sha256::digest(&signature);
-
-        let mut data = vec![0u8; sealed.len() - 33];
-        for i in 0..data.len() {
-            data[i] = sealed[33 + i] ^ key_material[i % 32];
-        }
-        Ok(data)
+        Err(TpmError::SealedVersionUnsupported)
     }
 
     fn unseal_v5_aead(
@@ -644,7 +634,6 @@ impl Provider for SecureEnclaveProvider {
         }
 
         match sealed[0] {
-            #[allow(deprecated)]
             4 => self.unseal_v4_legacy(&state, sealed),
             5 => self.unseal_v5_aead(&state, sealed),
             _ => Err(TpmError::SealedVersionUnsupported),

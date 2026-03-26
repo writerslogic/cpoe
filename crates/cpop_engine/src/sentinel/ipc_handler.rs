@@ -301,19 +301,26 @@ impl SentinelIpcHandler {
             .latest()
             .ok_or("Chain reported non-empty but latest() returned None")?;
 
-        let signing_key_guard = self.sentinel.signing_key.read_recover();
-        let signing_key = signing_key_guard
-            .as_ref()
-            .ok_or("Signing key not initialized")?;
-        let decl = crate::declaration::no_ai_declaration(
-            latest.content_hash,
-            latest.hash,
-            &title,
-            "Exported via IPC",
-        )
-        .sign(signing_key)
-        .map_err(|e| format!("Declaration signing failed: {e}"))?;
-        drop(signing_key_guard);
+        let (decl, identity_fingerprint, mut hmac_key) = {
+            let signing_key_guard = self.sentinel.signing_key.read_recover();
+            let signing_key = signing_key_guard
+                .as_ref()
+                .ok_or("Signing key not initialized")?;
+            let decl = crate::declaration::no_ai_declaration(
+                latest.content_hash,
+                latest.hash,
+                &title,
+                "Exported via IPC",
+            )
+            .sign(signing_key)
+            .map_err(|e| format!("Declaration signing failed: {e}"))?;
+            let mut hasher = Sha256::new();
+            hasher.update(signing_key.verifying_key().to_bytes());
+            let fingerprint = hasher.finalize().to_vec();
+            let key_bytes = Zeroizing::new(signing_key.to_bytes());
+            let hmac = crate::crypto::derive_hmac_key(key_bytes.as_ref());
+            (decl, fingerprint, hmac)
+        };
         builder = builder.with_declaration(&decl);
 
         let summary = self
@@ -325,17 +332,6 @@ impl SentinelIpcHandler {
             digest: None,
             session_summary: summary,
             digest_signature: None,
-        };
-
-        let (identity_fingerprint, mut hmac_key) = {
-            let guard = self.sentinel.signing_key.read_recover();
-            let key = guard.as_ref().ok_or("Signing key not initialized")?;
-            let mut hasher = Sha256::new();
-            hasher.update(key.verifying_key().to_bytes());
-            let fingerprint = hasher.finalize().to_vec();
-            let key_bytes = Zeroizing::new(key.to_bytes());
-            let hmac = crate::crypto::derive_hmac_key(key_bytes.as_ref());
-            (fingerprint, hmac)
         };
 
         let db_path = self.sentinel.config.writersproof_dir.join("events.db");

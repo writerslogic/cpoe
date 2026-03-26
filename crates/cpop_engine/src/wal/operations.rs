@@ -252,12 +252,17 @@ impl Wal {
     /// guarantees integrity from this point forward, not provenance of historical keys.
     pub fn truncate(&self, before_seq: u64) -> Result<(), WalError> {
         let mut state = self.inner.lock_recover();
-        let mut all_entries = Vec::new();
         let mut file = state.file.try_clone()?;
         file.seek(SeekFrom::Start(HEADER_SIZE as u64))?;
 
+        // Stream through the file in one pass: validate the chain and collect only
+        // retained entries (sequence >= before_seq), avoiding a full in-memory load.
+        let mut expected_prev = [0u8; 32];
+        let mut entries: Vec<Entry> = Vec::new();
+        let mut entry_count: u64 = 0;
+
         loop {
-            if all_entries.len() as u64 >= MAX_WAL_ENTRIES {
+            if entry_count >= MAX_WAL_ENTRIES {
                 return Err(WalError::TooManyEntries(MAX_WAL_ENTRIES));
             }
             let mut len_buf = [0u8; 4];
@@ -271,21 +276,19 @@ impl Wal {
             let mut entry_buf = vec![0u8; entry_len as usize];
             file.read_exact(&mut entry_buf)?;
             let entry = deserialize_entry(&entry_buf)?;
-            all_entries.push(entry);
-        }
 
-        let mut expected_prev = [0u8; 32];
-        for entry in &all_entries {
+            // Validate chain integrity for every entry regardless of whether it is retained.
             if entry.prev_hash.ct_eq(&expected_prev).unwrap_u8() == 0 {
                 return Err(WalError::BrokenChain);
             }
             expected_prev = entry.compute_hash();
-        }
+            entry_count += 1;
 
-        let entries: Vec<_> = all_entries
-            .into_iter()
-            .filter(|e| e.sequence >= before_seq)
-            .collect();
+            // Only keep entries that fall within the retained range.
+            if entry.sequence >= before_seq {
+                entries.push(entry);
+            }
+        }
 
         // Verify ordinal continuity: retained entries must have sequential ordinals.
         for pair in entries.windows(2) {

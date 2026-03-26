@@ -229,8 +229,31 @@ impl DaemonManager {
     #[cfg(windows)]
     pub fn signal_stop(&self) -> Result<()> {
         let pid = self.read_pid()?;
+        let pid_str = pid.to_string();
+
+        // Try graceful termination first (no /F). This allows the target process
+        // to run any shutdown handlers before exiting. If it does not exit within
+        // the timeout, fall back to /F (force) to guarantee termination.
+        let graceful = std::process::Command::new("taskkill")
+            .args(["/PID", &pid_str])
+            .output()
+            .map_err(SentinelError::Io)?;
+
+        if graceful.status.success() {
+            // Graceful signal accepted; wait up to 5 s for the process to exit.
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while Instant::now() < deadline {
+                if !is_process_running(pid) {
+                    return Ok(());
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
+
+        // Process did not exit gracefully; force-terminate it.
+        log::warn!("pid {pid} did not exit gracefully, sending /F");
         let output = std::process::Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/F"])
+            .args(["/PID", &pid_str, "/F"])
             .output()
             .map_err(SentinelError::Io)?;
         if output.status.success() {

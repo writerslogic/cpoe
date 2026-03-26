@@ -42,7 +42,8 @@ pub fn ffi_init() -> FfiResult {
         let signing_key = SigningKey::from_bytes(&seed);
         use zeroize::Zeroize;
         seed.zeroize();
-        if let Err(e) = std::fs::write(&key_path, signing_key.to_bytes()) {
+        let key_bytes = zeroize::Zeroizing::new(signing_key.to_bytes());
+        if let Err(e) = std::fs::write(&key_path, key_bytes.as_ref()) {
             return FfiResult {
                 success: false,
                 message: None,

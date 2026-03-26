@@ -335,6 +335,10 @@ impl Builder {
                     signature: general_purpose::STANDARD.encode(sig.signature),
                 })
                 .collect(),
+            session_document_hash: evidence
+                .session_certificate
+                .as_ref()
+                .map(|cert| hex::encode(cert.document_hash)),
         };
 
         self.packet.key_hierarchy = Some(packet);

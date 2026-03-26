@@ -47,6 +47,9 @@ fn verify_binding_with_trusted(
     if binding.safe_clock == Some(false) {
         return Err(TpmError::ClockNotSafe);
     }
+    if binding.safe_clock.is_none() {
+        log::warn!("TPM clock safety unknown for binding");
+    }
 
     let payload = binding_payload(binding);
 
@@ -100,10 +103,23 @@ pub fn verify_quote(quote: &Quote) -> Result<(), TpmError> {
 }
 
 fn verify_signature(public_key: &[u8], payload: &[u8], signature: &[u8]) -> Result<(), TpmError> {
-    try_verify_ed25519(public_key, payload, signature)
-        .or_else(|| try_verify_ecdsa_p256(public_key, payload, signature))
-        .or_else(|| try_verify_rsa(public_key, payload, signature))
-        .unwrap_or(Err(TpmError::UnsupportedPublicKey))
+    // KNOWN LIMITATION: algorithm is inferred by trying Ed25519, then ECDSA-P256, then RSA in
+    // order, accepting the first that parses and verifies. This try-all approach permits
+    // algorithm confusion if a key happens to parse under multiple schemes. It should be replaced
+    // with an explicit algorithm field on Binding/Quote once those structs are extended.
+    if let Some(result) = try_verify_ed25519(public_key, payload, signature) {
+        log::debug!("TPM signature verified via Ed25519");
+        return result;
+    }
+    if let Some(result) = try_verify_ecdsa_p256(public_key, payload, signature) {
+        log::debug!("TPM signature verified via ECDSA-P256");
+        return result;
+    }
+    if let Some(result) = try_verify_rsa(public_key, payload, signature) {
+        log::debug!("TPM signature verified via RSA-PKCS1v15");
+        return result;
+    }
+    Err(TpmError::UnsupportedPublicKey)
 }
 
 fn try_verify_ed25519(

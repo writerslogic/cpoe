@@ -92,7 +92,7 @@ pub fn compute_hurst_rs(data: &[f64]) -> Result<HurstAnalysis, String> {
     let mut log_n_vec = Vec::new();
     let mut log_rs_vec = Vec::new();
 
-    let min_window = RS_MIN_WINDOW;
+    let min_window = RS_MIN_WINDOW.min(n / 8).max(4);
     let max_window = n / 4;
 
     let mut window_size = min_window;

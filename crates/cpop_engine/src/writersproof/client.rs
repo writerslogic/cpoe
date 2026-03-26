@@ -4,6 +4,7 @@
 
 use ed25519_dalek::{Signer, SigningKey};
 use reqwest::Client;
+use sha2::{Digest, Sha256};
 
 use super::types::{
     AnchorRequest, AnchorResponse, AttestResponse, BeaconRequest, BeaconResponse, EnrollRequest,
@@ -11,6 +12,7 @@ use super::types::{
     VerifyResponse,
 };
 use crate::error::{Error, Result};
+use crate::steganography::{ZwcExtractor, ZwcParams};
 
 /// WritersProof API client.
 pub struct WritersProofClient {
@@ -381,15 +383,28 @@ impl WritersProofClient {
 
     /// Verify a steganographic watermark via WritersProof.
     ///
+    /// The document text is never sent to the server. Instead, this method:
+    /// 1. Hashes the clean (ZWC-stripped) document text with SHA-256 locally.
+    /// 2. Extracts the ZWC watermark tag from the document locally.
+    /// 3. Sends only `{doc_hash, extracted_tag, mmr_root}` to the server.
+    ///
     /// `POST /v1/stego/verify`
     pub async fn stego_verify(
         &self,
         document_text: &str,
         mmr_root: &str,
     ) -> Result<StegoVerifyResponse> {
+        // Extract ZWC tag and hash the clean text locally — never send plaintext.
+        let extractor = ZwcExtractor::new(ZwcParams::default());
+        let extracted_tag = extractor.extract_tag(document_text);
+        let clean_text = ZwcExtractor::strip_zwc(document_text);
+        let doc_hash = hex::encode(Sha256::digest(clean_text.as_bytes()));
+        let extracted_tag_hex = hex::encode(&extracted_tag);
+
         let url = format!("{}/v1/stego/verify", self.base_url);
         let body = serde_json::json!({
-            "document_text": document_text,
+            "doc_hash": doc_hash,
+            "extracted_tag": extracted_tag_hex,
             "mmr_root": mmr_root,
         });
 

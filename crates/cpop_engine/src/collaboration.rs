@@ -221,6 +221,13 @@ impl CollaborationSection {
 
     /// Verify all checkpoint indices `[0, total_checkpoints)` are claimed by at least one participant.
     pub fn validate_coverage(&self, total_checkpoints: u32) -> Result<(), String> {
+        const MAX_CHECKPOINTS: u32 = 1_000_000;
+        if total_checkpoints > MAX_CHECKPOINTS {
+            return Err(format!(
+                "total_checkpoints {} exceeds maximum allowed {}",
+                total_checkpoints, MAX_CHECKPOINTS
+            ));
+        }
         let mut covered = vec![false; total_checkpoints as usize];
 
         for participant in &self.participants {

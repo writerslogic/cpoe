@@ -211,7 +211,7 @@ impl Provider for LinuxTpmProvider {
         Ok(Binding {
             version: 1,
             provider_type: "tpm2-linux".to_string(),
-            device_id: self.device_id(),
+            device_id: dev_id,
             timestamp,
             attested_hash: data_hash,
             signature,
