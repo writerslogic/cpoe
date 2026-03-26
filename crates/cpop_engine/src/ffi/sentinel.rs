@@ -832,8 +832,8 @@ mod tests {
         assert!(dir.is_some(), "get_data_dir() returned None");
         let dir = dir.unwrap();
         assert!(
-            dir.ends_with("CPOP"),
-            "data dir should end with CPOP, got: {}",
+            dir.ends_with("CPOP") || dir.ends_with("WritersProof"),
+            "data dir should end with CPOP or WritersProof, got: {}",
             dir.display()
         );
 

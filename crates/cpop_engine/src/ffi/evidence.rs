@@ -689,7 +689,7 @@ pub fn ffi_export_c2pa_manifest(
     let mime_type = doc_file
         .extension()
         .and_then(|ext| ext.to_str())
-        .map(|ext| detect_mime_type(ext));
+        .map(detect_mime_type);
 
     let mut builder =
         cpop_protocol::c2pa::C2paManifestBuilder::new(evidence_packet, evidence_bytes, doc_hash);
