@@ -36,8 +36,9 @@ impl ZwcEmbedder {
         let doc_hash = sha2_hash(text.as_bytes());
         let tag = compute_watermark_tag(key, mmr_root, &doc_hash, self.params.zwc_count);
         let positions = compute_positions(
-            &doc_hash,
+            key,
             mmr_root,
+            &doc_hash,
             word_boundaries.len(),
             self.params.zwc_count,
         );
@@ -124,11 +125,14 @@ pub(super) fn compute_watermark_tag(
 
 /// Compute deterministic word-boundary positions for ZWC placement.
 ///
-/// Uses HMAC-SHA256(doc_hash || mmr_root, DST_POSITIONS) as PRNG seed,
+/// Uses HMAC-SHA256(key, DST_POSITIONS || mmr_root || doc_hash) as PRNG seed,
 /// then Fisher-Yates partial shuffle to select `count` unique positions.
+/// The signing key is used as the HMAC key so that position knowledge requires
+/// the secret key, preventing an attacker from stripping watermarks by position.
 pub(super) fn compute_positions(
-    doc_hash: &[u8; 32],
+    key: &[u8; 32],
     mmr_root: &[u8; 32],
+    doc_hash: &[u8; 32],
     num_boundaries: usize,
     count: usize,
 ) -> Vec<usize> {
@@ -137,10 +141,10 @@ pub(super) fn compute_positions(
         return Vec::new();
     }
 
-    let mut mac =
-        Hmac::<Sha256>::new_from_slice(doc_hash).expect("HMAC-SHA256 accepts any key length");
+    let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC-SHA256 accepts any key length");
     mac.update(DST_POSITIONS);
     mac.update(mmr_root);
+    mac.update(doc_hash);
     let initial = mac.finalize().into_bytes();
     let mut seed = [0u8; 32];
     seed.copy_from_slice(&initial);

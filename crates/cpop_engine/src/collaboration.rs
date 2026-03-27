@@ -220,6 +220,9 @@ impl CollaborationSection {
     }
 
     /// Verify all checkpoint indices `[0, total_checkpoints)` are claimed by at least one participant.
+    ///
+    /// Returns an error if any range has start > end or if any checkpoints are uncovered.
+    /// Ranges extending beyond `total_checkpoints` are clamped with a warning log.
     pub fn validate_coverage(&self, total_checkpoints: u32) -> Result<(), String> {
         const MAX_CHECKPOINTS: u32 = 1_000_000;
         if total_checkpoints > MAX_CHECKPOINTS {
@@ -233,7 +236,27 @@ impl CollaborationSection {
         for participant in &self.participants {
             if let Some(ref ranges) = participant.checkpoint_ranges {
                 for (start, end) in ranges {
-                    for i in *start..=*end {
+                    // AUD-187: Reject inverted ranges instead of silently ignoring them
+                    if start > end {
+                        return Err(format!(
+                            "invalid checkpoint range ({}, {}): start exceeds end",
+                            start, end
+                        ));
+                    }
+                    // AUD-188: Clamp indices beyond total_checkpoints with a warning
+                    let clamped_end = if *end >= total_checkpoints {
+                        log::warn!(
+                            "checkpoint range ({}, {}) exceeds total {}; clamping to {}",
+                            start,
+                            end,
+                            total_checkpoints,
+                            total_checkpoints.saturating_sub(1)
+                        );
+                        total_checkpoints.saturating_sub(1)
+                    } else {
+                        *end
+                    };
+                    for i in *start..=clamped_end {
                         if (i as usize) < covered.len() {
                             covered[i as usize] = true;
                         }

@@ -207,9 +207,18 @@ impl Checkpoint {
         Ok(())
     }
 
+    /// Compute the checkpoint hash over all bound fields.
+    ///
+    /// The domain separator version is selected by the highest-versioned optional
+    /// field that is present, ensuring that each checkpoint format produces a
+    /// distinct hash domain even when lower-version fields are also populated:
+    ///
+    /// - **v4**: `argon2_swf` is set (Argon2id SWF proof, draft-condrey-rats-pop algorithm=20)
+    /// - **v3**: any of `rfc_vdf`, `rfc_jitter`, or `time_evidence` is set (RFC-compliant fields)
+    /// - **v2**: `jitter_binding` is set (entangled mode WAR/1.1)
+    /// - **v1**: none of the above (legacy checkpoint)
     pub(super) fn compute_hash(&self) -> [u8; 32] {
         let mut hasher = Sha256::new();
-        // Domain separator: v4 (Argon2id SWF), v3 (RFC fields), v2 (jitter), v1 (legacy)
         if self.argon2_swf.is_some() {
             hasher.update(b"witnessd-checkpoint-v4");
         } else if self.rfc_vdf.is_some()

@@ -191,7 +191,7 @@ pub fn build_ephemeral_packet(
             total_samples: i32::try_from(jitter_intervals.len()).unwrap_or(i32::MAX),
             keystrokes_per_minute: kpm,
             unique_doc_states: i32::try_from(snapshots.len()).unwrap_or(i32::MAX),
-            chain_valid: false,
+            chain_valid: !checkpoints.is_empty(),
             plausible_human_rate: plausible,
             samples: vec![],
             phys_ratio: None,
@@ -199,6 +199,36 @@ pub fn build_ephemeral_packet(
     } else {
         None
     };
+
+    // AUD-032: Generate claims and limitations for ephemeral packets
+    let mut claims = vec![Claim {
+        claim_type: ClaimType::ChainIntegrity,
+        description: "Content states form an unbroken cryptographic chain".to_string(),
+        confidence: "cryptographic".to_string(),
+    }];
+    if keystroke_evidence
+        .as_ref()
+        .is_some_and(|k| k.plausible_human_rate)
+    {
+        claims.push(Claim {
+            claim_type: ClaimType::KeystrokesVerified,
+            description: "Keystroke timing consistent with human input".to_string(),
+            confidence: "statistical".to_string(),
+        });
+    }
+    claims.push(Claim {
+        claim_type: ClaimType::ProcessDeclared,
+        description: "Author declaration recorded and signed".to_string(),
+        confidence: "cryptographic".to_string(),
+    });
+
+    let mut limitations = vec![
+        "No VDF time-binding proofs (ephemeral session)".to_string(),
+        "No hardware attestation available".to_string(),
+    ];
+    if keystroke_evidence.is_none() {
+        limitations.push("No keystroke timing data collected".to_string());
+    }
 
     let packet = Packet {
         version: 1,
@@ -239,8 +269,8 @@ pub fn build_ephemeral_packet(
         writersproof_certificate_id: None,
         baseline_verification: None,
         dictation_events: Vec::new(),
-        claims: vec![],
-        limitations: vec![],
+        claims,
+        limitations,
         beacon_attestation: None,
     };
 

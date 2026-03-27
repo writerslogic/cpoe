@@ -8,25 +8,42 @@ use std::path::Path;
 
 impl CpopConfig {
     /// Load config from `data_dir/writersproof.json`, falling back to defaults and legacy files.
+    ///
+    /// AUD-140: Reads the file directly instead of checking exists() first to avoid TOCTOU.
+    /// AUD-141: Distinguishes file-not-found (fall through to defaults) from parse errors
+    /// (propagated to caller).
     pub fn load_or_default(data_dir: &Path) -> Result<Self> {
         let config_path = data_dir.join("writersproof.json");
 
-        if config_path.exists() {
-            let raw = fs::read_to_string(&config_path)?;
-            let mut config: CpopConfig = serde_json::from_str(&raw)?;
-            config.data_dir = data_dir.to_path_buf();
-            config.beacons.sanitize();
-            config.validate()?;
-            return Ok(config);
+        match fs::read_to_string(&config_path) {
+            Ok(raw) => {
+                let mut config: CpopConfig = serde_json::from_str(&raw).map_err(|e| {
+                    anyhow::anyhow!("failed to parse {}: {}", config_path.display(), e)
+                })?;
+                config.data_dir = data_dir.to_path_buf();
+                config.beacons.sanitize();
+                config.validate()?;
+                return Ok(config);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // Fall through to legacy / default path
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "failed to read {}: {}",
+                    config_path.display(),
+                    e
+                ));
+            }
         }
 
         let mut config = Self::default_with_dir(data_dir);
         let cli_path = data_dir.join("config.json");
         let gui_path = data_dir.join("engine_config.json");
 
-        if cli_path.exists() {
-            if let Ok(raw) = fs::read_to_string(&cli_path) {
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw) {
+        match fs::read_to_string(&cli_path) {
+            Ok(raw) => match serde_json::from_str::<serde_json::Value>(&raw) {
+                Ok(val) => {
                     if let Some(vdf) = val.get("vdf") {
                         config.vdf.iterations_per_second = vdf
                             .get("iterations_per_second")
@@ -34,12 +51,19 @@ impl CpopConfig {
                             .unwrap_or(config.vdf.iterations_per_second);
                     }
                 }
+                Err(e) => {
+                    log::warn!("failed to parse legacy {}: {}", cli_path.display(), e);
+                }
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                log::warn!("failed to read legacy {}: {}", cli_path.display(), e);
             }
         }
 
-        if gui_path.exists() {
-            if let Ok(raw) = fs::read_to_string(&gui_path) {
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw) {
+        match fs::read_to_string(&gui_path) {
+            Ok(raw) => match serde_json::from_str::<serde_json::Value>(&raw) {
+                Ok(val) => {
                     config.retention_days = val
                         .get("retention_days")
                         .and_then(|v| v.as_u64())
@@ -52,6 +76,13 @@ impl CpopConfig {
                             .collect();
                     }
                 }
+                Err(e) => {
+                    log::warn!("failed to parse legacy {}: {}", gui_path.display(), e);
+                }
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                log::warn!("failed to read legacy {}: {}", gui_path.display(), e);
             }
         }
 

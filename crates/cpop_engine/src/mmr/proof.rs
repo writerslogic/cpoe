@@ -569,6 +569,17 @@ impl RangeProof {
         if peaks.is_empty() || peak_position >= peaks.len() {
             return Err(MmrError::InvalidProof);
         }
+        // AUD-112: Validate leaf count matches indices/hashes and the declared range
+        if leaf_indices.len() != leaf_hashes.len() {
+            return Err(MmrError::InvalidProof);
+        }
+        if end_leaf < start_leaf {
+            return Err(MmrError::InvalidProof);
+        }
+        let expected_count = (end_leaf - start_leaf + 1) as usize;
+        if leaf_indices.len() != expected_count {
+            return Err(MmrError::InvalidProof);
+        }
         if offset + 8 + 32 > data.len() {
             return Err(MmrError::InvalidNodeData);
         }
