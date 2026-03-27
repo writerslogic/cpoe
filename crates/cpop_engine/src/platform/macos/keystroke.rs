@@ -30,7 +30,12 @@ fn debug_write_keystroke(tag: &str, count: u64) {
         Ok(d) => d,
         Err(_) => return,
     };
-    let path = std::path::Path::new(&dir).join("keystroke_debug.txt");
+    // Reject traversal attempts and relative paths from the env var.
+    let dir_path = std::path::Path::new(&dir);
+    if dir.contains("..") || !dir_path.is_absolute() {
+        return;
+    }
+    let path = dir_path.join("keystroke_debug.txt");
     if let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -59,6 +64,164 @@ struct EventTapResources {
 unsafe impl Send for EventTapResources {}
 unsafe impl Sync for EventTapResources {}
 
+// ---------------------------------------------------------------------------
+// EventTapRunner: shared CGEventTap lifecycle (create, run loop, stop, release)
+// ---------------------------------------------------------------------------
+
+/// Manages the CGEventTap lifecycle. Both `KeystrokeMonitor` and
+/// `MacOSKeystrokeCapture` compose this to avoid duplicating the ~80 lines
+/// of tap creation, run-loop management, ready signaling, and cleanup.
+struct EventTapRunner {
+    thread: Option<std::thread::JoinHandle<()>>,
+    run_loop: Arc<Mutex<Option<RunLoopHandle>>>,
+    tap_resources: Arc<Mutex<Option<EventTapResources>>>,
+}
+
+impl EventTapRunner {
+    /// Spawn a thread that creates a CGEventTap, installs it on a run loop,
+    /// and calls `tap_cb` for each event. Returns after the tap is confirmed
+    /// ready (or times out after 5 s).
+    fn start(mut tap_cb: TapCallback) -> Result<Self> {
+        let (ready_tx, ready_rx) = mpsc::channel();
+
+        let run_loop: Arc<Mutex<Option<RunLoopHandle>>> = Arc::new(Mutex::new(None));
+        let run_loop_clone = Arc::clone(&run_loop);
+        let tap_resources: Arc<Mutex<Option<EventTapResources>>> = Arc::new(Mutex::new(None));
+        let tap_resources_clone = Arc::clone(&tap_resources);
+
+        let thread = std::thread::spawn(move || {
+            // SAFETY: `tap_cb` lives on this thread's stack frame. The raw pointer
+            // passed to CGEventTapCreate is only dereferenced by the run loop on
+            // this same thread. CFRunLoopRun() blocks until CFRunLoopStop() is
+            // called from stop(). After CFRunLoopRun returns, `tap_cb` is dropped
+            // normally. stop() calls CFRelease(tap) only after joining this thread,
+            // so macOS cannot invoke the callback after `tap_cb` is dropped.
+            unsafe {
+                let tap = CGEventTapCreate(
+                    K_CG_HID_EVENT_TAP,
+                    K_CG_HEAD_INSERT_EVENT_TAP,
+                    K_CG_EVENT_TAP_OPTION_LISTEN_ONLY,
+                    cg_event_mask_bit(K_CG_EVENT_KEY_DOWN),
+                    event_tap_trampoline,
+                    &mut tap_cb as *mut TapCallback as *mut std::ffi::c_void,
+                );
+
+                if tap.is_null() {
+                    let _ = ready_tx.send(Err(anyhow!("Failed to create CGEventTap")));
+                    return;
+                }
+
+                let source = CFMachPortCreateRunLoopSource(std::ptr::null_mut(), tap, 0);
+                if source.is_null() {
+                    CFRelease(tap);
+                    let _ = ready_tx.send(Err(anyhow!("Failed to create runloop source")));
+                    return;
+                }
+
+                let rl_ref = CFRunLoopGetCurrent();
+                CFRetain(rl_ref);
+                *run_loop_clone.lock_recover() = Some(RunLoopHandle(rl_ref));
+                *tap_resources_clone.lock_recover() = Some(EventTapResources {
+                    run_loop: rl_ref,
+                    tap,
+                    source,
+                });
+                CFRunLoopAddSource(rl_ref, source, kCFRunLoopCommonModes);
+                let _ = ready_tx.send(Ok(()));
+                CGEventTapEnable(tap, true);
+                CFRunLoopRun();
+            }
+        });
+
+        match ready_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+            Ok(Ok(())) => Ok(Self {
+                thread: Some(thread),
+                run_loop,
+                tap_resources,
+            }),
+            Ok(Err(err)) => Err(err),
+            Err(_) => Err(anyhow!("CGEventTap initialization timed out after 5s")),
+        }
+    }
+
+    /// Stop the run loop, join the thread, and release all CF resources.
+    fn stop(&mut self) {
+        let rl_ptr = self.run_loop.lock_recover().take().map(|h| h.0);
+        if let Some(p) = rl_ptr {
+            unsafe {
+                CFRunLoopStop(p);
+            }
+        }
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+        if let Some(res) = self.tap_resources.lock_recover().take() {
+            unsafe {
+                CFRelease(res.source);
+                CFRelease(res.tap);
+                CFRelease(res.run_loop);
+            }
+        }
+    }
+}
+
+impl Drop for EventTapRunner {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+/// Build the `TapCallback` that wraps verification, counting, timeout
+/// re-enable, and dispatches to `on_keystroke` for hardware events.
+fn build_monitor_tap_callback<F>(
+    tap_ptr: Arc<AtomicPtr<std::ffi::c_void>>,
+    ks_count: Arc<AtomicU64>,
+    ver_count: Arc<AtomicU64>,
+    rej_count: Arc<AtomicU64>,
+    mut on_keystroke: F,
+) -> TapCallback
+where
+    F: FnMut(*mut std::ffi::c_void, EventVerificationResult) + Send + 'static,
+{
+    Box::new(move |event: *mut std::ffi::c_void, event_type: u32| {
+        if event_type == K_CG_EVENT_TAP_DISABLED_BY_TIMEOUT {
+            let ptr = tap_ptr.load(Ordering::SeqCst);
+            if !ptr.is_null() {
+                unsafe { CGEventTapEnable(ptr, true) };
+            }
+            let n = TAP_DISABLED_COUNT.fetch_add(1, Ordering::Relaxed);
+            log::warn!(
+                "CGEventTap disabled by timeout, re-enabled (count={})",
+                n + 1
+            );
+            return;
+        }
+
+        if event_type == K_CG_EVENT_KEY_DOWN {
+            let verification = unsafe { verify_event_source(event) };
+
+            match verification {
+                EventVerificationResult::Synthetic => {
+                    rej_count.fetch_add(1, Ordering::SeqCst);
+                    return;
+                }
+                EventVerificationResult::Hardware => {
+                    ver_count.fetch_add(1, Ordering::SeqCst);
+                }
+                EventVerificationResult::Suspicious => {}
+            }
+
+            let count = ks_count.fetch_add(1, Ordering::SeqCst) + 1;
+            debug_write_keystroke("tap_cb", count);
+            on_keystroke(event, verification);
+        }
+    })
+}
+
+// ---------------------------------------------------------------------------
+// KeystrokeInfo / KeystrokeCallback
+// ---------------------------------------------------------------------------
+
 #[derive(Debug, Clone)]
 pub struct KeystrokeInfo {
     pub timestamp_ns: i64,
@@ -70,13 +233,15 @@ pub struct KeystrokeInfo {
 
 pub type KeystrokeCallback = Arc<dyn Fn(KeystrokeInfo) + Send + Sync>;
 
+// ---------------------------------------------------------------------------
+// KeystrokeMonitor
+// ---------------------------------------------------------------------------
+
 pub struct KeystrokeMonitor {
-    thread: Option<std::thread::JoinHandle<()>>,
+    runner: EventTapRunner,
     keystroke_count: Arc<AtomicU64>,
     verified_count: Arc<AtomicU64>,
     rejected_count: Arc<AtomicU64>,
-    run_loop: Arc<Mutex<Option<RunLoopHandle>>>,
-    tap_resources: Arc<Mutex<Option<EventTapResources>>>,
 }
 
 impl KeystrokeMonitor {
@@ -89,8 +254,18 @@ impl KeystrokeMonitor {
         callback: Option<KeystrokeCallback>,
     ) -> Result<Self> {
         let session_clone = Arc::clone(&session);
-        Self::start_event_tap(
-            move |event: *mut std::ffi::c_void, verification: EventVerificationResult| {
+
+        let keystroke_count = Arc::new(AtomicU64::new(0));
+        let verified_count = Arc::new(AtomicU64::new(0));
+        let rejected_count = Arc::new(AtomicU64::new(0));
+        let tap_ptr = Arc::new(AtomicPtr::new(std::ptr::null_mut()));
+
+        let tap_cb = build_monitor_tap_callback(
+            Arc::clone(&tap_ptr),
+            Arc::clone(&keystroke_count),
+            Arc::clone(&verified_count),
+            Arc::clone(&rejected_count),
+            move |event, verification| {
                 let now = chrono::Utc::now().timestamp_nanos_safe();
                 let keycode =
                     unsafe { CGEventGetIntegerValueField(event, K_CG_KEYBOARD_EVENT_KEYCODE) };
@@ -110,7 +285,21 @@ impl KeystrokeMonitor {
                     });
                 }
             },
-        )
+        );
+
+        let runner = EventTapRunner::start(tap_cb)?;
+        // Store tap pointer so the callback can re-enable after timeout.
+        // The tap handle is inside runner.tap_resources; extract it once.
+        if let Some(ref res) = *runner.tap_resources.lock_recover() {
+            tap_ptr.store(res.tap, Ordering::SeqCst);
+        }
+
+        Ok(Self {
+            runner,
+            keystroke_count,
+            verified_count,
+            rejected_count,
+        })
     }
 
     pub fn keystroke_count(&self) -> u64 {
@@ -142,8 +331,18 @@ impl KeystrokeMonitor {
         callback: Option<KeystrokeCallback>,
     ) -> Result<Self> {
         let session_clone = Arc::clone(&session);
-        Self::start_event_tap(
-            move |event: *mut std::ffi::c_void, verification: EventVerificationResult| {
+
+        let keystroke_count = Arc::new(AtomicU64::new(0));
+        let verified_count = Arc::new(AtomicU64::new(0));
+        let rejected_count = Arc::new(AtomicU64::new(0));
+        let tap_ptr = Arc::new(AtomicPtr::new(std::ptr::null_mut()));
+
+        let tap_cb = build_monitor_tap_callback(
+            Arc::clone(&tap_ptr),
+            Arc::clone(&keystroke_count),
+            Arc::clone(&verified_count),
+            Arc::clone(&rejected_count),
+            move |event, verification| {
                 let keycode_raw =
                     unsafe { CGEventGetIntegerValueField(event, K_CG_KEYBOARD_EVENT_KEYCODE) };
                 let keycode = u16::try_from(keycode_raw).unwrap_or(0xFF);
@@ -162,164 +361,27 @@ impl KeystrokeMonitor {
                     });
                 }
             },
-        )
-    }
+        );
 
-    fn start_event_tap<F>(on_keystroke: F) -> Result<Self>
-    where
-        F: FnMut(*mut std::ffi::c_void, EventVerificationResult) + Send + 'static,
-    {
-        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
-
-        let keystroke_count = Arc::new(AtomicU64::new(0));
-        let verified_count = Arc::new(AtomicU64::new(0));
-        let rejected_count = Arc::new(AtomicU64::new(0));
-
-        let ks_count = Arc::clone(&keystroke_count);
-        let ver_count = Arc::clone(&verified_count);
-        let rej_count = Arc::clone(&rejected_count);
-
-        let run_loop: Arc<Mutex<Option<RunLoopHandle>>> = Arc::new(Mutex::new(None));
-        let run_loop_clone = Arc::clone(&run_loop);
-        let tap_resources: Arc<Mutex<Option<EventTapResources>>> = Arc::new(Mutex::new(None));
-        let tap_resources_clone = Arc::clone(&tap_resources);
-
-        // Shared pointer so the callback can re-enable the tap after timeout.
-        let tap_ptr = Arc::new(AtomicPtr::new(std::ptr::null_mut()));
-        let tap_ptr_cb = Arc::clone(&tap_ptr);
-
-        // H-070: No Mutex around on_keystroke; the callback is only ever invoked
-        // from the single run-loop thread, so &mut access is safe without locking.
-        let mut on_keystroke = on_keystroke;
-
-        let thread = std::thread::spawn(move || {
-            let mut tap_cb: TapCallback =
-                Box::new(move |event: *mut std::ffi::c_void, event_type: u32| {
-                    // macOS disables the tap when the callback is too slow.
-                    // Re-enable it immediately.
-                    if event_type == K_CG_EVENT_TAP_DISABLED_BY_TIMEOUT {
-                        let ptr: *mut std::ffi::c_void = tap_ptr_cb.load(Ordering::SeqCst);
-                        if !ptr.is_null() {
-                            unsafe { CGEventTapEnable(ptr, true) };
-                        }
-                        let n = TAP_DISABLED_COUNT.fetch_add(1, Ordering::Relaxed);
-                        log::warn!(
-                            "CGEventTap disabled by timeout, re-enabled (count={})",
-                            n + 1
-                        );
-                        return;
-                    }
-
-                    if event_type == K_CG_EVENT_KEY_DOWN {
-                        let verification = unsafe { verify_event_source(event) };
-
-                        match verification {
-                            EventVerificationResult::Synthetic => {
-                                rej_count.fetch_add(1, Ordering::SeqCst);
-                                return;
-                            }
-                            EventVerificationResult::Hardware => {
-                                ver_count.fetch_add(1, Ordering::SeqCst);
-                            }
-                            EventVerificationResult::Suspicious => {
-                                // Suspicious events are forwarded but not counted as
-                                // verified hardware; the caller sees the verification
-                                // variant and can decide how to weight the event.
-                            }
-                        }
-
-                        let count = ks_count.fetch_add(1, Ordering::SeqCst) + 1;
-                        debug_write_keystroke("tap_cb", count);
-
-                        on_keystroke(event, verification);
-                    }
-                });
-
-            // SAFETY: `tap_cb` lives on this thread's stack frame. The raw pointer
-            // passed to CGEventTapCreate is only dereferenced by the run loop on
-            // this same thread. CFRunLoopRun() blocks until CFRunLoopStop() is
-            // called from stop(). After CFRunLoopRun returns, `tap_cb` is dropped
-            // normally. stop() calls CFRelease(tap) only after joining this thread,
-            // so macOS cannot invoke the callback after `tap_cb` is dropped.
-            unsafe {
-                let tap = CGEventTapCreate(
-                    K_CG_HID_EVENT_TAP,
-                    K_CG_HEAD_INSERT_EVENT_TAP,
-                    K_CG_EVENT_TAP_OPTION_LISTEN_ONLY,
-                    cg_event_mask_bit(K_CG_EVENT_KEY_DOWN),
-                    event_tap_trampoline,
-                    &mut tap_cb as *mut TapCallback as *mut std::ffi::c_void,
-                );
-
-                if tap.is_null() {
-                    let _ = ready_tx.send(Err(anyhow!("Failed to create CGEventTap")));
-                    return;
-                }
-
-                // Store tap pointer so the callback can re-enable after timeout.
-                tap_ptr.store(tap, Ordering::SeqCst);
-
-                let source = CFMachPortCreateRunLoopSource(std::ptr::null_mut(), tap, 0);
-                if source.is_null() {
-                    CFRelease(tap);
-                    tap_ptr.store(std::ptr::null_mut(), Ordering::SeqCst);
-                    let _ = ready_tx.send(Err(anyhow!("Failed to create runloop source")));
-                    return;
-                }
-
-                let rl_ref = CFRunLoopGetCurrent();
-                CFRetain(rl_ref);
-                *run_loop_clone.lock_recover() = Some(RunLoopHandle(rl_ref));
-                // H-071: Store tap and source for cleanup in stop()/Drop
-                *tap_resources_clone.lock_recover() = Some(EventTapResources {
-                    run_loop: rl_ref,
-                    tap,
-                    source,
-                });
-                CFRunLoopAddSource(rl_ref, source, kCFRunLoopCommonModes);
-                // Signal ready only after run_loop handle is stored (C-002 fix)
-                let _ = ready_tx.send(Ok(()));
-                CGEventTapEnable(tap, true);
-                CFRunLoopRun();
-            }
-        });
-
-        match ready_rx.recv_timeout(std::time::Duration::from_secs(5)) {
-            Ok(Ok(())) => Ok(Self {
-                thread: Some(thread),
-                keystroke_count,
-                verified_count,
-                rejected_count,
-                run_loop,
-                tap_resources,
-            }),
-            Ok(Err(err)) => Err(err),
-            Err(_) => Err(anyhow!("CGEventTap initialization timed out after 5s")),
+        let runner = EventTapRunner::start(tap_cb)?;
+        if let Some(ref res) = *runner.tap_resources.lock_recover() {
+            tap_ptr.store(res.tap, Ordering::SeqCst);
         }
+
+        Ok(Self {
+            runner,
+            keystroke_count,
+            verified_count,
+            rejected_count,
+        })
     }
 
     pub fn stop(&mut self) {
-        // C-001: Stop the run loop first so the thread can exit, but take the
-        // handle so a second call to stop() (e.g. from Drop) is a no-op.
-        let rl_ptr = self.run_loop.lock_recover().take().map(|h| h.0);
-        if let Some(p) = rl_ptr {
-            unsafe {
-                CFRunLoopStop(p);
-            }
-        }
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
-        // H-071: Release tap, source, and run loop after thread has exited.
-        // tap_resources holds the canonical copies; run_loop was only taken
-        // above to call CFRunLoopStop. Release everything exactly once here.
-        if let Some(res) = self.tap_resources.lock_recover().take() {
-            unsafe {
-                CFRelease(res.source);
-                CFRelease(res.tap);
-                CFRelease(res.run_loop);
-            }
-        }
+        self.runner.stop();
+    }
+
+    pub fn run_loop_handle(&self) -> &Arc<Mutex<Option<RunLoopHandle>>> {
+        &self.runner.run_loop
     }
 }
 
@@ -329,16 +391,18 @@ impl Drop for KeystrokeMonitor {
     }
 }
 
+// ---------------------------------------------------------------------------
+// MacOSKeystrokeCapture (KeystrokeCapture trait impl)
+// ---------------------------------------------------------------------------
+
 pub struct MacOSKeystrokeCapture {
     running: Arc<AtomicBool>,
     sender: Option<mpsc::Sender<KeystrokeEvent>>,
-    thread: Option<std::thread::JoinHandle<()>>,
+    runner: Option<EventTapRunner>,
     strict_mode: bool,
     total_events: Arc<AtomicU64>,
     verified_hardware: Arc<AtomicU64>,
     rejected_synthetic: Arc<AtomicU64>,
-    run_loop: Arc<Mutex<Option<RunLoopHandle>>>,
-    tap_resources: Arc<Mutex<Option<EventTapResources>>>,
 }
 
 impl MacOSKeystrokeCapture {
@@ -346,13 +410,11 @@ impl MacOSKeystrokeCapture {
         Ok(Self {
             running: Arc::new(AtomicBool::new(false)),
             sender: None,
-            thread: None,
+            runner: None,
             strict_mode: true,
             total_events: Arc::new(AtomicU64::new(0)),
             verified_hardware: Arc::new(AtomicU64::new(0)),
             rejected_synthetic: Arc::new(AtomicU64::new(0)),
-            run_loop: Arc::new(Mutex::new(None)),
-            tap_resources: Arc::new(Mutex::new(None)),
         })
     }
 }
@@ -371,172 +433,86 @@ impl KeystrokeCapture for MacOSKeystrokeCapture {
         let verified_hardware = Arc::clone(&self.verified_hardware);
         let rejected_synthetic = Arc::clone(&self.rejected_synthetic);
         let strict = self.strict_mode;
-        let run_loop = Arc::clone(&self.run_loop);
-        let tap_resources = Arc::clone(&self.tap_resources);
-
-        running.store(true, Ordering::SeqCst);
-
-        // Shared pointer so the callback can re-enable the tap after timeout.
         let tap_ptr = Arc::new(AtomicPtr::new(std::ptr::null_mut()));
         let tap_ptr_cb = Arc::clone(&tap_ptr);
 
-        let (ready_tx, ready_rx) = mpsc::channel();
+        running.store(true, Ordering::SeqCst);
 
-        let thread = std::thread::spawn(move || {
-            let mut tap_cb: TapCallback =
-                Box::new(move |event: *mut std::ffi::c_void, event_type: u32| {
-                    if !running.load(Ordering::SeqCst) {
-                        return;
-                    }
+        let tap_cb: TapCallback = Box::new(move |event: *mut std::ffi::c_void, event_type: u32| {
+            if !running.load(Ordering::SeqCst) {
+                return;
+            }
 
-                    // macOS disables the tap when the callback is too slow.
-                    // Re-enable it immediately.
-                    if event_type == K_CG_EVENT_TAP_DISABLED_BY_TIMEOUT {
-                        let ptr: *mut std::ffi::c_void = tap_ptr_cb.load(Ordering::SeqCst);
-                        if !ptr.is_null() {
-                            unsafe { CGEventTapEnable(ptr, true) };
-                        }
-                        let n = TAP_DISABLED_COUNT.fetch_add(1, Ordering::Relaxed);
-                        log::warn!(
-                            "CGEventTap disabled by timeout, re-enabled (count={})",
-                            n + 1
-                        );
-                        return;
-                    }
-
-                    if event_type == K_CG_EVENT_KEY_DOWN {
-                        let verification = unsafe { verify_event_source(event) };
-
-                        let is_hardware = match verification {
-                            EventVerificationResult::Hardware => true,
-                            EventVerificationResult::Suspicious => !strict,
-                            EventVerificationResult::Synthetic => false,
-                        };
-
-                        total_events.fetch_add(1, Ordering::Relaxed);
-                        if is_hardware {
-                            verified_hardware.fetch_add(1, Ordering::Relaxed);
-                        } else {
-                            rejected_synthetic.fetch_add(1, Ordering::Relaxed);
-                        }
-
-                        if is_hardware {
-                            let now = chrono::Utc::now().timestamp_nanos_safe();
-                            let keycode = u16::try_from(unsafe {
-                                CGEventGetIntegerValueField(event, K_CG_KEYBOARD_EVENT_KEYCODE)
-                            })
-                            .unwrap_or(0xFF);
-                            let zone = crate::jitter::keycode_to_zone(keycode);
-
-                            let keystroke = KeystrokeEvent {
-                                timestamp_ns: now,
-                                keycode,
-                                zone: if zone >= 0 { zone as u8 } else { 0xFF },
-                                char_value: None,
-                                is_hardware: true,
-                                device_id: None,
-                                transport_type: None,
-                            };
-
-                            debug_write_keystroke(
-                                "capture_tx",
-                                total_events.load(Ordering::Relaxed),
-                            );
-                            if tx.send(keystroke).is_err() {
-                                running.store(false, Ordering::SeqCst);
-                            }
-                        }
-                    }
-                });
-
-            // SAFETY: same invariant as KeystrokeMonitor::start_event_tap; see
-            // comment there. tap_cb outlives all callback invocations because
-            // CFRunLoopRun blocks, and stop() releases the tap after thread join.
-            unsafe {
-                let tap = CGEventTapCreate(
-                    K_CG_HID_EVENT_TAP,
-                    K_CG_HEAD_INSERT_EVENT_TAP,
-                    K_CG_EVENT_TAP_OPTION_LISTEN_ONLY,
-                    cg_event_mask_bit(K_CG_EVENT_KEY_DOWN),
-                    event_tap_trampoline,
-                    &mut tap_cb as *mut TapCallback as *mut std::ffi::c_void,
+            if event_type == K_CG_EVENT_TAP_DISABLED_BY_TIMEOUT {
+                let ptr: *mut std::ffi::c_void = tap_ptr_cb.load(Ordering::SeqCst);
+                if !ptr.is_null() {
+                    unsafe { CGEventTapEnable(ptr, true) };
+                }
+                let n = TAP_DISABLED_COUNT.fetch_add(1, Ordering::Relaxed);
+                log::warn!(
+                    "CGEventTap disabled by timeout, re-enabled (count={})",
+                    n + 1
                 );
+                return;
+            }
 
-                if tap.is_null() {
-                    let _ = ready_tx.send(Err(anyhow!("Failed to create CGEventTap")));
-                    return;
+            if event_type == K_CG_EVENT_KEY_DOWN {
+                let verification = unsafe { verify_event_source(event) };
+
+                let is_hardware = match verification {
+                    EventVerificationResult::Hardware => true,
+                    EventVerificationResult::Suspicious => !strict,
+                    EventVerificationResult::Synthetic => false,
+                };
+
+                total_events.fetch_add(1, Ordering::Relaxed);
+                if is_hardware {
+                    verified_hardware.fetch_add(1, Ordering::Relaxed);
+                } else {
+                    rejected_synthetic.fetch_add(1, Ordering::Relaxed);
                 }
 
-                // Store tap pointer so the callback can re-enable after timeout.
-                tap_ptr.store(tap, Ordering::SeqCst);
+                if is_hardware {
+                    let now = chrono::Utc::now().timestamp_nanos_safe();
+                    let keycode = u16::try_from(unsafe {
+                        CGEventGetIntegerValueField(event, K_CG_KEYBOARD_EVENT_KEYCODE)
+                    })
+                    .unwrap_or(0xFF);
+                    let zone = crate::jitter::keycode_to_zone(keycode);
 
-                let source = CFMachPortCreateRunLoopSource(std::ptr::null_mut(), tap, 0);
-                if source.is_null() {
-                    CFRelease(tap);
-                    tap_ptr.store(std::ptr::null_mut(), Ordering::SeqCst);
-                    let _ = ready_tx.send(Err(anyhow!("Failed to create runloop source")));
-                    return;
+                    let keystroke = KeystrokeEvent {
+                        timestamp_ns: now,
+                        keycode,
+                        zone: if zone >= 0 { zone as u8 } else { 0xFF },
+                        char_value: None,
+                        is_hardware: true,
+                        device_id: None,
+                        transport_type: None,
+                    };
+
+                    debug_write_keystroke("capture_tx", total_events.load(Ordering::Relaxed));
+                    if tx.send(keystroke).is_err() {
+                        running.store(false, Ordering::SeqCst);
+                    }
                 }
-
-                let rl_ref = CFRunLoopGetCurrent();
-                CFRetain(rl_ref);
-                *run_loop.lock_recover() = Some(RunLoopHandle(rl_ref));
-                // H-072: Store tap and source for cleanup in stop()/Drop
-                *tap_resources.lock_recover() = Some(EventTapResources {
-                    run_loop: rl_ref,
-                    tap,
-                    source,
-                });
-                CFRunLoopAddSource(rl_ref, source, kCFRunLoopCommonModes);
-                // Signal ready only after run_loop handle is stored (C-002 fix)
-                let _ = ready_tx.send(Ok(()));
-                CGEventTapEnable(tap, true);
-                CFRunLoopRun();
             }
         });
 
-        match ready_rx.recv_timeout(std::time::Duration::from_secs(5)) {
-            Ok(Ok(())) => {
-                self.thread = Some(thread);
-                Ok(rx)
-            }
-            Ok(Err(err)) => {
-                self.running.store(false, Ordering::SeqCst);
-                self.sender = None;
-                Err(err)
-            }
-            Err(_) => {
-                self.running.store(false, Ordering::SeqCst);
-                self.sender = None;
-                Err(anyhow!("CGEventTap initialization timed out after 5s"))
-            }
+        let runner = EventTapRunner::start(tap_cb)?;
+        if let Some(ref res) = *runner.tap_resources.lock_recover() {
+            tap_ptr.store(res.tap, Ordering::SeqCst);
         }
+        self.runner = Some(runner);
+        Ok(rx)
     }
 
     fn stop(&mut self) -> Result<()> {
         self.running.store(false, Ordering::SeqCst);
         self.sender = None;
-        // C-001: Stop the run loop first so the thread can exit, but take the
-        // handle so a second call to stop() (e.g. from Drop) is a no-op.
-        let rl_ptr = self.run_loop.lock_recover().take().map(|h| h.0);
-        if let Some(p) = rl_ptr {
-            unsafe {
-                CFRunLoopStop(p);
-            }
+        if let Some(ref mut runner) = self.runner {
+            runner.stop();
         }
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
-        // H-072: Release tap, source, and run loop after thread has exited.
-        // tap_resources holds the canonical copies; run_loop was only taken
-        // above to call CFRunLoopStop. Release everything exactly once here.
-        if let Some(res) = self.tap_resources.lock_recover().take() {
-            unsafe {
-                CFRelease(res.source);
-                CFRelease(res.tap);
-                CFRelease(res.run_loop);
-            }
-        }
+        self.runner = None;
         Ok(())
     }
 

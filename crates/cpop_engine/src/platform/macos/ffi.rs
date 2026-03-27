@@ -176,7 +176,7 @@ extern "C" {
 }
 
 /// Callback type for CGEventTap user callbacks.
-pub type TapCallback = Box<dyn FnMut(*mut std::ffi::c_void, u32)>;
+pub type TapCallback = Box<dyn FnMut(*mut std::ffi::c_void, u32) + Send>;
 
 /// C trampoline for CGEventTap callbacks.
 ///
