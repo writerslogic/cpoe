@@ -129,10 +129,24 @@ pub fn build_ephemeral_packet(
             .sign(signing_key)
             .map_err(|e| Error::evidence(format!("declaration signing failed: {e}")))?;
 
-    let checkpoints: Vec<CheckpointProof> = snapshots
-        .iter()
-        .enumerate()
-        .map(|(i, snap)| CheckpointProof {
+    let mut checkpoints: Vec<CheckpointProof> = Vec::with_capacity(snapshots.len());
+    for (i, snap) in snapshots.iter().enumerate() {
+        let prev_hash = if i > 0 {
+            checkpoints[i - 1].hash.clone()
+        } else {
+            hex::encode([0u8; 32])
+        };
+        // Compute a deterministic checkpoint hash from its fields
+        let mut cp_hasher = Sha256::new();
+        cp_hasher.update(b"witnessd-checkpoint-v1");
+        cp_hasher.update((i as u64).to_be_bytes());
+        cp_hasher.update(hex::decode(&prev_hash).unwrap_or_else(|_| vec![0u8; 32]));
+        cp_hasher.update(snap.content_hash);
+        cp_hasher.update(snap.char_count.to_be_bytes());
+        cp_hasher.update((snap.timestamp_ns as u64).to_be_bytes());
+        let cp_hash = hex::encode(<[u8; 32]>::from(cp_hasher.finalize()));
+
+        checkpoints.push(CheckpointProof {
             ordinal: i as u64,
             timestamp: chrono::DateTime::from_timestamp_nanos(snap.timestamp_ns),
             content_hash: hex::encode(snap.content_hash),
@@ -141,16 +155,12 @@ pub fn build_ephemeral_packet(
             vdf_output: None,
             vdf_iterations: None,
             elapsed_time: None,
-            previous_hash: if i > 0 {
-                hex::encode(snapshots[i - 1].content_hash)
-            } else {
-                hex::encode([0u8; 32])
-            },
-            hash: hex::encode(snap.content_hash),
+            previous_hash: prev_hash,
+            hash: cp_hash,
             message: snap.message.clone(),
             signature: None,
-        })
-        .collect();
+        });
+    }
 
     // Build keystroke evidence from accumulated jitter intervals
     let keystroke_evidence = if !jitter_intervals.is_empty() {
@@ -202,11 +212,7 @@ pub fn build_ephemeral_packet(
             final_size: snapshots.last().map(|s| s.char_count).unwrap_or(0),
         },
         checkpoints,
-        vdf_params: vdf::Parameters {
-            iterations_per_second: 0,
-            min_iterations: 0,
-            max_iterations: 0,
-        },
+        vdf_params: vdf::default_parameters(),
         chain_hash: hex::encode(chain_hash),
         declaration: Some(signed_decl),
         presence: None,

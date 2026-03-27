@@ -536,6 +536,11 @@ impl Chain {
         let mut report = VerificationReport::new();
 
         for (i, checkpoint) in self.checkpoints.iter().enumerate() {
+            if let Err(e) = checkpoint.validate_timestamp() {
+                report.fail(format!("checkpoint {i}: {e}"));
+                return report;
+            }
+
             if checkpoint.compute_hash() != checkpoint.hash {
                 report.fail(format!("checkpoint {i}: hash mismatch"));
                 return report;
@@ -592,11 +597,10 @@ impl Chain {
                 }
                 Some(sig) => {
                     // Structural format check: verify Ed25519 signature length.
-                    // Cryptographic signature verification (Ed25519 verify against
+                    // Full cryptographic verification (Ed25519 verify against
                     // the signing public key) is performed separately in
                     // keyhierarchy/verification.rs (verify_checkpoint_signatures)
                     // because the Chain struct does not hold the public key.
-                    // This check catches corruption/truncation but NOT forgery.
                     if sig.len() != 64 {
                         report.signature_failures.push(checkpoint.ordinal);
                         report.fail(format!(
@@ -607,6 +611,11 @@ impl Chain {
                         ));
                         return report;
                     }
+                    report.warnings.push(format!(
+                        "checkpoint {i}: Ed25519 signature present but not \
+                         cryptographically verified (no verifying key in chain; \
+                         use keyhierarchy::verify_checkpoint_signatures for full check)"
+                    ));
                 }
             }
 
