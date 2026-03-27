@@ -128,15 +128,15 @@ impl Session {
         let public_key = signing_key.verifying_key().to_bytes().to_vec();
         let signature = signing_key.sign(&checkpoint_hash).to_bytes();
 
-        let next_ratchet = hkdf_expand(
+        let next_ratchet = Zeroizing::new(hkdf_expand(
             self.ratchet.current.as_bytes(),
             RATCHET_ADVANCE_DOMAIN.as_bytes(),
             &checkpoint_hash,
-        )?;
+        )?);
 
         let current_ordinal = self.ratchet.ordinal;
         drop(signing_seed);
-        self.ratchet.current = next_ratchet.into();
+        self.ratchet.current = (*next_ratchet).into();
         self.ratchet.ordinal += 1;
 
         let sig = CheckpointSignature {
@@ -191,14 +191,14 @@ impl Session {
         if let Some(delta) = counter_delta {
             ratchet_input.extend_from_slice(&delta.to_be_bytes());
         }
-        let next_ratchet = hkdf_expand(
+        let next_ratchet = Zeroizing::new(hkdf_expand(
             self.ratchet.current.as_bytes(),
             RATCHET_ADVANCE_DOMAIN.as_bytes(),
             &ratchet_input,
-        )?;
+        )?);
 
         let current_ordinal = self.ratchet.ordinal;
-        self.ratchet.current = next_ratchet.into();
+        self.ratchet.current = (*next_ratchet).into();
         self.ratchet.ordinal += 1;
 
         if let (Some(store), Some(counter)) = (sealed_store, current_counter) {
