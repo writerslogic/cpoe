@@ -18,6 +18,7 @@ pub mod steganography_ffi;
 pub mod system;
 pub mod types;
 pub mod verify_detail;
+pub mod writersproof_ffi;
 
 pub use attestation::*;
 pub use beacon::*;
@@ -34,3 +35,4 @@ pub use steganography_ffi::*;
 pub use system::*;
 pub use types::*;
 pub use verify_detail::*;
+pub use writersproof_ffi::*;
