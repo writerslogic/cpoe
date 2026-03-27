@@ -102,6 +102,11 @@ pub enum ForgeryFlag {
     NoFatiguePattern,
 }
 
+/// Convert a nanosecond timestamp difference to milliseconds.
+fn interval_ms(a: &SimpleJitterSample, b: &SimpleJitterSample) -> f64 {
+    b.timestamp_ns.saturating_sub(a.timestamp_ns).max(0) as f64 / 1_000_000.0
+}
+
 impl BehavioralFingerprint {
     /// Build a fingerprint from jitter samples, computing all statistical features.
     pub fn from_samples(samples: &[SimpleJitterSample]) -> Self {
@@ -111,9 +116,7 @@ impl BehavioralFingerprint {
 
         let intervals: Vec<f64> = samples
             .windows(2)
-            .map(|w| {
-                w[1].timestamp_ns.saturating_sub(w[0].timestamp_ns).max(0) as f64 / 1_000_000.0
-            })
+            .map(|w| interval_ms(&w[0], &w[1]))
             .filter(|&i| i > 0.0 && i < MAX_PAUSE_FILTER_MS)
             .collect();
 
@@ -126,25 +129,17 @@ impl BehavioralFingerprint {
         let skewness = stats::skewness(&intervals, mean, std);
         let kurtosis = stats::kurtosis(&intervals, mean, std);
 
-        let long_pauses = samples
-            .windows(2)
-            .map(|w| {
-                w[1].timestamp_ns.saturating_sub(w[0].timestamp_ns).max(0) as f64 / 1_000_000.0
-            })
-            .filter(|&i| i > PARAGRAPH_PAUSE_MS)
+        let long_pauses = intervals
+            .iter()
+            .filter(|&&i| i > PARAGRAPH_PAUSE_MS)
             .count();
 
-        let thinking_freq = if !samples.is_empty() {
-            long_pauses as f64 / samples.len() as f64
-        } else {
-            0.0
-        };
+        let thinking_freq = long_pauses as f64 / (samples.len() - 1) as f64;
 
         let mut bursts = Vec::new();
         let mut current_burst_len = 0;
         for w in samples.windows(2) {
-            let interval =
-                w[1].timestamp_ns.saturating_sub(w[0].timestamp_ns).max(0) as f64 / 1_000_000.0;
+            let interval = interval_ms(&w[0], &w[1]);
             if interval > BURST_SEPARATOR_MS {
                 if current_burst_len > 0 {
                     bursts.push(current_burst_len as f64);
@@ -153,6 +148,9 @@ impl BehavioralFingerprint {
             } else {
                 current_burst_len += 1;
             }
+        }
+        if current_burst_len > 0 {
+            bursts.push(current_burst_len as f64);
         }
 
         let burst_mean = if !bursts.is_empty() {
@@ -247,9 +245,7 @@ impl BehavioralFingerprint {
 
         let intervals: Vec<f64> = samples
             .windows(2)
-            .map(|w| {
-                w[1].timestamp_ns.saturating_sub(w[0].timestamp_ns).max(0) as f64 / 1_000_000.0
-            })
+            .map(|w| interval_ms(&w[0], &w[1]))
             .filter(|&i| i > 0.0 && i < MAX_PAUSE_FILTER_MS)
             .collect();
 
