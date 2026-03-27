@@ -579,7 +579,7 @@ impl Wal {
         if header.version != VERSION {
             return Err(WalError::InvalidVersion(header.version));
         }
-        if header.session_id != state.session_id {
+        if header.session_id.ct_eq(&state.session_id).unwrap_u8() == 0 {
             return Err(WalError::SessionMismatch);
         }
         Ok(())

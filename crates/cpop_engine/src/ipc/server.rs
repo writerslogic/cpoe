@@ -460,12 +460,18 @@ impl IpcServer {
                         continue;
                     }
                 };
-                let prev = active_connections.fetch_add(1, Ordering::Relaxed);
-                if prev >= MAX_CONCURRENT_CONNECTIONS {
-                    active_connections.fetch_sub(1, Ordering::Relaxed);
+                let acquired =
+                    active_connections.fetch_update(Ordering::AcqRel, Ordering::Relaxed, |n| {
+                        if n < MAX_CONCURRENT_CONNECTIONS {
+                            Some(n + 1)
+                        } else {
+                            None
+                        }
+                    });
+                if acquired.is_err() {
+                    let cur = active_connections.load(Ordering::Relaxed);
                     log::warn!(
-                        "IPC: rejecting connection ({}/{MAX_CONCURRENT_CONNECTIONS} active)",
-                        prev
+                        "IPC: rejecting connection ({cur}/{MAX_CONCURRENT_CONNECTIONS} active)",
                     );
                     drop(stream);
                     continue;
@@ -488,12 +494,18 @@ impl IpcServer {
                     .create(&self.pipe_name)?;
 
                 server.connect().await?;
-                let prev = active_connections.fetch_add(1, Ordering::Relaxed);
-                if prev >= MAX_CONCURRENT_CONNECTIONS {
-                    active_connections.fetch_sub(1, Ordering::Relaxed);
+                let acquired =
+                    active_connections.fetch_update(Ordering::AcqRel, Ordering::Relaxed, |n| {
+                        if n < MAX_CONCURRENT_CONNECTIONS {
+                            Some(n + 1)
+                        } else {
+                            None
+                        }
+                    });
+                if acquired.is_err() {
+                    let cur = active_connections.load(Ordering::Relaxed);
                     log::warn!(
-                        "IPC: rejecting connection ({}/{MAX_CONCURRENT_CONNECTIONS} active)",
-                        prev
+                        "IPC: rejecting connection ({cur}/{MAX_CONCURRENT_CONNECTIONS} active)",
                     );
                     drop(server);
                     continue;
@@ -525,10 +537,13 @@ impl IpcServer {
                     result = self.listener.accept() => {
                         match result {
                             Ok((stream, _)) => {
-                                let prev = active_connections.fetch_add(1, Ordering::Relaxed);
-                                if prev >= MAX_CONCURRENT_CONNECTIONS {
-                                    active_connections.fetch_sub(1, Ordering::Relaxed);
-                                    log::warn!("IPC: rejecting connection ({prev}/{MAX_CONCURRENT_CONNECTIONS} active)");
+                                let acquired = active_connections.fetch_update(
+                                    Ordering::AcqRel, Ordering::Relaxed, |n| {
+                                        if n < MAX_CONCURRENT_CONNECTIONS { Some(n + 1) } else { None }
+                                    });
+                                if acquired.is_err() {
+                                    let cur = active_connections.load(Ordering::Relaxed);
+                                    log::warn!("IPC: rejecting connection ({cur}/{MAX_CONCURRENT_CONNECTIONS} active)");
                                     drop(stream);
                                     continue;
                                 }
@@ -566,10 +581,13 @@ impl IpcServer {
                 tokio::select! {
                     result = server.connect() => {
                         if result.is_ok() {
-                            let prev = active_connections.fetch_add(1, Ordering::Relaxed);
-                            if prev >= MAX_CONCURRENT_CONNECTIONS {
-                                active_connections.fetch_sub(1, Ordering::Relaxed);
-                                log::warn!("IPC: rejecting connection ({prev}/{MAX_CONCURRENT_CONNECTIONS} active)");
+                            let acquired = active_connections.fetch_update(
+                                Ordering::AcqRel, Ordering::Relaxed, |n| {
+                                    if n < MAX_CONCURRENT_CONNECTIONS { Some(n + 1) } else { None }
+                                });
+                            if acquired.is_err() {
+                                let cur = active_connections.load(Ordering::Relaxed);
+                                log::warn!("IPC: rejecting connection ({cur}/{MAX_CONCURRENT_CONNECTIONS} active)");
                                 continue;
                             }
                             let handler_clone = Arc::clone(&handler);

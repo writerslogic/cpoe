@@ -32,6 +32,10 @@ impl SecureStore {
             &e.previous_hash,
         );
 
+        if !e.forensic_score.is_finite() {
+            e.forensic_score = 0.0;
+        }
+
         let tx = self.conn.transaction()?;
         tx.execute(
             "INSERT INTO secure_events (
@@ -65,13 +69,12 @@ impl SecureStore {
         let id = tx.last_insert_rowid();
         e.id = Some(id);
 
-        let event_count: i64 =
-            tx.query_row("SELECT COUNT(*) FROM secure_events", [], |row| row.get(0))?;
-        let last_verified_seq: i64 = tx.query_row(
-            "SELECT last_verified_sequence FROM integrity WHERE id = 1",
+        let (prev_event_count, last_verified_seq): (i64, i64) = tx.query_row(
+            "SELECT event_count, last_verified_sequence FROM integrity WHERE id = 1",
             [],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
+        let event_count = prev_event_count + 1;
         let new_integrity_hmac = crypto::compute_integrity_hmac(
             &self.hmac_key,
             &e.event_hash,
@@ -99,99 +102,110 @@ impl SecureStore {
         path: &str,
         limit: Option<u32>,
     ) -> anyhow::Result<Vec<SecureEvent>> {
+        let base_query = "SELECT id, device_id, machine_id, timestamp_ns, file_path, \
+                content_hash, file_size, size_delta, previous_hash, event_hash, \
+                context_type, context_note, vdf_input, vdf_output, vdf_iterations, \
+                forensic_score, is_paste, hardware_counter, input_method \
+                FROM secure_events WHERE file_path = ?1 ORDER BY id ASC";
         let query = match limit {
-            Some(n) => format!(
-                "SELECT id, device_id, machine_id, timestamp_ns, file_path, content_hash, file_size, size_delta,
-                        previous_hash, event_hash, context_type, context_note, vdf_input, vdf_output,
-                        vdf_iterations, forensic_score, is_paste, hardware_counter, input_method
-                 FROM secure_events WHERE file_path = ? ORDER BY id ASC LIMIT {}",
-                n
-            ),
-            None => "SELECT id, device_id, machine_id, timestamp_ns, file_path, content_hash, file_size, size_delta,
-                    previous_hash, event_hash, context_type, context_note, vdf_input, vdf_output,
-                    vdf_iterations, forensic_score, is_paste, hardware_counter, input_method
-             FROM secure_events WHERE file_path = ? ORDER BY id ASC".to_string(),
+            Some(_) => format!("{base_query} LIMIT ?2"),
+            None => base_query.to_string(),
         };
         let mut stmt = self.conn.prepare(&query)?;
 
-        let rows = stmt.query_map([path], |row| {
-            let device_id: Vec<u8> = row.get(1)?;
-            let content_hash: Vec<u8> = row.get(5)?;
-            let previous_hash: Vec<u8> = row.get(8)?;
-            let event_hash: Vec<u8> = row.get(9)?;
-            let vdf_input: Option<Vec<u8>> = row.get(12)?;
-            let vdf_output: Option<Vec<u8>> = row.get(13)?;
+        let mut events = Vec::new();
+        match limit {
+            Some(n) => {
+                let rows = stmt.query_map(params![path, n], Self::row_to_event)?;
+                for row in rows {
+                    events.push(row?);
+                }
+            }
+            None => {
+                let rows = stmt.query_map(params![path], Self::row_to_event)?;
+                for row in rows {
+                    events.push(row?);
+                }
+            }
+        }
+        Ok(events)
+    }
 
-            Ok(SecureEvent {
-                id: Some(row.get(0)?),
-                device_id: device_id.try_into().map_err(|_| {
-                    rusqlite::Error::InvalidColumnType(
-                        1,
-                        "device_id".into(),
-                        rusqlite::types::Type::Blob,
-                    )
-                })?,
-                machine_id: row.get(2)?,
-                timestamp_ns: row.get(3)?,
-                file_path: row.get(4)?,
-                content_hash: content_hash.try_into().map_err(|_| {
-                    rusqlite::Error::InvalidColumnType(
-                        5,
-                        "content_hash".into(),
-                        rusqlite::types::Type::Blob,
-                    )
-                })?,
-                file_size: row.get(6)?,
-                size_delta: row.get(7)?,
-                previous_hash: previous_hash.try_into().map_err(|_| {
-                    rusqlite::Error::InvalidColumnType(
-                        8,
-                        "previous_hash".into(),
-                        rusqlite::types::Type::Blob,
-                    )
-                })?,
-                event_hash: event_hash.try_into().map_err(|_| {
-                    rusqlite::Error::InvalidColumnType(
-                        9,
-                        "event_hash".into(),
-                        rusqlite::types::Type::Blob,
-                    )
-                })?,
-                context_type: row.get(10)?,
-                context_note: row.get(11)?,
-                vdf_input: vdf_input
-                    .map(|v| {
-                        v.try_into().map_err(|_| {
-                            rusqlite::Error::InvalidColumnType(
-                                12,
-                                "vdf_input".into(),
-                                rusqlite::types::Type::Blob,
-                            )
-                        })
-                    })
-                    .transpose()?,
-                vdf_output: vdf_output
-                    .map(|v| {
-                        v.try_into().map_err(|_| {
-                            rusqlite::Error::InvalidColumnType(
-                                13,
-                                "vdf_output".into(),
-                                rusqlite::types::Type::Blob,
-                            )
-                        })
-                    })
-                    .transpose()?,
-                vdf_iterations: u64::try_from(row.get::<_, i64>(14)?).unwrap_or(0),
-                forensic_score: row.get(15)?,
-                is_paste: row.get::<_, i32>(16)? != 0,
-                hardware_counter: row
-                    .get::<_, Option<i64>>(17)?
-                    .map(|v| u64::try_from(v).unwrap_or(0)),
-                input_method: row.get(18)?,
-            })
-        })?;
+    fn row_to_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<SecureEvent> {
+        let device_id: Vec<u8> = row.get(1)?;
+        let content_hash: Vec<u8> = row.get(5)?;
+        let previous_hash: Vec<u8> = row.get(8)?;
+        let event_hash: Vec<u8> = row.get(9)?;
+        let vdf_input: Option<Vec<u8>> = row.get(12)?;
+        let vdf_output: Option<Vec<u8>> = row.get(13)?;
 
-        rows.map(|r| r.map_err(anyhow::Error::from)).collect()
+        Ok(SecureEvent {
+            id: Some(row.get(0)?),
+            device_id: device_id.try_into().map_err(|_| {
+                rusqlite::Error::InvalidColumnType(
+                    1,
+                    "device_id".into(),
+                    rusqlite::types::Type::Blob,
+                )
+            })?,
+            machine_id: row.get(2)?,
+            timestamp_ns: row.get(3)?,
+            file_path: row.get(4)?,
+            content_hash: content_hash.try_into().map_err(|_| {
+                rusqlite::Error::InvalidColumnType(
+                    5,
+                    "content_hash".into(),
+                    rusqlite::types::Type::Blob,
+                )
+            })?,
+            file_size: row.get(6)?,
+            size_delta: row.get(7)?,
+            previous_hash: previous_hash.try_into().map_err(|_| {
+                rusqlite::Error::InvalidColumnType(
+                    8,
+                    "previous_hash".into(),
+                    rusqlite::types::Type::Blob,
+                )
+            })?,
+            event_hash: event_hash.try_into().map_err(|_| {
+                rusqlite::Error::InvalidColumnType(
+                    9,
+                    "event_hash".into(),
+                    rusqlite::types::Type::Blob,
+                )
+            })?,
+            context_type: row.get(10)?,
+            context_note: row.get(11)?,
+            vdf_input: vdf_input
+                .map(|v| {
+                    v.try_into().map_err(|_| {
+                        rusqlite::Error::InvalidColumnType(
+                            12,
+                            "vdf_input".into(),
+                            rusqlite::types::Type::Blob,
+                        )
+                    })
+                })
+                .transpose()?,
+            vdf_output: vdf_output
+                .map(|v| {
+                    v.try_into().map_err(|_| {
+                        rusqlite::Error::InvalidColumnType(
+                            13,
+                            "vdf_output".into(),
+                            rusqlite::types::Type::Blob,
+                        )
+                    })
+                })
+                .transpose()?,
+            vdf_iterations: u64::try_from(row.get::<_, i64>(14)?).unwrap_or(0),
+            forensic_score: row.get(15)?,
+            is_paste: row.get::<_, i32>(16)? != 0,
+            hardware_counter: row
+                .get::<_, Option<i64>>(17)?
+                .map(|v| u64::try_from(v).unwrap_or(0)),
+            input_method: row.get(18)?,
+        })
     }
 
     /// List tracked files with their latest timestamp and event count.
@@ -285,84 +299,12 @@ impl SecureStore {
              FROM secure_events WHERE device_id = ? ORDER BY id ASC",
         )?;
 
-        let rows = stmt.query_map([&device_id[..]], |row| {
-            let device_id_bytes: Vec<u8> = row.get(1)?;
-            let content_hash: Vec<u8> = row.get(5)?;
-            let previous_hash: Vec<u8> = row.get(8)?;
-            let event_hash: Vec<u8> = row.get(9)?;
-            let vdf_input: Option<Vec<u8>> = row.get(12)?;
-            let vdf_output: Option<Vec<u8>> = row.get(13)?;
-
-            Ok(SecureEvent {
-                id: Some(row.get(0)?),
-                device_id: device_id_bytes.try_into().map_err(|_| {
-                    rusqlite::Error::InvalidColumnType(
-                        1,
-                        "device_id".into(),
-                        rusqlite::types::Type::Blob,
-                    )
-                })?,
-                machine_id: row.get(2)?,
-                timestamp_ns: row.get(3)?,
-                file_path: row.get(4)?,
-                content_hash: content_hash.try_into().map_err(|_| {
-                    rusqlite::Error::InvalidColumnType(
-                        5,
-                        "content_hash".into(),
-                        rusqlite::types::Type::Blob,
-                    )
-                })?,
-                file_size: row.get(6)?,
-                size_delta: row.get(7)?,
-                previous_hash: previous_hash.try_into().map_err(|_| {
-                    rusqlite::Error::InvalidColumnType(
-                        8,
-                        "previous_hash".into(),
-                        rusqlite::types::Type::Blob,
-                    )
-                })?,
-                event_hash: event_hash.try_into().map_err(|_| {
-                    rusqlite::Error::InvalidColumnType(
-                        9,
-                        "event_hash".into(),
-                        rusqlite::types::Type::Blob,
-                    )
-                })?,
-                context_type: row.get(10)?,
-                context_note: row.get(11)?,
-                vdf_input: vdf_input
-                    .map(|v| {
-                        v.try_into().map_err(|_| {
-                            rusqlite::Error::InvalidColumnType(
-                                12,
-                                "vdf_input".into(),
-                                rusqlite::types::Type::Blob,
-                            )
-                        })
-                    })
-                    .transpose()?,
-                vdf_output: vdf_output
-                    .map(|v| {
-                        v.try_into().map_err(|_| {
-                            rusqlite::Error::InvalidColumnType(
-                                13,
-                                "vdf_output".into(),
-                                rusqlite::types::Type::Blob,
-                            )
-                        })
-                    })
-                    .transpose()?,
-                vdf_iterations: u64::try_from(row.get::<_, i64>(14)?).unwrap_or(0),
-                forensic_score: row.get(15)?,
-                is_paste: row.get::<_, i32>(16)? != 0,
-                hardware_counter: row
-                    .get::<_, Option<i64>>(17)?
-                    .map(|v| u64::try_from(v).unwrap_or(0)),
-                input_method: row.get(18)?,
-            })
-        })?;
-
-        rows.map(|r| r.map_err(anyhow::Error::from)).collect()
+        let rows = stmt.query_map([&device_id[..]], Self::row_to_event)?;
+        let mut events = Vec::new();
+        for row in rows {
+            events.push(row?);
+        }
+        Ok(events)
     }
 
     /// Check retention policy and prune events older than `retention_days`.

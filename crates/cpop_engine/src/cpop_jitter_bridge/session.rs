@@ -57,9 +57,10 @@ impl HybridJitterSession {
             k
         });
 
-        let secret = derive_session_secret(material.as_ref(), b"witnessd-hybrid-session-v1");
+        let mut secret = derive_session_secret(material.as_ref(), b"witnessd-hybrid-session-v1");
         material.zeroize();
         let cpop_jitter_session = PhysSession::new(secret);
+        secret.zeroize();
 
         Ok(Self {
             cpop_jitter_session,
@@ -190,15 +191,23 @@ impl HybridJitterSession {
         &self.samples
     }
 
-    /// Verify the hash chain integrity of all samples.
+    /// Verify the hash chain integrity, timestamp monotonicity, and keystroke
+    /// count monotonicity of all samples.
     pub fn verify_chain(&self) -> Result<(), String> {
         for (i, sample) in self.samples.iter().enumerate() {
             if sample.compute_hash() != sample.hash {
                 return Err(format!("sample {i}: hash mismatch"));
             }
             if i > 0 {
-                if sample.previous_hash != self.samples[i - 1].hash {
+                let prev = &self.samples[i - 1];
+                if sample.previous_hash != prev.hash {
                     return Err(format!("sample {i}: broken chain link"));
+                }
+                if sample.timestamp <= prev.timestamp {
+                    return Err(format!("sample {i}: timestamp not monotonic"));
+                }
+                if sample.keystroke_count <= prev.keystroke_count {
+                    return Err(format!("sample {i}: keystroke count not monotonic"));
                 }
             } else if sample.previous_hash != [0u8; 32] {
                 return Err("sample 0: non-zero previous hash".to_string());
@@ -325,7 +334,7 @@ impl HybridJitterSession {
             k
         });
 
-        let secret = derive_session_secret(material.as_ref(), b"witnessd-hybrid-session-v1");
+        let mut secret = derive_session_secret(material.as_ref(), b"witnessd-hybrid-session-v1");
         material.zeroize();
 
         let document_tracker = DocumentTracker {
@@ -335,8 +344,11 @@ impl HybridJitterSession {
             last_hash: None,
         };
 
+        let cpop_jitter_session = PhysSession::new(secret);
+        secret.zeroize();
+
         Ok(Self {
-            cpop_jitter_session: PhysSession::new(secret),
+            cpop_jitter_session,
             zone_engine: data.zone_engine,
             document_tracker,
             id: data.id,

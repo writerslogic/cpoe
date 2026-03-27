@@ -197,7 +197,7 @@ fn collect_hardware_info() -> HardwareInfo {
 fn get_model_identifier() -> Option<String> {
     use std::process::Command;
 
-    let output = Command::new("sysctl")
+    let output = Command::new("/usr/sbin/sysctl")
         .arg("-n")
         .arg("hw.model")
         .output()
@@ -216,7 +216,7 @@ fn get_model_identifier() -> Option<String> {
 fn get_os_version() -> Option<String> {
     use std::process::Command;
 
-    let output = Command::new("sw_vers")
+    let output = Command::new("/usr/bin/sw_vers")
         .arg("-productVersion")
         .output()
         .ok()?;
@@ -500,16 +500,17 @@ impl SecureEnclaveProvider {
         let signature = sign(state, seal_nonce)?;
         let mut key_material = Sha256::digest(&signature);
 
-        let cipher = ChaCha20Poly1305::new_from_slice(&key_material)
-            .map_err(|e| TpmError::Unsealing(format!("AEAD key init: {e}")))?;
-
-        let aead_nonce = AeadNonce::from_slice(aead_nonce_bytes);
-        let plaintext = cipher
-            .decrypt(aead_nonce, ciphertext)
-            .map_err(|_| TpmError::SealedCorrupted)?;
+        let result = (|| {
+            let cipher = ChaCha20Poly1305::new_from_slice(&key_material)
+                .map_err(|e| TpmError::Unsealing(format!("AEAD key init: {e}")))?;
+            let aead_nonce = AeadNonce::from_slice(aead_nonce_bytes);
+            cipher
+                .decrypt(aead_nonce, ciphertext)
+                .map_err(|_| TpmError::SealedCorrupted)
+        })();
 
         key_material.zeroize();
-        Ok(plaintext)
+        result
     }
 }
 
@@ -521,7 +522,7 @@ impl Provider for SecureEnclaveProvider {
             supports_sealing: true,
             supports_attestation: true,
             monotonic_counter: true,
-            secure_clock: true,
+            secure_clock: false,
         }
     }
 
@@ -607,20 +608,22 @@ impl Provider for SecureEnclaveProvider {
         let signature = sign(&state, &seal_nonce)?;
         let mut key_material = Sha256::digest(&signature);
 
-        let cipher = ChaCha20Poly1305::new_from_slice(&key_material)
-            .map_err(|e| TpmError::Sealing(format!("AEAD key init: {e}")))?;
-
-        let mut nonce_bytes = [0u8; 12];
-        getrandom::getrandom(&mut nonce_bytes)
-            .map_err(|e| TpmError::Sealing(format!("nonce generation: {e}")))?;
-        let aead_nonce = AeadNonce::from_slice(&nonce_bytes);
-
-        let ciphertext = cipher
-            .encrypt(aead_nonce, data)
-            .map_err(|e| TpmError::Sealing(format!("AEAD encrypt: {e}")))?;
+        let result = (|| -> Result<(Vec<u8>, [u8; 12]), TpmError> {
+            let cipher = ChaCha20Poly1305::new_from_slice(&key_material)
+                .map_err(|e| TpmError::Sealing(format!("AEAD key init: {e}")))?;
+            let mut nonce_bytes = [0u8; 12];
+            getrandom::getrandom(&mut nonce_bytes)
+                .map_err(|e| TpmError::Sealing(format!("nonce generation: {e}")))?;
+            let aead_nonce = AeadNonce::from_slice(&nonce_bytes);
+            let ciphertext = cipher
+                .encrypt(aead_nonce, data)
+                .map_err(|e| TpmError::Sealing(format!("AEAD encrypt: {e}")))?;
+            Ok((ciphertext, nonce_bytes))
+        })();
 
         key_material.zeroize();
 
+        let (ciphertext, nonce_bytes) = result?;
         let mut sealed = Vec::with_capacity(1 + 32 + 12 + ciphertext.len());
         sealed.push(5);
         sealed.extend_from_slice(&seal_nonce);
@@ -928,7 +931,7 @@ fn is_secure_enclave_available() -> bool {
 
     use std::process::Command;
 
-    let output = match Command::new("sysctl")
+    let output = match Command::new("/usr/sbin/sysctl")
         .arg("-n")
         .arg("machdep.cpu.brand_string")
         .output()
@@ -950,7 +953,7 @@ fn is_secure_enclave_available() -> bool {
             return false;
         }
 
-        let t2_check = Command::new("ioreg")
+        let t2_check = Command::new("/usr/sbin/ioreg")
             .args(["-l", "-d1", "-c", "AppleT2Controller"])
             .output();
 
@@ -966,7 +969,9 @@ fn is_secure_enclave_available() -> bool {
         }
     }
 
-    let security_check = Command::new("security").args(["list-keychains"]).output();
+    let security_check = Command::new("/usr/bin/security")
+        .args(["list-keychains"])
+        .output();
 
     match security_check {
         Ok(out) => out.status.success(),
@@ -994,7 +999,7 @@ fn extract_public_key(key_ref: SecKeyRef) -> Result<Vec<u8>, TpmError> {
 fn hardware_uuid() -> Option<String> {
     use std::process::Command;
 
-    let output = Command::new("ioreg")
+    let output = Command::new("/usr/sbin/ioreg")
         .args(["-rd1", "-c", "IOPlatformExpertDevice"])
         .output()
         .ok()?;
@@ -1016,7 +1021,7 @@ fn hardware_uuid() -> Option<String> {
         }
     }
 
-    let output = Command::new("sysctl")
+    let output = Command::new("/usr/sbin/sysctl")
         .arg("-n")
         .arg("kern.uuid")
         .output()
@@ -1073,7 +1078,7 @@ mod tests {
 
         let caps = provider.capabilities();
         assert!(caps.hardware_backed);
-        assert!(caps.secure_clock);
+        assert!(!caps.secure_clock);
         assert!(caps.monotonic_counter);
 
         let device_id = provider.device_id();

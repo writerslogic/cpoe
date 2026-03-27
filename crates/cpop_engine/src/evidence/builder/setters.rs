@@ -160,7 +160,8 @@ impl Builder {
             self.packet.strength = Strength::Standard;
         }
 
-        if evidence.entropy_quality.phys_ratio > HARDWARE_ENTROPY_RATIO_THRESHOLD {
+        let phys_ratio = evidence.entropy_quality.phys_ratio;
+        if phys_ratio.is_finite() && phys_ratio > HARDWARE_ENTROPY_RATIO_THRESHOLD {
             if self.packet.strength < Strength::Enhanced {
                 self.packet.strength = Strength::Enhanced;
             }
@@ -168,7 +169,7 @@ impl Builder {
                 ClaimType::KeystrokesVerified,
                 format!(
                     "Hardware entropy ratio {:.0}% - strong assurance of genuine input",
-                    evidence.entropy_quality.phys_ratio * 100.0
+                    phys_ratio * 100.0
                 ),
                 "high",
             );

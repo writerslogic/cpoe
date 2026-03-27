@@ -48,6 +48,10 @@ const FATIGUE_SLOWDOWN_RATIO: f64 = 1.05;
 /// Per-flag confidence multiplier in forgery analysis.
 const FORGERY_CONFIDENCE_PER_FLAG: f64 = 0.3;
 
+/// Maximum number of samples processed for fingerprint/forgery analysis.
+/// Limits memory allocation from untrusted IPC input.
+const MAX_FINGERPRINT_SAMPLES: usize = 100_000;
+
 /// Features extracted from typing that are hard to fake
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BehavioralFingerprint {
@@ -113,6 +117,11 @@ impl BehavioralFingerprint {
         if samples.len() < 2 {
             return Self::default();
         }
+        let samples = if samples.len() > MAX_FINGERPRINT_SAMPLES {
+            &samples[..MAX_FINGERPRINT_SAMPLES]
+        } else {
+            samples
+        };
 
         let intervals: Vec<f64> = samples
             .windows(2)
@@ -134,7 +143,7 @@ impl BehavioralFingerprint {
             .filter(|&&i| i > PARAGRAPH_PAUSE_MS)
             .count();
 
-        let thinking_freq = long_pauses as f64 / (samples.len() - 1) as f64;
+        let thinking_freq = long_pauses as f64 / intervals.len() as f64;
 
         let mut bursts = Vec::new();
         let mut current_burst_len = 0;
@@ -242,6 +251,11 @@ impl BehavioralFingerprint {
                 flags: vec![],
             };
         }
+        let samples = if samples.len() > MAX_FINGERPRINT_SAMPLES {
+            &samples[..MAX_FINGERPRINT_SAMPLES]
+        } else {
+            samples
+        };
 
         let intervals: Vec<f64> = samples
             .windows(2)
