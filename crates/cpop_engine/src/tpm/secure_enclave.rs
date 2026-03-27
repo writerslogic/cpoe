@@ -21,10 +21,10 @@ use security_framework_sys::access_control::{
     kSecAccessControlPrivateKeyUsage, kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
     SecAccessControlCreateWithFlags,
 };
-use security_framework_sys::base::{errSecSuccess, SecKeyRef};
+use security_framework_sys::base::{errSecItemNotFound, errSecSuccess, SecKeyRef};
 use security_framework_sys::item::{
-    kSecAttrAccessControl, kSecAttrApplicationLabel, kSecAttrIsPermanent, kSecAttrKeySizeInBits,
-    kSecAttrKeyType, kSecAttrKeyTypeECSECPrimeRandom, kSecAttrTokenID,
+    kSecAttrAccessControl, kSecAttrApplicationLabel, kSecAttrIsPermanent, kSecAttrKeyClass,
+    kSecAttrKeySizeInBits, kSecAttrKeyType, kSecAttrKeyTypeECSECPrimeRandom, kSecAttrTokenID,
     kSecAttrTokenIDSecureEnclave, kSecClass, kSecClassKey, kSecPrivateKeyAttrs, kSecReturnRef,
 };
 use security_framework_sys::key::{
@@ -259,6 +259,11 @@ fn load_or_create_se_key(tag_str: &str) -> Result<(SecKeyRef, Vec<u8>), TpmError
         let key_ref = result as SecKeyRef;
         let public_key = extract_public_key(key_ref)?;
         return Ok((key_ref, public_key));
+    }
+    if status != errSecItemNotFound {
+        return Err(TpmError::KeyGeneration(format!(
+            "Keychain query failed with status {status} for tag {tag_str}"
+        )));
     }
 
     let access = unsafe {
@@ -581,7 +586,7 @@ impl Provider for SecureEnclaveProvider {
             signature,
             public_key: state.public_key.clone(),
             monotonic_counter: Some(state.counter),
-            safe_clock: Some(true),
+            safe_clock: Some(false),
             attestation: Some(Attestation {
                 payload,
                 quote: None,
@@ -647,7 +652,8 @@ impl Provider for SecureEnclaveProvider {
 
     fn clock_info(&self) -> Result<super::ClockInfo, TpmError> {
         let state = self.state.lock_recover();
-        let elapsed = state.start_time.elapsed().unwrap_or_default().as_millis() as u64;
+        let elapsed = u64::try_from(state.start_time.elapsed().unwrap_or_default().as_millis())
+            .unwrap_or(u64::MAX);
         Ok(super::ClockInfo {
             clock: elapsed,
             reset_count: 0,
@@ -665,12 +671,14 @@ impl SecureEnclaveProvider {
         let timestamp = Utc::now();
 
         let mut attestation_data = Vec::new();
-        attestation_data.extend_from_slice(b"WITSE-ATTEST-V1\n");
+        attestation_data.extend_from_slice(b"CPOP-ATTEST-V2\n");
 
         let challenge_hash = Sha256::digest(challenge);
         attestation_data.extend_from_slice(&challenge_hash);
         attestation_data.extend_from_slice(&state.public_key);
-        attestation_data.extend_from_slice(state.device_id.as_bytes());
+        let device_id_bytes = state.device_id.as_bytes();
+        attestation_data.extend_from_slice(&(device_id_bytes.len() as u32).to_be_bytes());
+        attestation_data.extend_from_slice(device_id_bytes);
 
         let ts_bytes = timestamp.timestamp_nanos_safe().to_le_bytes();
         attestation_data.extend_from_slice(&ts_bytes);
@@ -681,7 +689,9 @@ impl SecureEnclaveProvider {
         }
 
         if let Some(ref model) = state.hardware_info.model {
-            attestation_data.extend_from_slice(model.as_bytes());
+            let model_bytes = model.as_bytes();
+            attestation_data.extend_from_slice(&(model_bytes.len() as u32).to_be_bytes());
+            attestation_data.extend_from_slice(model_bytes);
         }
 
         // Attestation proof = H(attestation_data). Technically redundant with
@@ -728,13 +738,15 @@ impl SecureEnclaveProvider {
         let state = self.state.lock_recover();
 
         let mut expected_data = Vec::new();
-        expected_data.extend_from_slice(b"WITSE-ATTEST-V1\n");
+        expected_data.extend_from_slice(b"CPOP-ATTEST-V2\n");
 
         let challenge_hash = Sha256::digest(expected_challenge);
         expected_data.extend_from_slice(&challenge_hash);
 
         expected_data.extend_from_slice(&attestation.public_key);
-        expected_data.extend_from_slice(attestation.device_id.as_bytes());
+        let device_id_bytes = attestation.device_id.as_bytes();
+        expected_data.extend_from_slice(&(device_id_bytes.len() as u32).to_be_bytes());
+        expected_data.extend_from_slice(device_id_bytes);
 
         let ts_bytes = attestation.timestamp.timestamp_nanos_safe().to_le_bytes();
         expected_data.extend_from_slice(&ts_bytes);
@@ -745,7 +757,9 @@ impl SecureEnclaveProvider {
         }
 
         if let Some(ref model) = state.hardware_info.model {
-            expected_data.extend_from_slice(model.as_bytes());
+            let model_bytes = model.as_bytes();
+            expected_data.extend_from_slice(&(model_bytes.len() as u32).to_be_bytes());
+            expected_data.extend_from_slice(model_bytes);
         }
 
         let expected_proof = Sha256::digest(&expected_data).to_vec();
@@ -886,7 +900,7 @@ fn verify_ecdsa_signature(
         let key_type_key = CFString::wrap_under_get_rule(kSecAttrKeyType);
         let key_type_value =
             CFType::wrap_under_get_rule(kSecAttrKeyTypeECSECPrimeRandom as CFTypeRef);
-        let key_class_key = CFString::new("kSecAttrKeyClass");
+        let key_class_key = CFString::wrap_under_get_rule(kSecAttrKeyClass);
         let key_class_value = CFType::wrap_under_get_rule(kSecAttrKeyClassPublic);
 
         let attrs = core_foundation::dictionary::CFDictionary::from_CFType_pairs(&[
