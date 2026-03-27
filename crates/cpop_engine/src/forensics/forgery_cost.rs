@@ -189,7 +189,7 @@ pub fn estimate_forgery_cost(input: &ForgeryCostInput) -> ForgeryCostEstimate {
     };
     components.push(behavioral_cost);
 
-    let cross_modal_cost = if input.cross_modal_total > 0 {
+    let cross_modal_cost = if input.cross_modal_total >= 2 {
         let n = input.cross_modal_total as f64;
         let constraint_factor = n * (n - 1.0) / 2.0;
         let cost = if input.cross_modal_consistent {
@@ -270,8 +270,14 @@ pub fn estimate_forgery_cost(input: &ForgeryCostInput) -> ForgeryCostEstimate {
             0.0
         }
     } else {
+        // Guard: only take ln of positive values (already filtered above).
         let log_sum: f64 = finite_costs.iter().map(|c| c.ln()).sum();
-        let geo_mean = (log_sum / finite_costs.len() as f64).exp();
+        let geo_mean_raw = (log_sum / finite_costs.len() as f64).exp();
+        let geo_mean = if geo_mean_raw.is_finite() {
+            geo_mean_raw
+        } else {
+            0.0
+        };
         if has_infinite {
             geo_mean * 100.0
         } else {
@@ -281,7 +287,7 @@ pub fn estimate_forgery_cost(input: &ForgeryCostInput) -> ForgeryCostEstimate {
 
     let weakest_link = components
         .iter()
-        .filter(|c| c.present)
+        .filter(|c| c.present && !c.cost_cpu_sec.is_nan())
         .min_by(|a, b| {
             a.cost_cpu_sec
                 .partial_cmp(&b.cost_cpu_sec)

@@ -265,15 +265,31 @@ pub fn compute_assessment_score(
         return INSUFFICIENT_DATA_SCORE;
     }
 
+    // Guard non-finite inputs; treat them as neutral (no penalty/reward).
+    let bio_score = if biological_cadence_score.is_finite() {
+        biological_cadence_score
+    } else {
+        0.0
+    };
+
     let mut score = 1.0;
 
-    if primary.monotonic_append_ratio > MONOTONIC_PENALTY_START {
-        score -= MONOTONIC_PENALTY_WEIGHT
-            * (primary.monotonic_append_ratio - MONOTONIC_PENALTY_START)
+    let mar = if primary.monotonic_append_ratio.is_finite() {
+        primary.monotonic_append_ratio
+    } else {
+        0.0
+    };
+    if mar > MONOTONIC_PENALTY_START {
+        score -= MONOTONIC_PENALTY_WEIGHT * (mar - MONOTONIC_PENALTY_START)
             / (1.0 - MONOTONIC_PENALTY_START);
     }
 
-    let normalized_entropy = primary.edit_entropy / ENTROPY_NORMALIZATION;
+    let edit_entropy = if primary.edit_entropy.is_finite() {
+        primary.edit_entropy
+    } else {
+        ENTROPY_NORMALIZATION
+    };
+    let normalized_entropy = edit_entropy / ENTROPY_NORMALIZATION;
     if normalized_entropy < LOW_ENTROPY_SCORE_THRESHOLD {
         score -= LOW_ENTROPY_PENALTY;
     }
@@ -292,22 +308,30 @@ pub fn compute_assessment_score(
         score -= ROBOTIC_CADENCE_PENALTY;
     }
 
-    if cadence.coefficient_of_variation < CV_ROBOTIC_THRESHOLD {
-        score -= COV_PENALTY_WEIGHT * (CV_ROBOTIC_THRESHOLD - cadence.coefficient_of_variation)
-            / CV_ROBOTIC_THRESHOLD;
+    let cov = if cadence.coefficient_of_variation.is_finite() {
+        cadence.coefficient_of_variation
+    } else {
+        CV_ROBOTIC_THRESHOLD
+    };
+    if cov < CV_ROBOTIC_THRESHOLD {
+        score -= COV_PENALTY_WEIGHT * (CV_ROBOTIC_THRESHOLD - cov) / CV_ROBOTIC_THRESHOLD;
     }
 
     score -= ANOMALY_PENALTY * anomaly_count as f64;
 
-    if biological_cadence_score > BIOLOGICAL_CADENCE_THRESHOLD {
-        score += BIOLOGICAL_CADENCE_REWARD
-            * (biological_cadence_score - BIOLOGICAL_CADENCE_THRESHOLD)
+    if bio_score > BIOLOGICAL_CADENCE_THRESHOLD {
+        score += BIOLOGICAL_CADENCE_REWARD * (bio_score - BIOLOGICAL_CADENCE_THRESHOLD)
             / BIOLOGICAL_CADENCE_THRESHOLD;
     }
 
     // Penalty: high IKI autocorrelation (rhythmic/transcriptive typing)
-    if cadence.iki_autocorrelation > IKI_AUTOCORR_TRANSCRIPTIVE {
-        score -= IKI_AUTOCORR_PENALTY * (cadence.iki_autocorrelation - IKI_AUTOCORR_TRANSCRIPTIVE)
+    let iki_ac = if cadence.iki_autocorrelation.is_finite() {
+        cadence.iki_autocorrelation
+    } else {
+        0.0
+    };
+    if iki_ac > IKI_AUTOCORR_TRANSCRIPTIVE {
+        score -= IKI_AUTOCORR_PENALTY * (iki_ac - IKI_AUTOCORR_TRANSCRIPTIVE)
             / (1.0 - IKI_AUTOCORR_TRANSCRIPTIVE);
     }
 
@@ -344,9 +368,13 @@ pub fn compute_cadence_score(cadence: &CadenceMetrics) -> f64 {
         score -= CADENCE_ROBOTIC_PENALTY;
     }
 
-    if cadence.coefficient_of_variation < CV_ROBOTIC_THRESHOLD {
-        let penalty =
-            (CV_ROBOTIC_THRESHOLD - cadence.coefficient_of_variation) / CV_ROBOTIC_THRESHOLD;
+    let cov = if cadence.coefficient_of_variation.is_finite() {
+        cadence.coefficient_of_variation
+    } else {
+        CV_ROBOTIC_THRESHOLD
+    };
+    if cov < CV_ROBOTIC_THRESHOLD {
+        let penalty = (CV_ROBOTIC_THRESHOLD - cov) / CV_ROBOTIC_THRESHOLD;
         score -= CADENCE_COV_PENALTY * penalty;
     }
 

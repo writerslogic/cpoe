@@ -111,7 +111,9 @@ impl BehavioralFingerprint {
 
         let intervals: Vec<f64> = samples
             .windows(2)
-            .map(|w| (w[1].timestamp_ns - w[0].timestamp_ns) as f64 / 1_000_000.0)
+            .map(|w| {
+                w[1].timestamp_ns.saturating_sub(w[0].timestamp_ns).max(0) as f64 / 1_000_000.0
+            })
             .filter(|&i| i > 0.0 && i < MAX_PAUSE_FILTER_MS)
             .collect();
 
@@ -126,7 +128,9 @@ impl BehavioralFingerprint {
 
         let long_pauses = samples
             .windows(2)
-            .map(|w| (w[1].timestamp_ns - w[0].timestamp_ns) as f64 / 1_000_000.0)
+            .map(|w| {
+                w[1].timestamp_ns.saturating_sub(w[0].timestamp_ns).max(0) as f64 / 1_000_000.0
+            })
             .filter(|&i| i > PARAGRAPH_PAUSE_MS)
             .count();
 
@@ -139,7 +143,8 @@ impl BehavioralFingerprint {
         let mut bursts = Vec::new();
         let mut current_burst_len = 0;
         for w in samples.windows(2) {
-            let interval = (w[1].timestamp_ns - w[0].timestamp_ns) as f64 / 1_000_000.0;
+            let interval =
+                w[1].timestamp_ns.saturating_sub(w[0].timestamp_ns).max(0) as f64 / 1_000_000.0;
             if interval > BURST_SEPARATOR_MS {
                 if current_burst_len > 0 {
                     bursts.push(current_burst_len as f64);
@@ -242,7 +247,9 @@ impl BehavioralFingerprint {
 
         let intervals: Vec<f64> = samples
             .windows(2)
-            .map(|w| (w[1].timestamp_ns - w[0].timestamp_ns) as f64 / 1_000_000.0)
+            .map(|w| {
+                w[1].timestamp_ns.saturating_sub(w[0].timestamp_ns).max(0) as f64 / 1_000_000.0
+            })
             .filter(|&i| i > 0.0 && i < MAX_PAUSE_FILTER_MS)
             .collect();
 

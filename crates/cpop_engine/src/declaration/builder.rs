@@ -139,7 +139,10 @@ impl Builder {
 
         let mut total = 0.0;
         for modality in &self.decl.input_modalities {
-            if modality.percentage < 0.0 || modality.percentage > 100.0 {
+            if modality.percentage.is_nan()
+                || modality.percentage < 0.0
+                || modality.percentage > 100.0
+            {
                 return Err(Error::validation("modality percentage must be 0-100"));
             }
             total += modality.percentage;

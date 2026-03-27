@@ -31,8 +31,12 @@ pub fn verify_against_baseline(digest: &BaselineDigest, session: &SessionBehavio
 }
 
 fn gaussian_similarity(value: f64, mean: f64, m2: f64, count: u64) -> f64 {
+    if !value.is_finite() || !mean.is_finite() || !m2.is_finite() {
+        return 0.5;
+    }
     if count < 2 {
-        return 1.0;
+        // Fresh baseline with insufficient data; return lenient but not perfect similarity.
+        return 0.8;
     }
     let variance = m2 / (count - 1) as f64;
     if variance < 1e-9 {
