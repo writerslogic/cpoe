@@ -34,7 +34,8 @@ impl SoftwareProvider {
         let mut seed = Zeroizing::new([0u8; 32]);
         getrandom::getrandom(seed.as_mut_slice())
             .expect("OS RNG unavailable — cannot create software TPM");
-        let device_id = format!("sw-{}", hex::encode(&seed[..8]));
+        let seed_hash = Sha256::digest(seed.as_slice());
+        let device_id = format!("sw-{}", hex::encode(&seed_hash[..8]));
         let signing_key = ed25519_dalek::SigningKey::from_bytes(&seed);
         Self {
             signing_key,
@@ -118,7 +119,7 @@ impl Provider for SoftwareProvider {
             signature,
             public_key,
             monotonic_counter: Some(state.counter),
-            safe_clock: Some(true),
+            safe_clock: None,
             attestation: Some(super::Attestation {
                 payload,
                 quote: None,

@@ -41,7 +41,7 @@ use std::ptr::null_mut;
 use std::sync::Mutex;
 use std::time::SystemTime;
 use subtle::ConstantTimeEq;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 const SE_KEY_TAG: &str = "com.writerslogic.secureenclave.signing";
 const SE_ATTESTATION_KEY_TAG: &str = "com.writerslogic.secureenclave.attestation";
@@ -502,8 +502,8 @@ impl SecureEnclaveProvider {
         let aead_nonce_bytes = &sealed[33..45];
         let ciphertext = &sealed[45..];
 
-        let signature = sign(state, seal_nonce)?;
-        let mut key_material = Sha256::digest(&signature);
+        let signature = Zeroizing::new(sign(state, seal_nonce)?);
+        let mut key_material = Sha256::digest(&*signature);
 
         let result = (|| {
             let cipher = ChaCha20Poly1305::new_from_slice(&key_material)
@@ -515,6 +515,7 @@ impl SecureEnclaveProvider {
         })();
 
         key_material.zeroize();
+        drop(signature);
         result
     }
 }
@@ -586,7 +587,7 @@ impl Provider for SecureEnclaveProvider {
             signature,
             public_key: state.public_key.clone(),
             monotonic_counter: Some(state.counter),
-            safe_clock: Some(false),
+            safe_clock: None,
             attestation: Some(Attestation {
                 payload,
                 quote: None,
@@ -606,12 +607,12 @@ impl Provider for SecureEnclaveProvider {
     fn seal(&self, data: &[u8], _policy: &[u8]) -> Result<Vec<u8>, TpmError> {
         let state = self.state.lock_recover();
 
-        let mut seal_nonce = vec![0u8; 32];
+        let mut seal_nonce = Zeroizing::new(vec![0u8; 32]);
         getrandom::getrandom(&mut seal_nonce)
             .map_err(|e| TpmError::Sealing(format!("seal nonce generation: {e}")))?;
 
-        let signature = sign(&state, &seal_nonce)?;
-        let mut key_material = Sha256::digest(&signature);
+        let signature = Zeroizing::new(sign(&state, &seal_nonce)?);
+        let mut key_material = Sha256::digest(&*signature);
 
         let result = (|| -> Result<(Vec<u8>, [u8; 12]), TpmError> {
             let cipher = ChaCha20Poly1305::new_from_slice(&key_material)

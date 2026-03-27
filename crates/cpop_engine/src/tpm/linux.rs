@@ -429,8 +429,8 @@ fn create_ak(state: &mut LinuxState) -> Result<(KeyHandle, Vec<u8>), TpmError> {
         .map_err(|_| TpmError::NotAvailable)?;
 
     // Generate random auth value so the AK is not deterministic / unprotected.
-    let mut auth_bytes = [0u8; 32];
-    getrandom::getrandom(&mut auth_bytes).map_err(|_| TpmError::NotAvailable)?;
+    let mut auth_bytes = zeroize::Zeroizing::new([0u8; 32]);
+    getrandom::getrandom(auth_bytes.as_mut_slice()).map_err(|_| TpmError::NotAvailable)?;
     let auth = Auth::try_from(auth_bytes.to_vec()).map_err(|_| TpmError::NotAvailable)?;
 
     let result = state
