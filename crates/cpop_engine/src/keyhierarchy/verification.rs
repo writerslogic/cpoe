@@ -147,14 +147,19 @@ pub fn verify_key_hierarchy(evidence: &KeyHierarchyEvidence) -> Result<(), KeyHi
         }
     }
 
-    if !evidence.master_public_key.is_empty() {
-        let expected = fingerprint_for_public_key(&evidence.master_public_key);
-        if expected != evidence.master_fingerprint {
-            return Err(KeyHierarchyError::InvalidCert);
-        }
+    // Require master_public_key to be present and verify fingerprint consistency.
+    // An empty master_public_key would skip fingerprint validation, enabling identity spoofing.
+    if evidence.master_public_key.is_empty() {
+        return Err(KeyHierarchyError::InvalidCert);
+    }
+    let expected = fingerprint_for_public_key(&evidence.master_public_key);
+    if expected != evidence.master_fingerprint {
+        return Err(KeyHierarchyError::InvalidCert);
     }
 
-    if evidence.ratchet_count != evidence.checkpoint_signatures.len() as i32 {
+    // Use safe cast for ratchet count comparison
+    let sig_count = i32::try_from(evidence.checkpoint_signatures.len()).unwrap_or(i32::MAX);
+    if evidence.ratchet_count != sig_count {
         return Err(KeyHierarchyError::InvalidCert);
     }
 
