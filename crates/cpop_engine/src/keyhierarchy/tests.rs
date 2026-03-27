@@ -200,19 +200,19 @@ fn test_verify_ratchet_signature() {
 #[test]
 fn test_verify_ratchet_signature_invalid_public_key() {
     let err = verify_ratchet_signature(&[1u8; 16], &[2u8; 32], &[3u8; 64]).unwrap_err();
-    assert!(err.contains("invalid ratchet public key size"));
+    assert!(err.to_string().contains("invalid ratchet public key size"));
 }
 
 #[test]
 fn test_verify_ratchet_signature_invalid_checkpoint_hash() {
     let err = verify_ratchet_signature(&[1u8; 32], &[2u8; 16], &[3u8; 64]).unwrap_err();
-    assert!(err.contains("invalid checkpoint hash size"));
+    assert!(err.to_string().contains("invalid checkpoint hash size"));
 }
 
 #[test]
 fn test_verify_ratchet_signature_invalid_signature_size() {
     let err = verify_ratchet_signature(&[1u8; 32], &[2u8; 32], &[3u8; 32]).unwrap_err();
-    assert!(err.contains("invalid signature size"));
+    assert!(err.to_string().contains("invalid signature size"));
 }
 
 #[test]

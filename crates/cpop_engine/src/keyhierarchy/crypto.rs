@@ -13,9 +13,16 @@ pub(crate) const RATCHET_INIT_DOMAIN: &str = "witnessd-ratchet-init-v1";
 pub(crate) const RATCHET_ADVANCE_DOMAIN: &str = "witnessd-ratchet-advance-v1";
 pub(crate) const SIGNING_KEY_DOMAIN: &str = "witnessd-signing-key-v1";
 
-/// HKDF-SHA256 key derivation: `ikm` is the input keying material, `salt` is the
-/// HKDF salt (passed as the info/domain label by callers), and `info` is the
-/// context-specific binding (e.g. session input or empty). Matches RFC 5869.
+/// HKDF-SHA256 key derivation (RFC 5869).
+///
+/// - `ikm`: input keying material (e.g. identity seed or ratchet state).
+/// - `salt`: extraction-phase salt. Callers pass domain-separation labels
+///   (e.g. `SESSION_DOMAIN`) here, which is non-standard but acceptable
+///   because it binds the PRK to a unique domain before expansion.
+/// - `info`: expansion-phase context (e.g. session-specific input, or empty).
+// NOTE: Callers use domain labels as salt for extraction-phase separation.
+// This is the reverse of the typical convention (domain in `info`), but the
+// cryptographic result is sound and changing it would break all derived keys.
 pub fn hkdf_expand(ikm: &[u8], salt: &[u8], info: &[u8]) -> Result<[u8; 32], KeyHierarchyError> {
     let hk = Hkdf::<Sha256>::new(Some(salt), ikm);
     let mut okm = [0u8; 32];
