@@ -6,6 +6,7 @@ use super::ffi::*;
 use super::synthetic::verify_event_source;
 use super::{EventVerificationResult, HidDeviceInfo, KeystrokeEvent, SyntheticStats};
 use crate::platform::KeystrokeCapture;
+use crate::MutexRecover;
 use anyhow::{anyhow, Result};
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
@@ -53,6 +54,8 @@ struct EventTapResources {
     tap: *mut std::ffi::c_void,
     source: *mut std::ffi::c_void,
 }
+// SAFETY: EventTapResources is only accessed under a Mutex. The CF objects it
+// holds are safe to release from any thread after the run loop has exited.
 unsafe impl Send for EventTapResources {}
 unsafe impl Sync for EventTapResources {}
 
@@ -91,12 +94,11 @@ impl KeystrokeMonitor {
                 let now = chrono::Utc::now().timestamp_nanos_safe();
                 let keycode =
                     unsafe { CGEventGetIntegerValueField(event, K_CG_KEYBOARD_EVENT_KEYCODE) };
-                let zone_i = crate::jitter::keycode_to_zone(keycode as u16);
+                let keycode_u16 = u16::try_from(keycode).unwrap_or(0xFF);
+                let zone_i = crate::jitter::keycode_to_zone(keycode_u16);
                 let zone = if zone_i >= 0 { zone_i as u8 } else { 0xFF };
 
-                if let Ok(mut s) = session_clone.lock() {
-                    s.add_sample(now, zone);
-                }
+                session_clone.lock_recover().add_sample(now, zone);
 
                 if let Some(ref cb) = callback {
                     cb(KeystrokeInfo {
@@ -142,14 +144,12 @@ impl KeystrokeMonitor {
         let session_clone = Arc::clone(&session);
         Self::start_event_tap(
             move |event: *mut std::ffi::c_void, verification: EventVerificationResult| {
-                let keycode =
-                    unsafe { CGEventGetIntegerValueField(event, K_CG_KEYBOARD_EVENT_KEYCODE) }
-                        as u16;
+                let keycode_raw =
+                    unsafe { CGEventGetIntegerValueField(event, K_CG_KEYBOARD_EVENT_KEYCODE) };
+                let keycode = u16::try_from(keycode_raw).unwrap_or(0xFF);
                 let zone = crate::jitter::keycode_to_zone(keycode);
 
-                if let Ok(mut s) = session_clone.lock() {
-                    let _ = s.record_keystroke(keycode);
-                }
+                let _ = session_clone.lock_recover().record_keystroke(keycode);
 
                 if let Some(ref cb) = callback {
                     let now = chrono::Utc::now().timestamp_nanos_safe();
@@ -235,6 +235,12 @@ impl KeystrokeMonitor {
                     }
                 });
 
+            // SAFETY: `tap_cb` lives on this thread's stack frame. The raw pointer
+            // passed to CGEventTapCreate is only dereferenced by the run loop on
+            // this same thread. CFRunLoopRun() blocks until CFRunLoopStop() is
+            // called from stop(). After CFRunLoopRun returns, `tap_cb` is dropped
+            // normally. stop() calls CFRelease(tap) only after joining this thread,
+            // so macOS cannot invoke the callback after `tap_cb` is dropped.
             unsafe {
                 let tap = CGEventTapCreate(
                     K_CG_HID_EVENT_TAP,
@@ -263,17 +269,13 @@ impl KeystrokeMonitor {
 
                 let rl_ref = CFRunLoopGetCurrent();
                 CFRetain(rl_ref);
-                if let Ok(mut rl) = run_loop_clone.lock() {
-                    *rl = Some(RunLoopHandle(rl_ref));
-                }
+                *run_loop_clone.lock_recover() = Some(RunLoopHandle(rl_ref));
                 // H-071: Store tap and source for cleanup in stop()/Drop
-                if let Ok(mut res) = tap_resources_clone.lock() {
-                    *res = Some(EventTapResources {
-                        run_loop: rl_ref,
-                        tap,
-                        source,
-                    });
-                }
+                *tap_resources_clone.lock_recover() = Some(EventTapResources {
+                    run_loop: rl_ref,
+                    tap,
+                    source,
+                });
                 CFRunLoopAddSource(rl_ref, source, kCFRunLoopCommonModes);
                 // Signal ready only after run_loop handle is stored (C-002 fix)
                 let _ = ready_tx.send(Ok(()));
@@ -299,11 +301,7 @@ impl KeystrokeMonitor {
     pub fn stop(&mut self) {
         // C-001: Stop the run loop first so the thread can exit, but take the
         // handle so a second call to stop() (e.g. from Drop) is a no-op.
-        let rl_ptr = self
-            .run_loop
-            .lock()
-            .ok()
-            .and_then(|mut rl| rl.take().map(|h| h.0));
+        let rl_ptr = self.run_loop.lock_recover().take().map(|h| h.0);
         if let Some(p) = rl_ptr {
             unsafe {
                 CFRunLoopStop(p);
@@ -315,7 +313,7 @@ impl KeystrokeMonitor {
         // H-071: Release tap, source, and run loop after thread has exited.
         // tap_resources holds the canonical copies; run_loop was only taken
         // above to call CFRunLoopStop. Release everything exactly once here.
-        if let Some(res) = self.tap_resources.lock().ok().and_then(|mut r| r.take()) {
+        if let Some(res) = self.tap_resources.lock_recover().take() {
             unsafe {
                 CFRelease(res.source);
                 CFRelease(res.tap);
@@ -424,9 +422,10 @@ impl KeystrokeCapture for MacOSKeystrokeCapture {
 
                         if is_hardware {
                             let now = chrono::Utc::now().timestamp_nanos_safe();
-                            let keycode = unsafe {
+                            let keycode = u16::try_from(unsafe {
                                 CGEventGetIntegerValueField(event, K_CG_KEYBOARD_EVENT_KEYCODE)
-                            } as u16;
+                            })
+                            .unwrap_or(0xFF);
                             let zone = crate::jitter::keycode_to_zone(keycode);
 
                             let keystroke = KeystrokeEvent {
@@ -443,11 +442,16 @@ impl KeystrokeCapture for MacOSKeystrokeCapture {
                                 "capture_tx",
                                 total_events.load(Ordering::Relaxed),
                             );
-                            let _ = tx.send(keystroke);
+                            if tx.send(keystroke).is_err() {
+                                running.store(false, Ordering::SeqCst);
+                            }
                         }
                     }
                 });
 
+            // SAFETY: same invariant as KeystrokeMonitor::start_event_tap; see
+            // comment there. tap_cb outlives all callback invocations because
+            // CFRunLoopRun blocks, and stop() releases the tap after thread join.
             unsafe {
                 let tap = CGEventTapCreate(
                     K_CG_HID_EVENT_TAP,
@@ -476,17 +480,13 @@ impl KeystrokeCapture for MacOSKeystrokeCapture {
 
                 let rl_ref = CFRunLoopGetCurrent();
                 CFRetain(rl_ref);
-                if let Ok(mut rl) = run_loop.lock() {
-                    *rl = Some(RunLoopHandle(rl_ref));
-                }
+                *run_loop.lock_recover() = Some(RunLoopHandle(rl_ref));
                 // H-072: Store tap and source for cleanup in stop()/Drop
-                if let Ok(mut res) = tap_resources.lock() {
-                    *res = Some(EventTapResources {
-                        run_loop: rl_ref,
-                        tap,
-                        source,
-                    });
-                }
+                *tap_resources.lock_recover() = Some(EventTapResources {
+                    run_loop: rl_ref,
+                    tap,
+                    source,
+                });
                 CFRunLoopAddSource(rl_ref, source, kCFRunLoopCommonModes);
                 // Signal ready only after run_loop handle is stored (C-002 fix)
                 let _ = ready_tx.send(Ok(()));
@@ -518,11 +518,7 @@ impl KeystrokeCapture for MacOSKeystrokeCapture {
         self.sender = None;
         // C-001: Stop the run loop first so the thread can exit, but take the
         // handle so a second call to stop() (e.g. from Drop) is a no-op.
-        let rl_ptr = self
-            .run_loop
-            .lock()
-            .ok()
-            .and_then(|mut rl| rl.take().map(|h| h.0));
+        let rl_ptr = self.run_loop.lock_recover().take().map(|h| h.0);
         if let Some(p) = rl_ptr {
             unsafe {
                 CFRunLoopStop(p);
@@ -534,7 +530,7 @@ impl KeystrokeCapture for MacOSKeystrokeCapture {
         // H-072: Release tap, source, and run loop after thread has exited.
         // tap_resources holds the canonical copies; run_loop was only taken
         // above to call CFRunLoopStop. Release everything exactly once here.
-        if let Some(res) = self.tap_resources.lock().ok().and_then(|mut r| r.take()) {
+        if let Some(res) = self.tap_resources.lock_recover().take() {
             unsafe {
                 CFRelease(res.source);
                 CFRelease(res.tap);
