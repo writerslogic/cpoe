@@ -12,6 +12,33 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Per-sample CPU cost (seconds) for forging statistically valid jitter timing.
+const JITTER_FORGE_COST_PER_SAMPLE: f64 = 0.1;
+
+/// CPU cost (seconds) to forge a plausible behavioral fingerprint.
+const BEHAVIORAL_FORGE_COST_SEC: f64 = 3600.0;
+
+/// Per-constraint CPU cost (seconds) for cross-modal consistency forgery.
+const CROSS_MODAL_CONSTRAINT_COST_SEC: f64 = 60.0;
+
+/// CPU cost (seconds) for cross-modal forgery when checks are inconsistent.
+const CROSS_MODAL_INCONSISTENT_COST_SEC: f64 = 10.0;
+
+/// Multiplier for content-key entanglement cost relative to chain duration.
+const ENTANGLEMENT_DURATION_MULTIPLIER: f64 = 2.0;
+
+/// Boost factor for overall difficulty when hardware-bound components exist.
+const HARDWARE_DIFFICULTY_BOOST: f64 = 100.0;
+
+/// Tier threshold: above this (seconds) = High resistance.
+const TIER_HIGH_THRESHOLD_SEC: f64 = 86400.0;
+
+/// Tier threshold: above this (seconds) = Moderate resistance.
+const TIER_MODERATE_THRESHOLD_SEC: f64 = 3600.0;
+
+/// Tier threshold: above this (seconds) = Low resistance.
+const TIER_LOW_THRESHOLD_SEC: f64 = 60.0;
+
 /// Forgery cost estimation for a complete evidence packet.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ForgeryCostEstimate {
@@ -87,6 +114,12 @@ pub struct ForgeryCostInput {
 
 /// Estimate the cost to forge a complete evidence packet.
 pub fn estimate_forgery_cost(input: &ForgeryCostInput) -> ForgeryCostEstimate {
+    debug_assert!(
+        input.cross_modal_passed <= input.cross_modal_total,
+        "cross_modal_passed ({}) exceeds cross_modal_total ({})",
+        input.cross_modal_passed,
+        input.cross_modal_total
+    );
     let mut components = Vec::new();
 
     let vdf_cost = if input.vdf_iterations > 0 && input.vdf_rate > 0 {
@@ -134,7 +167,7 @@ pub fn estimate_forgery_cost(input: &ForgeryCostInput) -> ForgeryCostEstimate {
     components.push(chain_cost);
 
     let jitter_cost = if input.has_jitter_binding && input.jitter_sample_count > 0 {
-        let cost = input.jitter_sample_count as f64 * 0.1;
+        let cost = input.jitter_sample_count as f64 * JITTER_FORGE_COST_PER_SAMPLE;
         ComponentCost {
             name: "jitter_entropy".into(),
             cost_cpu_sec: cost,
@@ -165,7 +198,7 @@ pub fn estimate_forgery_cost(input: &ForgeryCostInput) -> ForgeryCostEstimate {
     } else {
         ComponentCost {
             name: "hardware_attestation".into(),
-            cost_cpu_sec: 1.0,
+            cost_cpu_sec: 0.0,
             present: false,
             explanation: "Software-only keys; extractable by device owner".into(),
         }
@@ -175,7 +208,7 @@ pub fn estimate_forgery_cost(input: &ForgeryCostInput) -> ForgeryCostEstimate {
     let behavioral_cost = if input.has_behavioral_fingerprint {
         ComponentCost {
             name: "behavioral_fingerprint".into(),
-            cost_cpu_sec: 3600.0,
+            cost_cpu_sec: BEHAVIORAL_FORGE_COST_SEC,
             present: true,
             explanation: "Must replicate typing dynamics (Hurst, 1/f, cadence)".into(),
         }
@@ -193,9 +226,9 @@ pub fn estimate_forgery_cost(input: &ForgeryCostInput) -> ForgeryCostEstimate {
         let n = input.cross_modal_total as f64;
         let constraint_factor = n * (n - 1.0) / 2.0;
         let cost = if input.cross_modal_consistent {
-            constraint_factor * 60.0
+            constraint_factor * CROSS_MODAL_CONSTRAINT_COST_SEC
         } else {
-            10.0
+            CROSS_MODAL_INCONSISTENT_COST_SEC
         };
         ComponentCost {
             name: "cross_modal_consistency".into(),
@@ -234,7 +267,7 @@ pub fn estimate_forgery_cost(input: &ForgeryCostInput) -> ForgeryCostEstimate {
     components.push(time_cost);
 
     let entangle_cost = if input.has_content_key_entanglement {
-        let cost = input.chain_duration_sec as f64 * 2.0;
+        let cost = input.chain_duration_sec as f64 * ENTANGLEMENT_DURATION_MULTIPLIER;
         ComponentCost {
             name: "content_key_entanglement".into(),
             cost_cpu_sec: cost,
@@ -279,7 +312,7 @@ pub fn estimate_forgery_cost(input: &ForgeryCostInput) -> ForgeryCostEstimate {
             0.0
         };
         if has_infinite {
-            geo_mean * 100.0
+            geo_mean * HARDWARE_DIFFICULTY_BOOST
         } else {
             geo_mean
         }
@@ -295,22 +328,14 @@ pub fn estimate_forgery_cost(input: &ForgeryCostInput) -> ForgeryCostEstimate {
         })
         .map(|c| c.name.clone());
 
-    let estimated_forge_time_sec = {
-        let has_any_present = components.iter().any(|c| c.present);
-        let all_infinite = has_any_present
-            && components
-                .iter()
-                .filter(|c| c.present)
-                .all(|c| c.cost_cpu_sec.is_infinite());
-        if all_infinite {
-            f64::INFINITY
-        } else {
-            components
-                .iter()
-                .filter(|c| c.present && c.cost_cpu_sec.is_finite())
-                .map(|c| c.cost_cpu_sec)
-                .fold(0.0_f64, f64::max)
-        }
+    let estimated_forge_time_sec = if has_infinite {
+        f64::INFINITY
+    } else {
+        components
+            .iter()
+            .filter(|c| c.present && c.cost_cpu_sec > 0.0)
+            .map(|c| c.cost_cpu_sec)
+            .fold(0.0_f64, f64::max)
     };
 
     let tier = classify_tier(overall_difficulty, input.has_hardware_attestation);
@@ -331,11 +356,11 @@ fn classify_tier(difficulty: f64, has_hardware_attestation: bool) -> ForgeryResi
     if difficulty.is_infinite() {
         return ForgeryResistanceTier::VeryHigh;
     }
-    if difficulty > 86400.0 {
+    if difficulty > TIER_HIGH_THRESHOLD_SEC {
         ForgeryResistanceTier::High
-    } else if difficulty > 3600.0 {
+    } else if difficulty > TIER_MODERATE_THRESHOLD_SEC {
         ForgeryResistanceTier::Moderate
-    } else if difficulty > 60.0 {
+    } else if difficulty > TIER_LOW_THRESHOLD_SEC {
         ForgeryResistanceTier::Low
     } else {
         ForgeryResistanceTier::Trivial
