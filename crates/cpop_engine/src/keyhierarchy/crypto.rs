@@ -35,9 +35,9 @@ pub(crate) fn build_cert_data(
     data.extend_from_slice(session_pub_key);
     let nanos = created_at.timestamp_nanos_safe();
     if nanos < 0 {
-        // Pre-epoch timestamps would wrap in u64 encoding; reject
+        // Pre-epoch timestamps would wrap in u64 encoding; clamp to 0
         // to prevent certificate substitution attacks
-        log::warn!("build_cert_data: rejecting pre-epoch timestamp");
+        log::warn!("build_cert_data: clamping pre-epoch timestamp to zero");
     }
     data.extend_from_slice(&(nanos.max(0) as u64).to_be_bytes());
     data.extend_from_slice(&document_hash);
