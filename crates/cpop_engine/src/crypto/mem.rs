@@ -4,7 +4,7 @@
 //! optional `mlock` to prevent swap exposure.
 
 use std::ops::Deref;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 #[cfg(unix)]
 use libc::{mlock, munlock};
@@ -23,11 +23,25 @@ impl<const N: usize> Clone for ProtectedKey<N> {
 }
 
 impl<const N: usize> ProtectedKey<N> {
-    /// Wrap raw bytes, `mlock` the buffer, then zeroize the source.
+    /// Wrap raw bytes, `mlock` the buffer, then zeroize the local parameter copy.
+    ///
+    /// **Warning**: This zeroizes the parameter copy but the caller's original
+    /// variable may still hold key material on the stack. Prefer
+    /// [`from_zeroizing`](Self::from_zeroizing) which guarantees the caller's
+    /// copy is zeroized on drop.
     pub fn new(mut bytes: [u8; N]) -> Self {
         let mut key = Self(bytes);
         key.lock_memory();
         bytes.zeroize();
+        key
+    }
+
+    /// Create a ProtectedKey from a `Zeroizing` wrapper, ensuring the caller's
+    /// copy is automatically zeroized when the wrapper drops.
+    pub fn from_zeroizing(bytes: Zeroizing<[u8; N]>) -> Self {
+        let mut key = Self(*bytes);
+        key.lock_memory();
+        // `bytes` drops here; Zeroizing::drop zeroizes the caller's copy.
         key
     }
 
@@ -56,6 +70,12 @@ impl<const N: usize> ProtectedKey<N> {
 impl<const N: usize> From<[u8; N]> for ProtectedKey<N> {
     fn from(bytes: [u8; N]) -> Self {
         Self::new(bytes)
+    }
+}
+
+impl<const N: usize> From<Zeroizing<[u8; N]>> for ProtectedKey<N> {
+    fn from(bytes: Zeroizing<[u8; N]>) -> Self {
+        Self::from_zeroizing(bytes)
     }
 }
 

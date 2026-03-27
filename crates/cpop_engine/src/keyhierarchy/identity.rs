@@ -14,7 +14,7 @@ use chrono::Utc;
 /// Shared by both `derive_master_identity` and `derive_master_private_key`.
 fn derive_signing_key(puf: &dyn PufProvider) -> Result<SigningKey, KeyHierarchyError> {
     let challenge = Sha256::digest(format!("{}-challenge", IDENTITY_DOMAIN).as_bytes());
-    let puf_response = puf.get_response(&challenge)?;
+    let puf_response = Zeroizing::new(puf.get_response(&challenge)?);
 
     let seed = Zeroizing::new(hkdf_expand(
         &puf_response,
