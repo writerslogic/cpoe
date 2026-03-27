@@ -10,7 +10,7 @@ pub mod evidence;
 pub mod fingerprint;
 pub mod forensics;
 pub mod forensics_detail;
-pub mod helpers;
+pub(crate) mod helpers;
 pub mod report;
 pub mod report_types;
 pub mod sentinel;
