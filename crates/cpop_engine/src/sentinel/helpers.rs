@@ -579,9 +579,27 @@ pub fn validate_path(path: impl AsRef<Path>) -> Result<PathBuf, String> {
     Ok(canonical)
 }
 
+/// Key material file names that must never be overwritten via export paths.
+const KEY_MATERIAL_NAMES: &[&str] = &[
+    "signing_key",
+    ".storage_key",
+    "puf_seed",
+    "sealed_identity",
+    "identity.key",
+    "session.key",
+];
+
 fn validate_canonical_path(path: &Path) -> Result<(), String> {
     if crate::ipc::messages::is_blocked_system_path(path)? {
         return Err("Access to system directory denied".to_string());
+    }
+    // EH-046: Reject paths that would overwrite key material files.
+    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+        for &key_name in KEY_MATERIAL_NAMES {
+            if name == key_name {
+                return Err(format!("Refusing to overwrite key material file: {}", name));
+            }
+        }
     }
     Ok(())
 }

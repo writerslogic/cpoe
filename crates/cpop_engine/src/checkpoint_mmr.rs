@@ -36,7 +36,20 @@ impl CheckpointMmr {
     }
 
     /// Append a checkpoint hash and return its inclusion proof.
+    ///
+    /// EH-043: Idempotent -- if the last leaf already matches `checkpoint_hash`,
+    /// we skip the append and return a proof for the existing leaf.
     pub fn append_checkpoint(&self, checkpoint_hash: &[u8; 32]) -> Result<InclusionProof> {
+        let count = self.mmr.leaf_count();
+        if count > 0 {
+            let last_leaf_index = self.mmr.get_leaf_index(count - 1).map_err(Error::from)?;
+            if let Ok(existing_proof) = self.mmr.generate_proof(last_leaf_index) {
+                if existing_proof.verify(checkpoint_hash).is_ok() {
+                    return Ok(existing_proof);
+                }
+            }
+        }
+
         let leaf_index = self.mmr.append(checkpoint_hash).map_err(Error::from)?;
         // FileStore requires sync before proof generation
         self.mmr.sync().map_err(Error::from)?;

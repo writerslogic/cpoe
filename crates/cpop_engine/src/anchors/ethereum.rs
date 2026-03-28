@@ -41,8 +41,10 @@ impl EthereumProvider {
         private_key_hex: &str,
         chain_id: u64,
     ) -> Result<Self, AnchorError> {
-        let key_bytes = hex_to_bytes(private_key_hex)
-            .map_err(|e| AnchorError::Configuration(format!("Invalid private key: {e}")))?;
+        let key_bytes = zeroize::Zeroizing::new(
+            hex_to_bytes(private_key_hex)
+                .map_err(|e| AnchorError::Configuration(format!("Invalid private key: {e}")))?,
+        );
 
         if key_bytes.len() != 32 {
             return Err(AnchorError::Configuration(
@@ -60,7 +62,10 @@ impl EthereumProvider {
             contract_address: contract_address.to_lowercase(),
             signing_key,
             chain_id,
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .unwrap_or_default(),
             cached_address,
         })
     }

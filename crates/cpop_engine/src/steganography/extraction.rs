@@ -51,6 +51,19 @@ impl ZwcExtractor {
 
         let valid = extracted.len() == expected.len() && extracted.ct_eq(&expected).into();
 
+        // EH-050: Distinct diagnostics for count mismatch vs tag mismatch.
+        let failure_reason = if valid {
+            None
+        } else if extracted.len() != expected.len() {
+            Some(format!(
+                "ZWC count mismatch (found {}, expected {}); document may have been modified",
+                extracted.len(),
+                expected.len()
+            ))
+        } else {
+            Some("Tag mismatch (counts match); wrong HMAC key or MMR root".to_string())
+        };
+
         ZwcVerification {
             valid,
             zwc_found: extracted.len(),
@@ -62,6 +75,7 @@ impl ZwcExtractor {
             } else {
                 None
             },
+            failure_reason,
         }
     }
 
@@ -81,6 +95,7 @@ impl ZwcExtractor {
                     extracted_tag: hex::encode(&extracted),
                     // AUD-151: Don't leak expected tag on failure
                     expected_tag: None,
+                    failure_reason: Some(format!("Invalid binding tag hex: {e}")),
                 };
             }
         };
@@ -88,6 +103,18 @@ impl ZwcExtractor {
         let valid = extracted.len() == binding.zwc_count
             && extracted.len() == stored_tag.len()
             && extracted.ct_eq(&stored_tag).into();
+
+        let failure_reason = if valid {
+            None
+        } else if extracted.len() != binding.zwc_count {
+            Some(format!(
+                "ZWC count mismatch (found {}, expected {}); document may have been modified",
+                extracted.len(),
+                binding.zwc_count
+            ))
+        } else {
+            Some("Tag mismatch; document content may have changed".to_string())
+        };
 
         ZwcVerification {
             valid,
@@ -100,6 +127,7 @@ impl ZwcExtractor {
             } else {
                 None
             },
+            failure_reason,
         }
     }
 

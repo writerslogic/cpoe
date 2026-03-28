@@ -201,7 +201,7 @@ fn get_model() -> String {
         .get_or_init(|| {
             #[cfg(target_os = "macos")]
             {
-                std::process::Command::new("sysctl")
+                std::process::Command::new("/usr/sbin/sysctl")
                     .args(["-n", "hw.model"])
                     .output()
                     .ok()
@@ -227,7 +227,7 @@ fn get_os_version() -> String {
         .get_or_init(|| {
             #[cfg(target_os = "macos")]
             {
-                std::process::Command::new("sw_vers")
+                std::process::Command::new("/usr/bin/sw_vers")
                     .args(["-productVersion"])
                     .output()
                     .ok()

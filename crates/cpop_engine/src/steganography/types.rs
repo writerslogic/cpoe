@@ -63,4 +63,7 @@ pub struct ZwcVerification {
     pub extracted_tag: String,
     /// The expected tag (hex, if MMR root was provided).
     pub expected_tag: Option<String>,
+    /// EH-050: Diagnostic reason when verification fails.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_reason: Option<String>,
 }
