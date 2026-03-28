@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 
 use super::types::AuthorshipProfile;
 
+/// Minimum similarity score to consider two profiles as same-author.
+const CONSISTENCY_THRESHOLD: f64 = 0.6;
+
 /// Weighted similarity comparison of two authorship profiles.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProfileComparison {
@@ -85,7 +88,7 @@ pub fn compare_profiles(
     let total_weight = 0.85 + interval_weight;
     let similarity_score = (other + interval_contrib) / total_weight;
 
-    let is_consistent = similarity_score >= 0.6;
+    let is_consistent = similarity_score >= CONSISTENCY_THRESHOLD;
 
     let explanation = if is_consistent {
         format!(
@@ -107,10 +110,10 @@ pub fn compare_profiles(
     }
 }
 
-/// Gaussian kernel similarity: `exp(-(a-b)^2 / 2*sigma^2)`
+/// Gaussian kernel similarity: `exp(-(a-b)^2 / 2*sigma^2)`, clamped to [0.0, 1.0].
 fn gaussian_similarity(a: f64, b: f64, sigma: f64) -> f64 {
     let diff = a - b;
-    (-diff * diff / (2.0 * sigma * sigma)).exp()
+    (-diff * diff / (2.0 * sigma * sigma)).exp().clamp(0.0, 1.0)
 }
 
 /// Return `ln(v)` for positive inputs, or 0.0 for non-positive inputs.

@@ -2,8 +2,6 @@
 
 //! Keystroke cadence analysis.
 
-use statrs::statistics::{Data, OrderStatistics};
-
 use crate::jitter::SimpleJitterSample;
 
 use super::topology::compute_median;
@@ -84,14 +82,15 @@ pub fn analyze_cadence(samples: &[SimpleJitterSample]) -> CadenceMetrics {
         metrics.avg_pause_duration_ns = pauses.iter().sum::<f64>() / pauses.len() as f64;
     }
 
-    let mut data = Data::new(ikis.clone());
-    metrics.percentiles = [
-        data.percentile(10),
-        data.percentile(25),
-        data.percentile(50),
-        data.percentile(75),
-        data.percentile(90),
-    ];
+    metrics.percentiles = {
+        let mut sorted = ikis.clone();
+        sorted.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let pct = |p: usize| -> f64 {
+            let idx = (p as f64 / 100.0 * (sorted.len() - 1) as f64).round() as usize;
+            sorted[idx.min(sorted.len() - 1)]
+        };
+        [pct(10), pct(25), pct(50), pct(75), pct(90)]
+    };
 
     metrics.cross_hand_timing_ratio = compute_cross_hand_timing_ratio(samples, &ikis);
     metrics.post_pause_cv = compute_post_pause_cv(&ikis);
@@ -181,7 +180,7 @@ fn compute_iki_autocorrelation(ikis: &[f64]) -> f64 {
 
     let n = ikis.len();
     let mean = ikis.iter().sum::<f64>() / n as f64;
-    let variance: f64 = ikis.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / n as f64;
+    let variance: f64 = ikis.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1) as f64;
 
     if variance <= 0.0 {
         return 0.0;
@@ -191,7 +190,7 @@ fn compute_iki_autocorrelation(ikis: &[f64]) -> f64 {
         .windows(2)
         .map(|w| (w[0] - mean) * (w[1] - mean))
         .sum::<f64>()
-        / n as f64;
+        / (n - 1) as f64;
 
     (covariance / variance).clamp(-1.0, 1.0)
 }

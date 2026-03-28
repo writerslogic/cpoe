@@ -299,6 +299,7 @@ pub struct CheckpointProof {
     pub vdf_iterations: Option<u64>,
     pub elapsed_time: Option<Duration>,
     pub previous_hash: String,
+    /// Hash of this checkpoint's full chain state (content + ordinal + previous hash).
     pub hash: String,
     pub signature: Option<String>,
 }

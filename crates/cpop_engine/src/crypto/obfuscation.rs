@@ -3,7 +3,7 @@
 use rand::RngCore;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 /// In-memory XOR-obfuscated string (defense-in-depth against memory scraping).
 /// NOT encryption — does not resist an attacker who can read the nonce.
@@ -25,11 +25,14 @@ impl ObfuscatedString {
         Self { nonce, data }
     }
 
-    /// Unmask and return the plaintext string.
-    pub fn reveal(&self) -> String {
+    /// Unmask and return the plaintext string wrapped in [`Zeroizing`] so
+    /// callers cannot accidentally leave cleartext in memory.
+    pub fn reveal(&self) -> Zeroizing<String> {
         let mut data = self.data.clone();
         Self::xor(&mut data, &self.nonce);
-        String::from_utf8_lossy(&data).to_string()
+        let s = String::from_utf8_lossy(&data).to_string();
+        data.zeroize();
+        Zeroizing::new(s)
     }
 
     fn xor(data: &mut [u8], nonce: &[u8]) {

@@ -990,7 +990,7 @@ fn decode_evidence_for_c2pa(
         version: 1,
         profile_uri: "urn:ietf:params:rats:eat:profile:pop:1.0".to_string(),
         packet_id,
-        created: chrono::Utc::now().timestamp_millis() as u64,
+        created: packet.exported_at.timestamp_millis() as u64,
         document: cpop_protocol::rfc::DocumentRef {
             content_hash: cpop_protocol::rfc::HashValue {
                 algorithm: cpop_protocol::rfc::HashAlgorithm::Sha256,

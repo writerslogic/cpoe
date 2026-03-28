@@ -179,7 +179,8 @@ pub fn build_ephemeral_packet(
             0.0
         };
 
-        // Human typing: typically 30-300 KPM
+        // Human typing: typically 30-300 KPM; upper bound 600 KPM allows
+        // burst-typing, competitive typists, and keyboard-repeat artifacts.
         let plausible = (1.0..=600.0).contains(&kpm) || total_keystrokes < 10;
 
         Some(KeystrokeEvidence {

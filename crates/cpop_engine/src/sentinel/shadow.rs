@@ -132,7 +132,13 @@ impl ShadowManager {
         self.shadows
             .read_recover()
             .values()
-            .map(|s| (s.id.clone(), s.app_name.clone(), s.window_title.reveal()))
+            .map(|s| {
+                (
+                    s.id.clone(),
+                    s.app_name.clone(),
+                    (*s.window_title.reveal()).clone(),
+                )
+            })
             .collect()
     }
 }

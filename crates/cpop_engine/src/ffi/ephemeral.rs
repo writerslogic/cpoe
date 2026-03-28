@@ -113,14 +113,8 @@ fn generate_session_id(label: &str) -> Result<String, String> {
     Ok(hex::encode(&hash[..16]))
 }
 
-/// Minimum session count before eviction scan is worthwhile.
-const EVICTION_THRESHOLD: usize = 4;
-
 /// Evict sessions that have been idle longer than `SESSION_TIMEOUT`.
 fn evict_stale_sessions() {
-    if sessions().len() < EVICTION_THRESHOLD {
-        return;
-    }
     let now = Instant::now();
     sessions().retain(|id, session| {
         let stale = now.duration_since(session.last_activity) > SESSION_TIMEOUT;
@@ -135,7 +129,7 @@ fn evict_stale_sessions() {
 /// Start a new ephemeral witnessing session.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn ffi_start_ephemeral_session(context_label: String) -> FfiEphemeralSessionResult {
-    if context_label.len() > MAX_CONTEXT_LABEL_LEN {
+    if context_label.chars().count() > MAX_CONTEXT_LABEL_LEN {
         return FfiEphemeralSessionResult {
             success: false,
             session_id: String::new(),

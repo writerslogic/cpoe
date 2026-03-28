@@ -297,6 +297,9 @@ fn checkpoint_to_wire(
         timestamp: cp.timestamp.timestamp_millis() as u64,
         content_hash: HashValue::sha256(cp.content_hash.to_vec()),
         char_count: cp.content_size,
+        // Placeholder: per-checkpoint edit deltas are not tracked in the
+        // internal evidence model yet. Populated with zeros until the
+        // checkpoint chain records incremental edit operations.
         delta: EditDelta {
             chars_added: 0,
             chars_deleted: 0,

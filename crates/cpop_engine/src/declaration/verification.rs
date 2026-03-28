@@ -168,6 +168,9 @@ impl DeclarationJitter {
             0.0
         };
 
+        // Entropy estimate: sum of clamped log2 of each sample value. This is a
+        // heuristic that improves with sample count; it is not a rigorous
+        // information-theoretic entropy measurement.
         let entropy_bits = jitter_samples
             .iter()
             .map(|&j| {

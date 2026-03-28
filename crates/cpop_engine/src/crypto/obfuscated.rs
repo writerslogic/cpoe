@@ -29,10 +29,15 @@ fn process_secret() -> u64 {
 static ROLLING_KEY: AtomicU64 = AtomicU64::new(0xDEADBEEF_CAFEBABE);
 
 fn next_nonce() -> u64 {
-    let current = ROLLING_KEY.load(Ordering::Relaxed);
-    let next = current.rotate_left(7) ^ current.wrapping_mul(0x5851F42D4C957F2D);
-    ROLLING_KEY.store(next, Ordering::Relaxed);
-    next
+    let mut current = ROLLING_KEY.load(Ordering::Relaxed);
+    loop {
+        let next = current.rotate_left(7) ^ current.wrapping_mul(0x5851F42D4C957F2D);
+        match ROLLING_KEY.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed)
+        {
+            Ok(_) => return next,
+            Err(actual) => current = actual,
+        }
+    }
 }
 
 /// Derive the effective mask key by mixing the per-instance nonce with the
