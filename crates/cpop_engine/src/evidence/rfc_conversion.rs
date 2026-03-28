@@ -80,7 +80,8 @@ impl From<&Packet> for rfc::PacketRfc {
         let correlation_proof = if let Some(behavioral) = &packet.behavioral {
             if let Some(fp) = &behavioral.fingerprint {
                 // CV as proxy for correlation: lower CV -> higher rho
-                let cv = fp.keystroke_interval_std / fp.keystroke_interval_mean.max(1.0);
+                // Guard: mean is in ms, so use f64::EPSILON to prevent division by zero
+                let cv = fp.keystroke_interval_std / fp.keystroke_interval_mean.max(f64::EPSILON);
                 let rho = (1.0 - cv.min(1.0)).max(0.5);
                 rfc::CorrelationProof {
                     rho: rfc::RhoMillibits::from_float(rho),
@@ -94,12 +95,18 @@ impl From<&Packet> for rfc::PacketRfc {
         };
 
         let error_topology = packet.behavioral.as_ref().and_then(|b| {
-            b.fingerprint.as_ref().map(|fp| PacketErrorTopology {
-                fractal_dimension_decibits: rfc::Decibits::from_float(fp.keystroke_interval_std),
-                clustering_millibits: rfc::Millibits::from_float(
-                    fp.keystroke_interval_mean / 1000.0,
-                ),
-                temporal_signature: Vec::new(),
+            b.fingerprint.as_ref().map(|fp| {
+                // Convert ms std_dev to dimensionless fractal dimension via CV, clamped to [0, 2]
+                let fractal_cv = (fp.keystroke_interval_std
+                    / fp.keystroke_interval_mean.max(f64::EPSILON))
+                .min(2.0);
+                PacketErrorTopology {
+                    fractal_dimension_decibits: rfc::Decibits::from_float(fractal_cv),
+                    clustering_millibits: rfc::Millibits::from_float(
+                        fp.keystroke_interval_mean / 1000.0,
+                    ),
+                    temporal_signature: Vec::new(),
+                }
             })
         });
 

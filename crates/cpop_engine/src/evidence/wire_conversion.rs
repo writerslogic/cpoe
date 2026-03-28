@@ -17,7 +17,7 @@ use cpop_protocol::rfc::wire_types::enums::{AttestationTier, ContentTier, ProofA
 use cpop_protocol::rfc::wire_types::hash::HashValue;
 use cpop_protocol::rfc::wire_types::packet::EvidencePacketWire;
 
-const PROFILE_URI: &str = "urn:ietf:params:pop:profile:1.0";
+const PROFILE_URI: &str = "urn:ietf:params:rats:eat:profile:pop:1.0";
 
 /// Minimum jitter quantization per draft-condrey-rats-pop §11.4 (privacy).
 const JITTER_QUANTIZATION_MS: u64 = 5;
@@ -71,7 +71,13 @@ pub fn chain_to_wire(chain: &Chain) -> EvidencePacketWire {
         salt_commitment: None,
     };
 
-    let attestation_tier = Some(AttestationTier::SoftwareOnly);
+    // Derive attestation tier from hardware evidence on checkpoints
+    let has_tpm = chain.checkpoints.iter().any(|cp| cp.tpm_binding.is_some());
+    let attestation_tier = Some(if has_tpm {
+        AttestationTier::HardwareBound
+    } else {
+        AttestationTier::SoftwareOnly
+    });
     // ENHANCED = jitter binding; MAXIMUM = jitter + physical state on all checkpoints
     let all_have_physical = has_jitter && all_have_physical;
     let content_tier = if all_have_physical {
