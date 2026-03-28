@@ -19,9 +19,10 @@ pub struct TbsContext {
     device_id: String,
 }
 
-// SAFETY: TBS handles are thread-safe; access is gated through &self / &mut self
+// SAFETY: TBS handle can be sent to another thread. Sync is NOT implemented
+// because multi-step TPM command sequences (CreatePrimary/Load/Sign/Flush)
+// must not interleave. Callers must serialize access via Mutex.
 unsafe impl Send for TbsContext {}
-unsafe impl Sync for TbsContext {}
 
 impl TbsContext {
     pub fn new() -> Result<Self, TbsError> {

@@ -58,7 +58,14 @@ fn verify_binding_with_trusted(
     // so different key encodings (compressed vs uncompressed) still match.
     if !trusted_keys.is_empty() {
         for key in trusted_keys {
-            if verify_signature(key, &payload, &binding.signature).is_ok() {
+            if verify_signature_for_provider(
+                &binding.provider_type,
+                key,
+                &payload,
+                &binding.signature,
+            )
+            .is_ok()
+            {
                 return Ok(());
             }
         }
@@ -71,7 +78,12 @@ fn verify_binding_with_trusted(
     // WARNING: this path trusts the binding's own key; callers must provide trusted
     // keys for remote/adversarial verification.
     if !binding.public_key.is_empty() {
-        return verify_signature(&binding.public_key, &payload, &binding.signature);
+        return verify_signature_for_provider(
+            &binding.provider_type,
+            &binding.public_key,
+            &payload,
+            &binding.signature,
+        );
     }
 
     Err(TpmError::InvalidSignature)
@@ -93,35 +105,54 @@ pub fn verify_quote(quote: &Quote) -> Result<(), TpmError> {
         return Err(TpmError::InvalidSignature);
     }
 
-    if quote.provider_type == "software" {
-        return verify_signature(&quote.public_key, &quote.attested_data, &quote.signature);
-    }
-
     if quote.public_key.is_empty() {
         return Err(TpmError::InvalidSignature);
     }
 
-    verify_signature(&quote.public_key, &quote.attested_data, &quote.signature)
+    verify_signature_for_provider(
+        &quote.provider_type,
+        &quote.public_key,
+        &quote.attested_data,
+        &quote.signature,
+    )
 }
 
-fn verify_signature(public_key: &[u8], payload: &[u8], signature: &[u8]) -> Result<(), TpmError> {
-    // KNOWN LIMITATION: algorithm is inferred by trying Ed25519, then ECDSA-P256, then RSA in
-    // order, accepting the first that parses and verifies. This try-all approach permits
-    // algorithm confusion if a key happens to parse under multiple schemes. It should be replaced
-    // with an explicit algorithm field on Binding/Quote once those structs are extended.
-    if let Some(result) = try_verify_ed25519(public_key, payload, signature) {
-        log::debug!("TPM signature verified via Ed25519");
-        return result;
+fn verify_signature_for_provider(
+    provider_type: &str,
+    public_key: &[u8],
+    payload: &[u8],
+    signature: &[u8],
+) -> Result<(), TpmError> {
+    // Use provider_type to select the expected algorithm, avoiding algorithm confusion.
+    // Software providers always use Ed25519; Secure Enclave uses ECDSA-P256;
+    // Linux/Windows TPM may use RSA or ECDSA depending on key type.
+    match provider_type {
+        "software" => {
+            if let Some(result) = try_verify_ed25519(public_key, payload, signature) {
+                return result;
+            }
+            Err(TpmError::InvalidSignature)
+        }
+        "secure-enclave" => {
+            if let Some(result) = try_verify_ecdsa_p256(public_key, payload, signature) {
+                return result;
+            }
+            Err(TpmError::InvalidSignature)
+        }
+        _ => {
+            // Hardware TPM: try ECDSA first (P-256 SRK), then RSA, then Ed25519
+            if let Some(result) = try_verify_ecdsa_p256(public_key, payload, signature) {
+                return result;
+            }
+            if let Some(result) = try_verify_rsa(public_key, payload, signature) {
+                return result;
+            }
+            if let Some(result) = try_verify_ed25519(public_key, payload, signature) {
+                return result;
+            }
+            Err(TpmError::UnsupportedPublicKey)
+        }
     }
-    if let Some(result) = try_verify_ecdsa_p256(public_key, payload, signature) {
-        log::debug!("TPM signature verified via ECDSA-P256");
-        return result;
-    }
-    if let Some(result) = try_verify_rsa(public_key, payload, signature) {
-        log::debug!("TPM signature verified via RSA-PKCS1v15");
-        return result;
-    }
-    Err(TpmError::UnsupportedPublicKey)
 }
 
 fn try_verify_ed25519(
@@ -169,7 +200,7 @@ fn try_verify_rsa(
     let key = rsa::RsaPublicKey::from_pkcs1_der(public_key)
         .or_else(|_| rsa::RsaPublicKey::from_public_key_der(public_key))
         .ok()?;
-    let verifying_key = rsa::pkcs1v15::VerifyingKey::<sha2::Sha256>::new_unprefixed(key);
+    let verifying_key = rsa::pkcs1v15::VerifyingKey::<sha2::Sha256>::new(key);
     let sig = rsa::pkcs1v15::Signature::try_from(signature).ok()?;
     Some(
         verifying_key

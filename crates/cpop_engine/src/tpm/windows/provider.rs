@@ -17,7 +17,7 @@ use super::types::*;
 
 /// Windows TPM 2.0 provider via TBS (TPM Base Services).
 pub struct WindowsTpmProvider {
-    context: TbsContext,
+    context: Mutex<TbsContext>,
     public_key: Vec<u8>,
     state: Mutex<WindowsTpmState>,
 }
@@ -49,7 +49,7 @@ pub fn try_init() -> Option<WindowsTpmProvider> {
                 };
 
                 Some(WindowsTpmProvider {
-                    context,
+                    context: Mutex::new(context),
                     public_key,
                     state: Mutex::new(WindowsTpmState { counter: 0 }),
                 })
@@ -77,14 +77,13 @@ pub fn try_init() -> Option<WindowsTpmProvider> {
 }
 
 impl WindowsTpmProvider {
-    fn read_pcrs(&self, pcrs: &[u32]) -> Result<Vec<PcrValue>, TpmError> {
+    fn read_pcrs(&self, ctx: &TbsContext, pcrs: &[u32]) -> Result<Vec<PcrValue>, TpmError> {
         if pcrs.is_empty() {
             return Ok(Vec::new());
         }
 
         let cmd = build_pcr_read_command(pcrs);
-        let response = self
-            .context
+        let response = ctx
             .submit_command(&cmd)
             .map_err(|e| TpmError::Quote(e.to_string()))?;
 
@@ -163,10 +162,10 @@ impl WindowsTpmProvider {
     ///
     /// Creates a transient signing key via TPM2_Create + TPM2_Load, signs with
     /// TPM2_Sign (ECDSA-P256-SHA256), then flushes the key handle.
-    fn sign_payload(&self, data: &[u8]) -> Result<Vec<u8>, TpmError> {
+    fn sign_payload(&self, ctx: &TbsContext, data: &[u8]) -> Result<Vec<u8>, TpmError> {
         // 1. Create the SRK (parent for our signing key)
         let srk_response = self
-            .create_primary_srk()
+            .create_primary_srk(ctx)
             .map_err(|e| TpmError::Signing(format!("SRK creation: {e}")))?;
         if srk_response.len() < 14 {
             return Err(TpmError::Signing("SRK response too short".into()));
@@ -176,29 +175,33 @@ impl WindowsTpmProvider {
 
         // 2. Create a signing key under the SRK
         let signing_key_blob = self
-            .create_signing_key(srk_handle)
+            .create_signing_key(ctx, srk_handle)
             .map_err(|e| TpmError::Signing(format!("signing key create: {e}")))?;
 
         // 3. Load the signing key
         let key_handle = self
-            .load_key(srk_handle, &signing_key_blob)
+            .load_key(ctx, srk_handle, &signing_key_blob)
             .map_err(|e| TpmError::Signing(format!("signing key load: {e}")))?;
 
         // 4. Hash the data (TPM2_Sign expects a digest)
         let digest: [u8; 32] = Sha256::digest(data).into();
 
         // 5. TPM2_Sign
-        let sign_result = self.tpm2_sign(key_handle, &digest);
+        let sign_result = self.tpm2_sign(ctx, key_handle, &digest);
 
         // 6. Cleanup: flush both handles regardless of sign result
-        let _ = self.flush_context(key_handle);
-        let _ = self.flush_context(srk_handle);
+        let _ = self.flush_context(ctx, key_handle);
+        let _ = self.flush_context(ctx, srk_handle);
 
         sign_result
     }
 
     /// Create an ECC P-256 signing key under the given parent handle.
-    fn create_signing_key(&self, parent_handle: u32) -> Result<Vec<u8>, TpmError> {
+    fn create_signing_key(
+        &self,
+        ctx: &TbsContext,
+        parent_handle: u32,
+    ) -> Result<Vec<u8>, TpmError> {
         let mut body = Vec::new();
         body.extend_from_slice(&parent_handle.to_be_bytes());
 
@@ -225,8 +228,7 @@ impl WindowsTpmProvider {
         cmd.extend_from_slice(&TPM2_CC_CREATE.to_be_bytes());
         cmd.extend_from_slice(&body);
 
-        let response = self
-            .context
+        let response = ctx
             .submit_command(&cmd)
             .map_err(|e| TpmError::Signing(format!("TPM2_Create: {e}")))?;
 
@@ -236,16 +238,27 @@ impl WindowsTpmProvider {
     }
 
     /// Load a key blob under the given parent, returning the loaded handle.
-    fn load_key(&self, parent_handle: u32, blob: &[u8]) -> Result<u32, TpmError> {
+    fn load_key(&self, ctx: &TbsContext, parent_handle: u32, blob: &[u8]) -> Result<u32, TpmError> {
         // blob format: [pub_len:4][pub][priv_len:4][priv]
         let pub_len = super::helpers::read_u32_be(blob, 0)
             .map_err(|e| TpmError::Signing(format!("load key blob parse: {e}")))?
             as usize;
+        if 4 + pub_len > blob.len() {
+            return Err(TpmError::Signing(
+                "load key blob: pub_len exceeds blob size".into(),
+            ));
+        }
         let pub_bytes = &blob[4..4 + pub_len];
-        let priv_len = super::helpers::read_u32_be(blob, 4 + pub_len)
+        let priv_offset = 4 + pub_len;
+        let priv_len = super::helpers::read_u32_be(blob, priv_offset)
             .map_err(|e| TpmError::Signing(format!("load key blob parse: {e}")))?
             as usize;
-        let priv_bytes = &blob[4 + pub_len + 4..4 + pub_len + 4 + priv_len];
+        if priv_offset + 4 + priv_len > blob.len() {
+            return Err(TpmError::Signing(
+                "load key blob: priv_len exceeds blob size".into(),
+            ));
+        }
+        let priv_bytes = &blob[priv_offset + 4..priv_offset + 4 + priv_len];
 
         let mut body = Vec::new();
         body.extend_from_slice(&parent_handle.to_be_bytes());
@@ -269,8 +282,7 @@ impl WindowsTpmProvider {
         cmd.extend_from_slice(&TPM2_CC_LOAD.to_be_bytes());
         cmd.extend_from_slice(&body);
 
-        let response = self
-            .context
+        let response = ctx
             .submit_command(&cmd)
             .map_err(|e| TpmError::Signing(format!("TPM2_Load: {e}")))?;
 
@@ -290,7 +302,12 @@ impl WindowsTpmProvider {
     /// TPM2_Sign: ECDSA-P256-SHA256 signature over a 32-byte digest.
     ///
     /// Returns the raw ECDSA signature as r || s (64 bytes for P-256).
-    fn tpm2_sign(&self, key_handle: u32, digest: &[u8; 32]) -> Result<Vec<u8>, TpmError> {
+    fn tpm2_sign(
+        &self,
+        ctx: &TbsContext,
+        key_handle: u32,
+        digest: &[u8; 32],
+    ) -> Result<Vec<u8>, TpmError> {
         let mut body = Vec::new();
         body.extend_from_slice(&key_handle.to_be_bytes());
 
@@ -318,8 +335,7 @@ impl WindowsTpmProvider {
         cmd.extend_from_slice(&TPM2_CC_SIGN.to_be_bytes());
         cmd.extend_from_slice(&body);
 
-        let response = self
-            .context
+        let response = ctx
             .submit_command(&cmd)
             .map_err(|e| TpmError::Signing(format!("TPM2_Sign: {e}")))?;
 
@@ -379,7 +395,7 @@ impl WindowsTpmProvider {
     }
 
     /// TPM2_CreatePrimary: ECC P-256 SRK under Owner hierarchy.
-    fn create_primary_srk(&self) -> Result<Vec<u8>, TbsError> {
+    fn create_primary_srk(&self, ctx: &TbsContext) -> Result<Vec<u8>, TbsError> {
         let mut cmd = Vec::with_capacity(128);
         let mut body = Vec::new();
 
@@ -406,10 +422,15 @@ impl WindowsTpmProvider {
         cmd.extend_from_slice(&TPM2_CC_CREATE_PRIMARY.to_be_bytes());
         cmd.extend_from_slice(&body);
 
-        self.context.submit_command(&cmd)
+        ctx.submit_command(&cmd)
     }
 
-    fn create_sealed_object(&self, parent_handle: u32, data: &[u8]) -> Result<Vec<u8>, TbsError> {
+    fn create_sealed_object(
+        &self,
+        ctx: &TbsContext,
+        parent_handle: u32,
+        data: &[u8],
+    ) -> Result<Vec<u8>, TbsError> {
         let mut body = Vec::new();
 
         body.extend_from_slice(&parent_handle.to_be_bytes());
@@ -418,7 +439,7 @@ impl WindowsTpmProvider {
         body.extend_from_slice(&(auth_area.len() as u32).to_be_bytes());
         body.extend_from_slice(&auth_area);
 
-        let auth_value = self.derive_seal_auth_value();
+        let auth_value = self.derive_seal_auth_value(ctx);
         let sensitive_size = 2 + auth_value.len() + 2 + data.len();
         body.extend_from_slice(&(sensitive_size as u16).to_be_bytes());
         body.extend_from_slice(&(auth_value.len() as u16).to_be_bytes());
@@ -440,7 +461,7 @@ impl WindowsTpmProvider {
         cmd.extend_from_slice(&TPM2_CC_CREATE.to_be_bytes());
         cmd.extend_from_slice(&body);
 
-        self.context.submit_command(&cmd)
+        ctx.submit_command(&cmd)
     }
 
     /// Parse TPM2_Create response into `[pub_len: u32][pub][priv_len: u32][priv]`.
@@ -483,6 +504,7 @@ impl WindowsTpmProvider {
 
     fn load_object(
         &self,
+        ctx: &TbsContext,
         parent_handle: u32,
         pub_bytes: &[u8],
         priv_bytes: &[u8],
@@ -508,15 +530,15 @@ impl WindowsTpmProvider {
         cmd.extend_from_slice(&TPM2_CC_LOAD.to_be_bytes());
         cmd.extend_from_slice(&body);
 
-        self.context.submit_command(&cmd)
+        ctx.submit_command(&cmd)
     }
 
-    fn unseal_object(&self, obj_handle: u32) -> Result<Vec<u8>, TbsError> {
+    fn unseal_object(&self, ctx: &TbsContext, obj_handle: u32) -> Result<Vec<u8>, TbsError> {
         let mut body = Vec::new();
 
         body.extend_from_slice(&obj_handle.to_be_bytes());
 
-        let auth_value = self.derive_seal_auth_value();
+        let auth_value = self.derive_seal_auth_value(ctx);
         let auth_area = build_auth_area_with_password(obj_handle, &auth_value);
         body.extend_from_slice(&(auth_area.len() as u32).to_be_bytes());
         body.extend_from_slice(&auth_area);
@@ -528,27 +550,27 @@ impl WindowsTpmProvider {
         cmd.extend_from_slice(&TPM2_CC_UNSEAL.to_be_bytes());
         cmd.extend_from_slice(&body);
 
-        self.context.submit_command(&cmd)
+        ctx.submit_command(&cmd)
     }
 
-    fn flush_context(&self, handle: u32) -> Result<(), TbsError> {
+    fn flush_context(&self, ctx: &TbsContext, handle: u32) -> Result<(), TbsError> {
         let mut cmd = Vec::with_capacity(14);
         let command_size: u32 = 14;
         cmd.extend_from_slice(&TPM2_ST_NO_SESSIONS.to_be_bytes());
         cmd.extend_from_slice(&command_size.to_be_bytes());
         cmd.extend_from_slice(&0x00000165u32.to_be_bytes()); // CC_FlushContext
         cmd.extend_from_slice(&handle.to_be_bytes());
-        self.context.submit_command(&cmd)?;
+        ctx.submit_command(&cmd)?;
         Ok(())
     }
 
     /// Hardware-bound: derived from TPM device ID and SRK public key so sealed
     /// blobs can't be moved to another machine.
-    fn derive_seal_auth_value(&self) -> zeroize::Zeroizing<Vec<u8>> {
+    fn derive_seal_auth_value(&self, ctx: &TbsContext) -> zeroize::Zeroizing<Vec<u8>> {
         use sha2::Digest;
         let mut hasher = Sha256::new();
         hasher.update(b"witnessd-seal-auth-v2");
-        hasher.update(self.context.device_id().as_bytes());
+        hasher.update(ctx.device_id().as_bytes());
         hasher.update(&self.public_key);
         let hash = hasher.finalize();
         zeroize::Zeroizing::new(hash[..32].to_vec())
@@ -602,7 +624,8 @@ impl Provider for WindowsTpmProvider {
     }
 
     fn device_id(&self) -> String {
-        self.context.device_id().to_string()
+        let ctx = self.context.lock_recover();
+        ctx.device_id().to_string()
     }
 
     fn algorithm(&self) -> coset::iana::Algorithm {
@@ -614,20 +637,21 @@ impl Provider for WindowsTpmProvider {
     }
 
     fn quote(&self, nonce: &[u8], pcrs: &[u32]) -> Result<Quote, TpmError> {
+        let ctx = self.context.lock_recover();
         let timestamp = Utc::now();
 
         let pcr_values = if !pcrs.is_empty() {
-            self.read_pcrs(pcrs)?
+            self.read_pcrs(&ctx, pcrs)?
         } else {
             Vec::new()
         };
 
         let attested_data = self.build_quote_attestation_data(nonce, &pcr_values, &timestamp);
-        let signature = self.sign_payload(&attested_data)?;
+        let signature = self.sign_payload(&ctx, &attested_data)?;
 
         Ok(Quote {
             provider_type: "tpm2-windows".to_string(),
-            device_id: self.device_id(),
+            device_id: ctx.device_id().to_string(),
             timestamp,
             nonce: nonce.to_vec(),
             attested_data,
@@ -639,6 +663,7 @@ impl Provider for WindowsTpmProvider {
     }
 
     fn bind(&self, data: &[u8]) -> Result<Binding, TpmError> {
+        let ctx = self.context.lock_recover();
         let counter = {
             let mut state = self.state.lock_recover();
             state.counter += 1;
@@ -646,7 +671,7 @@ impl Provider for WindowsTpmProvider {
         };
 
         let timestamp = Utc::now();
-        let device_id = self.device_id();
+        let device_id = ctx.device_id().to_string();
         let attested_hash = Sha256::digest(data).to_vec();
 
         let mut payload = Vec::new();
@@ -654,7 +679,7 @@ impl Provider for WindowsTpmProvider {
         payload.extend_from_slice(&timestamp.timestamp_nanos_safe().to_le_bytes());
         payload.extend_from_slice(device_id.as_bytes());
 
-        let signature = self.sign_payload(&payload)?;
+        let signature = self.sign_payload(&ctx, &payload)?;
 
         Ok(Binding {
             version: 1,
@@ -674,7 +699,8 @@ impl Provider for WindowsTpmProvider {
     }
 
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>, TpmError> {
-        self.sign_payload(data)
+        let ctx = self.context.lock_recover();
+        self.sign_payload(&ctx, data)
     }
 
     fn verify(&self, binding: &Binding) -> Result<(), TpmError> {
@@ -682,22 +708,23 @@ impl Provider for WindowsTpmProvider {
     }
 
     fn seal(&self, data: &[u8], _policy: &[u8]) -> Result<Vec<u8>, TpmError> {
+        let ctx = self.context.lock_recover();
         let srk_response = self
-            .create_primary_srk()
+            .create_primary_srk(&ctx)
             .map_err(|e| TpmError::Sealing(format!("SRK creation failed: {}", e)))?;
 
         let srk_handle = super::helpers::read_u32_be(&srk_response, 10)
             .map_err(|e| TpmError::Sealing(format!("SRK handle parse: {e}")))?;
 
         let create_response = self
-            .create_sealed_object(srk_handle, data)
+            .create_sealed_object(&ctx, srk_handle, data)
             .map_err(|e| TpmError::Sealing(format!("seal create failed: {}", e)))?;
 
         let sealed_blob = self
             .parse_create_response(&create_response)
             .map_err(|e| TpmError::Sealing(format!("parse create response: {}", e)))?;
 
-        if let Err(e) = self.flush_context(srk_handle) {
+        if let Err(e) = self.flush_context(&ctx, srk_handle) {
             log::warn!("Failed to flush SRK context after seal: {e}");
         }
 
@@ -705,26 +732,27 @@ impl Provider for WindowsTpmProvider {
     }
 
     fn unseal(&self, sealed: &[u8]) -> Result<Vec<u8>, TpmError> {
+        let ctx = self.context.lock_recover();
         let (pub_bytes, priv_bytes) = super::super::parse_sealed_blob(sealed)?;
 
         let srk_response = self
-            .create_primary_srk()
+            .create_primary_srk(&ctx)
             .map_err(|e| TpmError::Unsealing(format!("SRK creation failed: {}", e)))?;
         let srk_handle = super::helpers::read_u32_be(&srk_response, 10)
             .map_err(|e| TpmError::Unsealing(format!("SRK handle parse: {e}")))?;
 
         let load_response = self
-            .load_object(srk_handle, pub_bytes, priv_bytes)
+            .load_object(&ctx, srk_handle, pub_bytes, priv_bytes)
             .map_err(|e| TpmError::Unsealing(format!("load failed: {}", e)))?;
         let obj_handle = super::helpers::read_u32_be(&load_response, 10)
             .map_err(|e| TpmError::Unsealing(format!("object handle parse: {e}")))?;
 
-        let unseal_result = self.unseal_object(obj_handle);
+        let unseal_result = self.unseal_object(&ctx, obj_handle);
 
-        if let Err(e) = self.flush_context(obj_handle) {
+        if let Err(e) = self.flush_context(&ctx, obj_handle) {
             log::warn!("Failed to flush object context after unseal: {e}");
         }
-        if let Err(e) = self.flush_context(srk_handle) {
+        if let Err(e) = self.flush_context(&ctx, srk_handle) {
             log::warn!("Failed to flush SRK context after unseal: {e}");
         }
 
@@ -743,14 +771,14 @@ impl Provider for WindowsTpmProvider {
     }
 
     fn clock_info(&self) -> Result<super::super::ClockInfo, TpmError> {
+        let ctx = self.context.lock_recover();
         let command_size: u32 = 10;
         let mut cmd = Vec::with_capacity(command_size as usize);
         cmd.extend_from_slice(&TPM2_ST_NO_SESSIONS.to_be_bytes());
         cmd.extend_from_slice(&command_size.to_be_bytes());
         cmd.extend_from_slice(&0x00000181u32.to_be_bytes()); // CC_ReadClock
 
-        let response = self
-            .context
+        let response = ctx
             .submit_command(&cmd)
             .map_err(|e| TpmError::Quote(format!("ReadClock failed: {}", e)))?;
 
