@@ -776,7 +776,7 @@ impl Provider for WindowsTpmProvider {
         let mut cmd = Vec::with_capacity(command_size as usize);
         cmd.extend_from_slice(&TPM2_ST_NO_SESSIONS.to_be_bytes());
         cmd.extend_from_slice(&command_size.to_be_bytes());
-        cmd.extend_from_slice(&0x00000181u32.to_be_bytes()); // CC_ReadClock
+        cmd.extend_from_slice(&TPM2_CC_READ_CLOCK.to_be_bytes());
 
         let response = ctx
             .submit_command(&cmd)

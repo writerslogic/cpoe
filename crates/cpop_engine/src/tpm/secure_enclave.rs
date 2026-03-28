@@ -520,7 +520,6 @@ impl SecureEnclaveProvider {
         })();
 
         key_material.zeroize();
-        drop(signature);
         result
     }
 }
