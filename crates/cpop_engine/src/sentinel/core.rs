@@ -479,8 +479,11 @@ impl Sentinel {
                             collector.record_keystroke(event.keycode, event.char_value);
                         }
 
-                        // Attribute keystroke to the currently focused document
-                        if let Some(ref path) = *current_focus.read_recover() {
+                        // Attribute keystroke to the currently focused document.
+                        // Read current_focus into a local and drop the lock before
+                        // acquiring sessions, matching the lock order in helpers.rs.
+                        let focused_path = current_focus.read_recover().clone();
+                        if let Some(ref path) = focused_path {
                             if let Some(session) = sessions.write_recover().get_mut(path) {
                                 session.keystroke_count += 1;
                                 // Store jitter sample for per-document forensic analysis
@@ -882,17 +885,22 @@ impl Sentinel {
             return Ok(());
         }
 
-        let guard = self.signing_key.read_recover();
-        let signing_key = guard
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("signing key not initialized"))?;
-        let public_key = signing_key.verifying_key().to_bytes();
+        // Clone signing key into a local and drop the read lock immediately
+        // to avoid holding it across database I/O below.
+        let signing_key_local = {
+            let guard = self.signing_key.read_recover();
+            guard
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("signing key not initialized"))?
+                .clone()
+        };
+        let public_key = signing_key_local.verifying_key().to_bytes();
         let mut hasher = sha2::Sha256::new();
         hasher.update(public_key);
         let identity_fingerprint = hasher.finalize().to_vec();
 
         let db_path = self.config.writersproof_dir.join("events.db");
-        let hmac_key = crate::crypto::derive_hmac_key(&signing_key.to_bytes());
+        let hmac_key = crate::crypto::derive_hmac_key(&signing_key_local.to_bytes());
         let store = crate::store::SecureStore::open(&db_path, hmac_key.to_vec())?;
 
         let current_digest =
@@ -905,7 +913,8 @@ impl Sentinel {
         let updated_digest = crate::baseline::update_digest(current_digest, &summary);
 
         let digest_cbor = serde_json::to_vec(&updated_digest)?;
-        let signature = signing_key.sign(&digest_cbor);
+        let signature = signing_key_local.sign(&digest_cbor);
+        drop(signing_key_local);
 
         store.save_baseline_digest(&identity_fingerprint, &digest_cbor, &signature.to_bytes())?;
 

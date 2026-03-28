@@ -8,6 +8,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::SystemTime;
 use windows::core::PWSTR;
+use windows::Win32::Foundation::CloseHandle;
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
 };
@@ -72,13 +73,14 @@ fn get_process_path(pid: u32) -> Option<String> {
         let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
         let mut path = [0u16; 1024];
         let mut size = path.len() as u32;
-        QueryFullProcessImageNameW(
+        let result = QueryFullProcessImageNameW(
             handle,
             Default::default(),
             PWSTR(path.as_mut_ptr()),
             &mut size,
-        )
-        .ok()?;
+        );
+        let _ = CloseHandle(handle);
+        result.ok()?;
         Some(String::from_utf16_lossy(&path[..size as usize]))
     }
 }

@@ -280,8 +280,30 @@ impl IpcMessage {
         const MAX_JITTER_INTERVAL_NS: u64 = 60_000_000_000;
         /// Maximum plausible absolute timestamp: year ~2100 in nanoseconds.
         const MAX_TIMESTAMP_NS: i64 = 4_102_444_800_000_000_000;
+        /// Maximum length for short string fields (version, tier).
+        const MAX_SHORT_STRING: usize = 64;
+        /// Maximum length for message body fields (SystemAlert message).
+        const MAX_ALERT_MESSAGE: usize = 4096;
 
         match self {
+            IpcMessage::Handshake { version } => {
+                if version.len() > MAX_SHORT_STRING {
+                    return Err(format!(
+                        "Handshake version too long: {} bytes (max {})",
+                        version.len(),
+                        MAX_SHORT_STRING
+                    ));
+                }
+            }
+            IpcMessage::SystemAlert { message, .. } => {
+                if message.len() > MAX_ALERT_MESSAGE {
+                    return Err(format!(
+                        "SystemAlert message too long: {} bytes (max {})",
+                        message.len(),
+                        MAX_ALERT_MESSAGE
+                    ));
+                }
+            }
             IpcMessage::StartWitnessing { file_path } => {
                 validate_ipc_path(file_path)?;
             }
@@ -297,9 +319,18 @@ impl IpcMessage {
             IpcMessage::VerifyFile { path } => {
                 validate_ipc_path(path)?;
             }
-            IpcMessage::ExportFile { path, output, .. } => {
+            IpcMessage::ExportFile {
+                path, output, tier, ..
+            } => {
                 validate_ipc_path(path)?;
                 validate_ipc_path(output)?;
+                if tier.len() > MAX_SHORT_STRING {
+                    return Err(format!(
+                        "ExportFile tier too long: {} bytes (max {})",
+                        tier.len(),
+                        MAX_SHORT_STRING
+                    ));
+                }
             }
             IpcMessage::GetFileForensics { path } => {
                 validate_ipc_path(path)?;

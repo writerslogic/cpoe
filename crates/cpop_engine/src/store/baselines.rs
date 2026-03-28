@@ -17,6 +17,10 @@ impl SecureStore {
     }
 
     /// Persist a signed baseline digest for an identity fingerprint.
+    ///
+    /// The signature is stored as-is without verification here because the
+    /// signer is the local engine itself. Verification is performed on read
+    /// via `get_baseline_digest` callers.
     pub fn save_baseline_digest(
         &self,
         fingerprint: &[u8],
@@ -55,7 +59,9 @@ impl SecureStore {
             return Ok(()); // Silently reject non-finite values to prevent database corruption
         }
 
-        let res = self.conn.query_row(
+        let tx = self.conn.unchecked_transaction()?;
+
+        let res = tx.query_row(
             "SELECT sample_count, mean, m2 FROM physical_baselines WHERE signal_name = ?",
             [signal],
             |row| {
@@ -79,10 +85,11 @@ impl SecureStore {
         let delta2 = value - mean;
         m2 += delta * delta2;
 
-        self.conn.execute(
+        tx.execute(
             "INSERT OR REPLACE INTO physical_baselines (signal_name, sample_count, mean, m2) VALUES (?, ?, ?, ?)",
             params![signal, count, mean, m2]
         )?;
+        tx.commit()?;
         Ok(())
     }
 

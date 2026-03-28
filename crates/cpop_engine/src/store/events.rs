@@ -61,7 +61,8 @@ impl SecureStore {
                 i64::try_from(e.vdf_iterations).unwrap_or(i64::MAX),
                 e.forensic_score,
                 e.is_paste as i32,
-                e.hardware_counter.map(|c| c as i64),
+                e.hardware_counter
+                    .map(|c| i64::try_from(c).unwrap_or(i64::MAX)),
                 e.input_method
             ],
         )?;
@@ -74,7 +75,9 @@ impl SecureStore {
             [],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
-        let event_count = prev_event_count + 1;
+        let event_count = prev_event_count
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("event_count overflow"))?;
         let new_integrity_hmac = crypto::compute_integrity_hmac(
             &self.hmac_key,
             &e.event_hash,

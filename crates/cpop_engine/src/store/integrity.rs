@@ -230,7 +230,9 @@ impl SecureStore {
                     }
 
                     last_hash = expected_event_hash;
-                    count += 1;
+                    count = count
+                        .checked_add(1)
+                        .ok_or_else(|| anyhow!("integrity verification count overflow"))?;
                     new_last_seq = id;
                 }
 

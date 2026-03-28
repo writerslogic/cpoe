@@ -196,7 +196,7 @@ impl DocumentSession {
 
     /// Includes currently active focus interval if focused.
     pub fn total_focus_duration(&self) -> Duration {
-        let mut total = Duration::from_millis(self.total_focus_ms as u64);
+        let mut total = Duration::from_millis(self.total_focus_ms.max(0) as u64);
         if let Some(started) = self.focus_started {
             total += started.elapsed();
         }

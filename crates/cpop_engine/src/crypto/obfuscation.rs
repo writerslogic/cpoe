@@ -30,7 +30,7 @@ impl ObfuscatedString {
     pub fn reveal(&self) -> Zeroizing<String> {
         let mut data = self.data.clone();
         Self::xor(&mut data, &self.nonce);
-        let s = String::from_utf8_lossy(&data).to_string();
+        let s = String::from_utf8(std::mem::take(&mut data)).unwrap_or_default();
         data.zeroize();
         Zeroizing::new(s)
     }
@@ -70,11 +70,14 @@ impl<'de> Deserialize<'de> for ObfuscatedString {
     where
         D: Deserializer<'de>,
     {
-        let s = String::deserialize(deserializer)?;
+        let s = Zeroizing::new(String::deserialize(deserializer)?);
         Ok(Self::new(&s))
     }
 }
 
+/// **Not constant-time.** This comparison reveals timing information proportional
+/// to the shared prefix length. Do not use for secret comparison; use
+/// `subtle::ConstantTimeEq` on the revealed bytes if timing resistance is needed.
 impl PartialEq for ObfuscatedString {
     fn eq(&self, other: &Self) -> bool {
         // Optimization: if nonces are same, compare data directly

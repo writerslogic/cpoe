@@ -85,6 +85,12 @@ fn record_access(
 ///
 /// Plaintext fallback branches are kept for protocol version negotiation;
 /// they will be removed when v2 is enforced.
+///
+/// **Known limitation:** The rate limiter is shared across all connections, keyed by
+/// message type rather than by client identity. A single malicious local client can
+/// exhaust the rate limit for a message type and deny service to other local clients.
+/// This is acceptable for local-only IPC where all clients run under the same user,
+/// but should be revisited if the IPC transport is ever exposed beyond localhost.
 async fn handle_connection_inner<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
     stream: &mut S,
     handler: Arc<dyn IpcMessageHandler>,
