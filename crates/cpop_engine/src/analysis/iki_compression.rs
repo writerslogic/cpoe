@@ -41,10 +41,22 @@ pub fn analyze_iki_compression(iki_intervals_ns: &[f64]) -> Option<IkiCompressio
 
     // Quantize to milliseconds and serialize to bytes (little-endian u16, clamped)
     let mut bytes = Vec::with_capacity(iki_intervals_ns.len() * 2);
+    let mut negative_count = 0usize;
     for &iki_ns in iki_intervals_ns {
-        let ms = (iki_ns / 1_000_000.0).round() as u64;
-        let clamped = ms.min(u16::MAX as u64) as u16;
+        let ms_f = (iki_ns / 1_000_000.0).round();
+        if ms_f < 0.0 {
+            negative_count += 1;
+            continue;
+        }
+        let clamped = (ms_f as u64).min(u16::MAX as u64) as u16;
         bytes.extend_from_slice(&clamped.to_le_bytes());
+    }
+    if negative_count > 0 {
+        log::warn!("IKI compression: skipped {negative_count} negative IKI value(s)");
+    }
+
+    if bytes.is_empty() {
+        return None;
     }
 
     // Compute byte-level Shannon entropy

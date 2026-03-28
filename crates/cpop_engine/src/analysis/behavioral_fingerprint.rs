@@ -293,7 +293,7 @@ impl BehavioralFingerprint {
             .iter()
             .filter(|&&i| i < IMPOSSIBLY_FAST_MS)
             .count();
-        if impossibly_fast > (intervals.len() / SUSPICIOUS_FAST_PERCENT) {
+        if impossibly_fast * SUSPICIOUS_FAST_PERCENT > intervals.len() {
             flags.push(ForgeryFlag::SuperhumanSpeed {
                 count: impossibly_fast,
             });

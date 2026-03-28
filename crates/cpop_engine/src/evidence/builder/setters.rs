@@ -477,18 +477,18 @@ impl Builder {
         let std_dev = variance.sqrt();
         let cv = if mean > 0.0 { std_dev / mean } else { 0.0 };
 
-        // O(n) percentile selection via `select_nth_unstable_by`
-        let cmp = |a: &f64, b: &f64| a.total_cmp(b);
+        // Percentile selection via sort
         let percentiles = if intervals_us.len() >= 10 {
             let mut buf = intervals_us.clone();
+            buf.sort_unstable_by(|a, b| a.total_cmp(b));
             let n = buf.len();
-            let indices = [n / 10, n / 4, n / 2, 3 * n / 4, 9 * n / 10];
-            let mut vals = [0.0f64; 5];
-            for (i, &idx) in indices.iter().enumerate() {
-                buf.select_nth_unstable_by(idx, cmp);
-                vals[i] = buf[idx];
-            }
-            vals
+            [
+                buf[n / 10],
+                buf[n / 4],
+                buf[n / 2],
+                buf[3 * n / 4],
+                buf[9 * n / 10],
+            ]
         } else {
             [mean; 5] // too few samples for meaningful percentiles
         };
