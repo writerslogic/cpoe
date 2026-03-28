@@ -167,15 +167,15 @@
 - [x] **EH-040** `continuation.rs:131` — u32 overflow in packet_sequence + 1 validation.
 - [x] **EH-041** `keyhierarchy/migration.rs:78-98` — Expanded key second half not validated for consistency.
 - [x] **EH-042** `checkpoint/chain.rs:281,356` — checkpoints.len() as u64 truncating cast on 32-bit.
-- [ ] **EH-043** `checkpoint_mmr.rs:39-44` — append_checkpoint has no rollback on sync failure; duplicate leaf.
-- [ ] **EH-044** `config/loading.rs:14-20` — TOCTOU between exists() and read_to_string on config file.
-- [ ] **EH-045** `ffi/attestation.rs:204,230` — sysctl/sw_vers spawned as child process; PATH injection risk.
-- [ ] **EH-046** `ffi/evidence.rs:34-40` — validate_path does not prevent overwriting key material files.
-- [ ] **EH-047** `ethereum.rs:63` — reqwest client has no timeout.
-- [ ] **EH-048** `ethereum.rs:44-54` — key_bytes heap copy not zeroized (SYS-033).
-- [ ] **EH-049** `declaration/builder.rs:140-145` — NaN passes per-field percentage check.
-- [ ] **EH-050** `steganography/extraction.rs:46` — verify hashes stripped text; no diagnostic if doc modified vs wrong key.
-- [ ] **EH-051** `steganography/embedding.rs:103` — Tag bytes cycle/repeat when zwc_count > 128.
+- [x] **EH-043** `checkpoint_mmr.rs:39-44` — append_checkpoint has no rollback on sync failure; duplicate leaf.
+- [x] **EH-044** `config/loading.rs:14-20` — TOCTOU between exists() and read_to_string on config file.
+- [x] **EH-045** `ffi/attestation.rs:204,230` — sysctl/sw_vers spawned as child process; PATH injection risk.
+- [x] **EH-046** `ffi/evidence.rs:34-40` — validate_path does not prevent overwriting key material files.
+- [x] **EH-047** `ethereum.rs:63` — reqwest client has no timeout.
+- [x] **EH-048** `ethereum.rs:44-54` — key_bytes heap copy not zeroized (SYS-033).
+- [x] **EH-049** `declaration/builder.rs:140-145` — NaN passes per-field percentage check.
+- [x] **EH-050** `steganography/extraction.rs:46` — verify hashes stripped text; no diagnostic if doc modified vs wrong key.
+- [x] **EH-051** `steganography/embedding.rs:103` — Tag bytes cycle/repeat when zwc_count > 128.
 
 ### Medium (Engine) — Top 50
 
