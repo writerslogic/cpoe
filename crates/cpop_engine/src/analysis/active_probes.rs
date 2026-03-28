@@ -176,12 +176,17 @@ pub fn analyze_galton_invariant(
         1.0
     };
 
-    let variance: f64 = absorption_rates
-        .iter()
-        .map(|&r| (r - absorption_coefficient).powi(2))
-        .sum::<f64>()
-        / absorption_rates.len() as f64;
-    let std_error = (variance / absorption_rates.len() as f64).sqrt();
+    let n = absorption_rates.len();
+    let std_error = if n <= 1 {
+        0.0
+    } else {
+        let variance: f64 = absorption_rates
+            .iter()
+            .map(|&r| (r - absorption_coefficient).powi(2))
+            .sum::<f64>()
+            / (n - 1) as f64;
+        (variance / n as f64).sqrt()
+    };
 
     let is_valid = (GaltonInvariantResult::MIN_VALID_ALPHA
         ..=GaltonInvariantResult::MAX_VALID_ALPHA)
