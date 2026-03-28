@@ -179,16 +179,16 @@
 
 ### Medium (Engine) — Top 50
 
-- [ ] **EM-001** `active_probes.rs:183-184` — Population variance instead of sample variance in std_error.
-- [ ] **EM-002** `behavioral_fingerprint.rs:127` — thinking_pause_frequency denominator off by 1.
-- [ ] **EM-003** `iki_compression.rs:34` — Unit mismatch risk (ns vs ms) with no runtime validation.
-- [ ] **EM-004** `perplexity.rs:58` — sample_count counts bytes not chars for multibyte UTF-8.
-- [ ] **EM-005** `snr.rs:46-49` — 50% overlapping windows inflate SNR by ~3dB.
-- [ ] **EM-006** `stats.rs:49-53` — bhattacharyya_coefficient silent length truncation on zip.
-- [ ] **EM-007** `stats.rs:71-75` — merge_histogram silently truncates mismatched lengths.
-- [ ] **EM-008** `ethereum.rs:254` — Gas price off-by-one; first attempt already bumped 10%.
-- [ ] **EM-009** `ethereum.rs:375` — confirmed_at is poll time not block timestamp.
-- [ ] **EM-010** `ethereum.rs:413` — verify() does not check tx.from address.
+- [x] **EM-001** `active_probes.rs:183-184` — Population variance instead of sample variance in std_error.
+- [x] **EM-002** `behavioral_fingerprint.rs:127` — thinking_pause_frequency denominator off by 1.
+- [x] **EM-003** `iki_compression.rs:34` — Unit mismatch risk (ns vs ms) with no runtime validation.
+- [x] **EM-004** `perplexity.rs:58` — sample_count counts bytes not chars for multibyte UTF-8.
+- [x] **EM-005** `snr.rs:46-49` — 50% overlapping windows inflate SNR by ~3dB.
+- [x] **EM-006** `stats.rs:49-53` — bhattacharyya_coefficient silent length truncation on zip.
+- [x] **EM-007** `stats.rs:71-75` — merge_histogram silently truncates mismatched lengths.
+- [x] **EM-008** `ethereum.rs:254` — Gas price off-by-one; first attempt already bumped 10%.
+- [x] **EM-009** `ethereum.rs:375` — confirmed_at is poll time not block timestamp.
+- [x] **EM-010** `ethereum.rs:413` — verify() does not check tx.from address.
 - [x] **EM-011** `types.rs:142` — Anchor.status never demotes from Confirmed to Failed.
 - [x] **EM-012** `types.rs:161` — best_proof fallback returns failed/pending proofs.
 - [x] **EM-013** `streaming.rs:23-24` — f64::MIN sentinel for max is confusing.

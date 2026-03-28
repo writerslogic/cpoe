@@ -91,8 +91,8 @@ pub fn merge_histogram(a: &mut [f64], b: &[f64], a_weight: f64, b_weight: f64) {
     for i in 0..overlap {
         a[i] = a[i] * a_weight + b[i] * b_weight;
     }
-    for i in overlap..a.len() {
-        a[i] *= a_weight;
+    for val in a.iter_mut().skip(overlap) {
+        *val *= a_weight;
     }
 }
 
