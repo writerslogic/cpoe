@@ -380,6 +380,7 @@ fn test_session_recovery_no_data() {
             master_pubkey: vec![],
             signature: [0u8; 64],
             version: VERSION,
+            expires_at: None,
             start_quote: None,
             end_quote: None,
             start_counter: None,

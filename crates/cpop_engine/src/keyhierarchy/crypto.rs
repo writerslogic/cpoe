@@ -4,6 +4,7 @@ use crate::DateTimeNanosExt;
 use chrono::{DateTime, Utc};
 use hkdf::Hkdf;
 use sha2::{Digest, Sha256};
+use zeroize::Zeroizing;
 
 use super::error::KeyHierarchyError;
 
@@ -23,10 +24,14 @@ pub(crate) const SIGNING_KEY_DOMAIN: &str = "witnessd-signing-key-v1";
 // NOTE: Callers use domain labels as salt for extraction-phase separation.
 // This is the reverse of the typical convention (domain in `info`), but the
 // cryptographic result is sound and changing it would break all derived keys.
-pub fn hkdf_expand(ikm: &[u8], salt: &[u8], info: &[u8]) -> Result<[u8; 32], KeyHierarchyError> {
+pub fn hkdf_expand(
+    ikm: &[u8],
+    salt: &[u8],
+    info: &[u8],
+) -> Result<Zeroizing<[u8; 32]>, KeyHierarchyError> {
     let hk = Hkdf::<Sha256>::new(Some(salt), ikm);
-    let mut okm = [0u8; 32];
-    hk.expand(info, &mut okm)
+    let mut okm = Zeroizing::new([0u8; 32]);
+    hk.expand(info, okm.as_mut())
         .map_err(|_| KeyHierarchyError::Crypto("HKDF expand failed".to_string()))?;
     Ok(okm)
 }

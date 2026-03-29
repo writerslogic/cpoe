@@ -43,11 +43,11 @@ pub(crate) fn start_session_inner(
     };
 
     let key_bytes = Zeroizing::new(signing_key.to_bytes());
-    let session_seed = Zeroizing::new(hkdf_expand(
+    let session_seed = hkdf_expand(
         key_bytes.as_slice(),
         SESSION_DOMAIN.as_bytes(),
         &session_input,
-    )?);
+    )?;
     drop(key_bytes);
     // NOTE: ed25519_dalek::SigningKey holds a copy of the seed internally. The SigningKey is
     // dropped at end of scope, but the internal copy is not zeroized. This is a known
@@ -65,6 +65,7 @@ pub(crate) fn start_session_inner(
         master_pubkey: master_pub_key,
         signature,
         version: VERSION,
+        expires_at: None,
         start_quote: None,
         end_quote: None,
         start_counter: None,
@@ -75,14 +76,10 @@ pub(crate) fn start_session_inner(
         end_restart_count: None,
     };
 
-    // Wrap in Zeroizing so the intermediate Vec<u8> is cleared after conversion
-    // to ProtectedKey (which owns its own zeroized copy). SYS-033 residual.
-    let ratchet_init = Zeroizing::new(hkdf_expand(
-        session_seed.as_slice(),
-        RATCHET_INIT_DOMAIN.as_bytes(),
-        &[],
-    )?);
-    let ratchet_key: crate::crypto::mem::ProtectedKey<32> = (*ratchet_init).into();
+    // hkdf_expand returns Zeroizing<[u8; 32]>, so the intermediate is cleared
+    // on drop. ProtectedKey::from_zeroizing transfers ownership. SYS-033 residual.
+    let ratchet_init = hkdf_expand(session_seed.as_slice(), RATCHET_INIT_DOMAIN.as_bytes(), &[])?;
+    let ratchet_key = crate::crypto::mem::ProtectedKey::from_zeroizing(ratchet_init);
 
     Ok(Session {
         certificate,
@@ -119,24 +116,24 @@ impl Session {
             return Err(KeyHierarchyError::RatchetWiped);
         }
 
-        let signing_seed = Zeroizing::new(hkdf_expand(
+        let signing_seed = hkdf_expand(
             self.ratchet.current.as_bytes(),
             SIGNING_KEY_DOMAIN.as_bytes(),
             &[],
-        )?);
+        )?;
         let signing_key = SigningKey::from_bytes(&signing_seed);
         let public_key = signing_key.verifying_key().to_bytes().to_vec();
         let signature = signing_key.sign(&checkpoint_hash).to_bytes();
 
-        let next_ratchet = Zeroizing::new(hkdf_expand(
+        let next_ratchet = hkdf_expand(
             self.ratchet.current.as_bytes(),
             RATCHET_ADVANCE_DOMAIN.as_bytes(),
             &checkpoint_hash,
-        )?);
+        )?;
 
         let current_ordinal = self.ratchet.ordinal;
         drop(signing_seed);
-        self.ratchet.current = (*next_ratchet).into();
+        self.ratchet.current = crate::crypto::ProtectedKey::from_zeroizing(next_ratchet);
         self.ratchet.ordinal += 1;
 
         let sig = CheckpointSignature {
@@ -175,11 +172,11 @@ impl Session {
             _ => None,
         };
 
-        let signing_seed = Zeroizing::new(hkdf_expand(
+        let signing_seed = hkdf_expand(
             self.ratchet.current.as_bytes(),
             SIGNING_KEY_DOMAIN.as_bytes(),
             &[],
-        )?);
+        )?;
         let signing_key = SigningKey::from_bytes(&signing_seed);
         let public_key = signing_key.verifying_key().to_bytes().to_vec();
         let signature = signing_key.sign(&checkpoint_hash).to_bytes();
@@ -191,14 +188,14 @@ impl Session {
         if let Some(delta) = counter_delta {
             ratchet_input.extend_from_slice(&delta.to_be_bytes());
         }
-        let next_ratchet = Zeroizing::new(hkdf_expand(
+        let next_ratchet = hkdf_expand(
             self.ratchet.current.as_bytes(),
             RATCHET_ADVANCE_DOMAIN.as_bytes(),
             &ratchet_input,
-        )?);
+        )?;
 
         let current_ordinal = self.ratchet.ordinal;
-        self.ratchet.current = (*next_ratchet).into();
+        self.ratchet.current = crate::crypto::ProtectedKey::from_zeroizing(next_ratchet);
         self.ratchet.ordinal += 1;
 
         if let (Some(store), Some(counter)) = (sealed_store, current_counter) {
@@ -299,11 +296,11 @@ impl Session {
 
         let payload = crate::checkpoint_mmr::metadata_signing_payload(metadata);
 
-        let signing_seed = Zeroizing::new(hkdf_expand(
+        let signing_seed = hkdf_expand(
             self.ratchet.current.as_bytes(),
             CHAIN_METADATA_DOMAIN.as_bytes(),
             &[],
-        )?);
+        )?;
         let signing_key = SigningKey::from_bytes(&signing_seed);
         let signature = signing_key.sign(&payload).to_bytes();
         drop(signing_seed);
@@ -355,7 +352,7 @@ impl Session {
 
         let challenge = sha2::Sha256::digest(b"witnessd-ratchet-recovery-v2");
         let response = puf.get_response(&challenge)?;
-        let key = Zeroizing::new(hkdf_expand(&response, b"ratchet-recovery-key-v2", &[])?);
+        let key = hkdf_expand(&response, b"ratchet-recovery-key-v2", &[])?;
 
         let mut plaintext = Zeroizing::new(vec![0u8; 40]);
         plaintext[..32].copy_from_slice(self.ratchet.current.as_bytes());

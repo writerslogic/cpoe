@@ -101,7 +101,7 @@ pub fn chain_to_wire(chain: &Chain) -> EvidencePacketWire {
             id.copy_from_slice(&d[..16]);
             id
         },
-        created: chrono::Utc::now().timestamp_millis() as u64,
+        created: u64::try_from(chrono::Utc::now().timestamp_millis().max(0)).unwrap_or(0),
         document,
         checkpoints,
         attestation_tier,
@@ -154,7 +154,7 @@ fn checkpoint_to_wire(
                     leaf_value: sp.leaf_value.to_vec(),
                 })
                 .collect(),
-            claimed_duration: swf.claimed_duration.as_millis() as u64,
+            claimed_duration: u64::try_from(swf.claimed_duration.as_millis()).unwrap_or(u64::MAX),
         }
     } else if let Some(vdf) = &cp.vdf {
         ProcessProof {
@@ -170,7 +170,7 @@ fn checkpoint_to_wire(
             input: vdf.input.to_vec(),
             merkle_root: vdf.output.to_vec(),
             sampled_proofs: vec![],
-            claimed_duration: vdf.duration.as_millis() as u64,
+            claimed_duration: u64::try_from(vdf.duration.as_millis()).unwrap_or(u64::MAX),
         }
     } else {
         ProcessProof {
@@ -294,7 +294,7 @@ fn checkpoint_to_wire(
             id.copy_from_slice(&d[..16]);
             id
         },
-        timestamp: cp.timestamp.timestamp_millis() as u64,
+        timestamp: u64::try_from(cp.timestamp.timestamp_millis().max(0)).unwrap_or(0),
         content_hash: HashValue::sha256(cp.content_hash.to_vec()),
         char_count: cp.content_size,
         // Placeholder: per-checkpoint edit deltas are not tracked in the

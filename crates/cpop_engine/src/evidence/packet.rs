@@ -198,10 +198,10 @@ impl Packet {
                             .map_err(|_| Error::evidence("invalid signature length"))?,
                     );
 
-                    let digest_cbor = serde_json::to_vec(digest)
+                    let digest_json = serde_json::to_vec(digest)
                         .map_err(|e| Error::evidence(format!("digest serialize failed: {e}")))?;
 
-                    public_key.verify(&digest_cbor, &signature).map_err(|e| {
+                    public_key.verify(&digest_json, &signature).map_err(|e| {
                         Error::signature(format!("baseline digest signature invalid: {e}"))
                     })?;
                 }

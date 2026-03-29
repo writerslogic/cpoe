@@ -27,6 +27,10 @@ pub struct SessionCertificate {
     #[serde(with = "serde_array_64")]
     pub signature: [u8; 64],
     pub version: u32,
+    /// Optional expiry time for the certificate. If `Some`, verification
+    /// rejects the certificate after this instant.
+    #[serde(default)]
+    pub expires_at: Option<DateTime<Utc>>,
     /// TPM quote at session start, bound via chain-entangled nonce
     #[serde(default)]
     pub start_quote: Option<Vec<u8>>,
@@ -62,14 +66,14 @@ pub struct CheckpointSignature {
     pub counter_delta: Option<u64>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) struct RatchetState {
     pub(crate) current: crate::crypto::ProtectedKey<32>,
     pub(crate) ordinal: u64,
     pub(crate) wiped: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Session {
     pub certificate: SessionCertificate,
     pub(crate) ratchet: RatchetState,

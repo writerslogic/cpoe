@@ -71,7 +71,7 @@ fn recover_ratchet_v1_legacy(
 
     let challenge = Sha256::digest(b"witnessd-ratchet-recovery-v1");
     let response = puf.get_response(&challenge)?;
-    let mut key = hkdf_expand(&response, b"ratchet-recovery-key", &[])?;
+    let key = hkdf_expand(&response, b"ratchet-recovery-key", &[])?;
 
     if recovery.last_ratchet_state.len() < 40 {
         return Err(KeyHierarchyError::SessionRecoveryFailed);
@@ -86,7 +86,7 @@ fn recover_ratchet_v1_legacy(
             .try_into()
             .map_err(|_| KeyHierarchyError::SessionRecoveryFailed)?,
     );
-    key.zeroize();
+    drop(key);
 
     // Validate the decrypted ordinal against the signature chain to detect
     // obvious tampering of the unauthenticated ordinal bytes.
@@ -134,7 +134,7 @@ fn recover_ratchet_v2_aead(
 
     let challenge = Sha256::digest(b"witnessd-ratchet-recovery-v2");
     let response = puf.get_response(&challenge)?;
-    let key = Zeroizing::new(hkdf_expand(&response, b"ratchet-recovery-key-v2", &[])?);
+    let key = hkdf_expand(&response, b"ratchet-recovery-key-v2", &[])?;
 
     let cipher = ChaCha20Poly1305::new_from_slice(key.as_ref())
         .map_err(|_| KeyHierarchyError::SessionRecoveryFailed)?;
@@ -204,7 +204,7 @@ fn recover_session_with_new_ratchet(
     Ok(Session {
         certificate: recovery.certificate.clone(),
         ratchet: RatchetState {
-            current: crate::crypto::ProtectedKey::new(ratchet_init),
+            current: crate::crypto::ProtectedKey::from_zeroizing(ratchet_init),
             ordinal: next_ordinal,
             wiped: false,
         },

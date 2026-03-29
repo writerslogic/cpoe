@@ -119,6 +119,9 @@ pub fn build_ephemeral_packet(
     let mut doc_hash = [0u8; 32];
     doc_hash.copy_from_slice(&final_hash[..32]);
 
+    // Ephemeral packets have no checkpoint chain, so use the last snapshot's
+    // content_hash as the chain binding for the no-AI declaration. This binds
+    // the declaration to the final document state rather than to a checkpoint hash.
     let chain_hash = snapshots
         .last()
         .map(|s| s.content_hash)
@@ -143,7 +146,7 @@ pub fn build_ephemeral_packet(
         cp_hasher.update(hex::decode(&prev_hash).unwrap_or_else(|_| vec![0u8; 32]));
         cp_hasher.update(snap.content_hash);
         cp_hasher.update(snap.char_count.to_be_bytes());
-        cp_hasher.update((snap.timestamp_ns as u64).to_be_bytes());
+        cp_hasher.update((snap.timestamp_ns.max(0) as u64).to_be_bytes());
         let cp_hash = hex::encode(<[u8; 32]>::from(cp_hasher.finalize()));
 
         checkpoints.push(CheckpointProof {

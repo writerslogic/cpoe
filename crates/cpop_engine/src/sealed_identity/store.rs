@@ -227,14 +227,12 @@ impl SealedIdentityStore {
                     let challenge =
                         Sha256::digest(format!("{}-challenge", IDENTITY_DOMAIN).as_bytes());
                     let puf_response = puf.get_response(&challenge)?;
-                    let mut derived = crate::keyhierarchy::hkdf_expand(
+                    let derived = crate::keyhierarchy::hkdf_expand(
                         &puf_response,
                         IDENTITY_DOMAIN.as_bytes(),
                         b"master-seed",
                     )?;
-                    let v = derived.to_vec();
-                    derived.zeroize();
-                    v
+                    derived.to_vec()
                 }
             }
         } else {

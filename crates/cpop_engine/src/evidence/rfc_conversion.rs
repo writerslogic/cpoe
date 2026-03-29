@@ -44,8 +44,11 @@ impl From<&Packet> for rfc::PacketRfc {
         };
 
         let jitter_seal = if let Some(jb) = &packet.jitter_binding {
-            // ~8 bits of entropy per sample, scaled to millibits
-            // Use u64 to avoid overflow on large sample counts (>536K keystrokes)
+            // Heuristic: ~8 bits of entropy per jitter sample (conservative estimate
+            // for inter-keystroke timing on commodity hardware), scaled to millibits
+            // (multiply by 1000). Clamped to 20,000,000 millibits (20 kbits) to
+            // prevent unrealistic claims from very long sessions. Uses u64 intermediate
+            // to avoid overflow on large sample counts (>536K keystrokes).
             let entropy_estimate = jb
                 .summary
                 .sample_count
@@ -74,7 +77,7 @@ impl From<&Packet> for rfc::PacketRfc {
             root: hex::decode(&packet.document.final_hash)
                 .map_err(|e| log::warn!("Content hash hex decode failed: {e}"))
                 .unwrap_or_default(),
-            segment_count: packet.checkpoints.len().max(1) as u16,
+            segment_count: u16::try_from(packet.checkpoints.len().max(1)).unwrap_or(u16::MAX),
         };
 
         let correlation_proof = if let Some(behavioral) = &packet.behavioral {
@@ -119,7 +122,7 @@ impl From<&Packet> for rfc::PacketRfc {
                     _ => 0,
                 },
                 attestation: binding.signature.clone(),
-                timestamp: binding.timestamp.timestamp() as u64,
+                timestamp: u64::try_from(binding.timestamp.timestamp().max(0)).unwrap_or(0),
             })
         });
 

@@ -9,8 +9,21 @@ use super::types::{
     CheckpointSignature, KeyHierarchyEvidence, SessionBindingReport, SessionCertificate,
 };
 
-/// Verify the Ed25519 signature on a session certificate against the master key.
+/// Verify the Ed25519 signature on a session certificate against the embedded master key.
+///
+/// **Security note**: This only verifies internal consistency (the signature
+/// matches the embedded `master_pubkey`). Callers must separately validate
+/// that `master_pubkey` belongs to a trusted identity anchor before relying
+/// on the certificate for authorization decisions.
 pub fn verify_session_certificate(cert: &SessionCertificate) -> Result<(), KeyHierarchyError> {
+    if let Some(expires_at) = cert.expires_at {
+        if Utc::now() > expires_at {
+            return Err(KeyHierarchyError::Crypto(
+                "session certificate has expired".to_string(),
+            ));
+        }
+    }
+
     let cert_data = build_cert_data(
         cert.session_id,
         &cert.session_pubkey,

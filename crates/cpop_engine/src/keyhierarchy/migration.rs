@@ -71,7 +71,7 @@ fn build_migration_data(
     data.extend_from_slice(b"witnessd-key-migration-v1");
     data.extend_from_slice(legacy_pub);
     data.extend_from_slice(new_master_pub);
-    data.extend_from_slice(&(timestamp.timestamp_nanos_safe() as u64).to_be_bytes());
+    data.extend_from_slice(&(timestamp.timestamp_nanos_safe().max(0) as u64).to_be_bytes());
     data
 }
 
