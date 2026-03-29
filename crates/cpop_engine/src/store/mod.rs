@@ -6,6 +6,7 @@ use zeroize::Zeroize;
 
 pub mod access_log;
 pub mod baselines;
+pub mod document_stats;
 pub mod events;
 pub mod fingerprints;
 pub mod integrity;
@@ -14,6 +15,7 @@ pub mod types;
 #[cfg(test)]
 mod tests;
 
+pub use document_stats::DocumentStats;
 pub use types::SecureEvent;
 
 /// HMAC-integrity-protected SQLite event store with hash chaining.

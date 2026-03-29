@@ -131,6 +131,14 @@ pub struct DocumentSession {
     pub(crate) has_focus: bool,
     pub(crate) focus_started: Option<Instant>,
     pub event_validation: crate::forensics::event_validation::EventValidationState,
+    /// Cumulative keystroke count from all previous sessions (loaded from store on start).
+    pub cumulative_keystrokes_base: u64,
+    /// Cumulative focus time from all previous sessions.
+    pub cumulative_focus_ms_base: i64,
+    /// Number of previous sessions for this document.
+    pub session_number: u32,
+    /// When this document was first tracked.
+    pub first_tracked_at: Option<SystemTime>,
 }
 
 impl DocumentSession {
@@ -164,7 +172,21 @@ impl DocumentSession {
             has_focus: false,
             focus_started: None,
             event_validation: Default::default(),
+            cumulative_keystrokes_base: 0,
+            cumulative_focus_ms_base: 0,
+            session_number: 0,
+            first_tracked_at: None,
         }
+    }
+
+    /// Total keystrokes across all sessions including current.
+    pub fn total_keystrokes(&self) -> u64 {
+        self.cumulative_keystrokes_base + self.keystroke_count
+    }
+
+    /// Total focus duration across all sessions including current.
+    pub fn total_focus_ms_cumulative(&self) -> i64 {
+        self.cumulative_focus_ms_base + self.total_focus_ms
     }
 
     pub fn focus_gained(&mut self) {

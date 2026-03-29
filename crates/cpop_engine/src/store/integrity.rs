@@ -62,6 +62,16 @@ impl SecureStore {
                 updated_at           INTEGER NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS document_stats (
+                file_path           TEXT PRIMARY KEY,
+                total_keystrokes    INTEGER NOT NULL DEFAULT 0,
+                total_focus_ms      INTEGER NOT NULL DEFAULT 0,
+                session_count       INTEGER NOT NULL DEFAULT 0,
+                total_duration_secs INTEGER NOT NULL DEFAULT 0,
+                first_tracked_at    INTEGER NOT NULL,
+                last_tracked_at     INTEGER NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_secure_events_timestamp ON secure_events(timestamp_ns);
             CREATE INDEX IF NOT EXISTS idx_secure_events_file ON secure_events(file_path, timestamp_ns);"
         )?;

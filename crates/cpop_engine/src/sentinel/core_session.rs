@@ -11,12 +11,27 @@ use crate::{MutexRecover, RwLockRecover};
 use ed25519_dalek::{Signer, SigningKey};
 use sha2::Digest;
 use std::path::Path;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use zeroize::Zeroize;
 
 use super::core::Sentinel;
 
 impl Sentinel {
+    /// Open the event store using the sentinel's signing key.
+    fn open_event_store(&self) -> anyhow::Result<crate::store::SecureStore> {
+        let signing_key_local = {
+            let guard = self.signing_key.read_recover();
+            guard
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("signing key not initialized"))?
+                .clone()
+        };
+        let db_path = self.config.writersproof_dir.join("events.db");
+        let hmac_key = crate::crypto::derive_hmac_key(&signing_key_local.to_bytes());
+        let store = crate::store::SecureStore::open(&db_path, hmac_key.to_vec())?;
+        Ok(store)
+    }
+
     /// Begin witnessing a file, creating a session and WAL entry.
     pub fn start_witnessing(
         &self,
@@ -52,6 +67,30 @@ impl Sentinel {
         if let Ok(hash) = compute_file_hash(&path_str) {
             session.initial_hash = Some(hash.clone());
             session.current_hash = Some(hash);
+        }
+
+        // Load cumulative stats from previous sessions.
+        match self.open_event_store() {
+            Ok(store) => match store.load_document_stats(&path_str) {
+                Ok(Some(stats)) => {
+                    session.cumulative_keystrokes_base = stats.total_keystrokes as u64;
+                    session.cumulative_focus_ms_base = stats.total_focus_ms;
+                    session.session_number = stats.session_count as u32;
+                    session.first_tracked_at =
+                        Some(UNIX_EPOCH + Duration::from_secs(stats.first_tracked_at as u64));
+                }
+                Ok(None) => {
+                    session.first_tracked_at = Some(SystemTime::now());
+                }
+                Err(e) => {
+                    log::warn!("Failed to load document stats for {path_str}: {e}");
+                    session.first_tracked_at = Some(SystemTime::now());
+                }
+            },
+            Err(e) => {
+                log::warn!("Failed to open store for document stats: {e}");
+                session.first_tracked_at = Some(SystemTime::now());
+            }
         }
 
         let wal_path = self
@@ -129,6 +168,43 @@ impl Sentinel {
         let session = self.sessions.write_recover().remove(&path_str);
 
         if let Some(session) = session {
+            // Persist cumulative document stats before tearing down the session.
+            let now_ts = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+            let elapsed_secs = session.start_time.elapsed().unwrap_or_default().as_secs();
+            let first_tracked = session
+                .first_tracked_at
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(now_ts);
+            match self.open_event_store() {
+                Ok(store) => {
+                    let prev_dur = store
+                        .load_document_stats(&path_str)
+                        .ok()
+                        .flatten()
+                        .map(|s| s.total_duration_secs)
+                        .unwrap_or(0);
+                    let stats = crate::store::DocumentStats {
+                        file_path: path_str.clone(),
+                        total_keystrokes: session.total_keystrokes() as i64,
+                        total_focus_ms: session.total_focus_ms_cumulative(),
+                        session_count: (session.session_number + 1) as i64,
+                        total_duration_secs: prev_dur + elapsed_secs as i64,
+                        first_tracked_at: first_tracked,
+                        last_tracked_at: now_ts,
+                    };
+                    if let Err(e) = store.save_document_stats(&stats) {
+                        log::warn!("Failed to save document stats for {path_str}: {e}");
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Failed to open store to save document stats: {e}");
+                }
+            }
+
             if self
                 .session_events_tx
                 .send(SessionEvent {
