@@ -10,6 +10,7 @@
 //! - Platform-specific focus detection (macOS, Linux, Windows)
 
 pub mod core;
+pub mod core_session;
 pub mod daemon;
 pub mod error;
 pub mod focus;

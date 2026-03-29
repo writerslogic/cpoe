@@ -9,6 +9,7 @@
 mod charts;
 mod embed;
 mod layout;
+mod layout_sections;
 mod security;
 
 use crate::report::types::WarReport;
@@ -67,12 +68,12 @@ pub fn render_pdf(report: &WarReport, security_seed: Option<&[u8; 64]>) -> Resul
     if let Some(seed) = security_seed {
         security::draw_guilloche_border(&current_layer, seed);
     }
-    layout::draw_page2(&current_layer, report, &fonts);
+    layout_sections::draw_page2(&current_layer, report, &fonts);
 
     // Page 3: Scope, verification instructions, technical details
     let (page3, layer3) = doc.add_page(Mm(210.0), Mm(297.0), "Layer 1");
     let current_layer = doc.get_page(page3).get_layer(layer3);
-    layout::draw_page3(&current_layer, report, &fonts);
+    layout_sections::draw_page3(&current_layer, report, &fonts);
 
     // Serialize to bytes
     let mut buf = BufWriter::new(Vec::new());

@@ -515,7 +515,7 @@ impl Builder {
                 previous_hash: previous_commitment_hash.unwrap_or([0u8; 32]),
             },
             sources: vec![rfc::jitter_binding::SourceDescriptor {
-                source_type: "keyboard".to_string(),
+                source_type: cpop_protocol::rfc::SourceType::Other("keyboard".to_string()),
                 weight: 1000,
                 device_fingerprint: None,
                 transport_calibration: None,

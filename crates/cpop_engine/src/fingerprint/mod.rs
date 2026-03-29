@@ -3,6 +3,8 @@
 //! Author Fingerprinting Module
 
 pub mod activity;
+pub mod activity_analysis;
+pub mod activity_collection;
 pub mod author;
 pub mod comparison;
 pub mod consent;

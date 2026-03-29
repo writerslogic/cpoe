@@ -6,15 +6,10 @@ use super::helpers::*;
 use super::shadow::ShadowManager;
 use super::types::*;
 use crate::config::SentinelConfig;
-use crate::crypto::ObfuscatedString;
-use crate::ipc::IpcErrorCode;
 use crate::platform::{KeystrokeCapture, MouseCapture};
-use crate::wal::{EntryType, Wal};
 use crate::{MutexRecover, RwLockRecover};
-use ed25519_dalek::{Signer, SigningKey};
-use sha2::Digest;
+use ed25519_dalek::SigningKey;
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime};
@@ -49,7 +44,7 @@ pub struct Sentinel {
     pub(crate) signing_key: Arc<RwLock<Option<SigningKey>>>,
     pub(crate) activity_accumulator:
         Arc<RwLock<crate::fingerprint::ActivityFingerprintAccumulator>>,
-    session_events_tx: broadcast::Sender<SessionEvent>,
+    pub(crate) session_events_tx: broadcast::Sender<SessionEvent>,
     pub(crate) shutdown_tx: Arc<Mutex<Option<mpsc::Sender<()>>>>,
     voice_collector: Arc<RwLock<Option<crate::fingerprint::VoiceCollector>>>,
     mouse_idle_stats: Arc<RwLock<crate::platform::MouseIdleStats>>,
@@ -67,7 +62,7 @@ pub struct Sentinel {
     /// Last paste character count reported by the host app.
     last_paste_chars: Arc<std::sync::atomic::AtomicI64>,
     /// Timestamp when the sentinel was started via start().
-    start_time: Arc<Mutex<Option<SystemTime>>>,
+    pub(crate) start_time: Arc<Mutex<Option<SystemTime>>>,
 }
 
 impl Sentinel {
@@ -721,210 +716,8 @@ impl Sentinel {
         }
     }
 
-    /// Begin witnessing a file, creating a session and WAL entry.
-    pub fn start_witnessing(
-        &self,
-        file_path: &Path,
-    ) -> std::result::Result<(), (IpcErrorCode, String)> {
-        if !file_path.exists() {
-            return Err((
-                IpcErrorCode::FileNotFound,
-                format!("File not found: {}", file_path.display()),
-            ));
-        }
-
-        let path_str = file_path.to_string_lossy().to_string();
-
-        // AUD-041: Acquire signing_key before sessions to maintain lock ordering.
-        let key = self.signing_key.read_recover().clone();
-
-        // Single write lock for check+insert to avoid TOCTOU race
-        let mut sessions = self.sessions.write_recover();
-        if sessions.contains_key(&path_str) {
-            return Err((
-                IpcErrorCode::AlreadyTracking,
-                format!("Already tracking: {}", file_path.display()),
-            ));
-        }
-        let mut session = DocumentSession::new(
-            path_str.clone(),
-            "cli".to_string(),          // app_bundle_id for CLI-initiated tracking
-            "writerslogic".to_string(), // app_name
-            ObfuscatedString::new(&path_str),
-        );
-
-        if let Ok(hash) = compute_file_hash(&path_str) {
-            session.initial_hash = Some(hash.clone());
-            session.current_hash = Some(hash);
-        }
-
-        let wal_path = self
-            .config
-            .wal_dir
-            .join(format!("{}.wal", session.session_id));
-        // Session IDs are 32 random bytes hex-encoded (64 hex chars -> 32 bytes).
-        // Wal::open requires a [u8; 32] session key derived from this ID.
-        let mut session_id_bytes = [0u8; 32];
-        let hex_str = &session.session_id[..64.min(session.session_id.len())];
-        if hex::decode_to_slice(hex_str, &mut session_id_bytes).is_ok() {
-            if let Some(ref signing_key) = key {
-                // Copy key bytes for Wal::open (which takes SigningKey by value)
-                // and zeroize the intermediate copy. SigningKey::from_bytes produces
-                // a value whose Drop impl zeroizes internal state.
-                let mut key_bytes = signing_key.to_bytes();
-                let wal_key = SigningKey::from_bytes(&key_bytes);
-                key_bytes.zeroize();
-                match Wal::open(&wal_path, session_id_bytes, wal_key) {
-                    Ok(wal) => {
-                        let payload = create_session_start_payload(&session);
-                        if let Err(e) = wal.append(EntryType::SessionStart, payload) {
-                            log::warn!(
-                                "WAL append failed for session {}: {}",
-                                session.session_id,
-                                e
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        log::error!(
-                            "WAL::open() failed for session {}: {}; session continues without persistent proof",
-                            session.session_id,
-                            e
-                        );
-                    }
-                }
-            } else {
-                log::warn!(
-                    "Signing key not initialized, skipping WAL for session {}",
-                    session.session_id
-                );
-            }
-        } else {
-            log::warn!(
-                "Invalid session ID hex '{}', skipping WAL",
-                session.session_id
-            );
-        }
-
-        if self
-            .session_events_tx
-            .send(SessionEvent {
-                event_type: SessionEventType::Started,
-                session_id: session.session_id.clone(),
-                document_path: path_str.clone(),
-                timestamp: SystemTime::now(),
-            })
-            .is_err()
-        {
-            log::debug!("no session event listeners for Started");
-        }
-
-        sessions.insert(path_str, session);
-        Ok(())
-    }
-
-    /// Stop witnessing a file, ending its session and updating the baseline.
-    pub fn stop_witnessing(
-        &self,
-        file_path: &Path,
-    ) -> std::result::Result<(), (IpcErrorCode, String)> {
-        let path_str = file_path.to_string_lossy().to_string();
-
-        let session = self.sessions.write_recover().remove(&path_str);
-
-        if let Some(session) = session {
-            if self
-                .session_events_tx
-                .send(SessionEvent {
-                    event_type: SessionEventType::Ended,
-                    session_id: session.session_id,
-                    document_path: path_str,
-                    timestamp: SystemTime::now(),
-                })
-                .is_err()
-            {
-                log::debug!("no session event listeners for Ended");
-            }
-
-            if let Some(shadow_id) = session.shadow_id {
-                if let Err(e) = self.shadow.delete(&shadow_id) {
-                    log::warn!("shadow buffer delete failed for {shadow_id}: {e}");
-                }
-            }
-
-            if let Err(e) = self.update_baseline() {
-                log::error!("Failed to update baseline: {}", e);
-            }
-
-            Ok(())
-        } else {
-            Err((
-                IpcErrorCode::NotTracking,
-                format!("Not tracking: {}", file_path.display()),
-            ))
-        }
-    }
-
-    /// Return the paths of all currently tracked files.
-    pub fn tracked_files(&self) -> Vec<String> {
-        self.sessions.read_recover().keys().cloned().collect()
-    }
-
-    /// Return the sentinel start time, or None if not yet started.
-    pub fn start_time(&self) -> Option<SystemTime> {
-        *self.start_time.lock_recover()
-    }
-
-    /// Compute and persist an updated authorship baseline digest from accumulated activity.
-    pub fn update_baseline(&self) -> anyhow::Result<()> {
-        let summary = self
-            .activity_accumulator
-            .read_recover()
-            .to_session_summary();
-        if summary.keystroke_count < 10 {
-            return Ok(());
-        }
-
-        // Clone signing key into a local and drop the read lock immediately
-        // to avoid holding it across database I/O below.
-        let signing_key_local = {
-            let guard = self.signing_key.read_recover();
-            guard
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("signing key not initialized"))?
-                .clone()
-        };
-        let public_key = signing_key_local.verifying_key().to_bytes();
-        let mut hasher = sha2::Sha256::new();
-        hasher.update(public_key);
-        let identity_fingerprint = hasher.finalize().to_vec();
-
-        let db_path = self.config.writersproof_dir.join("events.db");
-        let hmac_key = crate::crypto::derive_hmac_key(&signing_key_local.to_bytes());
-        let store = crate::store::SecureStore::open(&db_path, hmac_key.to_vec())?;
-
-        let current_digest =
-            if let Some((cbor, _)) = store.get_baseline_digest(&identity_fingerprint)? {
-                serde_json::from_slice::<cpop_protocol::baseline::BaselineDigest>(&cbor)?
-            } else {
-                crate::baseline::compute_initial_digest(identity_fingerprint.clone())
-            };
-
-        let updated_digest = crate::baseline::update_digest(current_digest, &summary);
-
-        let digest_cbor = serde_json::to_vec(&updated_digest)?;
-        let signature = signing_key_local.sign(&digest_cbor);
-        // SigningKey zeroizes its secret material on Drop.
-        drop(signing_key_local);
-
-        store.save_baseline_digest(&identity_fingerprint, &digest_cbor, &signature.to_bytes())?;
-
-        log::info!(
-            "Authorship baseline updated. Tier: {:?}",
-            updated_digest.confidence_tier
-        );
-        Ok(())
-    }
+    // Session management methods (start_witnessing, stop_witnessing, tracked_files,
+    // start_time, update_baseline) are in core_session.rs.
 }
 
 impl Drop for Sentinel {

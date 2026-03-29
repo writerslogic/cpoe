@@ -679,7 +679,7 @@ fn test_commit_rfc_with_jitter_binding() {
     };
 
     let sources = vec![rfc::jitter_binding::SourceDescriptor {
-        source_type: "keyboard".to_string(),
+        source_type: cpop_protocol::rfc::SourceType::Other("keyboard".to_string()),
         weight: 1000,
         device_fingerprint: None,
         transport_calibration: None,
