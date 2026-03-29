@@ -29,7 +29,7 @@ impl Builder {
                 collaborators: Vec::new(),
                 statement: String::new(),
                 created_at: Utc::now(),
-                version: 1,
+                version: 2,
                 author_public_key: Vec::new(),
                 signature: Vec::new(),
                 jitter_sealed: None,

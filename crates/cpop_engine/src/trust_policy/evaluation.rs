@@ -58,7 +58,11 @@ impl AppraisalPolicy {
                 .map(|f| f.normalized_score)
                 .fold(f32::INFINITY, f32::min),
             TrustComputation::GeometricMean => {
-                let product: f32 = self.factors.iter().map(|f| f.normalized_score).product();
+                let product: f32 = self
+                    .factors
+                    .iter()
+                    .map(|f| f.normalized_score.max(0.0))
+                    .product();
                 product.powf(1.0 / self.factors.len() as f32)
             }
             TrustComputation::CustomFormula => {

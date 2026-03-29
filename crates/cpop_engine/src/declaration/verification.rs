@@ -123,19 +123,26 @@ impl Declaration {
         hasher.update((self.author_public_key.len() as u64).to_be_bytes());
         hasher.update(&self.author_public_key);
 
-        // Include jitter seal in signing payload (WAR/1.1)
-        if let Some(jitter) = &self.jitter_sealed {
-            hasher.update(b"witnessd-jitter-seal-v1");
-            hasher.update(jitter.jitter_hash);
-            hasher.update(jitter.keystroke_count.to_be_bytes());
-            hasher.update(jitter.duration_ms.to_be_bytes());
-            hasher.update(jitter.avg_interval_ms.to_bits().to_be_bytes());
-            hasher.update(jitter.entropy_bits.to_bits().to_be_bytes());
-            hasher.update(if jitter.hardware_sealed {
-                &[1u8]
-            } else {
-                &[0u8]
-            });
+        // Include jitter seal in signing payload (WAR/1.2)
+        // Discriminant ensures None vs Some produce distinct hashes.
+        match &self.jitter_sealed {
+            Some(jitter) => {
+                hasher.update([1u8]);
+                hasher.update(b"witnessd-jitter-seal-v1");
+                hasher.update(jitter.jitter_hash);
+                hasher.update(jitter.keystroke_count.to_be_bytes());
+                hasher.update(jitter.duration_ms.to_be_bytes());
+                hasher.update(jitter.avg_interval_ms.to_bits().to_be_bytes());
+                hasher.update(jitter.entropy_bits.to_bits().to_be_bytes());
+                hasher.update(if jitter.hardware_sealed {
+                    &[1u8]
+                } else {
+                    &[0u8]
+                });
+            }
+            None => {
+                hasher.update([0u8]);
+            }
         }
 
         hasher.finalize().to_vec()

@@ -84,7 +84,9 @@ impl ResearchCollector {
         let path = self.config.research_data_dir.join(filename);
 
         let json = serde_json::to_string_pretty(&export).map_err(|e| e.to_string())?;
-        fs::write(&path, json).map_err(|e| e.to_string())?;
+        let tmp_path = path.with_extension("json.tmp");
+        fs::write(&tmp_path, json).map_err(|e| e.to_string())?;
+        fs::rename(&tmp_path, &path).map_err(|e| e.to_string())?;
 
         Ok(())
     }
@@ -130,6 +132,11 @@ impl ResearchCollector {
     }
 
     /// Upload buffered sessions to the research endpoint; clear on success.
+    ///
+    /// No authentication header is sent intentionally. The endpoint is a Supabase
+    /// insert-only table with Row Level Security that grants only INSERT to the
+    /// `anon` role; there is no read access. All submitted data is anonymized
+    /// (no user identifiers, no raw keystrokes).
     pub async fn upload(&mut self) -> Result<UploadResult, String> {
         if !self.is_enabled() {
             return Err("Research contribution not enabled".to_string());

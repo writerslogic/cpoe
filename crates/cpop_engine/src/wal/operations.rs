@@ -76,7 +76,13 @@ impl Wal {
             state.file.seek(SeekFrom::Start(HEADER_SIZE as u64))?;
         } else {
             Self::read_header(&mut state)?;
-            Self::scan_to_end(&mut state)?;
+            let truncated = Self::scan_to_end(&mut state)?;
+            if truncated > 0 {
+                log::warn!(
+                    "WAL recovery: truncated ~{} corrupt trailing entries",
+                    truncated
+                );
+            }
         }
 
         Ok(Self {
@@ -582,6 +588,7 @@ impl Wal {
         if header.session_id.ct_eq(&state.session_id).unwrap_u8() == 0 {
             return Err(WalError::SessionMismatch);
         }
+        state.next_sequence = header.last_checkpoint_seq;
         Ok(())
     }
 
@@ -590,7 +597,7 @@ impl Wal {
     /// Returns `Err` (not `WalVerification`) when limits are hit because the
     /// caller (`open`) cannot proceed without valid state. Contrast with
     /// [`verify`](Self::verify) which returns a result struct for inspection.
-    fn scan_to_end(state: &mut WalState) -> Result<(), WalError> {
+    fn scan_to_end(state: &mut WalState) -> Result<u64, WalError> {
         let mut offset = HEADER_SIZE as u64;
         loop {
             if state.entry_count >= MAX_WAL_ENTRIES {
@@ -667,9 +674,18 @@ impl Wal {
         }
 
         // Truncate file to last valid entry to avoid appending after corrupt data
-        state.file.set_len(offset)?;
+        let file_len = state.file.metadata().map(|m| m.len()).unwrap_or(offset);
+        let truncated = if file_len > offset {
+            // Bytes after last valid entry indicate truncated/corrupt trailing data
+            let lost = file_len - offset;
+            state.file.set_len(offset)?;
+            // Estimate lost entry count (4-byte length prefix + minimum 1 byte payload)
+            lost / 5
+        } else {
+            0
+        };
         state.byte_count = offset;
         state.file.seek(SeekFrom::Start(offset))?;
-        Ok(())
+        Ok(truncated)
     }
 }

@@ -468,6 +468,11 @@ impl VoiceCollector {
         fp
     }
 
+    /// Set whether consent has been given for voice fingerprinting.
+    pub fn set_consent(&mut self, granted: bool) {
+        self.fingerprint.consent_given = granted;
+    }
+
     pub fn sample_count(&self) -> usize {
         self.total_chars
     }

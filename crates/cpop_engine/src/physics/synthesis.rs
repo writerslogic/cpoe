@@ -67,6 +67,10 @@ fn measure_thermal_proxy() -> u32 {
     let start_wall = std::time::Instant::now();
     let start_tsc = ClockSkew::measure();
 
+    if start_tsc == 0 {
+        log::warn!("ClockSkew::measure returned 0; thermal proxy unavailable on this architecture");
+    }
+
     while start_wall.elapsed() < std::time::Duration::from_millis(1) {}
 
     let end_tsc = ClockSkew::measure();

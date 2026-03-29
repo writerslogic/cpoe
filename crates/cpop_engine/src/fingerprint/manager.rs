@@ -97,6 +97,9 @@ impl FingerprintManager {
         if self.voice_collector.is_none() {
             self.voice_collector = Some(VoiceCollector::new());
         }
+        if let Some(ref mut collector) = self.voice_collector {
+            collector.set_consent(true);
+        }
         Ok(())
     }
 
