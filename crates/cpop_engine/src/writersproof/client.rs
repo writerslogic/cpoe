@@ -461,14 +461,14 @@ mod tests {
 
     #[test]
     fn test_client_construction() {
-        let client = WritersProofClient::new("https://api.writerslogic.com").unwrap();
-        assert_eq!(client.base_url, "https://api.writerslogic.com");
+        let client = WritersProofClient::new("https://api.writersproof.com").unwrap();
+        assert_eq!(client.base_url, "https://api.writersproof.com");
         assert!(client.jwt.is_none());
     }
 
     #[test]
     fn test_client_with_jwt() {
-        let client = WritersProofClient::new("https://api.writerslogic.com")
+        let client = WritersProofClient::new("https://api.writersproof.com")
             .unwrap()
             .with_jwt("test-token".to_string());
         assert_eq!(client.jwt.as_deref(), Some("test-token"));
@@ -476,7 +476,7 @@ mod tests {
 
     #[test]
     fn test_trailing_slash_stripped() {
-        let client = WritersProofClient::new("https://api.writerslogic.com/").unwrap();
-        assert_eq!(client.base_url, "https://api.writerslogic.com");
+        let client = WritersProofClient::new("https://api.writersproof.com/").unwrap();
+        assert_eq!(client.base_url, "https://api.writersproof.com");
     }
 }

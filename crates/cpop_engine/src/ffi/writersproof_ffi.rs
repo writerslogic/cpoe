@@ -104,7 +104,7 @@ pub fn ffi_anchor_to_writers_proof(document_path: String) -> FfiResult {
         }
     };
 
-    let client = match crate::writersproof::WritersProofClient::new("https://api.writerslogic.com")
+    let client = match crate::writersproof::WritersProofClient::new("https://api.writersproof.com")
     {
         Ok(c) => c.with_jwt((*api_key).clone()),
         Err(e) => {

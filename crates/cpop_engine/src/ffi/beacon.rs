@@ -101,7 +101,7 @@ pub fn ffi_submit_beacon(document_path: String, timeout_secs: u64) -> FfiBeaconR
 
     let effective_timeout = timeout_secs.max(5);
 
-    let client = match crate::writersproof::WritersProofClient::new("https://api.writerslogic.com")
+    let client = match crate::writersproof::WritersProofClient::new("https://api.writersproof.com")
     {
         Ok(c) => c.with_jwt((*api_key).clone()),
         Err(e) => return err_beacon(format!("Failed to create API client: {e}")),
