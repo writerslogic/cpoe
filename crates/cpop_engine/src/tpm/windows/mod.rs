@@ -6,6 +6,8 @@ mod commands;
 mod context;
 mod helpers;
 mod provider;
+mod provider_sealing;
+mod provider_signing;
 #[cfg(test)]
 mod tests;
 mod types;

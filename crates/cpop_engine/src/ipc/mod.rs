@@ -9,6 +9,8 @@ mod async_client;
 pub(crate) mod crypto;
 pub(crate) mod messages;
 mod server;
+mod server_handler;
+mod server_windows;
 mod sync_client;
 
 #[cfg(test)]
