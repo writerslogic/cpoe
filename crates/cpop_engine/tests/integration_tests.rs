@@ -1460,3 +1460,476 @@ fn test_stego_watermark_detects_modification() {
     // but the key-based verify above is the authoritative check
     let _ = binding_check;
 }
+
+// ============================================================
+// 17. Export content verification (deep)
+// ============================================================
+
+#[test]
+fn test_exported_cpop_is_valid_cbor() {
+    let (dir, _g) = setup();
+    let init = cpop_engine::ffi::system::ffi_init();
+    assert!(init.success, "init failed: {:?}", init.error_message);
+
+    let doc = create_doc(&dir, "cbor_valid.txt", "Version 1 content.");
+    for i in 1..=3 {
+        modify_doc(&doc, &format!("Version {i} with more substantial content."));
+        let cp = cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(
+            doc.clone(),
+            format!("v{i}"),
+        );
+        assert!(cp.success, "checkpoint {i} failed: {:?}", cp.error_message);
+    }
+
+    let output = dir.path().join("cbor_test.cpop");
+    let output_str = output.to_string_lossy().to_string();
+    let export =
+        cpop_engine::ffi::evidence_export::ffi_export_evidence(doc, "core".to_string(), output_str);
+    assert!(export.success, "export failed: {:?}", export.error_message);
+
+    let data = std::fs::read(&output).expect("read exported file");
+    assert!(!data.is_empty(), "exported file should not be empty");
+
+    // Parse as generic CBOR value to confirm structural validity
+    let value: ciborium::Value =
+        ciborium::from_reader(data.as_slice()).expect("exported file should be valid CBOR");
+
+    // The top-level value is a CBOR tag (CPOP tag 1129336656) wrapping a map
+    let inner = match &value {
+        ciborium::Value::Tag(_tag, inner) => inner.as_ref(),
+        other => other,
+    };
+    assert!(
+        inner.is_map(),
+        "CBOR payload should be a map, got: {:?}",
+        inner
+    );
+}
+
+#[test]
+fn test_exported_html_contains_required_sections() {
+    let (dir, _g) = setup();
+    let init = cpop_engine::ffi::system::ffi_init();
+    assert!(init.success, "init failed: {:?}", init.error_message);
+
+    let doc = create_doc(&dir, "html_sections.txt", "Initial document content.");
+    for i in 1..=3 {
+        modify_doc(
+            &doc,
+            &format!("Revision {i} with substantial edits and more text here."),
+        );
+        let cp = cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(
+            doc.clone(),
+            format!("rev{i}"),
+        );
+        assert!(cp.success, "checkpoint {i} failed: {:?}", cp.error_message);
+    }
+
+    let result = cpop_engine::ffi::report::ffi_render_war_html(doc);
+    assert!(
+        result.success,
+        "WAR HTML failed: {:?}",
+        result.error_message
+    );
+    let html = result.html.expect("html should be Some");
+
+    // Verify required sections are present
+    assert!(html.contains("<html"), "HTML should contain <html tag");
+    assert!(
+        html.contains("WAR") || html.contains("Attestation"),
+        "HTML should reference WAR or Attestation"
+    );
+    assert!(
+        html.to_lowercase().contains("score") || html.to_lowercase().contains("verdict"),
+        "HTML should contain a score or verdict section"
+    );
+    assert!(
+        html.to_lowercase().contains("checkpoint"),
+        "HTML should reference checkpoints"
+    );
+    assert!(
+        html.to_lowercase().contains("hash") || html.to_lowercase().contains("sha"),
+        "HTML should contain document hash information"
+    );
+}
+
+#[test]
+fn test_exported_evidence_contains_all_checkpoints() {
+    let (dir, _g) = setup();
+    let init = cpop_engine::ffi::system::ffi_init();
+    assert!(init.success, "init failed: {:?}", init.error_message);
+
+    let doc = create_doc(&dir, "all_cp.txt", "Version 0.");
+    for i in 1..=5 {
+        modify_doc(
+            &doc,
+            &format!("Version {i} with progressively more content."),
+        );
+        let cp = cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(
+            doc.clone(),
+            format!("v{i}"),
+        );
+        assert!(cp.success, "checkpoint {i} failed: {:?}", cp.error_message);
+    }
+
+    let output = dir.path().join("all_cp.cpop");
+    let output_str = output.to_string_lossy().to_string();
+    let export = cpop_engine::ffi::evidence_export::ffi_export_evidence(
+        doc,
+        "core".to_string(),
+        output_str.clone(),
+    );
+    assert!(export.success, "export failed: {:?}", export.error_message);
+
+    // Verify via ffi_verify_evidence_detailed that all 5 checkpoints are present
+    let verify = cpop_engine::ffi::verify_detail::ffi_verify_evidence_detailed(output_str);
+    assert!(verify.success, "verify failed: {:?}", verify.error_message);
+    assert_eq!(
+        verify.checkpoint_count, 5,
+        "expected 5 checkpoints, got {}",
+        verify.checkpoint_count
+    );
+}
+
+#[test]
+fn test_export_includes_document_metadata() {
+    let (dir, _g) = setup();
+    let init = cpop_engine::ffi::system::ffi_init();
+    assert!(init.success, "init failed: {:?}", init.error_message);
+
+    let doc = create_doc(&dir, "metadata_test.txt", "Metadata verification content.");
+    let cp = cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(
+        doc.clone(),
+        "metadata cp".to_string(),
+    );
+    assert!(cp.success, "checkpoint failed: {:?}", cp.error_message);
+
+    let output = dir.path().join("metadata.cpop");
+    let output_str = output.to_string_lossy().to_string();
+    let export =
+        cpop_engine::ffi::evidence_export::ffi_export_evidence(doc, "core".to_string(), output_str);
+    assert!(export.success, "export failed: {:?}", export.error_message);
+
+    // Parse the CBOR and verify document metadata fields
+    let data = std::fs::read(&output).expect("read exported file");
+    let value: ciborium::Value =
+        ciborium::from_reader(data.as_slice()).expect("should be valid CBOR");
+
+    // Unwrap CBOR tag if present (CPOP tag wraps the map)
+    let inner = match &value {
+        ciborium::Value::Tag(_tag, inner) => inner.as_ref(),
+        other => other,
+    };
+
+    // Wire format uses numeric string keys per IETF spec:
+    // "5" = document, "4" = created, "6" = checkpoints
+    if let ciborium::Value::Map(entries) = inner {
+        // Check that document field ("5") exists with filename ("2") and content_hash ("1")
+        let doc_entry = entries
+            .iter()
+            .find(|(k, _)| matches!(k, ciborium::Value::Text(s) if s == "5"));
+        assert!(
+            doc_entry.is_some(),
+            "CBOR should contain document field '5'; keys: {:?}",
+            entries.iter().map(|(k, _)| k).collect::<Vec<_>>()
+        );
+
+        if let Some((_, ciborium::Value::Map(doc_fields))) = doc_entry {
+            // DocumentRef uses "2" for filename, "1" for content_hash
+            let has_content_hash = doc_fields
+                .iter()
+                .any(|(k, _)| matches!(k, ciborium::Value::Text(s) if s == "1"));
+            assert!(
+                has_content_hash,
+                "document should have content_hash field (key '1')"
+            );
+            // filename may be present as key "2"
+            let has_filename = doc_fields
+                .iter()
+                .any(|(k, _)| matches!(k, ciborium::Value::Text(s) if s == "2"));
+            assert!(
+                has_filename,
+                "document should have filename field (key '2')"
+            );
+        }
+
+        // Check that "created" timestamp ("4") exists
+        let has_created = entries
+            .iter()
+            .any(|(k, _)| matches!(k, ciborium::Value::Text(s) if s == "4"));
+        assert!(
+            has_created,
+            "CBOR should contain 'created' timestamp (key '4')"
+        );
+    } else {
+        panic!("CBOR payload should be a map, got: {:?}", inner);
+    }
+}
+
+// ============================================================
+// 18. Stego deep verification
+// ============================================================
+
+#[test]
+fn test_stego_preserves_readable_text() {
+    use cpop_engine::steganography::{ZwcEmbedder, ZwcExtractor, ZwcParams};
+
+    let original = "The quick brown fox jumps over the lazy dog and then goes on \
+        to do many other interesting things in the meadow while the sun sets \
+        over the distant hills and the birds sing their evening songs to welcome \
+        the approaching twilight and the gentle breeze carries the scent of \
+        wildflowers across the open field where the rabbits play and the deer \
+        graze peacefully near the old stone wall that borders the ancient forest";
+
+    let key: [u8; 32] = [0x11; 32];
+    let mmr_root: [u8; 32] = [0x22; 32];
+    let params = ZwcParams::default();
+
+    let embedder = ZwcEmbedder::new(params);
+    let (watermarked, _binding) = embedder.embed(original, &mmr_root, &key).expect("embed");
+
+    // ZWC characters are invisible; stripping them should recover the original
+    let stripped = ZwcExtractor::strip_zwc(&watermarked);
+    assert_eq!(
+        stripped, original,
+        "readable text should be identical after stripping ZWCs"
+    );
+
+    // Additionally, the watermarked text should contain more bytes (ZWCs are multi-byte UTF-8)
+    assert!(
+        watermarked.len() > original.len(),
+        "watermarked text should be longer due to ZWC bytes"
+    );
+}
+
+#[test]
+fn test_stego_rejects_too_short_text() {
+    use cpop_engine::steganography::{ZwcEmbedder, ZwcParams};
+
+    let short_text = "only nine words here in this short text now";
+    // Default min_word_count is 64, so 9 words should fail
+    let key: [u8; 32] = [0x33; 32];
+    let mmr_root: [u8; 32] = [0x44; 32];
+    let params = ZwcParams::default();
+
+    let embedder = ZwcEmbedder::new(params);
+    let result = embedder.embed(short_text, &mmr_root, &key);
+    assert!(
+        result.is_err(),
+        "embedding in text with < 64 words should fail"
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("minimum") || err_msg.contains("words"),
+        "error should mention minimum word count: {err_msg}"
+    );
+}
+
+#[test]
+fn test_stego_survives_whitespace_normalization() {
+    use cpop_engine::steganography::{ZwcEmbedder, ZwcExtractor, ZwcParams};
+
+    // Build text with enough words (>= 64)
+    let words: Vec<&str> = (0..80)
+        .map(|_| "alpha bravo charlie delta echo foxtrot golf hotel")
+        .collect();
+    let text = words.join(" ");
+
+    let key: [u8; 32] = [0x55; 32];
+    let mmr_root: [u8; 32] = [0x66; 32];
+    let params = ZwcParams::default();
+
+    let embedder = ZwcEmbedder::new(params.clone());
+    let (watermarked, _binding) = embedder.embed(&text, &mmr_root, &key).expect("embed");
+
+    // Normalize ASCII whitespace (collapse runs of spaces/tabs to single space, trim)
+    // ZWC characters (U+200B, U+200C, U+200D, U+FEFF) should survive this
+    let normalized: String = watermarked
+        .split(|c: char| c == ' ' || c == '\t')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    // Verify the watermark is still detectable after normalization
+    assert!(
+        ZwcExtractor::has_watermark(&normalized),
+        "watermark should survive whitespace normalization"
+    );
+
+    // The key-based verify should still pass because ZWCs are placed at word
+    // boundaries and whitespace normalization does not remove ZWC characters
+    let extractor = ZwcExtractor::new(params);
+    let verification = extractor.verify(&normalized, &mmr_root, &key);
+    assert!(
+        verification.valid,
+        "watermark should verify after whitespace normalization: {:?}",
+        verification.failure_reason
+    );
+}
+
+// ============================================================
+// 19. Jitter deep verification
+// ============================================================
+
+#[test]
+fn test_jitter_chain_detects_replay() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let doc_path = dir.path().join("jitter_replay.txt");
+    std::fs::write(&doc_path, "Replay detection test content.").expect("write doc");
+
+    let params = cpop_engine::jitter::Parameters {
+        sample_interval: 5,
+        ..cpop_engine::jitter::default_parameters()
+    };
+    let mut session =
+        cpop_engine::jitter::Session::new(&doc_path, params.clone()).expect("create session");
+
+    // Record enough keystrokes to produce multiple samples
+    for _ in 0..25 {
+        session.record_keystroke().expect("record keystroke");
+    }
+
+    let evidence = session.export();
+    assert!(
+        evidence.statistics.chain_valid,
+        "original chain should be valid"
+    );
+    assert!(
+        evidence.samples.len() >= 5,
+        "should have at least 5 samples"
+    );
+
+    // Tamper: modify a sample's timestamp (simulate replay attack)
+    let mut tampered = evidence.clone();
+    // Change the timestamp of sample 2 to replay sample 0's timestamp
+    tampered.samples[2].timestamp = tampered.samples[0].timestamp;
+
+    // The tampered chain should fail verification because the hash
+    // includes the timestamp, so the stored hash won't match the recomputed one
+    let verify_result = tampered.verify();
+    assert!(
+        verify_result.is_err(),
+        "tampered evidence should fail verification"
+    );
+    let err_msg = verify_result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("hash mismatch") || err_msg.contains("broken chain"),
+        "error should indicate hash or chain failure: {err_msg}"
+    );
+}
+
+#[test]
+fn test_jitter_zone_diversity_with_realistic_typing() {
+    use cpop_engine::jitter::{char_to_zone, text_to_zone_sequence};
+
+    let text = "the quick brown fox jumps over the lazy dog";
+    let transitions = text_to_zone_sequence(text);
+
+    // "the quick brown fox..." uses keys from multiple keyboard zones
+    assert!(
+        !transitions.is_empty(),
+        "realistic text should produce zone transitions"
+    );
+
+    // Count distinct zones used
+    let mut zone_set = std::collections::HashSet::new();
+    for c in text.chars() {
+        let z = char_to_zone(c);
+        if z >= 0 {
+            zone_set.insert(z);
+        }
+    }
+
+    // "the quick brown fox jumps over the lazy dog" spans multiple zones
+    assert!(
+        zone_set.len() >= 3,
+        "realistic typing should use at least 3 distinct zones, got {}",
+        zone_set.len()
+    );
+
+    // Verify zone transitions include cross-hand movements
+    let cross_hand = transitions.iter().filter(|t| !t.is_same_hand()).count();
+    assert!(
+        cross_hand > 0,
+        "realistic text should include cross-hand transitions"
+    );
+}
+
+// ============================================================
+// 20. Error messages are user-friendly
+// ============================================================
+
+#[test]
+fn test_error_messages_not_internal() {
+    let (dir, _g) = setup();
+    let init = cpop_engine::ffi::system::ffi_init();
+    assert!(init.success, "init failed: {:?}", init.error_message);
+
+    // Call with nonexistent path
+    let bad_path = dir
+        .path()
+        .join("absolutely_does_not_exist.txt")
+        .to_string_lossy()
+        .to_string();
+    let cp =
+        cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(bad_path, "test".to_string());
+    assert!(!cp.success, "should fail for nonexistent file");
+
+    let err = cp.error_message.unwrap_or_default();
+    // Error should not contain stack traces or internal Rust paths
+    assert!(
+        !err.contains("src/"),
+        "error should not contain source file paths: {err}"
+    );
+    assert!(
+        !err.contains("panicked at"),
+        "error should not contain panic info: {err}"
+    );
+    assert!(
+        !err.contains("thread '"),
+        "error should not contain thread info: {err}"
+    );
+    assert!(
+        !err.contains("RUST_BACKTRACE"),
+        "error should not reference RUST_BACKTRACE: {err}"
+    );
+    // Error should be non-empty and human-readable
+    assert!(!err.is_empty(), "error message should not be empty");
+    assert!(
+        err.len() < 500,
+        "error message should be concise (< 500 chars): {err}"
+    );
+}
+
+// ============================================================
+// 21. Concurrent stress
+// ============================================================
+
+#[test]
+fn test_rapid_init_deinit_cycle() {
+    // Run 10 init cycles to verify no state corruption or resource leaks
+    for i in 0..10 {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // Use a block to isolate each cycle
+        {
+            let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+            std::env::set_var("CPOP_DATA_DIR", dir.path());
+            std::env::set_var("CPOP_NO_KEYCHAIN", "1");
+
+            let init = cpop_engine::ffi::system::ffi_init();
+            assert!(
+                init.success,
+                "init cycle {i} failed: {:?}",
+                init.error_message
+            );
+
+            // Verify basic operations still work after repeated init
+            let status = cpop_engine::ffi::system::ffi_get_status();
+            assert_eq!(
+                status.total_checkpoints, 0,
+                "fresh init cycle {i} should have 0 checkpoints"
+            );
+        }
+        // dir drops here, cleaning up the temp directory
+    }
+}
