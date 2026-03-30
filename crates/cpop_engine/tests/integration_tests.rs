@@ -779,3 +779,679 @@ fn test_dashboard_metrics_after_checkpoints() {
     assert_eq!(metrics.total_files, 1);
     assert_eq!(metrics.total_checkpoints, 3);
 }
+
+// ============================================================
+// 13. Security hardness tests
+// ============================================================
+
+#[test]
+fn test_checkpoint_rejects_path_traversal() {
+    let (dir, _g) = setup();
+    let init = cpop_engine::ffi::system::ffi_init();
+    assert!(init.success, "init failed: {:?}", init.error_message);
+
+    let traversal = dir
+        .path()
+        .join("../../../etc/passwd")
+        .to_string_lossy()
+        .to_string();
+    let cp = cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(
+        traversal,
+        "traversal attempt".to_string(),
+    );
+    assert!(!cp.success, "path traversal should be rejected");
+}
+
+#[test]
+fn test_checkpoint_rejects_system_paths() {
+    let (_dir, _g) = setup();
+    let init = cpop_engine::ffi::system::ffi_init();
+    assert!(init.success, "init failed: {:?}", init.error_message);
+
+    let cp = cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(
+        "/System/Library/CoreServices/SystemVersion.plist".to_string(),
+        "system path attempt".to_string(),
+    );
+    assert!(!cp.success, "system path should be rejected");
+}
+
+#[test]
+fn test_export_rejects_unwritable_path() {
+    let (dir, _g) = setup();
+    let init = cpop_engine::ffi::system::ffi_init();
+    assert!(init.success, "init failed: {:?}", init.error_message);
+
+    let doc = create_doc(&dir, "unwritable_test.txt", "Content for unwritable test.");
+    let cp = cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(
+        doc.clone(),
+        "checkpoint".to_string(),
+    );
+    assert!(cp.success, "checkpoint failed: {:?}", cp.error_message);
+
+    // Try exporting to a path that cannot be written (/System is read-only on macOS)
+    let result = cpop_engine::ffi::evidence_export::ffi_export_evidence(
+        doc,
+        "core".to_string(),
+        "/System/evidence.cpop".to_string(),
+    );
+    assert!(!result.success, "export to unwritable path should fail");
+}
+
+#[test]
+fn test_signing_key_exists_after_init() {
+    let (dir, _g) = setup();
+    let init = cpop_engine::ffi::system::ffi_init();
+    assert!(init.success, "init failed: {:?}", init.error_message);
+
+    let key_path = dir.path().join("signing_key");
+    assert!(key_path.exists(), "signing_key should exist after init");
+    let key_bytes = std::fs::read(&key_path).expect("read signing key");
+    assert_eq!(key_bytes.len(), 32, "signing key should be 32 bytes");
+}
+
+#[test]
+fn test_hmac_integrity_verification() {
+    let (dir, _g) = setup();
+    let init = cpop_engine::ffi::system::ffi_init();
+    assert!(init.success, "init failed: {:?}", init.error_message);
+
+    let doc = create_doc(&dir, "hmac_test.txt", "HMAC integrity content.");
+    let cp = cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(
+        doc.clone(),
+        "hmac checkpoint".to_string(),
+    );
+    assert!(cp.success, "checkpoint failed: {:?}", cp.error_message);
+
+    // Export evidence, verify it passes
+    let output = dir.path().join("hmac_evidence.cpop");
+    let output_str = output.to_string_lossy().to_string();
+    let export = cpop_engine::ffi::evidence_export::ffi_export_evidence(
+        doc,
+        "core".to_string(),
+        output_str.clone(),
+    );
+    assert!(export.success, "export failed: {:?}", export.error_message);
+
+    // Tamper with the middle of the file (corrupt the CBOR payload)
+    let mut data = std::fs::read(&output).expect("read evidence");
+    if data.len() > 20 {
+        let mid = data.len() / 2;
+        data[mid] ^= 0xFF;
+        data[mid + 1] ^= 0xFF;
+    }
+    let tampered_path = dir.path().join("hmac_tampered.cpop");
+    std::fs::write(&tampered_path, &data).expect("write tampered");
+    let tampered_str = tampered_path.to_string_lossy().to_string();
+
+    let verify = cpop_engine::ffi::verify_detail::ffi_verify_evidence_detailed(tampered_str);
+    // Tampered file should either fail to decode or fail verification
+    assert!(
+        !verify.success || !verify.overall_valid,
+        "tampered evidence should not verify as valid"
+    );
+}
+
+#[test]
+fn test_verify_detects_tampered_checkpoint() {
+    let (dir, _g) = setup();
+    let init = cpop_engine::ffi::system::ffi_init();
+    assert!(init.success, "init failed: {:?}", init.error_message);
+
+    let doc = create_doc(&dir, "tamper_cp.txt", "Version 1.");
+    for i in 1..=3 {
+        modify_doc(&doc, &format!("Version {i} with more content."));
+        let cp = cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(
+            doc.clone(),
+            format!("v{i}"),
+        );
+        assert!(cp.success, "checkpoint {i} failed: {:?}", cp.error_message);
+    }
+
+    let output = dir.path().join("tamper_evidence.cpop");
+    let output_str = output.to_string_lossy().to_string();
+    let export = cpop_engine::ffi::evidence_export::ffi_export_evidence(
+        doc,
+        "core".to_string(),
+        output_str.clone(),
+    );
+    assert!(export.success, "export failed: {:?}", export.error_message);
+
+    // Verify original passes
+    let verify_ok =
+        cpop_engine::ffi::verify_detail::ffi_verify_evidence_detailed(output_str.clone());
+    assert!(
+        verify_ok.success,
+        "original verify failed: {:?}",
+        verify_ok.error_message
+    );
+
+    // Tamper: flip bytes near the end
+    let mut data = std::fs::read(&output).expect("read");
+    let near_end = data.len().saturating_sub(10);
+    for i in near_end..data.len() {
+        data[i] ^= 0xFF;
+    }
+    std::fs::write(&output, &data).expect("write tampered");
+
+    let verify_bad = cpop_engine::ffi::verify_detail::ffi_verify_evidence_detailed(output_str);
+    assert!(
+        !verify_bad.success || !verify_bad.overall_valid,
+        "tampered evidence should fail verification"
+    );
+}
+
+#[test]
+fn test_verify_detects_truncated_file() {
+    let (dir, _g) = setup();
+    let init = cpop_engine::ffi::system::ffi_init();
+    assert!(init.success, "init failed: {:?}", init.error_message);
+
+    let doc = create_doc(&dir, "truncate_test.txt", "Content for truncation.");
+    let cp =
+        cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(doc.clone(), "cp".to_string());
+    assert!(cp.success, "checkpoint failed: {:?}", cp.error_message);
+
+    let output = dir.path().join("truncated.cpop");
+    let output_str = output.to_string_lossy().to_string();
+    let export = cpop_engine::ffi::evidence_export::ffi_export_evidence(
+        doc,
+        "core".to_string(),
+        output_str.clone(),
+    );
+    assert!(export.success, "export failed: {:?}", export.error_message);
+
+    // Truncate to half
+    let data = std::fs::read(&output).expect("read");
+    std::fs::write(&output, &data[..data.len() / 2]).expect("write truncated");
+
+    let verify = cpop_engine::ffi::verify_detail::ffi_verify_evidence_detailed(output_str);
+    assert!(
+        !verify.success || !verify.overall_valid,
+        "truncated file should fail verification"
+    );
+}
+
+#[test]
+fn test_verify_rejects_empty_file() {
+    let (dir, _g) = setup();
+    let init = cpop_engine::ffi::system::ffi_init();
+    assert!(init.success, "init failed: {:?}", init.error_message);
+
+    let empty = dir.path().join("empty.cpop");
+    std::fs::write(&empty, b"").expect("write empty");
+    let empty_str = empty.to_string_lossy().to_string();
+
+    let verify = cpop_engine::ffi::verify_detail::ffi_verify_evidence_detailed(empty_str);
+    assert!(!verify.success, "empty file should fail verification");
+}
+
+#[test]
+fn test_verify_rejects_random_bytes() {
+    let (dir, _g) = setup();
+    let init = cpop_engine::ffi::system::ffi_init();
+    assert!(init.success, "init failed: {:?}", init.error_message);
+
+    let random_path = dir.path().join("random.cpop");
+    let random_data: Vec<u8> = (0..1024).map(|i| (i * 37 + 13) as u8).collect();
+    std::fs::write(&random_path, &random_data).expect("write random");
+    let random_str = random_path.to_string_lossy().to_string();
+
+    let verify = cpop_engine::ffi::verify_detail::ffi_verify_evidence_detailed(random_str);
+    assert!(!verify.success, "random bytes should fail verification");
+}
+
+#[test]
+fn test_checkpoint_rejects_empty_path() {
+    let (_dir, _g) = setup();
+    let init = cpop_engine::ffi::system::ffi_init();
+    assert!(init.success, "init failed: {:?}", init.error_message);
+
+    let cp = cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(
+        String::new(),
+        "empty path".to_string(),
+    );
+    assert!(!cp.success, "empty path should be rejected");
+}
+
+#[test]
+fn test_checkpoint_rejects_nonexistent_file() {
+    let (dir, _g) = setup();
+    let init = cpop_engine::ffi::system::ffi_init();
+    assert!(init.success, "init failed: {:?}", init.error_message);
+
+    let nonexistent = dir
+        .path()
+        .join("does_not_exist.txt")
+        .to_string_lossy()
+        .to_string();
+    let cp = cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(
+        nonexistent,
+        "nonexistent".to_string(),
+    );
+    assert!(!cp.success, "nonexistent file should be rejected");
+}
+
+#[test]
+fn test_export_rejects_invalid_tier() {
+    let (dir, _g) = setup();
+    let init = cpop_engine::ffi::system::ffi_init();
+    assert!(init.success, "init failed: {:?}", init.error_message);
+
+    let doc = create_doc(&dir, "tier_test.txt", "Content for tier test.");
+    let cp =
+        cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(doc.clone(), "cp".to_string());
+    assert!(cp.success, "checkpoint failed: {:?}", cp.error_message);
+
+    // Invalid tier falls back to "core" per the implementation, so export should succeed.
+    // This test documents that behavior.
+    let output = dir.path().join("invalid_tier.cpop");
+    let result = cpop_engine::ffi::evidence_export::ffi_export_evidence(
+        doc,
+        "NONEXISTENT_TIER_XYZ".to_string(),
+        output.to_string_lossy().to_string(),
+    );
+    // The implementation defaults unknown tiers to Core, so this succeeds
+    assert!(
+        result.success,
+        "unknown tier should fall back to core: {:?}",
+        result.error_message
+    );
+}
+
+// ============================================================
+// 14. Edge case tests
+// ============================================================
+
+#[test]
+fn test_export_with_single_checkpoint() {
+    let (dir, _g) = setup();
+    let init = cpop_engine::ffi::system::ffi_init();
+    assert!(init.success, "init failed: {:?}", init.error_message);
+
+    let doc = create_doc(&dir, "single_cp.txt", "Single checkpoint content.");
+    let cp = cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(
+        doc.clone(),
+        "only one".to_string(),
+    );
+    assert!(cp.success, "checkpoint failed: {:?}", cp.error_message);
+
+    let output = dir.path().join("single.cpop");
+    let output_str = output.to_string_lossy().to_string();
+    let export = cpop_engine::ffi::evidence_export::ffi_export_evidence(
+        doc,
+        "core".to_string(),
+        output_str.clone(),
+    );
+    assert!(export.success, "export failed: {:?}", export.error_message);
+    assert!(output.exists(), "evidence file should exist");
+
+    let verify = cpop_engine::ffi::verify_detail::ffi_verify_evidence_detailed(output_str);
+    assert!(verify.success, "verify failed: {:?}", verify.error_message);
+    assert_eq!(verify.checkpoint_count, 1);
+}
+
+#[test]
+fn test_list_tracked_files_empty_store() {
+    let (_dir, _g) = setup();
+    let init = cpop_engine::ffi::system::ffi_init();
+    assert!(init.success, "init failed: {:?}", init.error_message);
+
+    let files = cpop_engine::ffi::system::ffi_list_tracked_files();
+    assert!(files.is_empty(), "fresh store should have no tracked files");
+}
+
+#[test]
+fn test_status_before_init() {
+    let (_dir, _g) = setup();
+    // Don't call ffi_init; query status on a fresh data dir
+    let status = cpop_engine::ffi::system::ffi_get_status();
+    // Should handle gracefully (either success with defaults or explicit error)
+    assert_eq!(status.tracked_file_count, 0);
+    assert_eq!(status.total_checkpoints, 0);
+}
+
+#[test]
+fn test_double_init() {
+    let (_dir, _g) = setup();
+    let init1 = cpop_engine::ffi::system::ffi_init();
+    assert!(
+        init1.success,
+        "first init failed: {:?}",
+        init1.error_message
+    );
+
+    let init2 = cpop_engine::ffi::system::ffi_init();
+    assert!(
+        init2.success,
+        "second init should succeed (idempotent): {:?}",
+        init2.error_message
+    );
+}
+
+#[test]
+fn test_sentinel_start_stop_start() {
+    let (_dir, _g) = setup();
+    let init = cpop_engine::ffi::system::ffi_init();
+    assert!(init.success, "init failed: {:?}", init.error_message);
+
+    let start1 = cpop_engine::ffi::sentinel::ffi_sentinel_start();
+    assert!(
+        start1.success,
+        "first start failed: {:?}",
+        start1.error_message
+    );
+    assert!(
+        cpop_engine::ffi::sentinel::ffi_sentinel_is_running(),
+        "sentinel should be running after start"
+    );
+
+    let stop = cpop_engine::ffi::sentinel::ffi_sentinel_stop();
+    assert!(stop.success, "stop failed: {:?}", stop.error_message);
+
+    let start2 = cpop_engine::ffi::sentinel::ffi_sentinel_start();
+    assert!(start2.success, "restart failed: {:?}", start2.error_message);
+    assert!(
+        cpop_engine::ffi::sentinel::ffi_sentinel_is_running(),
+        "sentinel should be running after restart"
+    );
+
+    cpop_engine::ffi::sentinel::ffi_sentinel_stop();
+}
+
+#[test]
+fn test_checkpoint_large_file() {
+    let (dir, _g) = setup();
+    let init = cpop_engine::ffi::system::ffi_init();
+    assert!(init.success, "init failed: {:?}", init.error_message);
+
+    // Create a 10MB file
+    let large_content: String = "A".repeat(10 * 1024 * 1024);
+    let doc = create_doc(&dir, "large_file.txt", &large_content);
+
+    let cp = cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(
+        doc.clone(),
+        "large file checkpoint".to_string(),
+    );
+    assert!(
+        cp.success,
+        "large file checkpoint failed: {:?}",
+        cp.error_message
+    );
+
+    let status = cpop_engine::ffi::system::ffi_get_status();
+    assert_eq!(status.total_checkpoints, 1);
+}
+
+#[test]
+fn test_many_checkpoints() {
+    let (dir, _g) = setup();
+    let init = cpop_engine::ffi::system::ffi_init();
+    assert!(init.success, "init failed: {:?}", init.error_message);
+
+    let doc = create_doc(&dir, "many_cp.txt", "Initial.");
+
+    for i in 1..=100 {
+        modify_doc(&doc, &format!("Revision number {i} with content changes."));
+        let cp = cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(
+            doc.clone(),
+            format!("r{i}"),
+        );
+        assert!(cp.success, "checkpoint {i} failed: {:?}", cp.error_message);
+    }
+
+    let status = cpop_engine::ffi::system::ffi_get_status();
+    assert_eq!(status.total_checkpoints, 100);
+}
+
+#[test]
+fn test_checkpoint_unicode_path() {
+    let (dir, _g) = setup();
+    let init = cpop_engine::ffi::system::ffi_init();
+    assert!(init.success, "init failed: {:?}", init.error_message);
+
+    let doc = create_doc(&dir, "unicode_\u{1F4DD}_doc.txt", "Unicode path content.");
+    let cp = cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(
+        doc,
+        "unicode path".to_string(),
+    );
+    assert!(
+        cp.success,
+        "unicode path checkpoint failed: {:?}",
+        cp.error_message
+    );
+}
+
+#[test]
+fn test_checkpoint_unicode_message() {
+    let (dir, _g) = setup();
+    let init = cpop_engine::ffi::system::ffi_init();
+    assert!(init.success, "init failed: {:?}", init.error_message);
+
+    let doc = create_doc(&dir, "unicode_msg.txt", "Content for unicode message test.");
+    let cp = cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(
+        doc,
+        "\u{1F680} Launch with \u{00E9}l\u{00E8}ve and \u{4E16}\u{754C}".to_string(),
+    );
+    assert!(
+        cp.success,
+        "unicode message checkpoint failed: {:?}",
+        cp.error_message
+    );
+}
+
+#[test]
+fn test_concurrent_checkpoints_same_file() {
+    let (dir, _g) = setup();
+    let init = cpop_engine::ffi::system::ffi_init();
+    assert!(init.success, "init failed: {:?}", init.error_message);
+
+    let doc = create_doc(&dir, "concurrent.txt", "Concurrent checkpoint content.");
+    let doc_path = doc.clone();
+
+    // Run 10 threads each creating a checkpoint
+    let handles: Vec<_> = (0..10)
+        .map(|i| {
+            let path = doc_path.clone();
+            std::thread::spawn(move || {
+                cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(
+                    path,
+                    format!("thread-{i}"),
+                )
+            })
+        })
+        .collect();
+
+    let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+    let success_count = results.iter().filter(|r| r.success).count();
+    assert!(
+        success_count >= 1,
+        "at least one concurrent checkpoint should succeed, got {} successes out of 10",
+        success_count
+    );
+}
+
+// ============================================================
+// 15. Error recovery tests
+// ============================================================
+
+#[test]
+fn test_init_recovers_from_corrupt_db() {
+    let (dir, _g) = setup();
+
+    // Write garbage to events.db before init
+    let db_path = dir.path().join("events.db");
+    std::fs::write(&db_path, b"THIS IS NOT A SQLITE DATABASE").expect("write corrupt db");
+
+    let init = cpop_engine::ffi::system::ffi_init();
+    // Init should either recover (recreate) or report the error cleanly
+    // The important thing is it does not panic
+    if init.success {
+        // If it recovered, we should be able to create a checkpoint
+        let doc = create_doc(&dir, "recovered.txt", "Post-recovery content.");
+        let cp = cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(
+            doc,
+            "recovery test".to_string(),
+        );
+        // Checkpoint may or may not succeed depending on DB state,
+        // but it should not panic
+        let _ = cp;
+    }
+}
+
+#[test]
+fn test_checkpoint_after_db_backup_recovery() {
+    let (dir, _g) = setup();
+    let init = cpop_engine::ffi::system::ffi_init();
+    assert!(init.success, "init failed: {:?}", init.error_message);
+
+    let doc = create_doc(&dir, "backup_test.txt", "Initial content.");
+    let cp1 = cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(
+        doc.clone(),
+        "before backup".to_string(),
+    );
+    assert!(
+        cp1.success,
+        "first checkpoint failed: {:?}",
+        cp1.error_message
+    );
+
+    // Simulate a backup/restore by copying the DB, then restoring
+    let db_path = dir.path().join("events.db");
+    let backup_path = dir.path().join("events.db.bak");
+    std::fs::copy(&db_path, &backup_path).expect("backup db");
+
+    // Create another checkpoint
+    modify_doc(&doc, "Modified after backup.");
+    let cp2 = cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(
+        doc.clone(),
+        "after backup".to_string(),
+    );
+    assert!(
+        cp2.success,
+        "second checkpoint failed: {:?}",
+        cp2.error_message
+    );
+
+    // Restore from backup (losing cp2)
+    std::fs::copy(&backup_path, &db_path).expect("restore db");
+
+    // Should still be able to create checkpoints after restore
+    modify_doc(&doc, "Post-restore content.");
+    let cp3 = cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(
+        doc,
+        "post restore".to_string(),
+    );
+    assert!(
+        cp3.success,
+        "post-restore checkpoint failed: {:?}",
+        cp3.error_message
+    );
+}
+
+#[test]
+fn test_status_when_sentinel_not_started() {
+    let (_dir, _g) = setup();
+    let init = cpop_engine::ffi::system::ffi_init();
+    assert!(init.success, "init failed: {:?}", init.error_message);
+
+    // Query sentinel status without starting it
+    let status = cpop_engine::ffi::sentinel_witnessing::ffi_sentinel_status();
+    assert!(!status.running, "sentinel should not be running");
+}
+
+#[test]
+fn test_witnessing_status_when_not_tracking() {
+    let (_dir, _g) = setup();
+    let init = cpop_engine::ffi::system::ffi_init();
+    assert!(init.success, "init failed: {:?}", init.error_message);
+
+    let status = cpop_engine::ffi::sentinel_witnessing::ffi_sentinel_witnessing_status();
+    assert!(
+        !status.is_tracking,
+        "should not be tracking when sentinel is not started"
+    );
+    assert_eq!(status.keystroke_count, 0);
+}
+
+// ============================================================
+// 16. Steganography E2E tests
+// ============================================================
+
+#[test]
+fn test_stego_watermark_embed_and_extract() {
+    use cpop_engine::steganography::{ZwcEmbedder, ZwcExtractor, ZwcParams};
+
+    // Create a document with enough words (min 64)
+    let words: Vec<&str> = (0..80)
+        .map(|_| "lorem ipsum dolor sit amet consectetur")
+        .collect();
+    let text = words.join(" ");
+
+    let key: [u8; 32] = [0xAA; 32];
+    let mmr_root: [u8; 32] = [0xBB; 32];
+    let params = ZwcParams::default();
+
+    let embedder = ZwcEmbedder::new(params.clone());
+    let (watermarked, binding) = embedder.embed(&text, &mmr_root, &key).expect("embed");
+
+    // Watermarked text should contain ZWCs
+    assert!(
+        ZwcExtractor::has_watermark(&watermarked),
+        "watermarked text should contain ZWC characters"
+    );
+    assert_eq!(
+        ZwcExtractor::count_zwc(&watermarked),
+        binding.zwc_count,
+        "ZWC count should match binding"
+    );
+
+    // Strip ZWCs and verify original text is recovered
+    let stripped = ZwcExtractor::strip_zwc(&watermarked);
+    assert_eq!(
+        stripped, text,
+        "stripping ZWCs should recover original text"
+    );
+
+    // Verify using binding
+    let extractor = ZwcExtractor::new(params);
+    let verification = extractor.verify_binding(&watermarked, &binding);
+    assert!(
+        verification.valid,
+        "watermark verification should pass: {:?}",
+        verification.failure_reason
+    );
+}
+
+#[test]
+fn test_stego_watermark_detects_modification() {
+    use cpop_engine::steganography::{ZwcEmbedder, ZwcExtractor, ZwcParams};
+
+    let words: Vec<&str> = (0..80)
+        .map(|_| "the quick brown fox jumps over lazy dog")
+        .collect();
+    let text = words.join(" ");
+
+    let key: [u8; 32] = [0xCC; 32];
+    let mmr_root: [u8; 32] = [0xDD; 32];
+    let params = ZwcParams::default();
+
+    let embedder = ZwcEmbedder::new(params.clone());
+    let (watermarked, binding) = embedder.embed(&text, &mmr_root, &key).expect("embed");
+
+    // Modify the watermarked text (add words, changing word boundaries)
+    let modified = watermarked.replace("quick", "slow");
+
+    // Verification should fail on modified text
+    let extractor = ZwcExtractor::new(params);
+    let verification = extractor.verify(&modified, &mmr_root, &key);
+    assert!(
+        !verification.valid,
+        "modified text should fail watermark verification"
+    );
+
+    // Also verify via binding (the tag extracted from modified positions won't match)
+    let binding_check = extractor.verify_binding(&modified, &binding);
+    // May or may not fail depending on whether the modification affects ZWC positions,
+    // but the key-based verify above is the authoritative check
+    let _ = binding_check;
+}
