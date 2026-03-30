@@ -1,5 +1,6 @@
 [package]
-name = "cpop_engine"
+name = "cpop-engine"
+publish = false
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -11,7 +12,7 @@ keywords = ["cryptography", "authorship", "witnessing", "attestation", "proof-of
 categories = ["cryptography", "authentication"]
 rust-version = "1.75.0"
 homepage = "https://github.com/writerslogic/cpop"
-documentation = "https://docs.rs/cpop_engine"
+documentation = "https://docs.rs/cpop-engine"
 exclude = ["tests/", "fuzz/", "benches/"]
 
 [lib]
@@ -102,11 +103,11 @@ dashmap = "6.0"
 uniffi = { version = "0.28", optional = true }
 
 # CPOP Jitter - hardware entropy for proof-of-process
-cpop-jitter = { version = "0.2", optional = true }
+cpop-jitter = { path = "../cpop-jitter", optional = true }
 typeshare = "1.0.5"
 
 # CPOP Protocol
-cpop-protocol = "0.3"
+cpop-protocol = { path = "../cpop-protocol" }
 
 tempfile = "3"
 

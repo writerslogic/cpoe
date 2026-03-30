@@ -25,10 +25,10 @@ path = "src/native_messaging_host.rs"
 
 [features]
 default = ["cpop_jitter"]
-cpop_jitter = ["cpop_engine/cpop_jitter"]
+cpop_jitter = ["cpop-engine/cpop_jitter"]
 
 [dependencies]
-cpop_engine = { path = "../../crates/cpop_engine", features = ["ffi"] }
+cpop-engine = { path = "../../crates/cpop-engine", features = ["ffi"] }
 clap = { version = "4.4", features = ["derive"] }
 clap_complete = "4.4"
 anyhow = "1.0"

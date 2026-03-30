@@ -6,7 +6,7 @@ edition = "2021"
 
 [dependencies]
 libfuzzer-sys = "0.4"
-writerslogic-core = { path = ".." }
+cpop-engine = { path = ".." }
 
 [[bin]]
 name = "vdf_fuzzer"

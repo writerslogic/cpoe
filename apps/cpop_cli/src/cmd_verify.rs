@@ -481,7 +481,7 @@ fn verify_cwar(file_path: &PathBuf, out: &OutputMode) -> Result<()> {
     let data = fs::read_to_string(file_path).context("read WAR file")?;
     let war_block =
         war::Block::decode_ascii(&data).map_err(|e| anyhow!("parse WAR block: {}", e))?;
-    let report = war_block.verify();
+    let report = war_block.verify(None);
 
     if out.json {
         let checks: Vec<serde_json::Value> = report

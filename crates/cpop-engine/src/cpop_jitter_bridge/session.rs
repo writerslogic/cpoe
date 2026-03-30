@@ -61,9 +61,10 @@ impl HybridJitterSession {
             k
         });
 
-        let mut secret = derive_session_secret(material.as_ref(), b"witnessd-hybrid-session-v1");
+        let mut secret =
+            derive_session_secret(material.as_ref(), b"witnessd-hybrid-session-v1", None);
         material.zeroize();
-        let cpop_jitter_session = PhysSession::new(secret);
+        let cpop_jitter_session = PhysSession::new(&secret);
         secret.zeroize();
 
         Ok(Self {
@@ -368,7 +369,8 @@ impl HybridJitterSession {
             k
         });
 
-        let mut secret = derive_session_secret(material.as_ref(), b"witnessd-hybrid-session-v1");
+        let mut secret =
+            derive_session_secret(material.as_ref(), b"witnessd-hybrid-session-v1", None);
         material.zeroize();
 
         let document_tracker = DocumentTracker {
@@ -378,7 +380,7 @@ impl HybridJitterSession {
             last_hash: None,
         };
 
-        let cpop_jitter_session = PhysSession::new(secret);
+        let cpop_jitter_session = PhysSession::new(&secret);
         secret.zeroize();
 
         Ok(Self {

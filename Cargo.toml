@@ -3,7 +3,7 @@ resolver = "2"
 members = [
     "crates/cpop-jitter",
     "crates/cpop-protocol",
-    "crates/cpop_engine",
+    "crates/cpop-engine",
     "apps/cpop_cli",
 ]
 
@@ -32,7 +32,3 @@ base64 = "0.22.1"
 ciborium = "0.2"
 coset = "0.3"
 uniffi = "0.28"
-
-[patch.crates-io]
-cpop-protocol = { path = "crates/cpop-protocol" }
-cpop-jitter = { path = "crates/cpop-jitter" }

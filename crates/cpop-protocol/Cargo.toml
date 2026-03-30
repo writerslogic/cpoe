@@ -11,6 +11,7 @@ keywords = ["cryptography", "authentication", "cpop", "ietf", "rats"]
 categories = ["cryptography", "authentication"]
 rust-version = "1.75.0"
 homepage = "https://lf-decentralized-trust-labs.github.io/proof-of-process/"
+publish = false
 documentation = "https://docs.rs/cpop-protocol"
 exclude = ["tests/", "fuzz/", "benches/", "certs/"]
 
@@ -49,7 +50,7 @@ chrono = { version = "0.4", features = ["serde"] }
 hex = "0.4"
 base64 = "0.22"
 serde_bytes = "0.11.19"
-cpop-jitter = { path = "../cpop-jitter", version = "0.2.1" }
+cpop-jitter = { path = "../cpop-jitter" }
 
 uuid = { version = "1.0", features = ["v4", "serde"] }
 
