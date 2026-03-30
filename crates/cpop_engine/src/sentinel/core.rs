@@ -153,6 +153,10 @@ impl Sentinel {
     }
 
     /// Return the current keystroke count from the activity accumulator.
+    pub fn config(&self) -> &SentinelConfig {
+        &self.config
+    }
+
     pub fn keystroke_count(&self) -> u64 {
         self.activity_accumulator
             .read_recover()
