@@ -197,6 +197,15 @@ pub fn ffi_export_evidence(path: String, tier: String, output: String) -> FfiRes
         id
     };
 
+    // Compute character count by reading the file as UTF-8.
+    // Falls back to byte count for non-UTF-8 files.
+    let byte_length = latest.file_size as u64;
+    let char_count = std::fs::read(&file_path)
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .map(|s| s.chars().count() as u64)
+        .unwrap_or(byte_length);
+
     let wire_packet = EvidencePacketWire {
         version: 1,
         profile_uri: "urn:ietf:params:rats:eat:profile:pop:1.0".to_string(),
@@ -208,8 +217,8 @@ pub fn ffi_export_evidence(path: String, tier: String, output: String) -> FfiRes
                 .file_name()
                 .and_then(|n| n.to_str())
                 .map(|s| s.to_string()),
-            byte_length: latest.file_size as u64,
-            char_count: latest.file_size as u64,
+            byte_length,
+            char_count,
             salt_mode: None,
             salt_commitment: None,
         },

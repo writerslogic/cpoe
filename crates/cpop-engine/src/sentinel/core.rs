@@ -562,6 +562,7 @@ impl Sentinel {
 
         let tap_check_capture = Arc::clone(&self.keystroke_capture);
         let tap_check_active = Arc::clone(&self.keystroke_capture_active);
+        let bridge_health_threads = Arc::clone(&self.bridge_threads);
 
         let event_loop_handle_ref = Arc::clone(&self.event_loop_handle);
         let handle = tokio::spawn(async move {
@@ -841,6 +842,19 @@ impl Sentinel {
                                     "CGEventTap died; marking keystroke capture inactive"
                                 );
                                 tap_check_active.store(false, Ordering::SeqCst);
+                            }
+                        }
+
+                        // Check if any bridge threads have panicked.
+                        {
+                            let threads = bridge_health_threads.lock_recover();
+                            for (i, handle) in threads.iter().enumerate() {
+                                if handle.is_finished() {
+                                    log::error!(
+                                        "Bridge thread {i} exited unexpectedly; \
+                                         keystrokes or mouse events may be lost"
+                                    );
+                                }
                             }
                         }
                     }

@@ -138,14 +138,15 @@ pub fn handle_focus_event_sync(
             // If the new path is a real file and there's an existing title://
             // session from the same app (unsaved doc that was just saved),
             // migrate the session to preserve all captured keystrokes.
+            // Single write lock for find-and-migrate to avoid TOCTOU race.
             if !doc_path.starts_with("title://") && !doc_path.starts_with("shadow://") {
                 let title_prefix = format!("title://{}/", event.app_bundle_id);
-                let title_key = {
-                    let map = sessions.read_recover();
-                    map.keys().find(|k| k.starts_with(&title_prefix)).cloned()
-                };
+                let mut sessions_map = sessions.write_recover();
+                let title_key = sessions_map
+                    .keys()
+                    .find(|k| k.starts_with(&title_prefix))
+                    .cloned();
                 if let Some(title_key) = title_key {
-                    let mut sessions_map = sessions.write_recover();
                     if let Some(mut session) = sessions_map.remove(&title_key) {
                         session.focus_lost();
                         session.path = doc_path.clone();
@@ -157,6 +158,7 @@ pub fn handle_focus_event_sync(
                         session.focus_gained();
                         let session_id = session.session_id.clone();
                         sessions_map.insert(doc_path.clone(), session);
+                        drop(sessions_map); // release before logging/broadcasting
                         log::info!(
                             "Migrated title-keyed session {} to path {:?}",
                             session_id,
@@ -172,6 +174,7 @@ pub fn handle_focus_event_sync(
                         return;
                     }
                 }
+                drop(sessions_map);
             }
 
             // If this document is regaining focus, stamp regained_at on its
