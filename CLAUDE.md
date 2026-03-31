@@ -19,6 +19,18 @@ writerslogic/
 └── docs/                    # Documentation
 ```
 
+### Why 3 Crates?
+
+The crates are split by **compilation target**, not by size:
+
+| Crate | Target | Why separate |
+|-------|--------|-------------|
+| `cpop-jitter` | `no_std` (bare-metal, embedded) | Runs on microcontrollers with no OS. Zero platform dependencies, alloc only. |
+| `cpop-protocol` | `wasm32` (browsers) | Runs in browser extensions for client-side evidence verification. No platform-specific code. |
+| `cpop-engine` | Native (macOS/Windows/Linux) | Requires OS APIs (CGEventTap, TPM, SQLite, Unix sockets). Cannot compile to wasm or no_std. |
+
+Merging them would break wasm and no_std compilation because the engine's platform dependencies (macOS frameworks, Windows hooks, SQLite) don't exist in those environments. The dependency graph is strictly one-directional: `engine -> protocol -> jitter`.
+
 ## Build & Test Commands
 
 ```sh
