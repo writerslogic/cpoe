@@ -24,12 +24,21 @@ pub fn ffi_sentinel_inject_keystroke(
     source_state_id: i64,
     keyboard_type: i64,
     source_pid: i64,
+    char_value: String,
 ) -> bool {
     let sentinel_opt = get_sentinel();
     let sentinel = match sentinel_opt.as_ref() {
         Some(s) if s.is_running() => s,
         _ => return false,
     };
+
+    // Feed voice fingerprint collector if enabled.
+    // Only the first character matters (NSEvent.characters can be multi-char for
+    // dead keys, but we want the primary character for writing style analysis).
+    let char_opt = char_value.chars().next();
+    if let Some(ref mut collector) = *sentinel.voice_collector.write_recover() {
+        collector.record_keystroke(keycode, char_opt);
+    }
 
     // Same verification as CGEventTap's verify_event_source.
     // Constants from CGEventTypes.h -- stable across macOS versions.

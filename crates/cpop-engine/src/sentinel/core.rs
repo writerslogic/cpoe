@@ -106,7 +106,7 @@ pub struct Sentinel {
         Arc<RwLock<crate::fingerprint::ActivityFingerprintAccumulator>>,
     pub(crate) session_events_tx: broadcast::Sender<SessionEvent>,
     pub(crate) shutdown_tx: Arc<Mutex<Option<mpsc::Sender<()>>>>,
-    voice_collector: Arc<RwLock<Option<crate::fingerprint::VoiceCollector>>>,
+    pub(crate) voice_collector: Arc<RwLock<Option<crate::fingerprint::VoiceCollector>>>,
     mouse_idle_stats: Arc<RwLock<crate::platform::MouseIdleStats>>,
     mouse_stego_engine: Arc<RwLock<crate::platform::MouseStegoEngine>>,
     session_nonce: Arc<RwLock<Option<[u8; 32]>>>,
