@@ -260,7 +260,7 @@ pub fn focus_document_sync(
         });
     }
 
-    // Read back the focus count for debug logging
+    #[cfg(debug_assertions)]
     let focus_count = sessions
         .read_recover()
         .get(path)

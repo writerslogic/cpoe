@@ -381,12 +381,16 @@ impl Sentinel {
                     let sync_rx: std::sync::mpsc::Receiver<crate::platform::KeystrokeEvent> =
                         sync_rx;
                     let handle = std::thread::spawn(move || {
+                        #[cfg(debug_assertions)]
                         let mut bridge_count: u64 = 0;
                         let mut dropped_count: u64 = 0;
                         while keystroke_running.load(Ordering::SeqCst) {
                             match sync_rx.recv_timeout(std::time::Duration::from_millis(100)) {
                                 Ok(event) => {
-                                    bridge_count += 1;
+                                    #[cfg(debug_assertions)]
+                                    {
+                                        bridge_count += 1;
+                                    }
                                     #[cfg(debug_assertions)]
                                     if bridge_count % 100 == 0 {
                                         if let Ok(dir) = std::env::var("CPOP_DATA_DIR") {

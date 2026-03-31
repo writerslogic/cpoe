@@ -192,6 +192,7 @@ pub fn ffi_sentinel_witnessing_status() -> FfiWitnessingStatus {
     };
 
     let keystroke_count = session.total_keystrokes();
+    #[cfg(debug_assertions)]
     let global_keystrokes = sentinel.keystroke_count();
     #[cfg(debug_assertions)]
     {
