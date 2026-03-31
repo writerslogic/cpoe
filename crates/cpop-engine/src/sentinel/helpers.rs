@@ -390,12 +390,49 @@ pub fn handle_change_event_sync(
     event: &ChangeEvent,
     sessions: &Arc<RwLock<HashMap<String, DocumentSession>>>,
     signing_key: &Arc<RwLock<Option<SigningKey>>>,
+    current_focus: &Arc<RwLock<Option<String>>>,
     wal_dir: &Path,
     session_events_tx: &broadcast::Sender<SessionEvent>,
 ) {
     // Acquire signing_key before sessions to match lock order in focus_document_sync
     let key = signing_key.read_recover().clone();
     let mut sessions_map = sessions.write_recover();
+
+    // If a title:// session exists for the app that saved this file,
+    // migrate it to the real path now. This handles the case where the
+    // user saves an unsaved document without switching focus away first.
+    if event.event_type == ChangeEventType::Saved && !sessions_map.contains_key(&event.path) {
+        // Find a title:// session from any app (we don't have the bundle_id
+        // in a ChangeEvent, so match any title session).
+        let title_key = sessions_map
+            .keys()
+            .find(|k| k.starts_with("title://"))
+            .cloned();
+        if let Some(title_key) = title_key {
+            if let Some(mut session) = sessions_map.remove(&title_key) {
+                session.path = event.path.clone();
+                if let Ok(hash) = compute_file_hash(&event.path) {
+                    session.initial_hash = Some(hash.clone());
+                    session.current_hash = Some(hash);
+                }
+                let session_id = session.session_id.clone();
+                sessions_map.insert(event.path.clone(), session);
+                log::info!(
+                    "Migrated title session {} to {:?} on save",
+                    session_id,
+                    event.path
+                );
+                *current_focus.write_recover() = Some(event.path.clone());
+                let _ = session_events_tx.send(SessionEvent {
+                    event_type: SessionEventType::Saved,
+                    session_id,
+                    document_path: event.path.clone(),
+                    timestamp: SystemTime::now(),
+                });
+                return;
+            }
+        }
+    }
 
     if let Some(session) = sessions_map.get_mut(&event.path) {
         match event.event_type {

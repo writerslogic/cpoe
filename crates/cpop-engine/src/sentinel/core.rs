@@ -788,6 +788,7 @@ impl Sentinel {
                                 &event,
                                 &sessions,
                                 &signing_key,
+                                &current_focus,
                                 &wal_dir,
                                 &session_events_tx,
                             );
@@ -971,6 +972,9 @@ impl Sentinel {
                 unfocus_document_sync(&path, &self.sessions, &self.session_events_tx);
             }
         }
+        // current_focus is NOT cleared so run_event_loop() can re-focus
+        // the same document on restart. The sessions above are unfocused
+        // (has_focus = false) but still present in the map.
 
         // Abort the event loop task
         if let Some(handle) = self.event_loop_handle.lock_recover().take() {

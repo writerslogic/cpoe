@@ -504,7 +504,11 @@ fn decode_evidence_for_c2pa(
             },
             filename: Some(doc.title.clone()),
             byte_length: doc.final_size,
-            char_count: doc.final_size,
+            char_count: std::fs::read(&doc.path)
+                .ok()
+                .and_then(|bytes| String::from_utf8(bytes).ok())
+                .map(|s| s.chars().count() as u64)
+                .unwrap_or(doc.final_size),
         },
         checkpoints,
         attestation_tier: None,
