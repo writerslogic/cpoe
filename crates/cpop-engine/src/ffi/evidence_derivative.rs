@@ -79,6 +79,9 @@ pub fn ffi_link_derivative(source_path: String, export_path: String, message: St
         };
     }
 
+    // Note: inherent TOCTOU between size check and hashing below. The file
+    // could change between operations, but this is a best-effort guard against
+    // accidentally processing very large files, not a security boundary.
     for (label, p) in [("Export", &export), ("Source", &source)] {
         match std::fs::metadata(p) {
             Ok(m) if m.len() > crate::MAX_FILE_SIZE => {

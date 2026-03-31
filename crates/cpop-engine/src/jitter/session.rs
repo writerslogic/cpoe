@@ -170,6 +170,10 @@ impl Session {
     }
 
     /// Record a keystroke, returning (jitter_micros, sample_emitted).
+    ///
+    /// `keystroke_count` uses `saturating_add`; at human typing rates (~10 keys/s)
+    /// u64::MAX would take ~58 billion years to reach, so saturation is unreachable
+    /// in practice and sampling will never stall.
     pub fn record_keystroke(&mut self) -> crate::error::Result<(u32, bool)> {
         self.keystroke_count = self.keystroke_count.saturating_add(1);
         if !self

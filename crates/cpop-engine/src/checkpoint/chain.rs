@@ -159,8 +159,9 @@ impl Chain {
 
         checkpoint.validate_timestamp()?;
         checkpoint.hash = checkpoint.compute_hash();
+        let result = checkpoint.clone();
         self.checkpoints.push(checkpoint);
-        Ok(self.checkpoints.last().expect("just pushed").clone())
+        Ok(result)
     }
 
     /// Acquire an exclusive advisory lock on the document file (non-blocking).
@@ -304,8 +305,9 @@ impl Chain {
 
         checkpoint.validate_timestamp()?;
         checkpoint.hash = checkpoint.compute_hash();
+        let result = checkpoint.clone();
         self.checkpoints.push(checkpoint);
-        Ok(self.checkpoints.last().expect("just pushed").clone())
+        Ok(result)
     }
 
     /// Commit with full RFC-compliant structures (draft-condrey-rats-pop-01).
@@ -477,8 +479,9 @@ impl Chain {
 
         checkpoint.validate_timestamp()?;
         checkpoint.hash = checkpoint.compute_hash();
+        let result = checkpoint.clone();
         self.checkpoints.push(checkpoint);
-        Ok(self.checkpoints.last().expect("just pushed").clone())
+        Ok(result)
     }
 
     /// Sum the minimum elapsed time across all VDF proofs in the chain.

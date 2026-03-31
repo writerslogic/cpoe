@@ -135,6 +135,17 @@ impl VdfProof {
                 .map_err(|_| "bad slice".to_string())?,
         );
 
+        // 1 hour in nanos; any VDF proof claiming longer is implausible.
+        const MAX_PLAUSIBLE_NANOS: u64 = 3_600 * 1_000_000_000;
+        if duration_nanos > MAX_PLAUSIBLE_NANOS {
+            log::warn!(
+                "VDF proof claims implausible duration: {} ns (max {} ns)",
+                duration_nanos,
+                MAX_PLAUSIBLE_NANOS
+            );
+            return Err("VDF duration exceeds 1 hour plausibility limit".to_string());
+        }
+
         Ok(Self {
             input,
             output,

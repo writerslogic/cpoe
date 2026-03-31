@@ -325,6 +325,15 @@ fn load_or_create_fingerprint_key(storage_dir: &Path) -> Result<[u8; KEY_SIZE]> 
     }
 
     let key_file = storage_dir.join(".storage_key");
+    // Validate the resolved path stays within the expected base directory
+    // to prevent path traversal via a crafted storage_dir.
+    if let Ok(canonical) = key_file.canonicalize() {
+        if let Ok(base) = storage_dir.canonicalize() {
+            if !canonical.starts_with(&base) {
+                return Err(anyhow!("Legacy key path escapes storage directory"));
+            }
+        }
+    }
     if key_file.exists() {
         let key = hkdf_derive_from_file(&key_file)?;
 

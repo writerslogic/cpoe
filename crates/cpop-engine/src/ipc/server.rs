@@ -59,11 +59,15 @@ impl IpcServer {
             }
             Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
                 // Socket file exists; check if another server is actively listening.
-                if std::os::unix::net::UnixStream::connect(&path).is_ok() {
-                    return Err(anyhow!(
-                        "Another IPC server is already listening on {}",
-                        path.display()
-                    ));
+                match std::os::unix::net::UnixStream::connect(&path) {
+                    Ok(stream) => {
+                        drop(stream); // explicitly close the probe connection
+                        return Err(anyhow!(
+                            "Another IPC server is already listening on {}",
+                            path.display()
+                        ));
+                    }
+                    Err(_) => {} // not listening; stale socket
                 }
                 // Stale socket; remove and retry.
                 std::fs::remove_file(&path)?;

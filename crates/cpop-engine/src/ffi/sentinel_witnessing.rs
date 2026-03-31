@@ -257,8 +257,9 @@ pub fn ffi_sentinel_witnessing_status() -> FfiWitnessingStatus {
             } else {
                 0.0
             };
-            // Blend: use store score when available, fall back to cadence score.
-            let score = if store_score > 0.0 {
+            // Clear priority: store score (if meaningful) > cadence score > 0.
+            const MIN_MEANINGFUL_SCORE: f64 = 0.01;
+            let score = if store_score >= MIN_MEANINGFUL_SCORE {
                 (store_score - focus_penalty).clamp(0.0, 1.0)
             } else if cadence_score > 0.0 {
                 (cadence_score - focus_penalty).clamp(0.0, 1.0)

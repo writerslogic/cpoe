@@ -163,7 +163,11 @@ pub fn ffi_sentinel_inject_keystroke(
                     AutoWitnessDecision::HumanPlausible => {
                         let keystroke_count = buffer.keystrokes.len() as u64;
                         let file_path = std::path::Path::new(path.as_str());
-                        drop(guard); // release before start_witnessing which acquires locks
+                        // Mark buffer as consumed under the lock to prevent
+                        // a TOCTOU race where another thread re-buffers
+                        // keystrokes between lock drop and start_witnessing.
+                        buffer.rejected = true;
+                        drop(guard);
 
                         if file_path.exists() && file_path.is_file() {
                             match sentinel.start_witnessing(file_path) {
