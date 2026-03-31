@@ -40,7 +40,7 @@ fn commit_checkpoint_for_path(
         }
     };
     let file_size = std::fs::metadata(file_path)
-        .map(|m| m.len() as i64)
+        .map(|m| i64::try_from(m.len()).unwrap_or(i64::MAX))
         .unwrap_or(0);
 
     let mut store = {

@@ -562,8 +562,10 @@ impl PreWitnessBuffer {
         // Compute inter-keystroke intervals
         let mut intervals: Vec<f64> = Vec::with_capacity(n - 1);
         for i in 1..n {
-            let dt = (self.keystrokes[i].timestamp_ns - self.keystrokes[i - 1].timestamp_ns).max(0)
-                as f64;
+            let dt = self.keystrokes[i]
+                .timestamp_ns
+                .saturating_sub(self.keystrokes[i - 1].timestamp_ns)
+                .max(0) as f64;
             intervals.push(dt);
         }
 

@@ -27,7 +27,9 @@ impl Sentinel {
                 .clone()
         };
         let db_path = self.config.writersproof_dir.join("events.db");
-        let hmac_key = crate::crypto::derive_hmac_key(&signing_key_local.to_bytes());
+        let mut key_bytes = signing_key_local.to_bytes();
+        let hmac_key = crate::crypto::derive_hmac_key(&key_bytes);
+        key_bytes.zeroize();
         let store = crate::store::SecureStore::open(&db_path, hmac_key.to_vec())?;
         Ok(store)
     }
@@ -73,9 +75,10 @@ impl Sentinel {
         match self.open_event_store() {
             Ok(store) => match store.load_document_stats(&path_str) {
                 Ok(Some(stats)) => {
-                    session.cumulative_keystrokes_base = stats.total_keystrokes as u64;
+                    session.cumulative_keystrokes_base =
+                        u64::try_from(stats.total_keystrokes).unwrap_or(0);
                     session.cumulative_focus_ms_base = stats.total_focus_ms;
-                    session.session_number = stats.session_count as u32;
+                    session.session_number = u32::try_from(stats.session_count).unwrap_or(0);
                     session.first_tracked_at = Some(
                         UNIX_EPOCH
                             + Duration::from_secs(
@@ -199,7 +202,7 @@ impl Sentinel {
         };
 
         let file_size = std::fs::metadata(file_path)
-            .map(|m| m.len() as i64)
+            .map(|m| i64::try_from(m.len()).unwrap_or(i64::MAX))
             .unwrap_or(0);
 
         let mut store = match self.open_event_store() {
@@ -287,10 +290,12 @@ impl Sentinel {
                         .unwrap_or(0);
                     let stats = crate::store::DocumentStats {
                         file_path: path_str.clone(),
-                        total_keystrokes: session.total_keystrokes() as i64,
+                        total_keystrokes: i64::try_from(session.total_keystrokes())
+                            .unwrap_or(i64::MAX),
                         total_focus_ms: session.total_focus_ms_cumulative(),
-                        session_count: (session.session_number + 1) as i64,
-                        total_duration_secs: prev_dur + elapsed_secs as i64,
+                        session_count: i64::from(session.session_number + 1),
+                        total_duration_secs: prev_dur
+                            + i64::try_from(elapsed_secs).unwrap_or(i64::MAX),
                         first_tracked_at: first_tracked,
                         last_tracked_at: now_ts,
                     };
@@ -370,7 +375,9 @@ impl Sentinel {
         let identity_fingerprint = hasher.finalize().to_vec();
 
         let db_path = self.config.writersproof_dir.join("events.db");
-        let hmac_key = crate::crypto::derive_hmac_key(&signing_key_local.to_bytes());
+        let mut key_bytes = signing_key_local.to_bytes();
+        let hmac_key = crate::crypto::derive_hmac_key(&key_bytes);
+        key_bytes.zeroize();
         let store = crate::store::SecureStore::open(&db_path, hmac_key.to_vec())?;
 
         let current_digest =

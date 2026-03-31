@@ -495,7 +495,11 @@ pub fn create_session_start_payload(session: &DocumentSession) -> Vec<u8> {
     let path_bytes = session.path.as_bytes();
     let mut payload = Vec::with_capacity(4 + path_bytes.len() + 32 + 8);
 
-    payload.extend_from_slice(&(path_bytes.len() as u32).to_be_bytes());
+    payload.extend_from_slice(
+        &u32::try_from(path_bytes.len())
+            .unwrap_or(u32::MAX)
+            .to_be_bytes(),
+    );
     payload.extend_from_slice(path_bytes);
 
     let hash_bytes = session
