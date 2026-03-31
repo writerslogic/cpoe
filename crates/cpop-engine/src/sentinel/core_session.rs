@@ -76,8 +76,12 @@ impl Sentinel {
                     session.cumulative_keystrokes_base = stats.total_keystrokes as u64;
                     session.cumulative_focus_ms_base = stats.total_focus_ms;
                     session.session_number = stats.session_count as u32;
-                    session.first_tracked_at =
-                        Some(UNIX_EPOCH + Duration::from_secs(stats.first_tracked_at as u64));
+                    session.first_tracked_at = Some(
+                        UNIX_EPOCH
+                            + Duration::from_secs(
+                                u64::try_from(stats.first_tracked_at).unwrap_or(0),
+                            ),
+                    );
                 }
                 Ok(None) => {
                     session.first_tracked_at = Some(SystemTime::now());
@@ -378,12 +382,12 @@ impl Sentinel {
 
         let updated_digest = crate::baseline::update_digest(current_digest, &summary);
 
-        let digest_cbor = serde_json::to_vec(&updated_digest)?;
-        let signature = signing_key_local.sign(&digest_cbor);
+        let digest_json = serde_json::to_vec(&updated_digest)?;
+        let signature = signing_key_local.sign(&digest_json);
         // SigningKey zeroizes its secret material on Drop.
         drop(signing_key_local);
 
-        store.save_baseline_digest(&identity_fingerprint, &digest_cbor, &signature.to_bytes())?;
+        store.save_baseline_digest(&identity_fingerprint, &digest_json, &signature.to_bytes())?;
 
         log::info!(
             "Authorship baseline updated. Tier: {:?}",

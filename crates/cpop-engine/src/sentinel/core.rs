@@ -17,6 +17,87 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::time::interval;
 use zeroize::Zeroize;
 
+/// Hash a file, open the secure store, and write a checkpoint event.
+///
+/// Returns `true` if the checkpoint was committed, `false` on any failure.
+/// Extracted from the event loop to eliminate duplicate checkpoint logic
+/// between the idle-timeout and periodic-checkpoint timer arms.
+fn commit_checkpoint_for_path(
+    path: &str,
+    note: &str,
+    signing_key: &Arc<RwLock<Option<SigningKey>>>,
+    writersproof_dir: &std::path::Path,
+) -> bool {
+    let file_path = std::path::Path::new(path);
+    if !file_path.exists() {
+        return false;
+    }
+    let content_hash = match crate::crypto::hash_file(file_path) {
+        Ok(h) => h,
+        Err(e) => {
+            log::warn!("Auto-checkpoint hash failed for {path}: {e}");
+            return false;
+        }
+    };
+    let file_size = std::fs::metadata(file_path)
+        .map(|m| m.len() as i64)
+        .unwrap_or(0);
+
+    let mut store = {
+        let guard = signing_key.read_recover();
+        let sk = match guard.as_ref() {
+            Some(sk) => sk,
+            None => return false,
+        };
+        let db_path = writersproof_dir.join("events.db");
+        let mut kb = sk.to_bytes();
+        let hk = crate::crypto::derive_hmac_key(&kb);
+        kb.zeroize();
+        match crate::store::SecureStore::open(&db_path, hk.to_vec()) {
+            Ok(s) => s,
+            Err(e) => {
+                log::warn!("Auto-checkpoint store open failed for {path}: {e}");
+                return false;
+            }
+        }
+    };
+
+    let mut event = crate::store::SecureEvent {
+        id: None,
+        device_id: [0u8; 16],
+        machine_id: String::new(),
+        timestamp_ns: SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos().min(i64::MAX as u128) as i64)
+            .unwrap_or(0),
+        file_path: path.to_string(),
+        content_hash,
+        file_size,
+        size_delta: 0,
+        previous_hash: [0u8; 32],
+        event_hash: [0u8; 32],
+        context_type: None,
+        context_note: Some(note.to_string()),
+        vdf_input: None,
+        vdf_output: None,
+        vdf_iterations: 0,
+        forensic_score: 0.0,
+        is_paste: false,
+        hardware_counter: None,
+        input_method: None,
+    };
+    match store.add_secure_event(&mut event) {
+        Ok(_) => {
+            log::info!("Auto-checkpoint committed for {path} ({note})");
+            true
+        }
+        Err(e) => {
+            log::warn!("Auto-checkpoint store write failed for {path}: {e}");
+            false
+        }
+    }
+}
+
 /// Sentinel source PID for events pre-verified by CGEventTap.
 ///
 /// Negative value distinguishes pre-verified tap events from real PIDs (>0)
@@ -448,6 +529,20 @@ impl Sentinel {
         let writersproof_dir = config.writersproof_dir.clone();
         let signing_key_for_cp = Arc::clone(&self.signing_key);
 
+        // Re-focus preserved sessions from a prior run so that keystrokes
+        // are attributed immediately, without waiting for the focus probe.
+        // Also reset EventValidationState to avoid stale clock_discontinuity
+        // and burst penalties from the pre-restart timestamps.
+        {
+            let focus = self.current_focus.read_recover().clone();
+            if let Some(ref path) = focus {
+                if let Some(session) = self.sessions.write_recover().get_mut(path.as_str()) {
+                    session.focus_gained();
+                    session.event_validation = Default::default();
+                }
+            }
+        }
+
         let event_loop_handle_ref = Arc::clone(&self.event_loop_handle);
         let handle = tokio::spawn(async move {
             let mut debounce_timer: Option<tokio::time::Instant> = None;
@@ -458,6 +553,10 @@ impl Sentinel {
             let mut last_keystroke_ts_ns: i64 = 0;
             let mut last_mouse_ts_ns: i64 = 0;
             let mut pre_witness_buffers: HashMap<String, PreWitnessBuffer> = HashMap::new();
+            // Process the first focus event immediately (no debounce) so that
+            // current_focus is set before any keystrokes arrive.  This is
+            // essential after a restart where the document is already focused.
+            let mut first_focus_event = true;
 
             loop {
                 tokio::select! {
@@ -496,9 +595,11 @@ impl Sentinel {
                         // acquiring sessions, matching the lock order in helpers.rs.
                         let focused_path = current_focus.read_recover().clone();
                         if let Some(ref path) = focused_path {
-                            let has_session = sessions.read_recover().contains_key(path);
-                            if has_session {
-                                if let Some(session) = sessions.write_recover().get_mut(path) {
+                            // Single write lock avoids TOCTOU race where a session
+                            // could be removed between a read check and write lock.
+                            let handled = {
+                                let mut map = sessions.write_recover();
+                                if let Some(session) = map.get_mut(path) {
                                     session.keystroke_count += 1;
                                     // Store jitter sample for per-document forensic analysis
                                     if session.jitter_samples.len() < MAX_DOCUMENT_JITTER_SAMPLES {
@@ -518,8 +619,12 @@ impl Sentinel {
                                         session.keystroke_count -= 1;
                                         session.jitter_samples.pop();
                                     }
+                                    true
+                                } else {
+                                    false
                                 }
-                            } else if config.auto_witness_enabled {
+                            }; // write lock released
+                            if !handled && config.auto_witness_enabled {
                                 // No active session; buffer into PreWitnessBuffer
                                 let buffer = pre_witness_buffers
                                     .entry(path.clone())
@@ -552,6 +657,9 @@ impl Sentinel {
                                             // Cannot call Sentinel::start_witnessing() because
                                             // self is not available inside tokio::spawn.
                                             let file_path = std::path::Path::new(path);
+                                            // Benign TOCTOU: if the file is deleted between this check and
+                                            // session insertion, the session will reference a non-existent file
+                                            // and naturally end on the next idle sweep.
                                             if file_path.exists() {
                                                 let mut session = DocumentSession::new(
                                                     path.clone(),
@@ -627,8 +735,24 @@ impl Sentinel {
                     }
 
                     Some(event) = focus_rx.recv() => {
-                        pending_focus = Some(event);
-                        debounce_timer = Some(tokio::time::Instant::now() + debounce_duration);
+                        if first_focus_event {
+                            // Process the startup focus probe immediately so
+                            // current_focus is set before any keystrokes arrive.
+                            first_focus_event = false;
+                            handle_focus_event_sync(
+                                event,
+                                &sessions,
+                                &config,
+                                &shadow,
+                                &signing_key,
+                                &current_focus,
+                                &wal_dir,
+                                &session_events_tx,
+                            );
+                        } else {
+                            pending_focus = Some(event);
+                            debounce_timer = Some(tokio::time::Instant::now() + debounce_duration);
+                        }
                     }
 
                     Some(event) = change_rx.recv() => {
@@ -658,75 +782,20 @@ impl Sentinel {
                                 .collect()
                         };
                         for path in &idle_paths {
-                            // Checkpoint before ending
-                            let needs = {
+                            let needs_checkpoint = {
                                 let map = sessions.read_recover();
                                 map.get(path.as_str()).is_some_and(|s| {
                                     s.keystroke_count > s.last_checkpoint_keystrokes
                                         && !path.starts_with("shadow://")
                                 })
                             };
-                            if needs {
-                                let fp = std::path::Path::new(path.as_str());
-                                if fp.exists() {
-                                    if let Ok(hash) = crate::crypto::hash_file(fp) {
-                                        let sz = std::fs::metadata(fp)
-                                            .map(|m| m.len() as i64)
-                                            .unwrap_or(0);
-                                        let store = {
-                                            let g = signing_key_for_cp.read_recover();
-                                            if let Some(ref sk) = *g {
-                                                let db = writersproof_dir.join("events.db");
-                                                let hk = crate::crypto::derive_hmac_key(
-                                                    &sk.to_bytes(),
-                                                );
-                                                crate::store::SecureStore::open(&db, hk.to_vec())
-                                                    .ok()
-                                            } else {
-                                                None
-                                            }
-                                        };
-                                        if let Some(mut store) = store {
-                                            let mut ev = crate::store::SecureEvent {
-                                                id: None,
-                                                device_id: [0u8; 16],
-                                                machine_id: String::new(),
-                                                timestamp_ns: SystemTime::now()
-                                                    .duration_since(std::time::UNIX_EPOCH)
-                                                    .map(|d| {
-                                                        d.as_nanos().min(i64::MAX as u128) as i64
-                                                    })
-                                                    .unwrap_or(0),
-                                                file_path: path.clone(),
-                                                content_hash: hash,
-                                                file_size: sz,
-                                                size_delta: 0,
-                                                previous_hash: [0u8; 32],
-                                                event_hash: [0u8; 32],
-                                                context_type: None,
-                                                context_note: Some(
-                                                    "Auto-checkpoint on idle end".to_string(),
-                                                ),
-                                                vdf_input: None,
-                                                vdf_output: None,
-                                                vdf_iterations: 0,
-                                                forensic_score: 0.0,
-                                                is_paste: false,
-                                                hardware_counter: None,
-                                                input_method: None,
-                                            };
-                                            if let Err(e) = store.add_secure_event(&mut ev) {
-                                                log::warn!(
-                                                    "Idle auto-checkpoint failed for {path}: {e}"
-                                                );
-                                            } else {
-                                                log::info!(
-                                                    "Idle auto-checkpoint committed for {path}"
-                                                );
-                                            }
-                                        }
-                                    }
-                                }
+                            if needs_checkpoint {
+                                commit_checkpoint_for_path(
+                                    path,
+                                    "Auto-checkpoint on idle end",
+                                    &signing_key_for_cp,
+                                    &writersproof_dir,
+                                );
                             }
                             end_session_sync(path, &sessions, &session_events_tx);
                         }
@@ -734,84 +803,30 @@ impl Sentinel {
 
                     _ = checkpoint_interval.tick() => {
                         // Auto-checkpoint sessions that accumulated new keystrokes.
-                        let candidates: Vec<(String, u64, u64)> = {
+                        let candidates: Vec<String> = {
                             let map = sessions.read_recover();
                             map.iter()
                                 .filter(|(p, s)| {
                                     s.keystroke_count > s.last_checkpoint_keystrokes
                                         && !p.starts_with("shadow://")
                                 })
-                                .map(|(p, s)| {
-                                    (p.clone(), s.keystroke_count, s.last_checkpoint_keystrokes)
-                                })
+                                .map(|(p, _)| p.clone())
                                 .collect()
                         };
-                        for (path, _ks, _prev) in &candidates {
-                            let file_path = std::path::Path::new(path.as_str());
-                            if !file_path.exists() {
-                                continue;
-                            }
-                            let content_hash = match crate::crypto::hash_file(file_path) {
-                                Ok(h) => h,
-                                Err(e) => {
-                                    log::warn!("Auto-checkpoint hash failed for {path}: {e}");
-                                    continue;
-                                }
-                            };
-                            let file_size = std::fs::metadata(file_path)
-                                .map(|m| m.len() as i64)
-                                .unwrap_or(0);
-                            let store = {
-                                let guard = signing_key_for_cp.read_recover();
-                                if let Some(ref sk) = *guard {
-                                    let db_path = writersproof_dir.join("events.db");
-                                    let hmac_key =
-                                        crate::crypto::derive_hmac_key(&sk.to_bytes());
-                                    crate::store::SecureStore::open(&db_path, hmac_key.to_vec())
-                                        .ok()
-                                } else {
-                                    None
-                                }
-                            };
-                            if let Some(mut store) = store {
-                                let mut event = crate::store::SecureEvent {
-                                    id: None,
-                                    device_id: [0u8; 16],
-                                    machine_id: String::new(),
-                                    timestamp_ns: SystemTime::now()
-                                        .duration_since(std::time::UNIX_EPOCH)
-                                        .map(|d| d.as_nanos().min(i64::MAX as u128) as i64)
-                                        .unwrap_or(0),
-                                    file_path: path.clone(),
-                                    content_hash,
-                                    file_size,
-                                    size_delta: 0,
-                                    previous_hash: [0u8; 32],
-                                    event_hash: [0u8; 32],
-                                    context_type: None,
-                                    context_note: Some("Auto-checkpoint".to_string()),
-                                    vdf_input: None,
-                                    vdf_output: None,
-                                    vdf_iterations: 0,
-                                    forensic_score: 0.0,
-                                    is_paste: false,
-                                    hardware_counter: None,
-                                    input_method: None,
-                                };
-                                match store.add_secure_event(&mut event) {
-                                    Ok(_) => {
-                                        log::info!("Auto-checkpoint committed for {path}");
-                                        let mut map = sessions.write_recover();
-                                        if let Some(session) = map.get_mut(path.as_str()) {
-                                            session.last_checkpoint_keystrokes =
-                                                session.keystroke_count;
-                                        }
-                                    }
-                                    Err(e) => {
-                                        log::warn!(
-                                            "Auto-checkpoint store write failed for {path}: {e}"
-                                        );
-                                    }
+                        // Candidates collected under read lock; a session may end before
+                        // checkpoint commit. This is benign: the extra checkpoint is valid
+                        // evidence data that simply outlives the in-memory session.
+                        for path in &candidates {
+                            if commit_checkpoint_for_path(
+                                path,
+                                "Auto-checkpoint",
+                                &signing_key_for_cp,
+                                &writersproof_dir,
+                            ) {
+                                let mut map = sessions.write_recover();
+                                if let Some(session) = map.get_mut(path.as_str()) {
+                                    session.last_checkpoint_keystrokes =
+                                        session.keystroke_count;
                                 }
                             }
                         }
@@ -849,20 +864,13 @@ impl Sentinel {
             if let Err(e) = focus_monitor.stop() {
                 log::debug!("focus monitor stop: {e}");
             }
-            // Unfocus all sessions but keep them so keystroke counts survive restart.
-            // Only drain sessions on true shutdown (Drop).
-            {
-                let paths: Vec<String> = sessions.read_recover().keys().cloned().collect();
-                for path in paths {
-                    unfocus_document_sync(&path, &sessions, &session_events_tx);
-                }
-            }
+            // Session unfocus is now handled by Sentinel::stop() directly
+            // (not here) to avoid the abort race where this cleanup code
+            // might never run if the event loop handle is aborted first.
         });
 
         // Store the event loop handle so it can be aborted on Drop
-        if let Ok(mut guard) = event_loop_handle_ref.lock() {
-            *guard = Some(handle);
-        }
+        *event_loop_handle_ref.lock_recover() = Some(handle);
 
         Ok(())
     }
@@ -894,11 +902,20 @@ impl Sentinel {
             let _ = cap.stop();
         }
 
-        // Abort the event loop task
-        if let Ok(mut guard) = self.event_loop_handle.lock() {
-            if let Some(handle) = guard.take() {
-                handle.abort();
+        // Unfocus all sessions here (not in the event loop cleanup) so that
+        // has_focus is guaranteed to be false before start() re-focuses them.
+        // The event loop abort below may fire before the loop's own cleanup
+        // runs, so we must do this in stop() directly.
+        {
+            let paths: Vec<String> = self.sessions.read_recover().keys().cloned().collect();
+            for path in paths {
+                unfocus_document_sync(&path, &self.sessions, &self.session_events_tx);
             }
+        }
+
+        // Abort the event loop task
+        if let Some(handle) = self.event_loop_handle.lock_recover().take() {
+            handle.abort();
         }
 
         self.shadow.cleanup_all();
@@ -997,11 +1014,26 @@ impl Sentinel {
 
 impl Drop for Sentinel {
     fn drop(&mut self) {
-        // Abort the event loop task if stop() was never called
-        if let Ok(mut guard) = self.event_loop_handle.lock() {
-            if let Some(handle) = guard.take() {
-                handle.abort();
-            }
+        // Signal all bridge threads and the event loop to exit.
+        self.running.store(false, Ordering::SeqCst);
+
+        // Stop CGEventTap threads so they don't leak.
+        if let Some(mut cap) = self.keystroke_capture.lock_recover().take() {
+            let _ = cap.stop();
+        }
+        self.keystroke_capture_active.store(false, Ordering::SeqCst);
+        if let Some(mut cap) = self.mouse_capture.lock_recover().take() {
+            let _ = cap.stop();
+        }
+
+        // Join bridge threads (they check the running flag on 100ms timeout).
+        for handle in self.bridge_threads.lock_recover().drain(..) {
+            let _ = handle.join();
+        }
+
+        // Abort the event loop task as a final safety net.
+        if let Some(handle) = self.event_loop_handle.lock_recover().take() {
+            handle.abort();
         }
     }
 }
