@@ -11,7 +11,7 @@
 |----------|------|-------|-----------|
 | CRITICAL | 0    | 5     | (all prior resolved) |
 | HIGH     | 0    | 90    | CLI (4), Engine (19), Protocol (7) |
-| MEDIUM   | 22   | 148   | CLI (12), Engine (28), Protocol (10) |
+| MEDIUM   | 0    | 170   | CLI (12), Engine (28), Protocol (10) |
 
 ---
 
@@ -138,26 +138,26 @@ All 255 findings from the prior audit (C-001..EC-003, H-001..EH-051, M-001..EM-0
 - [x] **M-035** `[code_quality]` `cmd_track.rs:151` — is_within_target() uses lexical starts_with; unsafe for non-canonical paths.
 - [x] **M-036** `[code_quality]` `cmd_export.rs:660` — default_output_path() no traversal check on relative paths.
 - [x] **M-037** `[input_validation]` `cmd_config.rs:209` — parse_editor_value doesn't handle quoted paths.
-- [ ] **M-038** `[code_quality]` `smart_defaults.rs:82` — File selection ambiguous with similar names.
+- [x] **M-038** `[code_quality]` `smart_defaults.rs:82` — File selection ambiguous with similar names.
 - [x] **M-039** `[error_handling]` `cmd_fingerprint.rs:189` — Error handling via string matching instead of types.
-- [ ] **M-040** `[error_handling]` `config/loading.rs:45` — Legacy config parse failure silently uses defaults.
-- [ ] **M-041** `[input_validation]` `main.rs:229` — Path traversal warning not enforced.
-- [ ] **M-042** `[code_quality]` `main.rs:131` — Auto-start logic fragile; adding commands requires manual update.
+- [x] **M-040** `[error_handling]` `config/loading.rs:45` — Legacy config parse failure silently uses defaults.
+- [x] **M-041** `[input_validation]` `main.rs:229` — Path traversal warning not enforced.
+- [x] **M-042** `[code_quality]` `main.rs:131` — Auto-start logic fragile; adding commands requires manual update.
 - [x] **M-043** `[error_handling]` `config/types.rs:353` — Config validation lacks reasonable bounds on timing intervals.
 
 ### Engine — IPC/FFI
 - [x] **M-044** `[security]` `ipc/messages.rs:36` — Path validation race between canonicalize and symlink check.
 - [x] **M-045** `[security]` `ipc/messages.rs:108` — Windows UNC path normalization incomplete.
-- [ ] **M-046** `[concurrency]` `ffi/sentinel_inject.rs:136` — Pre-witness buffer and session creation TOCTOU race.
+- [x] **M-046** `[concurrency]` `ffi/sentinel_inject.rs:136` — Pre-witness buffer and session creation TOCTOU race.
 - [x] **M-047** `[code_quality]` `ffi/ephemeral.rs:295` — Jitter interval filtering reports no rejection count to caller.
 - [x] **M-048** `[error_handling]` `ffi/beacon.rs:104` — Empty API key not validated before client creation.
-- [ ] **M-049** `[error_handling]` `ipc/async_client.rs:366` — Poisoned stream after partial send/recv; no auto-reconnect.
-- [ ] **M-050** `[error_handling]` `ipc/server.rs:62` — Stale socket test connection not properly closed.
+- [x] **M-049** `[error_handling]` `ipc/async_client.rs:366` — Poisoned stream after partial send/recv; no auto-reconnect.
+- [x] **M-050** `[error_handling]` `ipc/server.rs:62` — Stale socket test connection not properly closed.
 - [x] **M-051** `[security]` `ipc/messages.rs:344` — Pulse timestamp_ns not validated against wall clock.
-- [ ] **M-052** `[code_quality]` `ffi/ephemeral.rs:117` — Sessions DashMap has no LRU eviction; memory exhaustion DoS.
+- [x] **M-052** `[code_quality]` `ffi/ephemeral.rs:117` — Sessions DashMap has no LRU eviction; memory exhaustion DoS.
 - [x] **M-053** `[security]` `ipc/secure_channel.rs:40` — ChaCha20Poly1305 cipher key not zeroized on Drop.
-- [ ] **M-054** `[code_quality]` `ffi/sentinel_witnessing.rs:249` — Forensic score blending has overlapping conditions.
-- [ ] **M-055** `[error_handling]` `ffi/evidence_derivative.rs:82` — File size TOCTOU between validation and hashing.
+- [x] **M-054** `[code_quality]` `ffi/sentinel_witnessing.rs:249` — Forensic score blending has overlapping conditions.
+- [x] **M-055** `[error_handling]` `ffi/evidence_derivative.rs:82` — File size TOCTOU between validation and hashing.
 - [x] **M-056** `[error_handling]` `ffi/beacon.rs:57` — Beacon runtime OnceLock caches failure permanently.
 
 ### Engine — Sentinel/Platform
@@ -179,7 +179,7 @@ All 255 findings from the prior audit (C-001..EC-003, H-001..EH-051, M-001..EM-0
 
 ### Engine — Evidence/Checkpoint
 - [x] **M-067** `[code_quality]` `checkpoint/chain.rs:129` — expect() on checkpoint count conversion.
-- [ ] **M-068** `[code_quality]` `checkpoint/chain.rs:162` — expect() after push; logically safe but library anti-pattern.
+- [x] **M-068** `[code_quality]` `checkpoint/chain.rs:162` — expect() after push; logically safe but library anti-pattern.
 
 ### Engine — Forensics/Analysis/VDF
 - [x] **M-069** `[numeric]` `analysis/perplexity.rs:88` — Laplace smoothing uses 0.1 not 1.0; inconsistent with standard formulation.
@@ -191,7 +191,7 @@ All 255 findings from the prior audit (C-001..EC-003, H-001..EH-051, M-001..EM-0
 - [x] **M-075** `[code_quality]` `forensics/comparison.rs:79` — NaN weight redistribution implicit and undocumented.
 - [x] **M-076** `[numeric]` `forensics/analysis.rs:62` — Timestamp range not validated; i64::MAX corrupts time_span.
 - [x] **M-077** `[numeric]` `vdf/params.rs:61` — Calibration duration truncated; biased low on fast hardware.
-- [ ] **M-078** `[error_handling]` `vdf/proof.rs:110` — VDF duration_nanos no plausibility check.
+- [x] **M-078** `[error_handling]` `vdf/proof.rs:110` — VDF duration_nanos no plausibility check.
 - [x] **M-079** `[error_handling]` `vdf/swf_argon2.rs:510` — Undersample returns fewer indices than requested without error.
 - [x] **M-080** `[security]` `forensics/event_validation.rs:296` — Burst detection assumes monotonic timestamps; no validation.
 
@@ -204,9 +204,9 @@ All 255 findings from the prior audit (C-001..EC-003, H-001..EH-051, M-001..EM-0
 ### Engine — TPM/Jitter/MMR/Other
 - [x] **M-085** `[code_quality]` `tpm/windows/provider_signing.rs:151` — TPM return code not validated after sign/create.
 - [x] **M-086** `[security]` `tpm/secure_enclave/key_management.rs:161` — No null check after SecKeyCopyPublicKey.
-- [ ] **M-087** `[code_quality]` `jitter/session.rs:175` — Keystroke counter saturates at u64::MAX; sampling stops.
-- [ ] **M-088** `[security]` `fingerprint/storage.rs:332` — Legacy key migration path lacks traversal check.
-- [ ] **M-089** `[security]` `mmr/proof.rs:176` — RangeProof accepts extra siblings; sibling_idx validated late.
+- [x] **M-087** `[code_quality]` `jitter/session.rs:175` — Keystroke counter saturates at u64::MAX; sampling stops.
+- [x] **M-088** `[security]` `fingerprint/storage.rs:332` — Legacy key migration path lacks traversal check.
+- [x] **M-089** `[security]` `mmr/proof.rs:176` — RangeProof accepts extra siblings; sibling_idx validated late.
 - [x] **M-090** `[numeric]` `mmr/proof.rs:299` — 1u64 << (height+1) overflows if height >= 63.
 - [x] **M-091** `[numeric]` `mmr/mmr.rs:127` — get_leaf_index overflows at u64::MAX.
 - [x] **M-092** `[error_handling]` `cpop-jitter/src/evidence.rs:185` — TryFrom doesn't validate sequence uniqueness.
@@ -216,18 +216,18 @@ All 255 findings from the prior audit (C-001..EC-003, H-001..EH-051, M-001..EM-0
 - [x] **M-094** `[numeric]` `rfc/fixed_point.rs:134` — Microdollars from_dollars f64 to i64 overflow unchecked.
 - [x] **M-095** `[security]` `rfc/jitter_binding.rs:562` — Source weight sum may overflow u32 with corrupted data.
 - [x] **M-096** `[error_handling]` `forensics/engine.rs:122` — saturating_sub masks out-of-order timestamps.
-- [ ] **M-097** `[code_quality]` `rfc/time_evidence.rs:233` — Negative timestamp silently clamped to 0.
-- [ ] **M-098** `[code_quality]` `rfc/wire_types/components.rs:143` — CDDL limits not documented as spec constraints.
+- [x] **M-097** `[code_quality]` `rfc/time_evidence.rs:233` — Negative timestamp silently clamped to 0.
+- [x] **M-098** `[code_quality]` `rfc/wire_types/components.rs:143` — CDDL limits not documented as spec constraints.
 - [x] **M-099** `[error_handling]` `rfc/vdf.rs:64` — minimum_elapsed_ms division by zero if iterations_per_second=0.
 - [x] **M-100** `[code_quality]` `rfc/packet.rs:446` — VDF input/output length not validated against CDDL.
-- [ ] **M-101** `[code_quality]` `baseline.rs:198` — f32/f64 precision mismatch between baseline.rs and wire_types.
-- [ ] **M-102** `[security]` `rfc/wire_types/attestation.rs:314` — Deferred deserialization validation; nested CBOR pre-decode.
+- [x] **M-101** `[code_quality]` `baseline.rs:198` — f32/f64 precision mismatch between baseline.rs and wire_types.
+- [x] **M-102** `[security]` `rfc/wire_types/attestation.rs:314` — Deferred deserialization validation; nested CBOR pre-decode.
 - [x] **M-103** `[code_quality]` `codec/mod.rs:105` — ConfidenceTier validation fragile; manual bounds vs enum.
 
 ### Engine — Config/Report/Other
-- [ ] **M-104** `[security]` `config/types.rs:335` — App allowlist case sensitivity inconsistent across platforms.
-- [ ] **M-105** `[code_quality]` `collaboration.rs:243` — Out-of-bounds checkpoint ranges silently clamped.
-- [ ] **M-106** `[code_quality]` `continuation.rs:153` — Mixed byte ordering (big/little-endian) in VDF context.
+- [x] **M-104** `[security]` `config/types.rs:335` — App allowlist case sensitivity inconsistent across platforms.
+- [x] **M-105** `[code_quality]` `collaboration.rs:243` — Out-of-bounds checkpoint ranges silently clamped.
+- [x] **M-106** `[code_quality]` `continuation.rs:153` — Mixed byte ordering (big/little-endian) in VDF context.
 - [x] **M-107** `[security]` `report/html/sections.rs:10` — sanitize_css_color allows non-standard 5-char hex.
 
 ---
