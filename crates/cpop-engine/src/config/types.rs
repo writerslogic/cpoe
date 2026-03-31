@@ -332,9 +332,16 @@ impl SentinelConfig {
     }
 
     /// Check whether an application is allowed for tracking by bundle ID or name.
+    ///
+    /// Comparisons are case-insensitive to handle platform differences (macOS
+    /// bundle IDs are conventionally lowercase but not enforced; Windows app
+    /// names vary in casing).
     pub fn is_app_allowed(&self, bundle_id: &str, app_name: &str) -> bool {
+        let bid = bundle_id.to_lowercase();
+        let aname = app_name.to_lowercase();
         for blocked in &self.blocked_apps {
-            if blocked == bundle_id || blocked == app_name {
+            let b = blocked.to_lowercase();
+            if b == bid || b == aname {
                 return false;
             }
         }
@@ -342,7 +349,8 @@ impl SentinelConfig {
             return self.track_unknown_apps;
         }
         for allowed in &self.allowed_apps {
-            if allowed == bundle_id || allowed == app_name {
+            let a = allowed.to_lowercase();
+            if a == bid || a == aname {
                 return true;
             }
         }

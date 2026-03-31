@@ -247,19 +247,14 @@ impl CollaborationSection {
                             start, end
                         ));
                     }
-                    // AUD-188: Clamp indices beyond total_checkpoints with a warning
-                    let clamped_end = if *end >= total_checkpoints {
-                        log::warn!(
-                            "checkpoint range ({}, {}) exceeds total {}; clamping to {}",
-                            start,
-                            end,
-                            total_checkpoints,
-                            total_checkpoints.saturating_sub(1)
-                        );
-                        total_checkpoints.saturating_sub(1)
-                    } else {
-                        *end
-                    };
+                    // AUD-188: Reject out-of-bounds ranges
+                    if *end >= total_checkpoints {
+                        return Err(format!(
+                            "checkpoint range ({}, {}) exceeds total {}",
+                            start, end, total_checkpoints
+                        ));
+                    }
+                    let clamped_end = *end;
                     for i in *start..=clamped_end {
                         if (i as usize) < covered.len() {
                             covered[i as usize] = true;

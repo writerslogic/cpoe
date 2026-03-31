@@ -241,6 +241,26 @@ pub enum Commands {
     Man,
 }
 
+impl Commands {
+    /// Whether this command requires the sentinel daemon to be running.
+    ///
+    /// Commands that manage daemon lifecycle, query config, or produce shell
+    /// completions do not need auto-start.
+    pub fn needs_auto_start(&self) -> bool {
+        !matches!(
+            self,
+            Commands::Start { .. }
+                | Commands::Stop
+                | Commands::Status
+                | Commands::Init { .. }
+                | Commands::Calibrate
+                | Commands::Config { .. }
+                | Commands::Completions { .. }
+                | Commands::Man
+        )
+    }
+}
+
 #[derive(Subcommand)]
 pub enum PresenceAction {
     /// Start a presence verification session

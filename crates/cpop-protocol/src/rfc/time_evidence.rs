@@ -221,17 +221,32 @@ pub struct RoughtimeSample {
     pub nonce: [u8; 32],
 }
 
+/// Return the current time as milliseconds since Unix epoch, or an error if
+/// the system clock reports a pre-epoch (negative) timestamp.
+fn current_timestamp_ms() -> Result<u64, String> {
+    let ts = Utc::now().timestamp_millis();
+    if ts < 0 {
+        return Err(format!(
+            "system clock returned pre-epoch timestamp: {}ms",
+            ts
+        ));
+    }
+    Ok(ts as u64)
+}
+
 impl TimeEvidence {
     /// Create degraded-tier evidence with only a VDF proof hash.
-    pub fn new_degraded(vdf_proof_hash: [u8; 32]) -> Self {
-        Self {
+    ///
+    /// Returns an error if the system clock is before the Unix epoch.
+    pub fn new_degraded(vdf_proof_hash: [u8; 32]) -> Result<Self, String> {
+        Ok(Self {
             tier: TimeBindingTier::Degraded,
             tsa_responses: None,
             blockchain_anchors: None,
             roughtime_samples: None,
             vdf_proof_hash,
-            timestamp_ms: Utc::now().timestamp_millis().max(0) as u64,
-        }
+            timestamp_ms: current_timestamp_ms()?,
+        })
     }
 
     /// Build from components; tier is auto-calculated.
@@ -240,7 +255,7 @@ impl TimeEvidence {
         tsa_responses: Vec<TsaResponse>,
         blockchain_anchors: Vec<BlockchainAnchor>,
         roughtime_samples: Vec<RoughtimeSample>,
-    ) -> Self {
+    ) -> Result<Self, String> {
         let tier = TimeBindingTier::compute(
             blockchain_anchors.len(),
             tsa_responses.len(),
@@ -248,7 +263,7 @@ impl TimeEvidence {
             true, // VDF always present
         );
 
-        Self {
+        Ok(Self {
             tier,
             tsa_responses: if tsa_responses.is_empty() {
                 None
@@ -266,8 +281,8 @@ impl TimeEvidence {
                 Some(roughtime_samples)
             },
             vdf_proof_hash,
-            timestamp_ms: Utc::now().timestamp_millis().max(0) as u64,
-        }
+            timestamp_ms: current_timestamp_ms()?,
+        })
     }
 
     /// Append a TSA response and recalculate the tier.
@@ -504,7 +519,7 @@ mod tests {
 
     #[test]
     fn test_time_evidence_serialization() {
-        let evidence = TimeEvidence::new_degraded([1u8; 32]);
+        let evidence = TimeEvidence::new_degraded([1u8; 32]).unwrap();
 
         let json = serde_json::to_string_pretty(&evidence).unwrap();
         let decoded: TimeEvidence = serde_json::from_str(&json).unwrap();
@@ -515,7 +530,7 @@ mod tests {
 
     #[test]
     fn test_add_anchors_updates_tier() {
-        let mut evidence = TimeEvidence::new_degraded([0u8; 32]);
+        let mut evidence = TimeEvidence::new_degraded([0u8; 32]).unwrap();
         assert_eq!(evidence.tier, TimeBindingTier::Degraded);
 
         evidence.add_tsa_response(TsaResponse {
@@ -563,7 +578,7 @@ mod tests {
 
     #[test]
     fn test_validate_valid_evidence() {
-        let mut evidence = TimeEvidence::new_degraded([1u8; 32]);
+        let mut evidence = TimeEvidence::new_degraded([1u8; 32]).unwrap();
         assert!(evidence.is_valid());
 
         evidence.add_tsa_response(TsaResponse {
@@ -579,7 +594,7 @@ mod tests {
 
     #[test]
     fn test_validate_zero_vdf_hash() {
-        let evidence = TimeEvidence::new_degraded([0u8; 32]);
+        let evidence = TimeEvidence::new_degraded([0u8; 32]).unwrap();
         let errors = evidence.validate();
         assert!(errors
             .iter()
@@ -589,7 +604,7 @@ mod tests {
 
     #[test]
     fn test_validate_zero_timestamp() {
-        let mut evidence = TimeEvidence::new_degraded([1u8; 32]);
+        let mut evidence = TimeEvidence::new_degraded([1u8; 32]).unwrap();
         evidence.timestamp_ms = 0;
         let errors = evidence.validate();
         assert!(errors
@@ -600,7 +615,7 @@ mod tests {
 
     #[test]
     fn test_validate_tier_mismatch() {
-        let mut evidence = TimeEvidence::new_degraded([1u8; 32]);
+        let mut evidence = TimeEvidence::new_degraded([1u8; 32]).unwrap();
         evidence.tier = TimeBindingTier::Maximum;
         let errors = evidence.validate();
         assert!(errors.iter().any(|e| e.contains("tier mismatch")));
@@ -609,7 +624,7 @@ mod tests {
 
     #[test]
     fn test_validate_empty_tsa_token() {
-        let mut evidence = TimeEvidence::new_degraded([1u8; 32]);
+        let mut evidence = TimeEvidence::new_degraded([1u8; 32]).unwrap();
         evidence.tsa_responses = Some(vec![TsaResponse {
             tsa_url: "https://tsa.example.com".to_string(),
             tsa_name: "Example TSA".to_string(),
@@ -628,7 +643,7 @@ mod tests {
 
     #[test]
     fn test_validate_empty_blockchain_tx_id() {
-        let mut evidence = TimeEvidence::new_degraded([1u8; 32]);
+        let mut evidence = TimeEvidence::new_degraded([1u8; 32]).unwrap();
         evidence.blockchain_anchors = Some(vec![BlockchainAnchor {
             chain: "bitcoin".to_string(),
             block_height: 800000,
@@ -649,7 +664,7 @@ mod tests {
 
     #[test]
     fn test_validate_empty_roughtime_server() {
-        let mut evidence = TimeEvidence::new_degraded([1u8; 32]);
+        let mut evidence = TimeEvidence::new_degraded([1u8; 32]).unwrap();
         evidence.roughtime_samples = Some(vec![RoughtimeSample {
             server: "".to_string(),
             public_key: [0u8; 32],

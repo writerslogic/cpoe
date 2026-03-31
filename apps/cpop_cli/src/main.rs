@@ -128,17 +128,10 @@ async fn run() -> Result<()> {
 
 async fn maybe_auto_start(cli: &Cli, out: &OutputMode) -> Result<()> {
     let should_start = cli.path.is_some()
-        || !matches!(
-            &cli.command,
-            Some(Commands::Start { .. })
-                | Some(Commands::Stop)
-                | Some(Commands::Status)
-                | Some(Commands::Init { .. })
-                | Some(Commands::Calibrate)
-                | Some(Commands::Config { .. })
-                | Some(Commands::Completions { .. })
-                | None
-        );
+        || cli
+            .command
+            .as_ref()
+            .map_or(false, |cmd| cmd.needs_auto_start());
 
     if !should_start {
         return Ok(());
@@ -224,11 +217,12 @@ async fn interactive_menu(out: &OutputMode) -> Result<()> {
                 .with_prompt("Path to file or folder")
                 .interact_text()?;
             let resolved = util::normalize_path(&PathBuf::from(path))?;
-            // Warn if path escapes cwd and home directory (potential traversal).
+            // Reject paths outside cwd and home directory (potential traversal).
             if let (Ok(cwd), Some(home)) = (std::env::current_dir(), dirs::home_dir()) {
                 if !resolved.starts_with(&cwd) && !resolved.starts_with(&home) {
-                    eprintln!(
-                        "Warning: path '{}' is outside both the current directory and home directory.",
+                    anyhow::bail!(
+                        "path '{}' is outside both the current directory and home directory; \
+                         use an absolute path within your home directory instead",
                         resolved.display()
                     );
                 }

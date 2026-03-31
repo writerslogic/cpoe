@@ -140,6 +140,8 @@ pub struct EditDelta {
 }
 
 /// Max edit positions per delta.
+/// Per CDDL `edit-delta`: `positions` is `[* [uint, int]]` with practical
+/// upper bound to prevent resource exhaustion during validation.
 const MAX_EDIT_POSITIONS: usize = 100_000;
 
 impl EditDelta {
@@ -278,18 +280,25 @@ pub struct ProcessProof {
 }
 
 /// Max sampled Merkle proofs per process-proof.
+/// Per CDDL `process-proof`: `sampled-proofs` is `[* merkle-proof]`.
 const MAX_SAMPLED_PROOFS: usize = 1000;
 /// Max Merkle sibling path depth (log2 of max tree).
+/// Per CDDL `merkle-proof`: `sibling-path` is `[* bstr]`; 64 covers 2^64 leaves.
 const MAX_MERKLE_DEPTH: usize = 64;
 /// Max hash digest length in bytes.
+/// Per CDDL: digest fields are `bstr .size (32..64)` (SHA-256 through SHA-512).
 const MAX_DIGEST_LEN: usize = 64;
 /// Max jitter intervals per binding.
+/// Per CDDL `jitter-binding`: `intervals` is `[* uint]` with practical cap.
 pub(crate) const MAX_JITTER_INTERVALS: usize = 100_000;
 /// Max thermal samples per physical-state.
+/// Per CDDL `physical-state`: `thermal` is `[* float32]` with practical cap.
 const MAX_THERMAL_SAMPLES: usize = 10_000;
 /// Max thermal trajectory entries per physical-liveness.
+/// Per CDDL `physical-liveness`: `thermal-trajectory` is `[* float32]` with practical cap.
 const MAX_THERMAL_TRAJECTORY: usize = 10_000;
 /// Max feature flags per profile-declaration.
+/// Per CDDL `profile-declaration`: `feature-flags` is `[* uint]` with practical cap.
 const MAX_FEATURE_FLAGS: usize = 100;
 /// Expected SHA-256 digest size in bytes.
 const SHA256_DIGEST_LEN: usize = 32;

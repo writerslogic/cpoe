@@ -28,32 +28,36 @@ impl ConfidenceTier {
 }
 
 /// Welford's algorithm for streaming metrics.
+///
+/// Note: this baseline-specific copy uses `f64` to match the wire-format
+/// `streaming-stats` definition in `rfc::wire_types::components::StreamingStats`.
+/// Both use CBOR float64 on the wire per the CDDL schema (`float64`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StreamingStats {
     #[serde(rename = "1")]
     pub count: u64,
     #[serde(rename = "2")]
-    pub mean: f32,
+    pub mean: f64,
     #[serde(rename = "3")]
-    pub m2: f32,
+    pub m2: f64,
     #[serde(rename = "4")]
-    pub min: f32,
+    pub min: f64,
     #[serde(rename = "5")]
-    pub max: f32,
+    pub max: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionBehavioralSummary {
     /// 9-bin IKI histogram (edges: 0, 50, 100, 150, 200, 300, 500, 1000, 2000ms)
     #[serde(rename = "1")]
-    pub iki_histogram: [f32; 9],
+    pub iki_histogram: [f64; 9],
     #[serde(rename = "2")]
-    pub iki_cv: f32,
+    pub iki_cv: f64,
     /// Long-range dependency exponent
     #[serde(rename = "3")]
-    pub hurst: f32,
+    pub hurst: f64,
     #[serde(rename = "4")]
-    pub pause_frequency: f32,
+    pub pause_frequency: f64,
     #[serde(rename = "5")]
     pub duration_secs: u64,
     #[serde(rename = "6")]
@@ -75,7 +79,7 @@ pub struct BaselineDigest {
     #[serde(rename = "6")]
     pub hurst_stats: StreamingStats,
     #[serde(rename = "7")]
-    pub aggregate_iki_histogram: [f32; 9],
+    pub aggregate_iki_histogram: [f64; 9],
     #[serde(rename = "8")]
     pub pause_stats: StreamingStats,
     /// MMR root over previous session evidence hashes
@@ -108,7 +112,7 @@ pub struct BaselineVerification {
 }
 
 /// Neutral Hurst exponent (random walk, no long-range dependence).
-const HURST_NEUTRAL: f32 = 0.5;
+const HURST_NEUTRAL: f64 = 0.5;
 
 impl SessionBehavioralSummary {
     /// Validate that all fields contain sensible values.

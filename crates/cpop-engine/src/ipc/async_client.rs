@@ -79,6 +79,10 @@ pub enum AsyncIpcClientError {
 pub struct AsyncIpcClient {
     stream: Option<PlatformStream>,
     secure_session: Option<SecureSession>,
+    /// Path used for the connection, retained for auto-reconnect.
+    socket_path: Option<PathBuf>,
+    /// Set on I/O errors; triggers reconnect on next request.
+    poisoned: bool,
 }
 
 impl AsyncIpcClient {
@@ -87,6 +91,8 @@ impl AsyncIpcClient {
         Self {
             stream: None,
             secure_session: None,
+            socket_path: None,
+            poisoned: false,
         }
     }
 
@@ -95,13 +101,16 @@ impl AsyncIpcClient {
     pub async fn connect<P: AsRef<std::path::Path>>(
         path: P,
     ) -> std::result::Result<Self, AsyncIpcClientError> {
-        let stream = tokio::net::UnixStream::connect(path.as_ref())
+        let p = path.as_ref().to_path_buf();
+        let stream = tokio::net::UnixStream::connect(&p)
             .await
             .map_err(AsyncIpcClientError::ConnectionFailed)?;
 
         let mut client = Self {
             stream: Some(stream),
             secure_session: None,
+            socket_path: Some(p),
+            poisoned: false,
         };
 
         client.establish_secure_session().await?;
@@ -114,13 +123,16 @@ impl AsyncIpcClient {
     pub async fn connect<P: AsRef<std::path::Path>>(
         path: P,
     ) -> std::result::Result<Self, AsyncIpcClientError> {
+        let p = path.as_ref().to_path_buf();
         let stream = tokio::net::windows::named_pipe::ClientOptions::new()
-            .open(path.as_ref())
+            .open(&p)
             .map_err(AsyncIpcClientError::ConnectionFailed)?;
 
         let mut client = Self {
             stream: Some(stream),
             secure_session: None,
+            socket_path: Some(p),
+            poisoned: false,
         };
 
         client.establish_secure_session().await?;
@@ -358,17 +370,67 @@ impl AsyncIpcClient {
         Ok(msg)
     }
 
-    /// Send a message and wait for a response (request-response pattern)
+    /// Send a message and wait for a response (request-response pattern).
+    ///
+    /// If the connection was previously poisoned by an I/O error, attempts a
+    /// single reconnect before sending.
     pub async fn request(
         &mut self,
         msg: &IpcMessage,
     ) -> std::result::Result<IpcMessage, AsyncIpcClientError> {
-        self.send_message(msg).await?;
-        self.recv_message().await
+        if self.poisoned {
+            self.try_reconnect().await?;
+        }
+        match self.send_message(msg).await {
+            Ok(()) => {}
+            Err(e @ AsyncIpcClientError::SendFailed(_)) => {
+                self.poisoned = true;
+                return Err(e);
+            }
+            Err(e) => return Err(e),
+        }
+        match self.recv_message().await {
+            Ok(resp) => Ok(resp),
+            Err(e @ AsyncIpcClientError::ReceiveFailed(_))
+            | Err(e @ AsyncIpcClientError::ConnectionClosed) => {
+                self.poisoned = true;
+                Err(e)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Attempt to re-establish the connection using the original socket path.
+    async fn try_reconnect(&mut self) -> std::result::Result<(), AsyncIpcClientError> {
+        let path = self
+            .socket_path
+            .clone()
+            .ok_or(AsyncIpcClientError::NotConnected)?;
+        self.stream = None;
+        self.secure_session = None;
+        self.poisoned = false;
+
+        #[cfg(unix)]
+        {
+            let stream = tokio::net::UnixStream::connect(&path)
+                .await
+                .map_err(AsyncIpcClientError::ConnectionFailed)?;
+            self.stream = Some(stream);
+        }
+        #[cfg(target_os = "windows")]
+        {
+            let stream = tokio::net::windows::named_pipe::ClientOptions::new()
+                .open(&path)
+                .map_err(AsyncIpcClientError::ConnectionFailed)?;
+            self.stream = Some(stream);
+        }
+
+        self.establish_secure_session().await?;
+        Ok(())
     }
 
     pub fn is_connected(&self) -> bool {
-        self.stream.is_some()
+        self.stream.is_some() && !self.poisoned
     }
 
     /// Disconnect from the daemon

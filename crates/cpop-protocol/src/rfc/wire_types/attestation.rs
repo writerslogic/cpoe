@@ -214,6 +214,11 @@ pub struct EffortAttribution {
 ///
 /// Wrapped with CBOR tag 1129791826 (CWAR) for transmission.
 ///
+/// **Validation**: Raw serde deserialization (e.g. `ciborium::from_reader`)
+/// does NOT enforce size/version constraints. Always use [`Self::decode_cbor`]
+/// or [`Self::decode_cbor_untagged`] which call [`Self::validate`] after decode,
+/// or call `validate()` manually after deserializing through other paths.
+///
 /// ```cddl
 /// attestation-result = {
 ///     1 => uint,                    ; version
