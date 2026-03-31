@@ -969,8 +969,27 @@ impl Sentinel {
     }
 
     /// Return `true` if the sentinel event loop is active.
+    /// Checks both the running flag AND whether the event loop task is alive.
+    /// If the task panicked or exited, clears the running flag so callers
+    /// know to restart.
     pub fn is_running(&self) -> bool {
-        self.running.load(Ordering::SeqCst)
+        if !self.running.load(Ordering::SeqCst) {
+            return false;
+        }
+        // Check if the event loop task is still alive
+        let task_alive = {
+            let guard = self.event_loop_handle.lock_recover();
+            match guard.as_ref() {
+                Some(handle) => !handle.is_finished(),
+                None => false,
+            }
+        };
+        if !task_alive {
+            log::error!("Sentinel event loop task exited unexpectedly; clearing running flag");
+            self.running.store(false, Ordering::SeqCst);
+            return false;
+        }
+        true
     }
 
     /// Whether keystroke capture is active (false = degraded/focus-only mode).
@@ -979,46 +998,15 @@ impl Sentinel {
     }
 
     /// Restart keystroke capture after a tap failure (e.g. after macOS sleep/wake).
-    /// Returns true if capture was successfully restarted.
+    /// This is a no-op convenience method; callers should use the FFI stop/start
+    /// cycle instead, which fully restarts the event loop and bridge threads.
+    /// Returns true if capture appears active after the check.
     pub fn restart_keystroke_capture(&self) -> bool {
-        // Stop existing capture if any
-        if let Some(mut cap) = self.keystroke_capture.lock_recover().take() {
-            let _ = cap.stop();
-        }
-        self.keystroke_capture_active.store(false, Ordering::SeqCst);
-
-        #[cfg(target_os = "macos")]
-        let result = crate::platform::macos::MacOSKeystrokeCapture::new();
-        #[cfg(target_os = "windows")]
-        let result = crate::platform::windows::WindowsKeystrokeCapture::new();
-        #[cfg(target_os = "linux")]
-        let result = crate::platform::linux::LinuxKeystrokeCapture::new();
-        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
-        let result: anyhow::Result<Box<dyn KeystrokeCapture>> =
-            Err(anyhow::anyhow!("Keystroke capture not supported"));
-
-        match result {
-            Ok(mut capture) => match capture.start() {
-                Ok(_rx) => {
-                    // The bridge thread from the original start() is still running
-                    // and will pick up events from the new capture via the stored
-                    // sender. We only need to update the stored capture handle.
-                    log::info!("Keystroke capture restarted successfully");
-                    self.keystroke_capture_active.store(true, Ordering::SeqCst);
-                    *self.keystroke_capture.lock_recover() =
-                        Some(Box::new(capture) as Box<dyn KeystrokeCapture>);
-                    true
-                }
-                Err(e) => {
-                    log::error!("Failed to restart keystroke capture: {e}");
-                    false
-                }
-            },
-            Err(e) => {
-                log::error!("Failed to create keystroke capture: {e}");
-                false
-            }
-        }
+        // A stop+start cycle is the only reliable way to restart capture
+        // because the bridge thread holding the old receiver cannot be
+        // reconnected to a new capture. The FFI layer handles this via
+        // ffi_sentinel_stop() + ffi_sentinel_start().
+        self.is_keystroke_capture_active()
     }
 
     /// Record a paste event from the host app.
