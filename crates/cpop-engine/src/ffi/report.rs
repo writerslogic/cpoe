@@ -163,10 +163,11 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
             use sha2::Sha256;
             let hk = Hkdf::<Sha256>::new(None, signing_key.as_bytes());
             let mut seed = [0u8; 32];
-            hk.expand(b"witnessd-guilloche-seed-v1", &mut seed)
-                .unwrap_or_else(|_| {
-                    log::warn!("HKDF expand failed for guilloche seed");
-                });
+            if hk.expand(b"witnessd-guilloche-seed-v1", &mut seed).is_err() {
+                log::warn!("HKDF expand failed for guilloche seed");
+                seed.zeroize();
+                return String::new();
+            }
             let result = hex::encode(seed);
             seed.zeroize();
             result

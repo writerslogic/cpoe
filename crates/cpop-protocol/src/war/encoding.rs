@@ -136,6 +136,9 @@ impl Block {
             .map(|pos| start + pos)
             .ok_or("missing seal footer")?;
 
+        if header_end + 1 > seal_start {
+            return Err("malformed WAR block: no separator between headers and seal".into());
+        }
         let statement_lines: Vec<&str> = lines[header_end + 1..seal_start]
             .iter()
             .filter(|l| !l.is_empty())

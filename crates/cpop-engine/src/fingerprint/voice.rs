@@ -240,7 +240,10 @@ fn hash_with_seed(s: &str, seed: u64) -> u64 {
     hasher.update(s.as_bytes());
     hasher.update(seed.to_le_bytes());
     let result = hasher.finalize();
-    u64::from_le_bytes(result[0..8].try_into().expect("8-byte slice"))
+    // SHA-256 always produces 32 bytes; taking the first 8 is infallible.
+    let mut buf = [0u8; 8];
+    buf.copy_from_slice(&result[..8]);
+    u64::from_le_bytes(buf)
 }
 
 /// Correction/backspace behavioral signature.
