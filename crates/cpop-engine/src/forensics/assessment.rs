@@ -357,6 +357,18 @@ pub fn compute_assessment_score(
         score -= CROSS_HAND_PENALTY;
     }
 
+    // Penalty: low burst speed CV (constant speed within bursts = transcription)
+    if cadence.burst_speed_cv > 0.0 && cadence.burst_speed_cv < 0.15 && cadence.burst_count >= 3 {
+        score -= 0.10;
+    }
+
+    // Penalty: zero-variance windows (stretches with no timing variation)
+    if cadence.zero_variance_windows > 3 {
+        score -= 0.15;
+    } else if cadence.zero_variance_windows > 0 {
+        score -= 0.05;
+    }
+
     score.clamp(0.0, 1.0)
 }
 
@@ -380,6 +392,14 @@ pub fn compute_cadence_score(cadence: &CadenceMetrics) -> f64 {
 
     if cadence.percentiles[4] == 0.0 {
         return INSUFFICIENT_DATA_SCORE;
+    }
+
+    // Transcription signals
+    if cadence.burst_speed_cv > 0.0 && cadence.burst_speed_cv < 0.15 && cadence.burst_count >= 3 {
+        score -= 0.10;
+    }
+    if cadence.zero_variance_windows > 3 {
+        score -= 0.15;
     }
 
     score.clamp(0.0, 1.0)

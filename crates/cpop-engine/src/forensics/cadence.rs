@@ -101,6 +101,8 @@ pub fn analyze_cadence(samples: &[SimpleJitterSample]) -> CadenceMetrics {
     metrics.iki_autocorrelation = compute_iki_autocorrelation(&ikis);
     metrics.correction_ratio = compute_correction_ratio(samples);
     metrics.pause_depth_distribution = compute_pause_depth_distribution(&ikis);
+    metrics.burst_speed_cv = compute_burst_speed_cv(&bursts, &ikis);
+    metrics.zero_variance_windows = count_zero_variance_windows(&ikis);
 
     metrics
 }
@@ -313,4 +315,60 @@ fn detect_bursts_and_pauses(ikis: &[f64]) -> (Vec<TypingBurst>, Vec<f64>) {
 /// Return `true` if cadence is too rhythmic for original composition (likely retyped).
 pub fn is_retyped_content(samples: &[SimpleJitterSample]) -> bool {
     samples.len() >= MIN_RETYPED_SAMPLES && analyze_cadence(samples).is_robotic
+}
+
+/// Average CV of typing speed within individual bursts.
+/// Cognitive writing shows natural speed variation within each burst (CV >0.25).
+/// Transcriptive typing maintains constant speed within bursts (CV <0.15).
+fn compute_burst_speed_cv(bursts: &[TypingBurst], ikis: &[f64]) -> f64 {
+    let valid_bursts: Vec<f64> = bursts
+        .iter()
+        .filter(|b| b.length >= MIN_BURST_LENGTH)
+        .filter_map(|b| {
+            let end = (b.start_idx + b.length).min(ikis.len());
+            let burst_ikis = &ikis[b.start_idx..end];
+            if burst_ikis.len() < 3 {
+                return None;
+            }
+            let mean = burst_ikis.iter().sum::<f64>() / burst_ikis.len() as f64;
+            if mean <= 0.0 {
+                return None;
+            }
+            let variance = burst_ikis.iter().map(|x| (x - mean).powi(2)).sum::<f64>()
+                / burst_ikis.len() as f64;
+            Some(variance.sqrt() / mean)
+        })
+        .collect();
+
+    if valid_bursts.is_empty() {
+        return 0.0;
+    }
+    valid_bursts.iter().sum::<f64>() / valid_bursts.len() as f64
+}
+
+/// Count 500ms sliding windows where IKI variance is near zero (<5ms std dev).
+/// Any window with effectively zero timing variation is suspicious; >3 windows
+/// strongly suggests transcription or automated input.
+fn count_zero_variance_windows(ikis: &[f64]) -> usize {
+    /// Std dev threshold below which a window is considered zero-variance (5ms).
+    const ZERO_VAR_THRESHOLD_NS: f64 = 5_000_000.0;
+    /// Approximate number of IKIs in a 500ms window at typical typing speed.
+    const WINDOW_SIZE: usize = 5;
+
+    if ikis.len() < WINDOW_SIZE {
+        return 0;
+    }
+
+    let mut count = 0;
+    for window in ikis.windows(WINDOW_SIZE) {
+        let mean = window.iter().sum::<f64>() / WINDOW_SIZE as f64;
+        if mean <= 0.0 {
+            continue;
+        }
+        let variance = window.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / WINDOW_SIZE as f64;
+        if variance.sqrt() < ZERO_VAR_THRESHOLD_NS {
+            count += 1;
+        }
+    }
+    count
 }

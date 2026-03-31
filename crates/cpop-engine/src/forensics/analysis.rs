@@ -496,6 +496,7 @@ pub fn analyze_focus_patterns(
 fn detect_reading_pattern(switches: &[FocusSwitchRecord]) -> bool {
     // Group completed short switches by target bundle ID.
     let mut short_counts: HashMap<&str, usize> = HashMap::new();
+    let mut short_durations: Vec<f64> = Vec::new();
     for sw in switches {
         let away_sec = sw
             .regained_at
@@ -507,10 +508,33 @@ fn detect_reading_pattern(switches: &[FocusSwitchRecord]) -> bool {
             *short_counts
                 .entry(sw.target_bundle_id.as_str())
                 .or_insert(0) += 1;
+            short_durations.push(away_sec);
         }
     }
 
-    short_counts
+    let frequent = short_counts
         .values()
-        .any(|&count| count >= READING_PATTERN_MIN_REPEATS)
+        .any(|&count| count >= READING_PATTERN_MIN_REPEATS);
+
+    // Also detect regular-interval switching: if the CV of short switch
+    // durations is very low, the pattern is mechanically regular (stronger
+    // transcription signal than just frequency).
+    let regular_interval = if short_durations.len() >= READING_PATTERN_MIN_REPEATS {
+        let mean = short_durations.iter().sum::<f64>() / short_durations.len() as f64;
+        if mean > 0.0 {
+            let var = short_durations
+                .iter()
+                .map(|d| (d - mean).powi(2))
+                .sum::<f64>()
+                / short_durations.len() as f64;
+            let cv = var.sqrt() / mean;
+            cv < 0.3 // Very regular intervals
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    frequent || regular_interval
 }

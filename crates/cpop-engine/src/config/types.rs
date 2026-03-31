@@ -279,7 +279,7 @@ impl Default for SentinelConfig {
             wal_dir: writersproof_dir.join("sentinel").join("wal"),
             watch_paths: Vec::new(),
             recursive_watch: true,
-            debounce_duration_ms: 500,
+            debounce_duration_ms: 200,
             idle_timeout_secs: 1800,
             allowed_apps: vec![
                 // macOS

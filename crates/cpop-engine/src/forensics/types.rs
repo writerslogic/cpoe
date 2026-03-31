@@ -127,6 +127,12 @@ pub struct CadenceMetrics {
     pub correction_ratio: f64,
     /// Distribution of pause durations: [sentence_1_3s, paragraph_3_10s, deep_thought_10s_plus].
     pub pause_depth_distribution: [f64; 3],
+    /// CV of typing speeds within individual bursts. Transcriptive <0.15;
+    /// cognitive >0.25 (natural speed variation within each burst).
+    pub burst_speed_cv: f64,
+    /// Count of 500ms windows with near-zero IKI variance (sigma < 5ms).
+    /// Any non-zero count is suspicious; >3 strongly indicates transcription.
+    pub zero_variance_windows: usize,
 }
 
 /// Focus pattern metrics for cognitive/transcriptive analysis.

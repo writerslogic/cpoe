@@ -574,6 +574,9 @@ impl Sentinel {
             let mut last_keystroke_ts_ns: i64 = 0;
             let mut last_mouse_ts_ns: i64 = 0;
             let mut pre_witness_buffers: HashMap<String, PreWitnessBuffer> = HashMap::new();
+            // Keystrokes that arrive when current_focus is None (during focus
+            // transitions). Drained into the next focused session.
+            let mut unfocused_keystrokes: Vec<crate::jitter::SimpleJitterSample> = Vec::new();
             // Process the first focus event immediately (no debounce) so that
             // current_focus is set before any keystrokes arrive.  This is
             // essential after a restart where the document is already focused.
@@ -732,13 +735,20 @@ impl Sentinel {
                                     }
                                 }
 
-                                // Evict stale buffers older than 60 seconds
+                                // Evict stale buffers older than 5 minutes
                                 pre_witness_buffers.retain(|_, buf| {
                                     buf.created_at
                                         .elapsed()
-                                        .map(|d| d < Duration::from_secs(60))
+                                        .map(|d| d < Duration::from_secs(300))
                                         .unwrap_or(true)
                                 });
+                            }
+                        } else {
+                            // No focused document (between FocusLost and FocusGained).
+                            // Buffer the sample so it can be attributed when focus
+                            // is next gained, instead of silently dropping it.
+                            if unfocused_keystrokes.len() < 200 {
+                                unfocused_keystrokes.push(sample);
                             }
                         }
 
@@ -777,6 +787,7 @@ impl Sentinel {
                                 &wal_dir,
                                 &session_events_tx,
                             );
+                            unfocused_keystrokes.clear();
                         } else {
                             pending_focus = Some(event);
                             debounce_timer = Some(tokio::time::Instant::now() + debounce_duration);
@@ -913,6 +924,31 @@ impl Sentinel {
                             );
                         }
                         debounce_timer = None;
+
+                        // Drain keystrokes that arrived while focus was
+                        // transitioning into the now-focused session.
+                        if !unfocused_keystrokes.is_empty() {
+                            let focused = current_focus.read_recover().clone();
+                            if let Some(ref path) = focused {
+                                let mut map = sessions.write_recover();
+                                if let Some(session) = map.get_mut(path.as_str()) {
+                                    let count = unfocused_keystrokes.len() as u64;
+                                    session.keystroke_count += count;
+                                    for s in &unfocused_keystrokes {
+                                        if session.jitter_samples.len()
+                                            < MAX_DOCUMENT_JITTER_SAMPLES
+                                        {
+                                            session.jitter_samples.push(s.clone());
+                                        }
+                                    }
+                                    log::debug!(
+                                        "Attributed {} buffered keystrokes to {:?}",
+                                        count, path
+                                    );
+                                }
+                            }
+                            unfocused_keystrokes.clear();
+                        }
                     }
                 }
 
