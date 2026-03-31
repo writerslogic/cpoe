@@ -169,41 +169,36 @@ impl SecureSession {
                 .map_err(|_| anyhow!("Invalid sequence number bytes"))?,
         );
 
-        // Verify the wire sequence against the expected value using ct_eq before
-        // advancing the counter. This prevents a tampered packet from permanently
-        // consuming a sequence slot.
-        let expected_seq = self.rx_sequence.load(Ordering::SeqCst);
-        if seq
-            .to_le_bytes()
-            .ct_eq(&expected_seq.to_le_bytes())
-            .unwrap_u8()
-            != 1
-        {
-            return Err(anyhow!(
-                "Sequence validation failed (possible replay attack)"
-            ));
-        }
+        // Atomically validate and advance the sequence number in a single CAS
+        // loop. This prevents a TOCTOU race where two concurrent decrypts both
+        // pass the validation check with the same expected_seq.
+        let expected_seq = loop {
+            let current = self.rx_sequence.load(Ordering::SeqCst);
+            if seq.to_le_bytes().ct_eq(&current.to_le_bytes()).unwrap_u8() != 1 {
+                return Err(anyhow!(
+                    "Sequence validation failed (possible replay attack)"
+                ));
+            }
+            match self.rx_sequence.compare_exchange(
+                current,
+                current + 2,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(v) => break v,
+                Err(_) => continue, // another thread advanced; re-validate
+            }
+        };
 
-        // Reconstruct nonce from validated sequence — never trust the wire nonce.
+        // Reconstruct nonce from validated sequence, never trust the wire nonce.
         // The encrypt side derives nonce = construct_nonce(prefix, seq), so we must
         // reconstruct it identically. Using the wire nonce would allow an attacker
         // to supply a previously-used nonce, breaking AES-GCM's nonce-uniqueness.
-        let expected_nonce = construct_nonce(&self.rx_nonce_prefix, seq);
+        let expected_nonce = construct_nonce(&self.rx_nonce_prefix, expected_seq);
         let wire_nonce = &data[8..20];
         if expected_nonce.ct_eq(wire_nonce).unwrap_u8() != 1 {
             return Err(anyhow!("Nonce mismatch (possible tampering)"));
         }
-
-        // Both sequence and nonce are valid; now atomically advance the counter.
-        // CAS wins only if no concurrent decrypt raced past us.
-        self.rx_sequence
-            .compare_exchange(
-                expected_seq,
-                expected_seq + 2,
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-            )
-            .map_err(|_| anyhow!("rx_sequence CAS failed — concurrent decrypt detected"))?;
         let nonce = AesNonce::from_slice(&expected_nonce);
         let ciphertext = &data[20..];
 

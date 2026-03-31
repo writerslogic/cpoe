@@ -215,15 +215,17 @@ impl Provider for WindowsTpmProvider {
 
     fn bind(&self, data: &[u8]) -> Result<Binding, TpmError> {
         let ctx = self.context.lock_recover();
-        let counter = {
+        // Hold the state lock across counter increment and payload construction
+        // so the counter value is atomically associated with this specific binding.
+        let (counter, timestamp, device_id, attested_hash) = {
             let mut state = self.state.lock_recover();
             state.counter += 1;
-            state.counter
+            let counter = state.counter;
+            let timestamp = Utc::now();
+            let device_id = ctx.device_id().to_string();
+            let attested_hash = Sha256::digest(data).to_vec();
+            (counter, timestamp, device_id, attested_hash)
         };
-
-        let timestamp = Utc::now();
-        let device_id = ctx.device_id().to_string();
-        let attested_hash = Sha256::digest(data).to_vec();
 
         let mut payload = Vec::new();
         payload.extend_from_slice(&attested_hash);

@@ -166,12 +166,26 @@ impl KeystrokeMonitor {
     ///
     /// Returns an error if a monitor is already active (only one instance allowed).
     pub fn start(session: Arc<Mutex<SimpleJitterSession>>) -> Result<Self> {
-        if MONITOR_ACTIVE.swap(true, Ordering::SeqCst) {
+        // Atomically claim the monitor slot. compare_exchange ensures only one
+        // thread can transition false -> true; losers see Err and bail out.
+        if MONITOR_ACTIVE
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
             return Err(anyhow!("KeystrokeMonitor already active"));
         }
         *GLOBAL_SESSION.lock_recover() = Some(Arc::clone(&session));
         unsafe {
-            let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(low_level_keyboard_proc), None, 0)?;
+            let hook =
+                match SetWindowsHookExW(WH_KEYBOARD_LL, Some(low_level_keyboard_proc), None, 0) {
+                    Ok(h) => h,
+                    Err(e) => {
+                        // Hook setup failed; release the monitor slot so a retry can succeed.
+                        *GLOBAL_SESSION.lock_recover() = None;
+                        MONITOR_ACTIVE.store(false, Ordering::SeqCst);
+                        return Err(e.into());
+                    }
+                };
             let tid = Arc::new(AtomicU32::new(0));
             let tid_clone = Arc::clone(&tid);
             let handle = std::thread::spawn(move || {
