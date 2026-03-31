@@ -17,6 +17,40 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::time::interval;
 use zeroize::Zeroize;
 
+/// Load cumulative keystroke/focus stats from the store into a session.
+///
+/// Called when a session is created via auto-witness or focus-gained so that
+/// `total_keystrokes()` returns the lifetime count, not just the current
+/// session's count.
+fn load_cumulative_stats(
+    session: &mut DocumentSession,
+    path: &str,
+    signing_key: &Arc<RwLock<Option<SigningKey>>>,
+    writersproof_dir: &std::path::Path,
+) {
+    let guard = signing_key.read_recover();
+    let sk = match guard.as_ref() {
+        Some(sk) => sk,
+        None => return,
+    };
+    let db_path = writersproof_dir.join("events.db");
+    let store = match crate::store::open_store_with_signing_key(sk, &db_path) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    if let Ok(Some(stats)) = store.load_document_stats(path) {
+        session.cumulative_keystrokes_base = u64::try_from(stats.total_keystrokes).unwrap_or(0);
+        session.cumulative_focus_ms_base = stats.total_focus_ms;
+        session.session_number = u32::try_from(stats.session_count).unwrap_or(0);
+        if session.first_tracked_at.is_none() {
+            session.first_tracked_at = Some(
+                std::time::UNIX_EPOCH
+                    + Duration::from_secs(u64::try_from(stats.first_tracked_at).unwrap_or(0)),
+            );
+        }
+    }
+}
+
 /// Hash a file, open the secure store, and write a checkpoint event.
 ///
 /// Returns `true` if the checkpoint was committed, `false` on any failure.
@@ -653,6 +687,12 @@ impl Sentinel {
                                                     );
                                                     session.initial_hash = Some(hash.clone());
                                                     session.current_hash = Some(hash);
+                                                    load_cumulative_stats(
+                                                        &mut session,
+                                                        path,
+                                                        &signing_key,
+                                                        &writersproof_dir,
+                                                    );
                                                     session.keystroke_count = buffered_count;
                                                     session.focus_gained();
                                                     let _ = session_events_tx.send(SessionEvent {

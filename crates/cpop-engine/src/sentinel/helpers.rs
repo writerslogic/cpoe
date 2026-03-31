@@ -232,6 +232,21 @@ pub fn focus_document_sync(
                 session.current_hash = Some(hash.clone());
             }
 
+            // Load cumulative stats so total_keystrokes() returns lifetime count.
+            let db_path = wal_dir.parent().unwrap_or(wal_dir).join("events.db");
+            let guard = signing_key.read_recover();
+            if let Some(ref sk) = *guard {
+                if let Ok(store) = crate::store::open_store_with_signing_key(sk, &db_path) {
+                    if let Ok(Some(stats)) = store.load_document_stats(path) {
+                        session.cumulative_keystrokes_base =
+                            u64::try_from(stats.total_keystrokes).unwrap_or(0);
+                        session.cumulative_focus_ms_base = stats.total_focus_ms;
+                        session.session_number = u32::try_from(stats.session_count).unwrap_or(0);
+                    }
+                }
+            }
+            drop(guard);
+
             session
         });
 
