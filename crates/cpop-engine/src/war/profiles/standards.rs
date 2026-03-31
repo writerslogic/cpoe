@@ -343,7 +343,15 @@ pub fn standards_compliance_report(
 
     StandardsComplianceReport {
         rats,
-        did_method: author_did.map(|d| d.splitn(3, ':').take(2).collect::<Vec<_>>().join(":")),
+        // Extract DID method: "did:key:z6Mk..." -> "did:key"
+        did_method: author_did.map(|d| {
+            let parts: Vec<&str> = d.splitn(3, ':').collect();
+            if parts.len() >= 2 {
+                format!("{}:{}", parts[0], parts[1])
+            } else {
+                d.to_string()
+            }
+        }),
         ai_disclosure,
         iptc_digital_source_type: ai_disclosure.to_iptc_digital_source_type().to_string(),
         c2pa_assertion_label: super::c2pa::ASSERTION_LABEL.to_string(),
