@@ -113,7 +113,11 @@ pub fn compute_hurst_rs(data: &[f64]) -> Result<HurstAnalysis, String> {
 
     // NaN/Inf from degenerate inputs would bypass clamp and propagate silently
     if !slope.is_finite() || !r_squared.is_finite() || !std_error.is_finite() {
-        return Err("Degenerate regression output (NaN/Inf)".to_string());
+        return Err(
+            "R/S regression produced NaN/Inf; likely caused by constant variance \
+             across all windows or zero denominator in rescaled-range calculation"
+                .to_string(),
+        );
     }
 
     // R/S Hurst exponent is bounded [0, 1] by definition
@@ -229,7 +233,11 @@ pub fn compute_hurst_dfa(data: &[f64]) -> Result<HurstAnalysis, String> {
     let (slope, _intercept, r_squared, std_error) = linear_regression(&log_scales, &log_fluct)?;
 
     if !slope.is_finite() || !r_squared.is_finite() || !std_error.is_finite() {
-        return Err("Degenerate regression output (NaN/Inf)".to_string());
+        return Err(
+            "DFA regression produced NaN/Inf; likely caused by zero fluctuation \
+             at all scales or insufficient variation in the integrated series"
+                .to_string(),
+        );
     }
 
     // DFA alpha can reach 2.0 (Brownian ~1.5, ballistic ~2.0)

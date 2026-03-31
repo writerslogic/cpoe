@@ -74,8 +74,12 @@ pub fn compare_profiles(
         ),
     };
 
-    // When interval_similarity is NaN (both profiles lack interval data),
-    // exclude it and redistribute its weight proportionally among the rest.
+    // NaN handling strategy: when a dimension produces NaN (e.g., both
+    // profiles lack interval data, or safe_ln received non-positive input),
+    // that dimension's contribution and weight are zeroed out. The remaining
+    // dimensions' weights are implicitly rescaled by dividing by
+    // total_weight, which excludes the NaN dimension's weight. This avoids
+    // penalizing or rewarding comparisons that lack a particular signal.
     let (interval_contrib, interval_weight) = if scores.interval_similarity.is_nan() {
         (0.0, 0.0)
     } else {
@@ -116,11 +120,14 @@ fn gaussian_similarity(a: f64, b: f64, sigma: f64) -> f64 {
     (-diff * diff / (2.0 * sigma * sigma)).exp().clamp(0.0, 1.0)
 }
 
-/// Return `ln(v)` for positive inputs, or 0.0 for non-positive inputs.
+/// Return `ln(v)` for positive inputs, or `NAN` for non-positive inputs.
+///
+/// Returning NAN (rather than 0.0) ensures that dimensions with invalid data
+/// are excluded from similarity scoring instead of silently biasing results.
 fn safe_ln(v: f64) -> f64 {
     if v > 0.0 {
         v.ln()
     } else {
-        0.0
+        f64::NAN
     }
 }

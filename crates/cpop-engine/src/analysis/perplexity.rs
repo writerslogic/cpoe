@@ -84,7 +84,10 @@ impl PerplexityModel {
                 let char_count = *context_counts.get(&next_char).unwrap_or(&0);
                 let total = *self.totals.get(buf.as_str()).unwrap_or(&1);
 
-                // Lidstone smoothing (alpha=0.1 for sharper anomaly detection)
+                // Lidstone smoothing with alpha=0.1 (not standard Laplace alpha=1.0).
+                // A smaller alpha keeps the distribution sharper, making the
+                // perplexity score more sensitive to anomalous n-gram patterns
+                // while still avoiding zero probabilities.
                 (char_count as f64 + 0.1) / (total as f64 + 0.1 * 256.0)
             } else {
                 // Backoff smoothing for unseen contexts

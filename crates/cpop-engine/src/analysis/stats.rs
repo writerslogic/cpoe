@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 /// Single-pass mean and sample standard deviation.
+///
+/// Returns `(0.0, 0.0)` for empty input and `(mean, 0.0)` for `data.len() < 2`
+/// (sample std dev is undefined with fewer than two observations).
 pub fn mean_and_std_dev(data: &[f64]) -> (f64, f64) {
     let n = data.len() as f64;
     if n < 1.0 {

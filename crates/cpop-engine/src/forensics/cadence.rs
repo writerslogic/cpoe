@@ -82,7 +82,11 @@ pub fn analyze_cadence(samples: &[SimpleJitterSample]) -> CadenceMetrics {
         metrics.avg_pause_duration_ns = pauses.iter().sum::<f64>() / pauses.len() as f64;
     }
 
-    metrics.percentiles = {
+    metrics.percentiles = if ikis.len() < 5 {
+        // Too few samples for meaningful percentile estimation; rounding
+        // errors in index calculation can select the wrong element.
+        [0.0; 5]
+    } else {
         let mut sorted = ikis.clone();
         sorted.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let pct = |p: usize| -> f64 {
