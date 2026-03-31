@@ -302,7 +302,7 @@ fn test_handle_focus_gained_creates_session() {
 }
 
 #[test]
-fn test_handle_focus_gained_empty_path_skipped() {
+fn test_handle_focus_gained_empty_path_creates_title_session() {
     let (sessions, config, shadow, signing_key, current_focus, temp_dir, tx) =
         make_focus_test_harness();
 
@@ -325,8 +325,132 @@ fn test_handle_focus_gained_empty_path_skipped() {
         &tx,
     );
 
+    // With auto_witness enabled, an empty path but non-empty window title
+    // creates a title:// session to capture keystrokes for unsaved documents.
+    let sessions_map = sessions.read().unwrap();
+    let title_key = "title://com.microsoft.VSCode/Test Window";
+    assert!(sessions_map.contains_key(title_key));
+    assert_eq!(current_focus.read().unwrap().as_deref(), Some(title_key));
+}
+
+#[test]
+fn test_handle_focus_gained_empty_path_and_title_skipped() {
+    let (sessions, config, shadow, signing_key, current_focus, temp_dir, tx) =
+        make_focus_test_harness();
+
+    // Empty path, empty shadow_id, empty window title -> should be skipped
+    let event = FocusEvent {
+        event_type: FocusEventType::FocusGained,
+        path: String::new(),
+        shadow_id: String::new(),
+        app_bundle_id: "com.microsoft.VSCode".to_string(),
+        app_name: "Visual Studio Code".to_string(),
+        window_title: ObfuscatedString::new(""),
+        timestamp: std::time::SystemTime::now(),
+    };
+
+    handle_focus_event_sync(
+        event,
+        &sessions,
+        &config,
+        &shadow,
+        &signing_key,
+        &current_focus,
+        temp_dir.path(),
+        &tx,
+    );
+
     let sessions_map = sessions.read().unwrap();
     assert!(sessions_map.is_empty());
+}
+
+#[test]
+fn test_title_session_migrates_to_real_path_on_save() {
+    let (sessions, config, shadow, signing_key, current_focus, temp_dir, tx) =
+        make_focus_test_harness();
+
+    // Step 1: Focus an unsaved document (empty path, non-empty title)
+    let event = make_focus_event(
+        FocusEventType::FocusGained,
+        "",
+        "",
+        "com.microsoft.VSCode",
+        "Visual Studio Code",
+    );
+    handle_focus_event_sync(
+        event,
+        &sessions,
+        &config,
+        &shadow,
+        &signing_key,
+        &current_focus,
+        temp_dir.path(),
+        &tx,
+    );
+
+    let title_key = "title://com.microsoft.VSCode/Test Window";
+    {
+        let map = sessions.read().unwrap();
+        assert!(map.contains_key(title_key));
+    }
+
+    // Simulate some keystrokes on the title session
+    {
+        let mut map = sessions.write().unwrap();
+        if let Some(session) = map.get_mut(title_key) {
+            session.keystroke_count = 42;
+        }
+    }
+
+    // Step 2: Document is saved, focus monitor detects real path.
+    // First a FocusLost clears the title session...
+    let lost_event = make_focus_event(
+        FocusEventType::FocusLost,
+        "",
+        "",
+        "com.microsoft.VSCode",
+        "Visual Studio Code",
+    );
+    handle_focus_event_sync(
+        lost_event,
+        &sessions,
+        &config,
+        &shadow,
+        &signing_key,
+        &current_focus,
+        temp_dir.path(),
+        &tx,
+    );
+
+    // ...then FocusGained with the real path triggers migration.
+    let real_path = temp_dir.path().join("saved_doc.txt");
+    std::fs::write(&real_path, "test content").unwrap();
+    let gain_event = make_focus_event(
+        FocusEventType::FocusGained,
+        real_path.to_str().unwrap(),
+        "",
+        "com.microsoft.VSCode",
+        "Visual Studio Code",
+    );
+    handle_focus_event_sync(
+        gain_event,
+        &sessions,
+        &config,
+        &shadow,
+        &signing_key,
+        &current_focus,
+        temp_dir.path(),
+        &tx,
+    );
+
+    let map = sessions.read().unwrap();
+    // Title session should be gone
+    assert!(!map.contains_key(title_key));
+    // Real path session should exist with the migrated keystroke count
+    let real_path_str = real_path.to_str().unwrap();
+    assert!(map.contains_key(real_path_str));
+    assert_eq!(map[real_path_str].keystroke_count, 42);
+    assert!(map[real_path_str].is_focused());
 }
 
 #[test]

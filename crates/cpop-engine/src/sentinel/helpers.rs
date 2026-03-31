@@ -73,25 +73,33 @@ pub fn handle_focus_event_sync(
                         }
                         return;
                     }
-                    #[cfg(debug_assertions)]
-                    {
-                        use std::io::Write;
-                        if let Ok(d) = std::env::var("CPOP_DATA_DIR") {
-                            let debug_path = format!("{}/event_debug.txt", d);
-                            if let Ok(mut f) = std::fs::OpenOptions::new()
-                                .create(true)
-                                .append(true)
-                                .open(&debug_path)
-                            {
-                                let _ = writeln!(
-                                    f,
-                                    "DROPPED: empty path and empty shadow_id for {}",
-                                    event.app_bundle_id
-                                );
+                    // No file path yet (unsaved document). Use the window title
+                    // as a temporary tracking key so keystrokes are captured from
+                    // the moment the user starts writing.
+                    let title = event.window_title.reveal();
+                    if !title.is_empty() && config.auto_witness_enabled {
+                        format!("title://{}/{}", event.app_bundle_id, &*title)
+                    } else {
+                        #[cfg(debug_assertions)]
+                        {
+                            use std::io::Write;
+                            if let Ok(d) = std::env::var("CPOP_DATA_DIR") {
+                                let debug_path = format!("{}/event_debug.txt", d);
+                                if let Ok(mut f) = std::fs::OpenOptions::new()
+                                    .create(true)
+                                    .append(true)
+                                    .open(&debug_path)
+                                {
+                                    let _ = writeln!(
+                                        f,
+                                        "DROPPED: empty path, shadow_id, and title for {}",
+                                        event.app_bundle_id
+                                    );
+                                }
                             }
                         }
+                        return;
                     }
-                    return;
                 }
             } else {
                 event.path.clone()
@@ -125,6 +133,45 @@ pub fn handle_focus_event_sync(
                 }
                 unfocus_document_sync(path, sessions, session_events_tx);
                 *current_focus.write_recover() = None;
+            }
+
+            // If the new path is a real file and there's an existing title://
+            // session from the same app (unsaved doc that was just saved),
+            // migrate the session to preserve all captured keystrokes.
+            if !doc_path.starts_with("title://") && !doc_path.starts_with("shadow://") {
+                let title_prefix = format!("title://{}/", event.app_bundle_id);
+                let title_key = {
+                    let map = sessions.read_recover();
+                    map.keys().find(|k| k.starts_with(&title_prefix)).cloned()
+                };
+                if let Some(title_key) = title_key {
+                    let mut sessions_map = sessions.write_recover();
+                    if let Some(mut session) = sessions_map.remove(&title_key) {
+                        session.focus_lost();
+                        session.path = doc_path.clone();
+                        session.window_title = event.window_title.clone();
+                        if let Ok(hash) = compute_file_hash(&doc_path) {
+                            session.initial_hash = Some(hash.clone());
+                            session.current_hash = Some(hash);
+                        }
+                        session.focus_gained();
+                        let session_id = session.session_id.clone();
+                        sessions_map.insert(doc_path.clone(), session);
+                        log::info!(
+                            "Migrated title-keyed session {} to path {:?}",
+                            session_id,
+                            doc_path
+                        );
+                        let _ = session_events_tx.send(SessionEvent {
+                            event_type: SessionEventType::Focused,
+                            session_id,
+                            document_path: doc_path.clone(),
+                            timestamp: SystemTime::now(),
+                        });
+                        *current_focus.write_recover() = Some(doc_path);
+                        return;
+                    }
+                }
             }
 
             // If this document is regaining focus, stamp regained_at on its
@@ -190,8 +237,9 @@ pub fn focus_document_sync(
     wal_dir: &Path,
     session_events_tx: &broadcast::Sender<SessionEvent>,
 ) {
-    // Skip directories and paths that don't look like documents
-    if !path.starts_with("shadow://") {
+    // Skip directories and paths that don't look like documents.
+    // Virtual keys (shadow://, title://) bypass filesystem checks.
+    if !path.starts_with("shadow://") && !path.starts_with("title://") {
         let p = std::path::Path::new(path);
         if p.is_dir() {
             return;

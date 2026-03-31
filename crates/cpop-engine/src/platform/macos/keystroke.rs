@@ -175,6 +175,7 @@ impl Drop for EventTapRunner {
 /// re-enable, and dispatches to `on_keystroke` for hardware events.
 fn build_monitor_tap_callback<F>(
     tap_ptr: Arc<AtomicPtr<std::ffi::c_void>>,
+    tap_alive: Arc<AtomicBool>,
     ks_count: Arc<AtomicU64>,
     ver_count: Arc<AtomicU64>,
     rej_count: Arc<AtomicU64>,
@@ -190,8 +191,11 @@ where
                 unsafe { CGEventTapEnable(ptr, true) };
                 let enabled = unsafe { CGEventTapIsEnabled(ptr) };
                 if !enabled {
-                    log::error!("CGEventTapEnable failed: tap not re-enabled after timeout");
+                    log::error!("CGEventTap re-enable failed after timeout; marking tap as dead");
+                    tap_alive.store(false, Ordering::SeqCst);
                 }
+            } else {
+                tap_alive.store(false, Ordering::SeqCst);
             }
             let n = TAP_DISABLED_COUNT.fetch_add(1, Ordering::Relaxed);
             log::warn!(
@@ -243,6 +247,7 @@ pub type KeystrokeCallback = Arc<dyn Fn(KeystrokeInfo) + Send + Sync>;
 
 pub struct KeystrokeMonitor {
     runner: EventTapRunner,
+    tap_alive: Arc<AtomicBool>,
     keystroke_count: Arc<AtomicU64>,
     verified_count: Arc<AtomicU64>,
     rejected_count: Arc<AtomicU64>,
@@ -263,9 +268,11 @@ impl KeystrokeMonitor {
         let verified_count = Arc::new(AtomicU64::new(0));
         let rejected_count = Arc::new(AtomicU64::new(0));
         let tap_ptr = Arc::new(AtomicPtr::new(std::ptr::null_mut()));
+        let tap_alive = Arc::new(AtomicBool::new(true));
 
         let tap_cb = build_monitor_tap_callback(
             Arc::clone(&tap_ptr),
+            Arc::clone(&tap_alive),
             Arc::clone(&keystroke_count),
             Arc::clone(&verified_count),
             Arc::clone(&rejected_count),
@@ -300,6 +307,7 @@ impl KeystrokeMonitor {
 
         Ok(Self {
             runner,
+            tap_alive,
             keystroke_count,
             verified_count,
             rejected_count,
@@ -322,6 +330,10 @@ impl KeystrokeMonitor {
         self.rejected_count.load(Ordering::SeqCst) > 0
     }
 
+    pub fn is_tap_alive(&self) -> bool {
+        self.tap_alive.load(Ordering::SeqCst)
+    }
+
     #[cfg(feature = "cpop_jitter")]
     pub fn start_with_hybrid(
         session: Arc<Mutex<crate::cpop_jitter_bridge::HybridJitterSession>>,
@@ -340,9 +352,11 @@ impl KeystrokeMonitor {
         let verified_count = Arc::new(AtomicU64::new(0));
         let rejected_count = Arc::new(AtomicU64::new(0));
         let tap_ptr = Arc::new(AtomicPtr::new(std::ptr::null_mut()));
+        let tap_alive = Arc::new(AtomicBool::new(true));
 
         let tap_cb = build_monitor_tap_callback(
             Arc::clone(&tap_ptr),
+            Arc::clone(&tap_alive),
             Arc::clone(&keystroke_count),
             Arc::clone(&verified_count),
             Arc::clone(&rejected_count),
@@ -374,6 +388,7 @@ impl KeystrokeMonitor {
 
         Ok(Self {
             runner,
+            tap_alive,
             keystroke_count,
             verified_count,
             rejected_count,
@@ -401,6 +416,7 @@ impl Drop for KeystrokeMonitor {
 
 pub struct MacOSKeystrokeCapture {
     running: Arc<AtomicBool>,
+    tap_alive: Arc<AtomicBool>,
     sender: Option<mpsc::Sender<KeystrokeEvent>>,
     runner: Option<EventTapRunner>,
     strict_mode: bool,
@@ -413,6 +429,7 @@ impl MacOSKeystrokeCapture {
     pub fn new() -> Result<Self> {
         Ok(Self {
             running: Arc::new(AtomicBool::new(false)),
+            tap_alive: Arc::new(AtomicBool::new(false)),
             sender: None,
             runner: None,
             strict_mode: true,
@@ -433,6 +450,7 @@ impl KeystrokeCapture for MacOSKeystrokeCapture {
         self.sender = Some(tx.clone());
 
         let running = Arc::clone(&self.running);
+        let tap_alive = Arc::clone(&self.tap_alive);
         let total_events = Arc::clone(&self.total_events);
         let verified_hardware = Arc::clone(&self.verified_hardware);
         let rejected_synthetic = Arc::clone(&self.rejected_synthetic);
@@ -441,6 +459,7 @@ impl KeystrokeCapture for MacOSKeystrokeCapture {
         let tap_ptr_cb = Arc::clone(&tap_ptr);
 
         running.store(true, Ordering::SeqCst);
+        tap_alive.store(true, Ordering::SeqCst);
 
         let tap_cb: TapCallback = Box::new(move |event: *mut std::ffi::c_void, event_type: u32| {
             if !running.load(Ordering::SeqCst) {
@@ -451,6 +470,15 @@ impl KeystrokeCapture for MacOSKeystrokeCapture {
                 let ptr: *mut std::ffi::c_void = tap_ptr_cb.load(Ordering::SeqCst);
                 if !ptr.is_null() {
                     unsafe { CGEventTapEnable(ptr, true) };
+                    let enabled = unsafe { CGEventTapIsEnabled(ptr) };
+                    if !enabled {
+                        log::error!(
+                            "CGEventTap re-enable failed after timeout; marking tap as dead"
+                        );
+                        tap_alive.store(false, Ordering::SeqCst);
+                    }
+                } else {
+                    tap_alive.store(false, Ordering::SeqCst);
                 }
                 let n = TAP_DISABLED_COUNT.fetch_add(1, Ordering::Relaxed);
                 log::warn!(
@@ -512,6 +540,7 @@ impl KeystrokeCapture for MacOSKeystrokeCapture {
 
     fn stop(&mut self) -> Result<()> {
         self.running.store(false, Ordering::SeqCst);
+        self.tap_alive.store(false, Ordering::SeqCst);
         self.sender = None;
         if let Some(ref mut runner) = self.runner {
             runner.stop();
@@ -539,6 +568,10 @@ impl KeystrokeCapture for MacOSKeystrokeCapture {
 
     fn get_strict_mode(&self) -> bool {
         self.strict_mode
+    }
+
+    fn is_tap_alive(&self) -> bool {
+        self.tap_alive.load(Ordering::SeqCst)
     }
 }
 

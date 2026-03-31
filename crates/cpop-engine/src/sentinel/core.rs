@@ -560,6 +560,9 @@ impl Sentinel {
             }
         }
 
+        let tap_check_capture = Arc::clone(&self.keystroke_capture);
+        let tap_check_active = Arc::clone(&self.keystroke_capture_active);
+
         let event_loop_handle_ref = Arc::clone(&self.event_loop_handle);
         let handle = tokio::spawn(async move {
             let mut debounce_timer: Option<tokio::time::Instant> = None;
@@ -811,6 +814,7 @@ impl Sentinel {
                                 map.get(path.as_str()).is_some_and(|s| {
                                     s.keystroke_count > s.last_checkpoint_keystrokes
                                         && !path.starts_with("shadow://")
+                                        && !path.starts_with("title://")
                                 })
                             };
                             if needs_checkpoint {
@@ -823,6 +827,22 @@ impl Sentinel {
                             }
                             end_session_sync(path, &sessions, &session_events_tx);
                         }
+
+                        // Check if the CGEventTap is still alive; update the
+                        // active flag so the UI reflects degraded mode accurately.
+                        // If dead, attempt a restart (e.g. after macOS sleep/wake).
+                        {
+                            let tap_dead = {
+                                let guard = tap_check_capture.lock_recover();
+                                guard.as_ref().is_some_and(|cap| !cap.is_tap_alive())
+                            };
+                            if tap_dead && tap_check_active.load(Ordering::SeqCst) {
+                                log::error!(
+                                    "CGEventTap died; marking keystroke capture inactive"
+                                );
+                                tap_check_active.store(false, Ordering::SeqCst);
+                            }
+                        }
                     }
 
                     _ = checkpoint_interval.tick() => {
@@ -833,6 +853,7 @@ impl Sentinel {
                                 .filter(|(p, s)| {
                                     s.keystroke_count > s.last_checkpoint_keystrokes
                                         && !p.starts_with("shadow://")
+                                        && !p.starts_with("title://")
                                 })
                                 .map(|(p, _)| p.clone())
                                 .collect()
@@ -955,6 +976,49 @@ impl Sentinel {
     /// Whether keystroke capture is active (false = degraded/focus-only mode).
     pub fn is_keystroke_capture_active(&self) -> bool {
         self.keystroke_capture_active.load(Ordering::SeqCst)
+    }
+
+    /// Restart keystroke capture after a tap failure (e.g. after macOS sleep/wake).
+    /// Returns true if capture was successfully restarted.
+    pub fn restart_keystroke_capture(&self) -> bool {
+        // Stop existing capture if any
+        if let Some(mut cap) = self.keystroke_capture.lock_recover().take() {
+            let _ = cap.stop();
+        }
+        self.keystroke_capture_active.store(false, Ordering::SeqCst);
+
+        #[cfg(target_os = "macos")]
+        let result = crate::platform::macos::MacOSKeystrokeCapture::new();
+        #[cfg(target_os = "windows")]
+        let result = crate::platform::windows::WindowsKeystrokeCapture::new();
+        #[cfg(target_os = "linux")]
+        let result = crate::platform::linux::LinuxKeystrokeCapture::new();
+        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+        let result: anyhow::Result<Box<dyn KeystrokeCapture>> =
+            Err(anyhow::anyhow!("Keystroke capture not supported"));
+
+        match result {
+            Ok(mut capture) => match capture.start() {
+                Ok(_rx) => {
+                    // The bridge thread from the original start() is still running
+                    // and will pick up events from the new capture via the stored
+                    // sender. We only need to update the stored capture handle.
+                    log::info!("Keystroke capture restarted successfully");
+                    self.keystroke_capture_active.store(true, Ordering::SeqCst);
+                    *self.keystroke_capture.lock_recover() =
+                        Some(Box::new(capture) as Box<dyn KeystrokeCapture>);
+                    true
+                }
+                Err(e) => {
+                    log::error!("Failed to restart keystroke capture: {e}");
+                    false
+                }
+            },
+            Err(e) => {
+                log::error!("Failed to create keystroke capture: {e}");
+                false
+            }
+        }
     }
 
     /// Record a paste event from the host app.

@@ -294,6 +294,47 @@ pub fn ffi_sentinel_is_running() -> bool {
     get_sentinel().is_some_and(|s| s.is_running())
 }
 
+/// Restart keystroke capture after a tap failure (e.g. macOS sleep/wake).
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn ffi_sentinel_restart_keystroke_capture() -> FfiResult {
+    let sentinel = match get_sentinel() {
+        Some(s) => s,
+        None => {
+            return FfiResult {
+                success: false,
+                message: None,
+                error_message: Some("Sentinel not initialized".to_string()),
+            };
+        }
+    };
+
+    if !sentinel.is_running() {
+        return FfiResult {
+            success: false,
+            message: None,
+            error_message: Some("Sentinel not running".to_string()),
+        };
+    }
+
+    if sentinel.restart_keystroke_capture() {
+        FfiResult {
+            success: true,
+            message: Some("Keystroke capture restarted".to_string()),
+            error_message: None,
+        }
+    } else {
+        FfiResult {
+            success: false,
+            message: None,
+            error_message: Some(
+                "Failed to restart keystroke capture. \
+                 Check Input Monitoring permission in System Settings > Privacy & Security"
+                    .to_string(),
+            ),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

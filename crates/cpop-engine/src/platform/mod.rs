@@ -47,6 +47,11 @@ pub trait KeystrokeCapture: Send + Sync {
     fn set_strict_mode(&mut self, strict: bool);
     /// Return whether strict mode is enabled.
     fn get_strict_mode(&self) -> bool;
+    /// Return true if the underlying event tap is still alive and receiving events.
+    /// Returns true by default; macOS overrides to detect tap-disabled failures.
+    fn is_tap_alive(&self) -> bool {
+        true
+    }
 }
 
 /// Platform-specific focus monitoring.
