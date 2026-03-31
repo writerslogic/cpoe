@@ -30,11 +30,10 @@ impl SentinelIpcHandler {
         let db_path = self.sentinel.config.writersproof_dir.join("events.db");
         let guard = self.sentinel.signing_key.read_recover();
         let signing_key = guard.as_ref().ok_or("Signing key not initialized")?;
-        let key_bytes = Zeroizing::new(signing_key.to_bytes());
-        let hmac_key = crate::crypto::derive_hmac_key(key_bytes.as_ref());
+        let store = crate::store::open_store_with_signing_key(signing_key, &db_path)
+            .map_err(|e| format!("Database error: {e}"))?;
         drop(guard);
-        crate::store::SecureStore::open(&db_path, hmac_key.to_vec())
-            .map_err(|e| format!("Database error: {e}"))
+        Ok(store)
     }
 
     fn load_events(

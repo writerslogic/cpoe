@@ -49,6 +49,20 @@ impl SecureStore {
     }
 }
 
+/// Open a [`SecureStore`] by deriving the HMAC key from an Ed25519 signing key.
+///
+/// Extracts the key bytes, derives the HMAC key via [`crate::crypto::derive_hmac_key`],
+/// zeroizes intermediates, and opens the store at `db_path`.
+pub fn open_store_with_signing_key(
+    signing_key: &ed25519_dalek::SigningKey,
+    db_path: &Path,
+) -> anyhow::Result<SecureStore> {
+    let mut key_bytes = signing_key.to_bytes();
+    let hmac_key = crate::crypto::derive_hmac_key(&key_bytes);
+    key_bytes.zeroize();
+    SecureStore::open(db_path, hmac_key.to_vec())
+}
+
 impl Drop for SecureStore {
     fn drop(&mut self) {
         self.hmac_key.zeroize();

@@ -172,30 +172,20 @@ pub fn ffi_link_derivative(source_path: String, export_path: String, message: St
         };
 
     let (dev_id, mach_id) = device_identity();
-    let mut event = crate::store::SecureEvent {
-        id: None,
-        device_id: *dev_id,
-        machine_id: mach_id.clone(),
-        timestamp_ns: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos().min(i64::MAX as u128) as i64)
-            .unwrap_or(0),
-        file_path: source_str.clone(),
+    let mut event = crate::store::SecureEvent::new(
+        source_str.clone(),
         content_hash,
         file_size,
-        size_delta,
-        previous_hash: [0u8; 32],
-        event_hash: [0u8; 32],
-        context_type: Some("derivative".to_string()),
-        context_note: Some(context_note),
-        vdf_input: Some(vdf_input),
-        vdf_output: Some(vdf_proof.output),
-        vdf_iterations: vdf_proof.iterations,
-        forensic_score: 1.0,
-        is_paste: false,
-        hardware_counter: None,
-        input_method: None,
-    };
+        Some(context_note),
+    );
+    event.device_id = *dev_id;
+    event.machine_id = mach_id.clone();
+    event.size_delta = size_delta;
+    event.context_type = Some("derivative".to_string());
+    event.vdf_input = Some(vdf_input);
+    event.vdf_output = Some(vdf_proof.output);
+    event.vdf_iterations = vdf_proof.iterations;
+    event.forensic_score = 1.0;
 
     match store.add_secure_event(&mut event) {
         Ok(_) => FfiResult {

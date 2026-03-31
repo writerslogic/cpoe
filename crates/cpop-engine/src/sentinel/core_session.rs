@@ -27,11 +27,7 @@ impl Sentinel {
                 .clone()
         };
         let db_path = self.config.writersproof_dir.join("events.db");
-        let mut key_bytes = signing_key_local.to_bytes();
-        let hmac_key = crate::crypto::derive_hmac_key(&key_bytes);
-        key_bytes.zeroize();
-        let store = crate::store::SecureStore::open(&db_path, hmac_key.to_vec())?;
-        Ok(store)
+        crate::store::open_store_with_signing_key(&signing_key_local, &db_path)
     }
 
     /// Begin witnessing a file, creating a session and WAL entry.
@@ -213,30 +209,12 @@ impl Sentinel {
             }
         };
 
-        let mut event = crate::store::SecureEvent {
-            id: None,
-            device_id: [0u8; 16],
-            machine_id: String::new(),
-            timestamp_ns: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_nanos().min(i64::MAX as u128) as i64)
-                .unwrap_or(0),
-            file_path: path.to_string(),
+        let mut event = crate::store::SecureEvent::new(
+            path.to_string(),
             content_hash,
             file_size,
-            size_delta: 0,
-            previous_hash: [0u8; 32],
-            event_hash: [0u8; 32],
-            context_type: None,
-            context_note: Some("Auto-checkpoint".to_string()),
-            vdf_input: None,
-            vdf_output: None,
-            vdf_iterations: 0,
-            forensic_score: 0.0,
-            is_paste: false,
-            hardware_counter: None,
-            input_method: None,
-        };
+            Some("Auto-checkpoint".to_string()),
+        );
 
         match store.add_secure_event(&mut event) {
             Ok(_) => {

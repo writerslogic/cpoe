@@ -25,3 +25,45 @@ pub struct SecureEvent {
     /// Input method hint from the platform layer (e.g. "dictation", "ime")
     pub input_method: Option<String>,
 }
+
+fn now_ns() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos().min(i64::MAX as u128) as i64)
+        .unwrap_or(0)
+}
+
+impl SecureEvent {
+    /// Create a new event with sensible defaults for most fields.
+    ///
+    /// Callers that need non-default values for `context_type`, `size_delta`,
+    /// `forensic_score`, `is_paste`, or VDF fields should set them after construction.
+    pub fn new(
+        file_path: String,
+        content_hash: [u8; 32],
+        file_size: i64,
+        context_note: Option<String>,
+    ) -> Self {
+        Self {
+            id: None,
+            device_id: [0u8; 16],
+            machine_id: String::new(),
+            timestamp_ns: now_ns(),
+            file_path,
+            content_hash,
+            file_size,
+            size_delta: 0,
+            previous_hash: [0u8; 32],
+            event_hash: [0u8; 32],
+            context_type: None,
+            context_note,
+            vdf_input: None,
+            vdf_output: None,
+            vdf_iterations: 0,
+            forensic_score: 0.0,
+            is_paste: false,
+            hardware_counter: None,
+            input_method: None,
+        }
+    }
+}

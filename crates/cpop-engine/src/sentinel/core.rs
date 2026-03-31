@@ -50,10 +50,7 @@ fn commit_checkpoint_for_path(
             None => return false,
         };
         let db_path = writersproof_dir.join("events.db");
-        let mut kb = sk.to_bytes();
-        let hk = crate::crypto::derive_hmac_key(&kb);
-        kb.zeroize();
-        match crate::store::SecureStore::open(&db_path, hk.to_vec()) {
+        match crate::store::open_store_with_signing_key(sk, &db_path) {
             Ok(s) => s,
             Err(e) => {
                 log::warn!("Auto-checkpoint store open failed for {path}: {e}");
@@ -62,30 +59,12 @@ fn commit_checkpoint_for_path(
         }
     };
 
-    let mut event = crate::store::SecureEvent {
-        id: None,
-        device_id: [0u8; 16],
-        machine_id: String::new(),
-        timestamp_ns: SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos().min(i64::MAX as u128) as i64)
-            .unwrap_or(0),
-        file_path: path.to_string(),
+    let mut event = crate::store::SecureEvent::new(
+        path.to_string(),
         content_hash,
         file_size,
-        size_delta: 0,
-        previous_hash: [0u8; 32],
-        event_hash: [0u8; 32],
-        context_type: None,
-        context_note: Some(note.to_string()),
-        vdf_input: None,
-        vdf_output: None,
-        vdf_iterations: 0,
-        forensic_score: 0.0,
-        is_paste: false,
-        hardware_counter: None,
-        input_method: None,
-    };
+        Some(note.to_string()),
+    );
     match store.add_secure_event(&mut event) {
         Ok(_) => {
             log::info!("Auto-checkpoint committed for {path} ({note})");

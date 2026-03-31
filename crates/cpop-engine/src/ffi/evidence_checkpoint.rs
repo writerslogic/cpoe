@@ -52,31 +52,15 @@ pub fn ffi_create_checkpoint(path: String, message: String) -> FfiResult {
     };
 
     let (dev_id, mach_id) = device_identity();
-    let mut event = crate::store::SecureEvent {
-        id: None,
-        device_id: *dev_id,
-        machine_id: mach_id.clone(),
-        timestamp_ns: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos().min(i64::MAX as u128) as i64)
-            .unwrap_or(0),
-        // Use canonicalized path so export/log lookups match
-        file_path: file_path.to_string_lossy().to_string(),
+    // Use canonicalized path so export/log lookups match
+    let mut event = crate::store::SecureEvent::new(
+        file_path.to_string_lossy().to_string(),
         content_hash,
         file_size,
-        size_delta: 0,
-        previous_hash: [0u8; 32],
-        event_hash: [0u8; 32],
-        context_type: None,
         context_note,
-        vdf_input: None,
-        vdf_output: None,
-        vdf_iterations: 0,
-        forensic_score: 0.0,
-        is_paste: false,
-        hardware_counter: None,
-        input_method: None,
-    };
+    );
+    event.device_id = *dev_id;
+    event.machine_id = mach_id.clone();
 
     match store.add_secure_event(&mut event) {
         Ok(_) => FfiResult {

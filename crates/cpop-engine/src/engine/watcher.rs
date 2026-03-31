@@ -197,27 +197,18 @@ fn process_file_event(inner: &Arc<EngineInner>, path: &Path) -> Result<()> {
         }
     };
 
-    let mut event = SecureEvent {
-        id: None,
-        device_id: inner.device_id,
-        machine_id: inner.machine_id.clone(),
-        timestamp_ns: event_timestamp_ns,
-        file_path: resolved_path.to_string_lossy().to_string(),
+    let mut event = SecureEvent::new(
+        resolved_path.to_string_lossy().to_string(),
         content_hash,
         file_size,
-        size_delta,
-        previous_hash: [0u8; 32],
-        event_hash: [0u8; 32],
-        context_type: None,
-        context_note: None,
-        vdf_input: None,
-        vdf_output: None,
-        vdf_iterations: 0,
-        forensic_score,
-        is_paste,
-        hardware_counter: None,
-        input_method: None,
-    };
+        None,
+    );
+    event.device_id = inner.device_id;
+    event.machine_id = inner.machine_id.clone();
+    event.timestamp_ns = event_timestamp_ns;
+    event.size_delta = size_delta;
+    event.forensic_score = forensic_score;
+    event.is_paste = is_paste;
 
     inner.store.lock_recover().add_secure_event(&mut event)?;
 

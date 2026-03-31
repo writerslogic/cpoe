@@ -250,30 +250,19 @@ pub fn ffi_ephemeral_checkpoint(session_id: String, content: String, message: St
 
     let ephemeral_path = format!("ephemeral://{session_id}");
     if let Ok(mut store) = open_store() {
-        let mut event = crate::store::SecureEvent {
-            id: None,
-            device_id: device_identity().0,
-            machine_id: device_identity().1.clone(),
-            timestamp_ns: now_ns(),
-            file_path: ephemeral_path,
+        let mut event = crate::store::SecureEvent::new(
+            ephemeral_path,
             content_hash,
-            file_size: char_count as i64,
-            size_delta,
-            previous_hash: [0u8; 32],
-            event_hash: [0u8; 32],
-            context_type: Some("ephemeral".to_string()),
-            context_note: entry
+            char_count as i64,
+            entry
                 .content_snapshots
                 .last()
                 .and_then(|s| s.message.clone()),
-            vdf_input: None,
-            vdf_output: None,
-            vdf_iterations: 0,
-            forensic_score: 0.0,
-            is_paste: false,
-            hardware_counter: None,
-            input_method: None,
-        };
+        );
+        event.device_id = device_identity().0;
+        event.machine_id = device_identity().1.clone();
+        event.size_delta = size_delta;
+        event.context_type = Some("ephemeral".to_string());
         if let Err(e) = store.add_secure_event(&mut event) {
             log::error!("Failed to persist checkpoint: {e}");
         }
@@ -528,30 +517,19 @@ pub fn ffi_ephemeral_checkpoint_hash(
 
     let ephemeral_path = format!("ephemeral://{session_id}");
     if let Ok(mut store) = open_store() {
-        let mut event = crate::store::SecureEvent {
-            id: None,
-            device_id: device_identity().0,
-            machine_id: device_identity().1.clone(),
-            timestamp_ns: now_ns(),
-            file_path: ephemeral_path,
+        let mut event = crate::store::SecureEvent::new(
+            ephemeral_path,
             content_hash,
-            file_size: char_count as i64,
-            size_delta,
-            previous_hash: [0u8; 32],
-            event_hash: [0u8; 32],
-            context_type: Some("ephemeral".to_string()),
-            context_note: entry
+            char_count as i64,
+            entry
                 .content_snapshots
                 .last()
                 .and_then(|s| s.message.clone()),
-            vdf_input: None,
-            vdf_output: None,
-            vdf_iterations: 0,
-            forensic_score: 0.0,
-            is_paste: false,
-            hardware_counter: None,
-            input_method: None,
-        };
+        );
+        event.device_id = device_identity().0;
+        event.machine_id = device_identity().1.clone();
+        event.size_delta = size_delta;
+        event.context_type = Some("ephemeral".to_string());
         if let Err(e) = store.add_secure_event(&mut event) {
             log::error!("Failed to persist checkpoint: {e}");
         }
