@@ -60,6 +60,15 @@ fn validate_ipc_path(path: &Path) -> Result<(), String> {
         }
     };
 
+    // Symlink check on the canonical path (not the original) to avoid a
+    // TOCTOU race where the symlink target changes between resolution and use.
+    if canonical.is_symlink() {
+        return Err(format!(
+            "Symlink rejected at IPC boundary: '{}'",
+            canonical.display()
+        ));
+    }
+
     // First line of defense at IPC boundary; sentinel::validate_path() does a
     // second check post-canonicalization.
     if is_blocked_system_path(&canonical)? {
@@ -116,10 +125,12 @@ pub(crate) fn is_blocked_system_path(path: &Path) -> Result<bool, String> {
     {
         let s = path.to_string_lossy();
         let lower = s.to_lowercase();
-        // Strip UNC extended-length and device namespace prefixes so
-        // \\?\C:\Windows\..., \??\C:\..., and \\.\C:\... are all caught.
+        // Strip UNC extended-length, device namespace, and NT-style prefixes so
+        // \\?\C:\Windows\..., \\?\UNC\..., \??\C:\..., and \\.\C:\... are all
+        // caught. \\?\UNC\ must be checked before \\?\ to avoid partial strip.
         let normalized = lower
-            .strip_prefix(r"\\?\")
+            .strip_prefix(r"\\?\unc\")
+            .or_else(|| lower.strip_prefix(r"\\?\"))
             .or_else(|| lower.strip_prefix(r"\??\"))
             .or_else(|| lower.strip_prefix(r"\\.\"))
             .unwrap_or(&lower);
@@ -347,6 +358,21 @@ impl IpcMessage {
                         "Pulse timestamp_ns out of bounds: {}",
                         sample.timestamp_ns
                     ));
+                }
+                // Reject timestamps more than 5 minutes from wall clock to
+                // prevent replay or far-future injection.
+                {
+                    const FIVE_MINUTES_NS: i64 = 5 * 60 * 1_000_000_000;
+                    let now_ns = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_nanos() as i64)
+                        .unwrap_or(0);
+                    if (sample.timestamp_ns - now_ns).abs() > FIVE_MINUTES_NS {
+                        return Err(format!(
+                            "Pulse timestamp_ns too far from wall clock: {}",
+                            sample.timestamp_ns
+                        ));
+                    }
                 }
                 if sample.duration_since_last_ns > MAX_JITTER_INTERVAL_NS {
                     return Err(format!(

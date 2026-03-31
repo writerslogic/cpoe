@@ -295,12 +295,14 @@ pub fn ffi_ephemeral_inject_jitter(session_id: String, intervals: Vec<u64>) -> F
         }
     };
 
+    let total = intervals.len();
     let valid: Vec<u64> = intervals
         .into_iter()
         .filter(|i| (10_000..=10_000_000).contains(i))
         .collect();
 
     let accepted = valid.len();
+    let rejected = total - accepted;
     let remaining_cap = MAX_JITTER_INTERVALS.saturating_sub(entry.jitter_intervals.len());
     entry
         .jitter_intervals
@@ -310,7 +312,9 @@ pub fn ffi_ephemeral_inject_jitter(session_id: String, intervals: Vec<u64>) -> F
 
     FfiResult {
         success: true,
-        message: Some(format!("Accepted {accepted} intervals")),
+        message: Some(format!(
+            "Accepted {accepted} intervals, rejected {rejected}"
+        )),
         error_message: None,
     }
 }

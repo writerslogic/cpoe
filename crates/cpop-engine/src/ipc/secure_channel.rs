@@ -21,6 +21,20 @@ const NONCE_COUNTER_MAX: u64 = u64::MAX - 1;
 /// Uses the same cap as IPC wire frames.
 const MAX_SECURE_CHANNEL_PAYLOAD: usize = super::messages::MAX_MESSAGE_SIZE;
 
+/// Zeroize the key material inside a ChaCha20Poly1305 cipher on drop.
+/// The cipher is layout-equivalent to a 32-byte key (`GenericArray<u8, U32>`).
+fn zeroize_cipher(cipher: &mut ChaCha20Poly1305) {
+    // SAFETY: ChaCha20Poly1305 is repr(transparent) over Key (GenericArray<u8, U32>).
+    // We overwrite all 32 bytes of key material.
+    let ptr = cipher as *mut ChaCha20Poly1305 as *mut u8;
+    let len = std::mem::size_of::<ChaCha20Poly1305>();
+    // Use write_volatile to prevent the compiler from optimizing away the zeroization.
+    for i in 0..len {
+        unsafe { std::ptr::write_volatile(ptr.add(i), 0u8) };
+    }
+    std::sync::atomic::fence(Ordering::SeqCst);
+}
+
 /// Factory for creating matched sender/receiver pairs with ChaCha20-Poly1305 encryption.
 pub struct SecureChannel<T> {
     _phantom: std::marker::PhantomData<T>,
@@ -72,6 +86,13 @@ pub struct SecureSender<T> {
     /// Random prefix for nonce bytes [0..4], generated once at channel creation.
     nonce_prefix: [u8; 4],
     _phantom: std::marker::PhantomData<T>,
+}
+
+impl<T> Drop for SecureSender<T> {
+    fn drop(&mut self) {
+        zeroize_cipher(&mut self.cipher);
+        self.nonce_prefix.zeroize();
+    }
 }
 
 impl<T: serde::Serialize> SecureSender<T> {
@@ -132,6 +153,12 @@ pub struct SecureReceiver<T> {
     rx: Receiver<EncryptedMessage>,
     cipher: ChaCha20Poly1305,
     _phantom: std::marker::PhantomData<T>,
+}
+
+impl<T> Drop for SecureReceiver<T> {
+    fn drop(&mut self) {
+        zeroize_cipher(&mut self.cipher);
+    }
 }
 
 impl<T: serde::de::DeserializeOwned> SecureReceiver<T> {
