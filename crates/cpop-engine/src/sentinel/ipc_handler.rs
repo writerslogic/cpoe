@@ -31,9 +31,9 @@ impl SentinelIpcHandler {
         let guard = self.sentinel.signing_key.read_recover();
         let signing_key = guard.as_ref().ok_or("Signing key not initialized")?;
         let key_bytes = Zeroizing::new(signing_key.to_bytes());
-        let mut hmac_key = crate::crypto::derive_hmac_key(key_bytes.as_ref());
+        let hmac_key = crate::crypto::derive_hmac_key(key_bytes.as_ref());
         drop(guard);
-        crate::store::SecureStore::open(&db_path, std::mem::take(&mut *hmac_key))
+        crate::store::SecureStore::open(&db_path, hmac_key.to_vec())
             .map_err(|e| format!("Database error: {e}"))
     }
 
@@ -301,7 +301,7 @@ impl SentinelIpcHandler {
             .latest()
             .ok_or("Chain reported non-empty but latest() returned None")?;
 
-        let (decl, identity_fingerprint, mut hmac_key) = {
+        let (decl, identity_fingerprint, hmac_key) = {
             let signing_key_guard = self.sentinel.signing_key.read_recover();
             let signing_key = signing_key_guard
                 .as_ref()
@@ -335,8 +335,7 @@ impl SentinelIpcHandler {
         };
 
         let db_path = self.sentinel.config.writersproof_dir.join("events.db");
-        if let Ok(store) = crate::store::SecureStore::open(&db_path, std::mem::take(&mut *hmac_key))
-        {
+        if let Ok(store) = crate::store::SecureStore::open(&db_path, hmac_key.to_vec()) {
             if let Ok(Some((cbor, sig))) = store.get_baseline_digest(&identity_fingerprint) {
                 if let Ok(digest) =
                     serde_json::from_slice::<cpop_protocol::baseline::BaselineDigest>(&cbor)
@@ -435,7 +434,7 @@ impl IpcMessageHandler for SentinelIpcHandler {
             IpcMessage::Heartbeat => IpcMessage::HeartbeatAck {
                 timestamp_ns: SystemTime::now()
                     .duration_since(UNIX_EPOCH)
-                    .map(|d| d.as_nanos() as u64)
+                    .map(|d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX))
                     .unwrap_or(0),
             },
 

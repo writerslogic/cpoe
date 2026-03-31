@@ -553,7 +553,7 @@ impl PreWitnessBuffer {
         // Check 2: time span > 1.5s
         let first_ts = self.keystrokes[0].timestamp_ns;
         let last_ts = self.keystrokes[n - 1].timestamp_ns;
-        let span_ns = (last_ts - first_ts).max(0) as f64;
+        let span_ns = last_ts.saturating_sub(first_ts).max(0) as f64;
         let span_s = span_ns / 1_000_000_000.0;
         if span_s < 1.5 {
             return AutoWitnessDecision::RejectedBurst;
