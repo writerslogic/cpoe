@@ -27,19 +27,19 @@ pub fn handle_focus_event_sync(
     #[cfg(debug_assertions)]
     {
         use std::io::Write;
-        let debug_path = std::env::var("CPOP_DATA_DIR")
-            .map(|d| format!("{}/event_debug.txt", d))
-            .unwrap_or_else(|_| "/tmp/cpop_event_debug.txt".to_string());
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&debug_path)
-        {
-            let _ = writeln!(
-                f,
-                "HANDLE_FOCUS: type={:?} bundle={} path={:?} shadow={}",
-                event.event_type, event.app_bundle_id, event.path, event.shadow_id
-            );
+        if let Ok(d) = std::env::var("CPOP_DATA_DIR") {
+            let debug_path = format!("{}/event_debug.txt", d);
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&debug_path)
+            {
+                let _ = writeln!(
+                    f,
+                    "HANDLE_FOCUS: type={:?} bundle={} path={:?} shadow={}",
+                    event.event_type, event.app_bundle_id, event.path, event.shadow_id
+                );
+            }
         }
     }
 
@@ -61,22 +61,34 @@ pub fn handle_focus_event_sync(
                 if !event.shadow_id.is_empty() {
                     format!("shadow://{}", event.shadow_id)
                 } else {
+                    // AX query failed to resolve a document path. Fall back
+                    // to the existing current_focus if one is set (common
+                    // after a stop/restart cycle where the same document is
+                    // still open but AX is slow to respond).
+                    let fallback = { current_focus.read_recover().clone() };
+                    if let Some(path) = fallback {
+                        // Re-focus the existing session without changing the path.
+                        if let Some(session) = sessions.write_recover().get_mut(path.as_str()) {
+                            session.focus_gained();
+                        }
+                        return;
+                    }
                     #[cfg(debug_assertions)]
                     {
                         use std::io::Write;
-                        let debug_path = std::env::var("CPOP_DATA_DIR")
-                            .map(|d| format!("{}/event_debug.txt", d))
-                            .unwrap_or_else(|_| "/tmp/cpop_event_debug.txt".to_string());
-                        if let Ok(mut f) = std::fs::OpenOptions::new()
-                            .create(true)
-                            .append(true)
-                            .open(&debug_path)
-                        {
-                            let _ = writeln!(
-                                f,
-                                "DROPPED: empty path and empty shadow_id for {}",
-                                event.app_bundle_id
-                            );
+                        if let Ok(d) = std::env::var("CPOP_DATA_DIR") {
+                            let debug_path = format!("{}/event_debug.txt", d);
+                            if let Ok(mut f) = std::fs::OpenOptions::new()
+                                .create(true)
+                                .append(true)
+                                .open(&debug_path)
+                            {
+                                let _ = writeln!(
+                                    f,
+                                    "DROPPED: empty path and empty shadow_id for {}",
+                                    event.app_bundle_id
+                                );
+                            }
                         }
                     }
                     return;
@@ -140,17 +152,7 @@ pub fn handle_focus_event_sync(
             );
             *current_focus.write_recover() = Some(doc_path);
         }
-        FocusEventType::FocusLost => {
-            let prev_path = {
-                let focus = current_focus.read_recover();
-                focus.clone()
-            };
-            if let Some(path) = prev_path {
-                unfocus_document_sync(&path, sessions, session_events_tx);
-                *current_focus.write_recover() = None;
-            }
-        }
-        FocusEventType::FocusUnknown => {
+        FocusEventType::FocusLost | FocusEventType::FocusUnknown => {
             let prev_path = {
                 let focus = current_focus.read_recover();
                 focus.clone()
@@ -204,26 +206,18 @@ pub fn focus_document_sync(
         }
     }
 
-    // Check if we already have a session (fast path, read lock only)
-    let is_new_session = !sessions.read_recover().contains_key(path);
-
-    // Compute file hash and signing key BEFORE acquiring the write lock
-    // to avoid blocking FFI calls that need to read sessions.
-    let pre_hash = if is_new_session {
-        // Check file size before hashing to avoid blocking on large files
-        let hash = match std::fs::metadata(path) {
+    // Compute file hash BEFORE acquiring write lock to avoid blocking FFI
+    let pre_hash = {
+        match std::fs::metadata(path) {
             Ok(meta) if meta.len() <= MAX_HASH_FILE_SIZE => compute_file_hash(path).ok(),
             _ => None,
-        };
-        Some(hash)
-    } else {
-        None
+        }
     };
     let key = signing_key.read_recover().clone();
 
-    // Hold the write lock for the minimum time necessary
     let new_session_info = {
         let mut sessions_map = sessions.write_recover();
+        let was_new = !sessions_map.contains_key(path);
 
         let session = sessions_map.entry(path.to_string()).or_insert_with(|| {
             let mut session = DocumentSession::new(
@@ -233,7 +227,7 @@ pub fn focus_document_sync(
                 event.window_title.clone(),
             );
 
-            if let Some(Some(ref hash)) = pre_hash {
+            if let Some(ref hash) = pre_hash {
                 session.initial_hash = Some(hash.clone());
                 session.current_hash = Some(hash.clone());
             }
@@ -244,8 +238,7 @@ pub fn focus_document_sync(
         session.focus_gained();
         session.window_title = event.window_title.clone();
 
-        // Capture info for post-lock operations
-        if is_new_session {
+        if was_new {
             Some((
                 session.session_id.clone(),
                 create_session_start_payload(session),
@@ -277,19 +270,19 @@ pub fn focus_document_sync(
     #[cfg(debug_assertions)]
     {
         use std::io::Write;
-        let debug_path = std::env::var("CPOP_DATA_DIR")
-            .map(|d| format!("{}/event_debug.txt", d))
-            .unwrap_or_else(|_| "/tmp/cpop_event_debug.txt".to_string());
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&debug_path)
-        {
-            let _ = writeln!(
-                f,
-                "SESSION_FOCUSED: path={} focus_count={}",
-                path, focus_count
-            );
+        if let Ok(d) = std::env::var("CPOP_DATA_DIR") {
+            let debug_path = format!("{}/event_debug.txt", d);
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&debug_path)
+            {
+                let _ = writeln!(
+                    f,
+                    "SESSION_FOCUSED: path={} focus_count={}",
+                    path, focus_count
+                );
+            }
         }
     }
 
@@ -520,8 +513,10 @@ pub fn create_session_start_payload(session: &DocumentSession) -> Vec<u8> {
             log::debug!("No initial hash available for session, using zero hash");
             vec![0u8; 32]
         });
-    payload.extend_from_slice(&hash_bytes[..32.min(hash_bytes.len())]);
-    payload.resize(payload.len() + (32 - hash_bytes.len().min(32)), 0);
+    let mut hash_fixed = [0u8; 32];
+    let len = hash_bytes.len().min(32);
+    hash_fixed[..len].copy_from_slice(&hash_bytes[..len]);
+    payload.extend_from_slice(&hash_fixed);
 
     let timestamp = session
         .start_time
@@ -538,13 +533,15 @@ pub fn create_document_hash_payload(hash: &str, size: i64) -> Result<Vec<u8>, St
         hex::decode(hash).map_err(|e| format!("Failed to decode hash '{}': {}", hash, e))?;
     let mut payload = Vec::with_capacity(32 + 8 + 8);
 
-    payload.extend_from_slice(&hash_bytes[..32.min(hash_bytes.len())]);
-    payload.resize(payload.len() + (32 - hash_bytes.len().min(32)), 0);
-    payload.extend_from_slice(&(size as u64).to_be_bytes());
+    let mut hash_fixed = [0u8; 32];
+    let len = hash_bytes.len().min(32);
+    hash_fixed[..len].copy_from_slice(&hash_bytes[..len]);
+    payload.extend_from_slice(&hash_fixed);
+    payload.extend_from_slice(&(size.max(0) as u64).to_be_bytes());
 
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos() as i64)
+        .map(|d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX))
         .unwrap_or(0);
     payload.extend_from_slice(&timestamp.to_be_bytes());
 
