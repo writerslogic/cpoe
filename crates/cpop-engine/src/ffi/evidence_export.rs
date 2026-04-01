@@ -8,6 +8,57 @@ use cpop_protocol::rfc::wire_types::{
 };
 use sha2::{Digest, Sha256};
 
+/// Export stored events as a human-readable JSON evidence packet.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn ffi_export_evidence_json(path: String, tier: String, output: String) -> FfiResult {
+    // Build the same wire packet as the CBOR export, then serialize to JSON.
+    let cbor_result = ffi_export_evidence(path.clone(), tier, output.clone());
+    if !cbor_result.success {
+        return cbor_result;
+    }
+    // Read the CBOR file we just wrote, decode, re-encode as JSON
+    let output_path = std::path::Path::new(&output);
+    let data = match std::fs::read(output_path) {
+        Ok(d) => d,
+        Err(e) => {
+            return FfiResult {
+                success: false,
+                message: None,
+                error_message: Some(format!("Failed to read exported file: {e}")),
+            };
+        }
+    };
+    let cbor_payload = crate::ffi::helpers::unwrap_cose_or_raw(&data);
+    match EvidencePacketWire::decode_cbor(&cbor_payload) {
+        Ok(wire) => match serde_json::to_string_pretty(&wire) {
+            Ok(json) => {
+                if let Err(e) = std::fs::write(output_path, json.as_bytes()) {
+                    return FfiResult {
+                        success: false,
+                        message: None,
+                        error_message: Some(format!("Failed to write JSON: {e}")),
+                    };
+                }
+                FfiResult {
+                    success: true,
+                    message: Some(format!("Exported JSON to {}", output_path.display())),
+                    error_message: None,
+                }
+            }
+            Err(e) => FfiResult {
+                success: false,
+                message: None,
+                error_message: Some(format!("JSON serialization failed: {e}")),
+            },
+        },
+        Err(e) => FfiResult {
+            success: false,
+            message: None,
+            error_message: Some(format!("Failed to decode CBOR for JSON conversion: {e}")),
+        },
+    }
+}
+
 /// Export stored events for a file as a CBOR evidence packet at the given tier.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn ffi_export_evidence(path: String, tier: String, output: String) -> FfiResult {
