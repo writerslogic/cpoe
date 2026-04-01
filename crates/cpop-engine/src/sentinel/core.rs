@@ -836,11 +836,47 @@ impl Sentinel {
             let _ = cap.stop();
         }
 
-        // Unfocus all sessions here (not in the event loop cleanup) so that
-        // has_focus is guaranteed to be false before start() re-focuses them.
-        // The event loop abort below may fire before the loop's own cleanup
-        // runs, so we must do this in stop() directly.
+        // Persist cumulative stats and unfocus all sessions so keystroke
+        // counts survive across stop/start cycles.
         {
+            let sessions_map = self.sessions.read_recover();
+            let guard = self.signing_key.read_recover();
+            if let Some(ref sk) = *guard {
+                let db = self.config.writersproof_dir.join("events.db");
+                if let Ok(store) = crate::store::open_store_with_signing_key(sk, &db) {
+                    for (path, session) in sessions_map.iter() {
+                        if path.starts_with("shadow://") {
+                            continue;
+                        }
+                        let now_secs = SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs() as i64)
+                            .unwrap_or(0);
+                        let stats = crate::store::DocumentStats {
+                            file_path: path.clone(),
+                            total_keystrokes: i64::try_from(session.total_keystrokes())
+                                .unwrap_or(i64::MAX),
+                            total_focus_ms: session.total_focus_ms_cumulative(),
+                            session_count: i64::from(session.session_number + 1),
+                            total_duration_secs: session
+                                .start_time
+                                .elapsed()
+                                .map(|d| d.as_secs() as i64)
+                                .unwrap_or(0),
+                            first_tracked_at: session
+                                .first_tracked_at
+                                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                                .map(|d| d.as_secs() as i64)
+                                .unwrap_or(now_secs),
+                            last_tracked_at: now_secs,
+                        };
+                        let _ = store.save_document_stats(&stats);
+                    }
+                }
+            }
+            drop(guard);
+            drop(sessions_map);
+
             let paths: Vec<String> = self.sessions.read_recover().keys().cloned().collect();
             for path in paths {
                 unfocus_document_sync(&path, &self.sessions, &self.session_events_tx);
