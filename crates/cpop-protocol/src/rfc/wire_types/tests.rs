@@ -148,6 +148,7 @@ fn create_test_evidence_packet() -> EvidencePacketWire {
         profile: None,
         presence_challenges: None,
         channel_binding: None,
+        signing_public_key: None,
         content_tier: Some(ContentTier::Core),
         previous_packet_ref: None,
         packet_sequence: None,
