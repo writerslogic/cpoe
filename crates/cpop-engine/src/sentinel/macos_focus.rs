@@ -53,10 +53,19 @@ impl MacOSFocusMonitor {
             let title_str = window_title.unwrap_or_default();
 
             let doc_path = doc_path.or_else(|| {
-                super::types::infer_document_path_from_title_with_bundle(
+                let inferred = super::types::infer_document_path_from_title_with_bundle(
                     &title_str,
                     Some(&bundle_id_str),
-                )
+                )?;
+                // Only use inferred paths that are absolute. Relative paths
+                // (bare filenames like "essay.txt") cannot be resolved to real
+                // files, causing hash failures and path mismatches on export.
+                // The sentinel's title:// fallback handles bare filenames.
+                if std::path::Path::new(&inferred).is_absolute() {
+                    Some(inferred)
+                } else {
+                    None
+                }
             });
 
             Some(WindowInfo {
