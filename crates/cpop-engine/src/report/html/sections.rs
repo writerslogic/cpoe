@@ -47,10 +47,10 @@ pub(super) fn write_verdict(html: &mut String, r: &WarReport) -> fmt::Result {
     let lr_display = format_lr(r.likelihood_ratio);
     write!(
         html,
-        r#"<div class="verdict" style="background:{color}">
-  <div class="verdict-score">{score}<small>/ 100</small></div>
+        r#"<div class="verdict" style="border-left-color:{color}">
+  <div class="verdict-score" style="color:{color}">{score}<small>/ 100</small></div>
   <div class="verdict-body">
-    <h2>{label} &mdash; {subtitle}</h2>
+    <h2>{label}</h2>
     <p>{desc}</p>
   </div>
   <div class="verdict-lr">
@@ -62,7 +62,6 @@ pub(super) fn write_verdict(html: &mut String, r: &WarReport) -> fmt::Result {
 "#,
         score = r.score,
         label = r.verdict.label(),
-        subtitle = r.verdict.subtitle(),
         desc = html_escape(&r.verdict_description),
         lr = lr_display,
         tier = r.enfsi_tier.label(),

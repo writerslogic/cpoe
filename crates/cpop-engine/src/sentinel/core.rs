@@ -97,6 +97,8 @@ const CGEVENTTAP_VERIFIED_PID: i64 = -1;
 /// Never acquire `sessions` before `signing_key`.
 pub struct Sentinel {
     pub(crate) config: Arc<SentinelConfig>,
+    /// Runtime toggle for document snapshots (can be changed without restart).
+    pub(crate) snapshots_enabled: Arc<AtomicBool>,
     pub(crate) sessions: Arc<RwLock<HashMap<String, DocumentSession>>>,
     pub(crate) shadow: Arc<ShadowManager>,
     pub(crate) current_focus: Arc<RwLock<Option<String>>>,
@@ -138,8 +140,10 @@ impl Sentinel {
         use rand::RngCore;
         rand::rng().fill_bytes(&mut mouse_stego_seed);
 
+        let snapshots_default = config.snapshots_enabled;
         let sentinel = Self {
             config: Arc::new(config),
+            snapshots_enabled: Arc::new(AtomicBool::new(snapshots_default)),
             sessions: Arc::new(RwLock::new(HashMap::new())),
             shadow: Arc::new(shadow),
             current_focus: Arc::new(RwLock::new(None)),
@@ -215,6 +219,11 @@ impl Sentinel {
     /// Return the current keystroke count from the activity accumulator.
     pub fn config(&self) -> &SentinelConfig {
         &self.config
+    }
+
+    /// Toggle document snapshot saving at runtime.
+    pub fn set_snapshots_enabled(&self, enabled: bool) {
+        self.snapshots_enabled.store(enabled, Ordering::SeqCst);
     }
 
     pub fn keystroke_count(&self) -> u64 {
@@ -528,6 +537,7 @@ impl Sentinel {
         let tap_check_capture = Arc::clone(&self.keystroke_capture);
         let tap_check_active = Arc::clone(&self.keystroke_capture_active);
         let bridge_health_threads = Arc::clone(&self.bridge_threads);
+        let snapshots_flag = Arc::clone(&self.snapshots_enabled);
 
         let event_loop_handle_ref = Arc::clone(&self.event_loop_handle);
         let handle = tokio::spawn(async move {
@@ -782,6 +792,39 @@ impl Sentinel {
                                                     .unwrap_or(0),
                                             };
                                             let _ = store.save_document_stats(&stats);
+                                        }
+                                    }
+
+                                    // Save document snapshot if enabled
+                                    if snapshots_flag.load(Ordering::SeqCst)
+                                        && !path.starts_with("shadow://")
+                                    {
+                                        let src = std::path::Path::new(path);
+                                        if src.exists() && src.is_file() {
+                                            let path_hash = {
+                                                use sha2::Digest;
+                                                let h = sha2::Sha256::digest(path.as_bytes());
+                                                hex::encode(&h[..8])
+                                            };
+                                            let ext = src
+                                                .extension()
+                                                .and_then(|e| e.to_str())
+                                                .unwrap_or("txt");
+                                            let snap_dir =
+                                                writersproof_dir.join("snapshots").join(&path_hash);
+                                            let _ = std::fs::create_dir_all(&snap_dir);
+                                            let ordinal = session
+                                                .last_checkpoint_keystrokes;
+                                            let snap_name = format!(
+                                                "{:06}.{}",
+                                                ordinal, ext
+                                            );
+                                            let snap_path = snap_dir.join(&snap_name);
+                                            if let Err(e) = std::fs::copy(src, &snap_path) {
+                                                log::warn!(
+                                                    "Snapshot save failed for {}: {e}", path
+                                                );
+                                            }
                                         }
                                     }
                                 }

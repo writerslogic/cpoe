@@ -437,6 +437,40 @@ pub fn ffi_get_identity_mnemonic() -> FfiResult {
     }
 }
 
+/// Enable or disable document snapshots at checkpoints.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn ffi_set_snapshots_enabled(enabled: bool) {
+    if let Some(sentinel) = crate::ffi::sentinel::get_sentinel() {
+        sentinel.set_snapshots_enabled(enabled);
+    }
+}
+
+/// Get the snapshot file path for a document at a given checkpoint ordinal.
+/// Returns empty string if no snapshot exists.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn ffi_get_snapshot_path(file_path: String, checkpoint_ordinal: u64) -> String {
+    let data_dir = match get_data_dir() {
+        Some(d) => d,
+        None => return String::new(),
+    };
+    let path_hash = {
+        use sha2::Digest;
+        let h = sha2::Sha256::digest(file_path.as_bytes());
+        hex::encode(&h[..8])
+    };
+    let src = std::path::Path::new(&file_path);
+    let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("txt");
+    let snap_path = data_dir
+        .join("snapshots")
+        .join(&path_hash)
+        .join(format!("{:06}.{}", checkpoint_ordinal, ext));
+    if snap_path.exists() {
+        snap_path.to_string_lossy().to_string()
+    } else {
+        String::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

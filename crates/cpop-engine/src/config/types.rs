@@ -241,6 +241,8 @@ pub struct SentinelConfig {
     pub hash_on_focus: bool,
     pub hash_on_save: bool,
     pub poll_interval_ms: u64,
+    /// When true, a copy of the tracked file is saved at each auto-checkpoint.
+    pub snapshots_enabled: bool,
 }
 
 impl Default for SentinelConfig {
@@ -344,6 +346,7 @@ impl Default for SentinelConfig {
             hash_on_focus: true,
             hash_on_save: true,
             poll_interval_ms: 100,
+            snapshots_enabled: false,
         }
     }
 }
