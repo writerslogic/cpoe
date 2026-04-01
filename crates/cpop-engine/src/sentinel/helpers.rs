@@ -247,12 +247,12 @@ pub fn focus_document_sync(
         if p.is_dir() {
             return;
         }
-        match p.extension().and_then(|e| e.to_str()) {
-            None => return,
-            Some(ext) => {
-                if NON_DOCUMENT_EXTENSIONS.contains(&ext.to_lowercase().as_str()) {
-                    return;
-                }
+        // Block known non-document extensions (media, archives, binaries).
+        // Files without extensions are allowed through; many legitimate
+        // documents (README, Makefile, cloud app exports) have no extension.
+        if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
+            if NON_DOCUMENT_EXTENSIONS.contains(&ext.to_lowercase().as_str()) {
+                return;
             }
         }
     }

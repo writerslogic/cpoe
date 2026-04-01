@@ -352,13 +352,14 @@ pub fn parse_url_parts(url: &str) -> (String, String) {
 
 /// Known document file extensions for heuristic title-based path inference.
 const DOC_EXTENSIONS: &[&str] = &[
-    ".docx", ".doc", ".txt", ".md", ".rtf", ".odt", ".tex", ".pdf", ".xlsx", ".xls", ".csv",
-    ".pptx", ".ppt", ".rs", ".py", ".js", ".ts", ".jsx", ".tsx", ".c", ".cpp", ".h", ".java",
-    ".go", ".rb", ".swift", ".kt", ".html", ".css", ".json", ".xml", ".yaml", ".yml", ".toml",
-    ".sh", ".bat", ".ps1",
+    ".docx", ".doc", ".txt", ".md", ".org", ".rtf", ".odt", ".tex", ".pdf", ".xlsx", ".xls",
+    ".csv", ".pptx", ".ppt", ".rs", ".py", ".js", ".ts", ".jsx", ".tsx", ".c", ".cpp", ".h",
+    ".java", ".go", ".rb", ".swift", ".kt", ".html", ".css", ".json", ".xml", ".yaml", ".yml",
+    ".toml", ".sh", ".bat", ".ps1", ".r", ".jl", ".lua", ".php", ".pl", ".scala",
 ];
 
 /// Electron-based editors that don't expose `AXDocument` and need title parsing.
+/// For these apps, bare filenames without extensions are accepted as document names.
 const ELECTRON_EDITORS: &[&str] = &[
     "abnerworks.Typora",
     "com.typora.Typora",
@@ -366,9 +367,17 @@ const ELECTRON_EDITORS: &[&str] = &[
     "com.zettlr.app",
     "com.github.marktext",
     "com.logseq.logseq",
+    "com.microsoft.VSCode",
+    "com.microsoft.VSCodeInsiders",
+    "com.todesktop.230313mzl4w4u92", // Cursor
+    "com.notion.id",
+    "com.notion.Notion",
+    "com.figma.Desktop",
 ];
 
 /// Window title fragments that indicate no real document is open.
+/// These are matched as exact (case-insensitive) whole titles, not substrings,
+/// to avoid blocking legitimate documents like "Untitled Draft" or "Welcome Letter".
 const SKIP_TITLE_FRAGMENTS: &[&str] = &[
     "untitled",
     "no file",
@@ -377,7 +386,7 @@ const SKIP_TITLE_FRAGMENTS: &[&str] = &[
     "preferences",
     "get started",
     "graph view",
-    "daily note", // Obsidian/Logseq generated view, not a user file
+    "daily note",
 ];
 
 /// Infer a document file path from a window title like `"file.rs - VSCode"`.
@@ -481,9 +490,11 @@ fn looks_like_document_name(s: &str) -> bool {
 
     let lower = s.to_lowercase();
 
-    // Reject known non-document fragments.
+    // Reject known non-document titles. Match as exact title or as the
+    // first word/phrase, so "Untitled" and "Untitled - App" are both
+    // rejected but "Untitled Draft" is accepted as a legitimate document.
     for frag in SKIP_TITLE_FRAGMENTS {
-        if lower.contains(frag) {
+        if lower == *frag || lower.starts_with(&format!("{frag} -")) {
             return false;
         }
     }
