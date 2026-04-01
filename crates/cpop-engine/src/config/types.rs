@@ -233,7 +233,7 @@ pub struct SentinelConfig {
     pub wal_dir: PathBuf,
     pub watch_paths: Vec<PathBuf>,
     pub recursive_watch: bool,
-    pub debounce_duration_ms: u64,
+
     pub idle_timeout_secs: u64,
     pub allowed_apps: Vec<String>,
     pub blocked_apps: Vec<String>,
@@ -241,11 +241,6 @@ pub struct SentinelConfig {
     pub hash_on_focus: bool,
     pub hash_on_save: bool,
     pub poll_interval_ms: u64,
-    pub auto_witness_enabled: bool,
-    pub auto_witness_min_keystrokes: u32,
-    pub auto_witness_min_cv: f64,
-    pub auto_witness_max_same_key_pct: f64,
-    pub auto_witness_min_zones: usize,
 }
 
 impl Default for SentinelConfig {
@@ -279,7 +274,6 @@ impl Default for SentinelConfig {
             wal_dir: writersproof_dir.join("sentinel").join("wal"),
             watch_paths: Vec::new(),
             recursive_watch: true,
-            debounce_duration_ms: 200,
             idle_timeout_secs: 1800,
             allowed_apps: vec![
                 // macOS native
@@ -327,23 +321,29 @@ impl Default for SentinelConfig {
                 // Office suites
                 "org.libreoffice.LibreOffice".to_string(),
                 "org.openoffice.script".to_string(),
-                // Linux editors / terminals
-                "org.gnome.Terminal".to_string(),
-                "org.kde.konsole".to_string(),
+                // Linux editors
                 "org.gnome.gedit".to_string(),
                 "org.gnome.TextEditor".to_string(),
                 "org.kde.kate".to_string(),
             ],
-            blocked_apps: vec!["com.apple.finder".to_string(), "explorer".to_string()],
+            blocked_apps: vec![
+                // File managers
+                "com.apple.finder".to_string(),
+                "explorer".to_string(),
+                // Terminals (not document editors)
+                "com.apple.Terminal".to_string(),
+                "com.googlecode.iterm2".to_string(),
+                "org.vim.MacVim".to_string(),
+                "com.github.wez.wezterm".to_string(),
+                "net.kovidgoyal.kitty".to_string(),
+                "io.alacritty".to_string(),
+                "org.gnome.Terminal".to_string(),
+                "org.kde.konsole".to_string(),
+            ],
             track_unknown_apps: true,
             hash_on_focus: true,
             hash_on_save: true,
             poll_interval_ms: 100,
-            auto_witness_enabled: true,
-            auto_witness_min_keystrokes: 10,
-            auto_witness_min_cv: 0.12,
-            auto_witness_max_same_key_pct: 0.60,
-            auto_witness_min_zones: 2,
         }
     }
 }
@@ -398,7 +398,6 @@ impl SentinelConfig {
         require_nonzero(self.checkpoint_interval_secs, "checkpoint_interval_secs")?;
         require_nonzero(self.heartbeat_interval_secs, "heartbeat_interval_secs")?;
         require_nonzero(self.poll_interval_ms, "poll_interval_ms")?;
-        require_nonzero(self.debounce_duration_ms, "debounce_duration_ms")?;
 
         if self.idle_timeout_secs < self.checkpoint_interval_secs {
             bail!(

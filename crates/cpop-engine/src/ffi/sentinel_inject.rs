@@ -156,102 +156,11 @@ pub fn ffi_sentinel_inject_keystroke(
         .write_recover()
         .add_sample(&sample);
 
-    // Attribute keystroke to the currently focused document.
-    // If no session exists, buffer keystrokes for auto-witnessing.
+    // Only count keystrokes when a tracked document is focused.
+    // If current_focus is None or no session exists, ignore.
     if let Some(ref path) = sentinel.current_focus() {
-        // Auto-witness: if no session exists, buffer keystrokes and check human plausibility
-        if !sentinel.sessions.read_recover().contains_key(path.as_str()) {
-            use crate::sentinel::types::{
-                AutoWitnessDecision, PreWitnessBuffer, PreWitnessKeystroke,
-            };
-            use std::collections::HashMap;
-            use std::sync::Mutex;
-
-            // Process-global pre-witness buffers for the FFI inject path
-            static FFI_PRE_WITNESS: Mutex<Option<HashMap<String, PreWitnessBuffer>>> =
-                Mutex::new(None);
-
-            let mut guard = FFI_PRE_WITNESS.lock().unwrap_or_else(|e| e.into_inner());
-            let buffers = guard.get_or_insert_with(HashMap::new);
-
-            let buffer = buffers
-                .entry(path.clone())
-                .or_insert_with(|| PreWitnessBuffer::new(path.clone()));
-
-            if !buffer.rejected {
-                buffer.keystrokes.push(PreWitnessKeystroke {
-                    timestamp_ns,
-                    keycode,
-                    zone,
-                    source_pid,
-                });
-
-                let config = sentinel.config();
-                let decision = buffer.should_auto_witness(
-                    config.auto_witness_min_keystrokes,
-                    config.auto_witness_min_cv,
-                    config.auto_witness_max_same_key_pct,
-                    config.auto_witness_min_zones,
-                );
-
-                match decision {
-                    AutoWitnessDecision::HumanPlausible => {
-                        let keystroke_count = buffer.keystrokes.len() as u64;
-                        let file_path = std::path::Path::new(path.as_str());
-                        // Mark buffer as consumed under the lock to prevent
-                        // a TOCTOU race where another thread re-buffers
-                        // keystrokes between lock drop and start_witnessing.
-                        buffer.rejected = true;
-                        drop(guard);
-
-                        if file_path.exists() && file_path.is_file() {
-                            match sentinel.start_witnessing(file_path) {
-                                Ok(()) => {
-                                    log::info!(
-                                        "Auto-witnessed {} after {} human-plausible keystrokes (FFI path)",
-                                        path, keystroke_count
-                                    );
-                                    // Set the initial keystroke count from the buffer
-                                    if let Some(session) =
-                                        sentinel.sessions.write_recover().get_mut(path.as_str())
-                                    {
-                                        session.keystroke_count = keystroke_count;
-                                    }
-                                }
-                                Err(e) => {
-                                    log::debug!("Auto-witness failed for {}: {:?}", path, e);
-                                }
-                            }
-                        }
-                        return true; // keystroke processed
-                    }
-                    AutoWitnessDecision::NotEnoughData => {} // keep buffering
-                    rejected => {
-                        log::debug!("Auto-witness rejected for {}: {:?}", path, rejected);
-                        buffer.rejected = true;
-                    }
-                }
-            }
-
-            // Evict stale buffers older than 60 seconds
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default();
-            buffers.retain(|_, buf| {
-                buf.created_at
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|t| now.as_secs() - t.as_secs() < 60)
-                    .unwrap_or(false)
-            });
-
-            return true;
-        }
-
         if let Some(session) = sentinel.sessions.write_recover().get_mut(path) {
             session.keystroke_count += 1;
-            // Store jitter sample for per-document forensic analysis.
-            // Track whether the push actually occurred so the rollback below
-            // only pops when there is a matching push to undo.
             let pushed =
                 session.jitter_samples.len() < crate::sentinel::types::MAX_DOCUMENT_JITTER_SAMPLES;
             if pushed {
@@ -263,15 +172,14 @@ pub fn ffi_sentinel_inject_keystroke(
                 keycode,
                 zone,
                 source_pid,
-                None, // frontmost_pid not available in FFI path
+                None,
                 session.has_focus,
                 &mut session.event_validation,
             );
-            // Drop events with very low confidence (likely synthetic injection)
             if validation.confidence < 0.1 {
-                session.keystroke_count -= 1; // undo the increment
+                session.keystroke_count -= 1;
                 if pushed {
-                    session.jitter_samples.pop(); // undo the push
+                    session.jitter_samples.pop();
                 }
             }
         }

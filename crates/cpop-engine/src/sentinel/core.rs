@@ -17,40 +17,6 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::time::interval;
 use zeroize::Zeroize;
 
-/// Load cumulative keystroke/focus stats from the store into a session.
-///
-/// Called when a session is created via auto-witness or focus-gained so that
-/// `total_keystrokes()` returns the lifetime count, not just the current
-/// session's count.
-fn load_cumulative_stats(
-    session: &mut DocumentSession,
-    path: &str,
-    signing_key: &Arc<RwLock<Option<SigningKey>>>,
-    writersproof_dir: &std::path::Path,
-) {
-    let guard = signing_key.read_recover();
-    let sk = match guard.as_ref() {
-        Some(sk) => sk,
-        None => return,
-    };
-    let db_path = writersproof_dir.join("events.db");
-    let store = match crate::store::open_store_with_signing_key(sk, &db_path) {
-        Ok(s) => s,
-        Err(_) => return,
-    };
-    if let Ok(Some(stats)) = store.load_document_stats(path) {
-        session.cumulative_keystrokes_base = u64::try_from(stats.total_keystrokes).unwrap_or(0);
-        session.cumulative_focus_ms_base = stats.total_focus_ms;
-        session.session_number = u32::try_from(stats.session_count).unwrap_or(0);
-        if session.first_tracked_at.is_none() {
-            session.first_tracked_at = Some(
-                std::time::UNIX_EPOCH
-                    + Duration::from_secs(u64::try_from(stats.first_tracked_at).unwrap_or(0)),
-            );
-        }
-    }
-}
-
 /// Hash a file, open the secure store, and write a checkpoint event.
 ///
 /// Returns `true` if the checkpoint was committed, `false` on any failure.
@@ -379,7 +345,6 @@ impl Sentinel {
         let signing_key = Arc::clone(&self.signing_key);
         let session_events_tx = self.session_events_tx.clone();
         let running = Arc::clone(&self.running);
-        let debounce_duration = Duration::from_millis(config.debounce_duration_ms);
         let idle_timeout = Duration::from_secs(config.idle_timeout_secs);
         let wal_dir = config.wal_dir.clone();
 
@@ -566,26 +531,11 @@ impl Sentinel {
 
         let event_loop_handle_ref = Arc::clone(&self.event_loop_handle);
         let handle = tokio::spawn(async move {
-            let mut debounce_timer: Option<tokio::time::Instant> = None;
-            let mut pending_focus: Option<FocusEvent> = None;
             let mut idle_check_interval = interval(Duration::from_secs(60));
             let mut checkpoint_interval = interval(Duration::from_secs(checkpoint_interval_secs));
             let mut last_keystroke_time = std::time::Instant::now();
             let mut last_keystroke_ts_ns: i64 = 0;
             let mut last_mouse_ts_ns: i64 = 0;
-            let mut pre_witness_buffers: HashMap<String, PreWitnessBuffer> = HashMap::new();
-            // Keystrokes that arrive when current_focus is None (during focus
-            // transitions). Only drained if the same document regains focus;
-            // discarded if a different document gains focus (the keystrokes
-            // were likely stale input from the previous app).
-            let mut unfocused_keystrokes: Vec<crate::jitter::SimpleJitterSample> = Vec::new();
-            // The document path that was focused when the unfocused keystrokes
-            // were captured. Used to verify attribution on refocus.
-            let mut unfocused_source: Option<String> = None;
-            // Process the first focus event immediately (no debounce) so that
-            // current_focus is set before any keystrokes arrive.  This is
-            // essential after a restart where the document is already focused.
-            let mut first_focus_event = true;
 
             loop {
                 tokio::select! {
@@ -599,7 +549,7 @@ impl Sentinel {
                             continue;
                         }
 
-                        // Compute inter-keystroke duration BEFORE updating last_keystroke_ts_ns
+                        // Compute inter-keystroke duration
                         let duration_since_last_ns: u64 = if last_keystroke_ts_ns > 0 {
                             event.timestamp_ns.saturating_sub(last_keystroke_ts_ns).max(0) as u64
                         } else {
@@ -611,167 +561,36 @@ impl Sentinel {
                             duration_since_last_ns,
                             zone: event.zone,
                         };
-                        // RwLock::write() per keystroke: at human typing speeds (5-10 Hz)
-                        // contention is negligible. Revisit only if profiling shows otherwise.
                         activity_accumulator.write_recover().add_sample(&sample);
 
                         if let Some(ref mut collector) = *voice_collector.write_recover() {
                             collector.record_keystroke(event.keycode, event.char_value);
                         }
 
-                        // Attribute keystroke to the currently focused document.
-                        // Read current_focus into a local and drop the lock before
-                        // acquiring sessions, matching the lock order in helpers.rs.
+                        // Only count keystrokes when a tracked document is focused.
+                        // If current_focus is None or no session exists, ignore.
                         let focused_path = current_focus.read_recover().clone();
                         if let Some(ref path) = focused_path {
-                            // Single write lock avoids TOCTOU race where a session
-                            // could be removed between a read check and write lock.
-                            let handled = {
-                                let mut map = sessions.write_recover();
-                                if let Some(session) = map.get_mut(path) {
-                                    session.keystroke_count += 1;
-                                    // Store jitter sample for per-document forensic analysis
-                                    if session.jitter_samples.len() < MAX_DOCUMENT_JITTER_SAMPLES {
-                                        session.jitter_samples.push(sample.clone());
-                                    }
-
-                                    let validation = crate::forensics::validate_keystroke_event(
-                                        event.timestamp_ns,
-                                        event.keycode,
-                                        sample.zone,
-                                        CGEVENTTAP_VERIFIED_PID,
-                                        None,
-                                        session.has_focus,
-                                        &mut session.event_validation,
-                                    );
-                                    if validation.confidence < 0.1 {
-                                        session.keystroke_count -= 1;
-                                        session.jitter_samples.pop();
-                                    }
-                                    true
-                                } else {
-                                    false
-                                }
-                            }; // write lock released
-                            if !handled && config.auto_witness_enabled {
-                                // No active session; buffer into PreWitnessBuffer
-                                let buffer = pre_witness_buffers
-                                    .entry(path.clone())
-                                    .or_insert_with(|| PreWitnessBuffer::new(path.clone()));
-
-                                if !buffer.rejected {
-                                    buffer.keystrokes.push(PreWitnessKeystroke {
-                                        timestamp_ns: event.timestamp_ns,
-                                        keycode: event.keycode,
-                                        zone: event.zone,
-                                        source_pid: CGEVENTTAP_VERIFIED_PID,
-                                    });
-
-                                    let decision = buffer.should_auto_witness(
-                                        config.auto_witness_min_keystrokes,
-                                        config.auto_witness_min_cv,
-                                        config.auto_witness_max_same_key_pct,
-                                        config.auto_witness_min_zones,
-                                    );
-
-                                    match decision {
-                                        AutoWitnessDecision::HumanPlausible => {
-                                            let buffered_count = buffer.keystrokes.len() as u64;
-                                            log::info!(
-                                                "Auto-witness: starting session for {:?} \
-                                                 (keystrokes={}, decision={:?})",
-                                                path, buffered_count, decision
-                                            );
-                                            // Inline session creation using event-loop's Arc refs.
-                                            // Cannot call Sentinel::start_witnessing() because
-                                            // self is not available inside tokio::spawn.
-                                            // Acquire session write lock before checking
-                                            // the file, avoiding TOCTOU where the file is
-                                            // deleted between exists() and session insert.
-                                            let mut sessions_guard = sessions.write_recover();
-                                            match compute_file_hash(path) {
-                                                Ok(hash) => {
-                                                    let mut session = DocumentSession::new(
-                                                        path.clone(),
-                                                        "auto".to_string(),
-                                                        "auto-witness".to_string(),
-                                                        crate::crypto::ObfuscatedString::new(path),
-                                                    );
-                                                    session.initial_hash = Some(hash.clone());
-                                                    session.current_hash = Some(hash);
-                                                    load_cumulative_stats(
-                                                        &mut session,
-                                                        path,
-                                                        &signing_key,
-                                                        &writersproof_dir,
-                                                    );
-                                                    session.keystroke_count = buffered_count;
-                                                    session.focus_gained();
-                                                    let _ = session_events_tx.send(SessionEvent {
-                                                        event_type: SessionEventType::Started,
-                                                        session_id: session.session_id.clone(),
-                                                        document_path: path.clone(),
-                                                        timestamp: SystemTime::now(),
-                                                    });
-                                                    sessions_guard.insert(
-                                                        path.clone(),
-                                                        session,
-                                                    );
-                                                }
-                                                Err(e) => {
-                                                    log::debug!(
-                                                        "Auto-witness: cannot hash file {:?}: {}",
-                                                        path, e
-                                                    );
-                                                }
-                                            }
-                                            pre_witness_buffers.remove(path);
-                                        }
-                                        AutoWitnessDecision::NotEnoughData => {
-                                            // Keep buffering
-                                        }
-                                        rejected => {
-                                            log::debug!(
-                                                "Auto-witness: rejected {:?} for {:?}",
-                                                rejected, path
-                                            );
-                                            buffer.rejected = true;
-                                        }
-                                    }
+                            let mut map = sessions.write_recover();
+                            if let Some(session) = map.get_mut(path) {
+                                session.keystroke_count += 1;
+                                if session.jitter_samples.len() < MAX_DOCUMENT_JITTER_SAMPLES {
+                                    session.jitter_samples.push(sample.clone());
                                 }
 
-                                // Evict stale buffers older than 5 minutes
-                                pre_witness_buffers.retain(|_, buf| {
-                                    buf.created_at
-                                        .elapsed()
-                                        .map(|d| d < Duration::from_secs(300))
-                                        .unwrap_or(true)
-                                });
-                            }
-                        } else {
-                            // No focused document (between FocusLost and FocusGained).
-                            // Buffer the sample so it can be attributed when the
-                            // same document regains focus.
-                            if unfocused_keystrokes.is_empty() {
-                                // Record which document was last focused so we can
-                                // verify the keystrokes belong to the right session.
-                                unfocused_source = pending_focus
-                                    .as_ref()
-                                    .map(|f| f.path.clone())
-                                    .or_else(|| {
-                                        // No pending focus; the source is whatever
-                                        // was last focused before FocusLost cleared it.
-                                        // We don't have it directly, so check sessions
-                                        // for the most recently focused one.
-                                        let map = sessions.read_recover();
-                                        map.iter()
-                                            .filter(|(_, s)| !s.has_focus)
-                                            .max_by_key(|(_, s)| s.last_focused_at)
-                                            .map(|(p, _)| p.clone())
-                                    });
-                            }
-                            if unfocused_keystrokes.len() < 200 {
-                                unfocused_keystrokes.push(sample);
+                                let validation = crate::forensics::validate_keystroke_event(
+                                    event.timestamp_ns,
+                                    event.keycode,
+                                    sample.zone,
+                                    CGEVENTTAP_VERIFIED_PID,
+                                    None,
+                                    session.has_focus,
+                                    &mut session.event_validation,
+                                );
+                                if validation.confidence < 0.1 {
+                                    session.keystroke_count -= 1;
+                                    session.jitter_samples.pop();
+                                }
                             }
                         }
 
@@ -779,7 +598,6 @@ impl Sentinel {
                     }
 
                     Some(event) = mouse_rx.recv() => {
-                        // Compute inter-mouse-event duration from previous timestamp
                         let _mouse_duration_ns: u64 = if last_mouse_ts_ns > 0 {
                             event.timestamp_ns.saturating_sub(last_mouse_ts_ns).max(0) as u64
                         } else {
@@ -796,37 +614,28 @@ impl Sentinel {
                     }
 
                     Some(event) = focus_rx.recv() => {
-                        if first_focus_event {
-                            // Process the startup focus probe immediately so
-                            // current_focus is set before any keystrokes arrive.
-                            first_focus_event = false;
-                            handle_focus_event_sync(
-                                event,
-                                &sessions,
-                                &config,
-                                &shadow,
-                                &signing_key,
-                                &current_focus,
-                                &wal_dir,
-                                &session_events_tx,
-                            );
-                            unfocused_keystrokes.clear();
-                        } else {
-                            pending_focus = Some(event);
-                            debounce_timer = Some(tokio::time::Instant::now() + debounce_duration);
-                        }
+                        // Process every focus event immediately. The 100ms polling
+                        // interval provides natural throttling; no debounce needed.
+                        handle_focus_event_sync(
+                            event,
+                            &sessions,
+                            &config,
+                            &shadow,
+                            &signing_key,
+                            &current_focus,
+                            &wal_dir,
+                            &session_events_tx,
+                        );
                     }
 
                     Some(event) = change_rx.recv() => {
-                            handle_change_event_sync(
-                                &event,
-                                &sessions,
-                                &signing_key,
-                                &current_focus,
-                                &wal_dir,
-                                &session_events_tx,
-                            );
-
+                        handle_change_event_sync(
+                            &event,
+                            &sessions,
+                            &signing_key,
+                            &wal_dir,
+                            &session_events_tx,
+                        );
                     }
 
                     _ = idle_check_interval.tick() => {
@@ -850,7 +659,6 @@ impl Sentinel {
                                 map.get(path.as_str()).is_some_and(|s| {
                                     s.keystroke_count > s.last_checkpoint_keystrokes
                                         && !path.starts_with("shadow://")
-                                        && !path.starts_with("title://")
                                 })
                             };
                             if needs_checkpoint {
@@ -864,9 +672,7 @@ impl Sentinel {
                             end_session_sync(path, &sessions, &session_events_tx);
                         }
 
-                        // Check if the CGEventTap is still alive; update the
-                        // active flag so the UI reflects degraded mode accurately.
-                        // If dead, attempt a restart (e.g. after macOS sleep/wake).
+                        // Check CGEventTap health
                         {
                             let tap_dead = {
                                 let guard = tap_check_capture.lock_recover();
@@ -880,14 +686,13 @@ impl Sentinel {
                             }
                         }
 
-                        // Check if any bridge threads have panicked.
+                        // Check bridge thread health
                         {
                             let threads = bridge_health_threads.lock_recover();
                             for (i, handle) in threads.iter().enumerate() {
                                 if handle.is_finished() {
                                     log::error!(
-                                        "Bridge thread {i} exited unexpectedly; \
-                                         keystrokes or mouse events may be lost"
+                                        "Bridge thread {i} exited unexpectedly"
                                     );
                                 }
                             }
@@ -895,21 +700,16 @@ impl Sentinel {
                     }
 
                     _ = checkpoint_interval.tick() => {
-                        // Auto-checkpoint sessions that accumulated new keystrokes.
                         let candidates: Vec<String> = {
                             let map = sessions.read_recover();
                             map.iter()
                                 .filter(|(p, s)| {
                                     s.keystroke_count > s.last_checkpoint_keystrokes
                                         && !p.starts_with("shadow://")
-                                        && !p.starts_with("title://")
                                 })
                                 .map(|(p, _)| p.clone())
                                 .collect()
                         };
-                        // Candidates collected under read lock; a session may end before
-                        // checkpoint commit. This is benign: the extra checkpoint is valid
-                        // evidence data that simply outlives the in-memory session.
                         for path in &candidates {
                             if commit_checkpoint_for_path(
                                 path,
@@ -923,69 +723,6 @@ impl Sentinel {
                                         session.keystroke_count;
                                 }
                             }
-                        }
-                    }
-
-                    _ = async {
-                        if let Some(deadline) = debounce_timer {
-                            tokio::time::sleep_until(deadline).await;
-                            true
-                        } else {
-                            std::future::pending::<bool>().await
-                        }
-                    } => {
-                        if let Some(event) = pending_focus.take() {
-                            handle_focus_event_sync(
-                                event,
-                                &sessions,
-                                &config,
-                                &shadow,
-                                &signing_key,
-                                &current_focus,
-                                &wal_dir,
-                                &session_events_tx,
-                            );
-                        }
-                        debounce_timer = None;
-
-                        // Drain keystrokes that arrived while focus was
-                        // transitioning. Only attribute if the same document
-                        // regains focus; discard if a different document gained
-                        // focus (keystrokes were stale input from the old app).
-                        if !unfocused_keystrokes.is_empty() {
-                            let focused = current_focus.read_recover().clone();
-                            let should_drain = match (&focused, &unfocused_source) {
-                                (Some(new_path), Some(old_path)) => new_path == old_path,
-                                (Some(_), None) => true, // no source recorded; best effort
-                                _ => false,
-                            };
-                            if should_drain {
-                                if let Some(ref path) = focused {
-                                    let mut map = sessions.write_recover();
-                                    if let Some(session) = map.get_mut(path.as_str()) {
-                                        let count = unfocused_keystrokes.len() as u64;
-                                        session.keystroke_count += count;
-                                        for s in &unfocused_keystrokes {
-                                            if session.jitter_samples.len()
-                                                < MAX_DOCUMENT_JITTER_SAMPLES
-                                            {
-                                                session.jitter_samples.push(s.clone());
-                                            }
-                                        }
-                                        log::debug!(
-                                            "Attributed {} buffered keystrokes to {:?}",
-                                            count, path
-                                        );
-                                    }
-                                }
-                            } else if !unfocused_keystrokes.is_empty() {
-                                log::debug!(
-                                    "Discarded {} buffered keystrokes (source {:?} != focus {:?})",
-                                    unfocused_keystrokes.len(), unfocused_source, focused
-                                );
-                            }
-                            unfocused_keystrokes.clear();
-                            unfocused_source = None;
                         }
                     }
                 }

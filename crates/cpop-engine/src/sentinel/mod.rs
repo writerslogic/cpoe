@@ -48,7 +48,6 @@ pub use self::shadow::ShadowManager;
 pub use self::types::{
     generate_session_id, hash_string, infer_document_path_from_title,
     infer_document_path_from_title_with_bundle, normalize_document_path, parse_url_parts,
-    AutoWitnessDecision, ChangeEvent, ChangeEventType, DocumentSession, FocusEvent, FocusEventType,
-    FocusSwitchRecord, PreWitnessBuffer, PreWitnessKeystroke, SessionBinding, SessionEvent,
-    SessionEventType, WindowInfo,
+    ChangeEvent, ChangeEventType, DocumentSession, FocusEvent, FocusEventType, FocusSwitchRecord,
+    SessionBinding, SessionEvent, SessionEventType, WindowInfo,
 };

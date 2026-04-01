@@ -61,45 +61,18 @@ pub fn handle_focus_event_sync(
                 if !event.shadow_id.is_empty() {
                     format!("shadow://{}", event.shadow_id)
                 } else {
-                    // AX query failed to resolve a document path. Fall back
-                    // to the existing current_focus if one is set (common
-                    // after a stop/restart cycle where the same document is
-                    // still open but AX is slow to respond).
+                    // No document path available. Fall back to existing
+                    // current_focus if set (common after stop/restart where
+                    // AX is slow to respond for the already-open document).
                     let fallback = { current_focus.read_recover().clone() };
                     if let Some(path) = fallback {
-                        // Re-focus the existing session without changing the path.
                         if let Some(session) = sessions.write_recover().get_mut(path.as_str()) {
                             session.focus_gained();
                         }
                         return;
                     }
-                    // No file path yet (unsaved document). Use the window title
-                    // as a temporary tracking key so keystrokes are captured from
-                    // the moment the user starts writing.
-                    let title = event.window_title.reveal();
-                    if !title.is_empty() && config.auto_witness_enabled {
-                        format!("title://{}/{}", event.app_bundle_id, &*title)
-                    } else {
-                        #[cfg(debug_assertions)]
-                        {
-                            use std::io::Write;
-                            if let Ok(d) = std::env::var("CPOP_DATA_DIR") {
-                                let debug_path = format!("{}/event_debug.txt", d);
-                                if let Ok(mut f) = std::fs::OpenOptions::new()
-                                    .create(true)
-                                    .append(true)
-                                    .open(&debug_path)
-                                {
-                                    let _ = writeln!(
-                                        f,
-                                        "DROPPED: empty path, shadow_id, and title for {}",
-                                        event.app_bundle_id
-                                    );
-                                }
-                            }
-                        }
-                        return;
-                    }
+                    // No path, no shadow, no fallback: nothing to track.
+                    return;
                 }
             } else {
                 event.path.clone()
@@ -119,7 +92,6 @@ pub fn handle_focus_event_sync(
             };
 
             if let Some(ref path) = path_to_unfocus {
-                // Record a focus switch on the old document before unfocusing it
                 {
                     let mut sessions_map = sessions.write_recover();
                     if let Some(session) = sessions_map.get_mut(path.as_str()) {
@@ -133,48 +105,6 @@ pub fn handle_focus_event_sync(
                 }
                 unfocus_document_sync(path, sessions, session_events_tx);
                 *current_focus.write_recover() = None;
-            }
-
-            // If the new path is a real file and there's an existing title://
-            // session from the same app (unsaved doc that was just saved),
-            // migrate the session to preserve all captured keystrokes.
-            // Single write lock for find-and-migrate to avoid TOCTOU race.
-            if !doc_path.starts_with("title://") && !doc_path.starts_with("shadow://") {
-                let title_prefix = format!("title://{}/", event.app_bundle_id);
-                let mut sessions_map = sessions.write_recover();
-                let title_key = sessions_map
-                    .keys()
-                    .find(|k| k.starts_with(&title_prefix))
-                    .cloned();
-                if let Some(title_key) = title_key {
-                    if let Some(mut session) = sessions_map.remove(&title_key) {
-                        session.focus_lost();
-                        session.path = doc_path.clone();
-                        session.window_title = event.window_title.clone();
-                        if let Ok(hash) = compute_file_hash(&doc_path) {
-                            session.initial_hash = Some(hash.clone());
-                            session.current_hash = Some(hash);
-                        }
-                        session.focus_gained();
-                        let session_id = session.session_id.clone();
-                        sessions_map.insert(doc_path.clone(), session);
-                        drop(sessions_map); // release before logging/broadcasting
-                        log::info!(
-                            "Migrated title-keyed session {} to path {:?}",
-                            session_id,
-                            doc_path
-                        );
-                        let _ = session_events_tx.send(SessionEvent {
-                            event_type: SessionEventType::Focused,
-                            session_id,
-                            document_path: doc_path.clone(),
-                            timestamp: SystemTime::now(),
-                        });
-                        *current_focus.write_recover() = Some(doc_path);
-                        return;
-                    }
-                }
-                drop(sessions_map);
             }
 
             // If this document is regaining focus, stamp regained_at on its
@@ -242,7 +172,7 @@ pub fn focus_document_sync(
 ) {
     // Skip directories and paths that don't look like documents.
     // Virtual keys (shadow://, title://) bypass filesystem checks.
-    if !path.starts_with("shadow://") && !path.starts_with("title://") {
+    if !path.starts_with("shadow://") {
         let p = std::path::Path::new(path);
         if p.is_dir() {
             return;
@@ -390,49 +320,12 @@ pub fn handle_change_event_sync(
     event: &ChangeEvent,
     sessions: &Arc<RwLock<HashMap<String, DocumentSession>>>,
     signing_key: &Arc<RwLock<Option<SigningKey>>>,
-    current_focus: &Arc<RwLock<Option<String>>>,
     wal_dir: &Path,
     session_events_tx: &broadcast::Sender<SessionEvent>,
 ) {
     // Acquire signing_key before sessions to match lock order in focus_document_sync
     let key = signing_key.read_recover().clone();
     let mut sessions_map = sessions.write_recover();
-
-    // If a title:// session exists for the app that saved this file,
-    // migrate it to the real path now. This handles the case where the
-    // user saves an unsaved document without switching focus away first.
-    if event.event_type == ChangeEventType::Saved && !sessions_map.contains_key(&event.path) {
-        // Find a title:// session from any app (we don't have the bundle_id
-        // in a ChangeEvent, so match any title session).
-        let title_key = sessions_map
-            .keys()
-            .find(|k| k.starts_with("title://"))
-            .cloned();
-        if let Some(title_key) = title_key {
-            if let Some(mut session) = sessions_map.remove(&title_key) {
-                session.path = event.path.clone();
-                if let Ok(hash) = compute_file_hash(&event.path) {
-                    session.initial_hash = Some(hash.clone());
-                    session.current_hash = Some(hash);
-                }
-                let session_id = session.session_id.clone();
-                sessions_map.insert(event.path.clone(), session);
-                log::info!(
-                    "Migrated title session {} to {:?} on save",
-                    session_id,
-                    event.path
-                );
-                *current_focus.write_recover() = Some(event.path.clone());
-                let _ = session_events_tx.send(SessionEvent {
-                    event_type: SessionEventType::Saved,
-                    session_id,
-                    document_path: event.path.clone(),
-                    timestamp: SystemTime::now(),
-                });
-                return;
-            }
-        }
-    }
 
     if let Some(session) = sessions_map.get_mut(&event.path) {
         match event.event_type {
