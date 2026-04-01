@@ -5,7 +5,7 @@
 //! Monitors focused documents and manages tracking sessions automatically.
 //! Operates invisibly during writing, surfacing only on explicit status requests.
 //!
-//! - Debounced focus change handling (500ms default)
+//! - Debounced focus change handling (200ms default)
 //! - Multi-document session management with shadow buffers
 //! - Platform-specific focus detection (macOS, Linux, Windows)
 

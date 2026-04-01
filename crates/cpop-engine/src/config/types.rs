@@ -282,9 +282,12 @@ impl Default for SentinelConfig {
             debounce_duration_ms: 200,
             idle_timeout_secs: 1800,
             allowed_apps: vec![
-                // macOS
+                // macOS native
                 "com.apple.TextEdit".to_string(),
                 "com.apple.iWork.Pages".to_string(),
+                "com.apple.iWork.Numbers".to_string(),
+                "com.apple.iWork.Keynote".to_string(),
+                "com.apple.dt.Xcode".to_string(),
                 // MS Office
                 "com.microsoft.Word".to_string(),
                 "com.microsoft.Excel".to_string(),
@@ -292,20 +295,44 @@ impl Default for SentinelConfig {
                 // Editors / IDEs
                 "code".to_string(),
                 "com.microsoft.VSCode".to_string(),
+                "com.microsoft.VSCodeInsiders".to_string(),
+                "com.todesktop.230313mzl4w4u92".to_string(), // Cursor
                 "com.sublimetext.4".to_string(),
+                "com.sublimetext.3".to_string(),
                 "com.jetbrains.intellij".to_string(),
+                "com.jetbrains.WebStorm".to_string(),
+                "com.jetbrains.pycharm".to_string(),
+                "com.jetbrains.CLion".to_string(),
+                "com.jetbrains.goland".to_string(),
+                "com.jetbrains.rider".to_string(),
                 "com.googlecode.iterm2".to_string(),
                 "org.vim.MacVim".to_string(),
+                "com.github.atom".to_string(),
+                "com.panic.Nova".to_string(),
+                "com.barebones.bbedit".to_string(),
+                "com.coteditor.CotEditor".to_string(),
                 // Writing tools
                 "com.typora.Typora".to_string(),
                 "md.obsidian".to_string(),
                 "com.notion.Notion".to_string(),
-                // Browser-based (matched by app_name)
+                "com.notion.id".to_string(),
+                "com.literatureandlatte.scrivener3".to_string(),
+                "com.ulyssesapp.mac".to_string(),
+                "net.shinyfrog.bear".to_string(),
+                "com.reederapp.5.macOS".to_string(),
+                "pro.writer.mac".to_string(), // iA Writer
+                "com.omnigroup.OmniOutliner5".to_string(),
+                // Browser-based (matched by app_name, handled by extension)
                 "Google Docs".to_string(),
+                // Office suites
                 "org.libreoffice.LibreOffice".to_string(),
-                // Linux terminals
+                "org.openoffice.script".to_string(),
+                // Linux editors / terminals
                 "org.gnome.Terminal".to_string(),
                 "org.kde.konsole".to_string(),
+                "org.gnome.gedit".to_string(),
+                "org.gnome.TextEditor".to_string(),
+                "org.kde.kate".to_string(),
             ],
             blocked_apps: vec!["com.apple.finder".to_string(), "explorer".to_string()],
             track_unknown_apps: true,
