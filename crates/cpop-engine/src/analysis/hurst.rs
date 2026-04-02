@@ -203,6 +203,9 @@ pub fn compute_hurst_dfa(data: &[f64]) -> Result<HurstAnalysis, String> {
     }
 
     let mean: f64 = data.iter().sum::<f64>() / n as f64;
+    if !mean.is_finite() {
+        return Err("DFA input contains non-finite values".to_string());
+    }
     let mut profile = Vec::with_capacity(n);
     let mut cumsum = 0.0;
     for &x in data {

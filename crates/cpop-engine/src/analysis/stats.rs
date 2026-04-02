@@ -30,22 +30,32 @@ pub fn mean_or_zero(data: &[f64]) -> f64 {
 
 /// Population skewness given pre-computed mean and std dev.
 pub fn skewness(data: &[f64], mean: f64, std: f64) -> f64 {
-    if std == 0.0 || data.is_empty() {
+    if std.abs() < f64::EPSILON || data.is_empty() {
         return 0.0;
     }
     let n = data.len() as f64;
     let sum_cubed: f64 = data.iter().map(|&x| ((x - mean) / std).powi(3)).sum();
-    sum_cubed / n
+    let result = sum_cubed / n;
+    if result.is_finite() {
+        result
+    } else {
+        0.0
+    }
 }
 
 /// Excess kurtosis given pre-computed mean and std dev.
 pub fn kurtosis(data: &[f64], mean: f64, std: f64) -> f64 {
-    if std == 0.0 || data.is_empty() {
+    if std.abs() < f64::EPSILON || data.is_empty() {
         return 0.0;
     }
     let n = data.len() as f64;
     let sum_fourth: f64 = data.iter().map(|&x| ((x - mean) / std).powi(4)).sum();
-    sum_fourth / n - 3.0
+    let result = sum_fourth / n - 3.0;
+    if result.is_finite() {
+        result
+    } else {
+        0.0
+    }
 }
 
 /// Bhattacharyya coefficient between two f64 histograms.
