@@ -94,7 +94,7 @@ pub struct FullVerificationResult {
 }
 
 /// Run the full verification pipeline on an evidence packet.
-pub fn full_verify(packet: &mut Packet, opts: &VerifyOptions) -> FullVerificationResult {
+pub fn full_verify(packet: &Packet, opts: &VerifyOptions) -> FullVerificationResult {
     let mut warnings = Vec::new();
 
     // Phase 1: Structural verification

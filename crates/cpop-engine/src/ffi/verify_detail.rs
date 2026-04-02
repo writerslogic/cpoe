@@ -77,7 +77,7 @@ pub fn ffi_verify_evidence_detailed(path: String) -> FfiVerifyDetail {
 
     // Try wire format (EvidencePacketWire) first since ffi_export_evidence produces it,
     // then fall back to the legacy engine Packet format.
-    let mut packet = match EvidencePacketWire::decode_cbor(&cbor_payload) {
+    let packet = match EvidencePacketWire::decode_cbor(&cbor_payload) {
         Ok(wire) => wire_to_packet(&wire),
         Err(_) => match Packet::decode(&cbor_payload) {
             Ok(p) => p,
@@ -94,7 +94,7 @@ pub fn ffi_verify_evidence_detailed(path: String) -> FfiVerifyDetail {
         run_forensics: true,
     };
 
-    let result = full_verify(&mut packet, &opts);
+    let result = full_verify(&packet, &opts);
 
     let signature_valid = result.signature.unwrap_or(false);
     let chain_integrity = result.structural;
