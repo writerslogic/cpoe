@@ -254,11 +254,19 @@ pub fn ffi_export_evidence(path: String, tier: String, output: String) -> FfiRes
 
     // Compute character count by reading the file as UTF-8.
     // Falls back to byte count for non-UTF-8 files.
+    // Read once and verify the content hash matches to avoid TOCTOU (M-038).
     let byte_length = latest.file_size as u64;
     let char_count = std::fs::read(&file_path)
         .map_err(|e| log::warn!("read file for char count failed: {e}"))
         .ok()
-        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .and_then(|bytes| {
+            let hash: [u8; 32] = Sha256::digest(&bytes).into();
+            if hash != latest.content_hash {
+                log::warn!("file changed since last checkpoint; using byte length for char_count");
+                return None;
+            }
+            String::from_utf8(bytes).ok()
+        })
         .map(|s| s.chars().count() as u64)
         .unwrap_or(byte_length);
 

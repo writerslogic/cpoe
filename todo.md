@@ -367,7 +367,7 @@ All 265 findings from prior audit (2026-03-30) and 255 from 2026-03-25 are resol
   <!-- pid:no_rate_limiting | batch:5 -->
 - [ ] **M-037** `[security]` `ffi/helpers.rs:162`: HMAC key recovery creates inconsistent DB state on migration failure
   <!-- pid:toctou | batch:5 -->
-- [ ] **M-038** `[security]` `ffi/evidence_export.rs:258`: File read for char_count TOCTOU with size validation
+- [x] **M-038** `[security]` `ffi/evidence_export.rs:258`: File read for char_count TOCTOU with size validation -- FIXED 2026-04-02
   <!-- pid:toctou | batch:5 -->
 - [ ] **M-039** `[performance]` `ffi/system.rs:173`: ffi_list_tracked_files O(n^2) DB queries per file
   <!-- pid:n_plus_one | batch:5 -->
@@ -387,7 +387,7 @@ All 265 findings from prior audit (2026-03-30) and 255 from 2026-03-25 are resol
   <!-- pid:hardcoded_config | batch:5 -->
 - [x] **M-047** `[concurrency]` `ffi/sentinel.rs:15`: Poisoned SENTINEL lock silently recovered without logging -- FIXED 2026-04-02
   <!-- pid:silent_error | batch:5 -->
-- [ ] **M-048** `[concurrency]` `ffi/ephemeral.rs:81`: evict_stale_sessions TOCTOU on session removal
+- [x] **M-048** `[concurrency]` `ffi/ephemeral.rs:81`: evict_stale_sessions TOCTOU on session removal -- FIXED 2026-04-02
   <!-- pid:toctou | batch:5 -->
 - [ ] **M-049** `[maintainability]` `ffi/report.rs:376`: Session gap threshold (30 min) hardcoded; duplicates sentinel logic
   <!-- pid:duplicated_logic | batch:5 -->
@@ -441,7 +441,7 @@ All 265 findings from prior audit (2026-03-30) and 255 from 2026-03-25 are resol
   <!-- pid:missing_validation | batch:9 -->
 - [ ] **M-071** `[security]` `keyhierarchy/puf.rs:114`: Machine fingerprinting uses hostname+home_dir (user-controlled)
   <!-- pid:missing_validation | batch:9 -->
-- [ ] **M-072** `[error_handling]` `identity/secure_storage.rs:405`: Mutex poison on SEED_CACHE logged but continues
+- [x] **M-072** `[error_handling]` `identity/secure_storage.rs:405`: Mutex poison on SEED_CACHE logged but continues -- FIXED 2026-04-02
   <!-- pid:silent_error | batch:9 -->
 - [ ] **M-073** `[security]` `identity/secure_storage.rs:356`: Partial migration rollback on keychain save failure
   <!-- pid:toctou | batch:9 -->

@@ -358,30 +358,7 @@ pub fn ffi_ephemeral_finalize(
         statement
     };
 
-    // Validate session exists and has checkpoints BEFORE removing it,
-    // so the session is preserved if validation fails.
-    {
-        let entry = match sessions().get(&session_id) {
-            Some(e) => e,
-            None => {
-                return FfiEphemeralFinalizeResult {
-                    success: false,
-                    war_block: String::new(),
-                    compact_ref: String::new(),
-                    error_message: Some(format!("No ephemeral session: {session_id}")),
-                }
-            }
-        };
-        if entry.content_snapshots.is_empty() {
-            return FfiEphemeralFinalizeResult {
-                success: false,
-                war_block: String::new(),
-                compact_ref: String::new(),
-                error_message: Some("No checkpoints recorded in session".to_string()),
-            };
-        }
-    }
-
+    // Atomically remove the session, then validate. Re-insert if invalid (M-048).
     let (_, session) = match sessions().remove(&session_id) {
         Some(pair) => pair,
         None => {
@@ -389,10 +366,19 @@ pub fn ffi_ephemeral_finalize(
                 success: false,
                 war_block: String::new(),
                 compact_ref: String::new(),
-                error_message: Some("Session was removed concurrently".to_string()),
+                error_message: Some(format!("No ephemeral session: {session_id}")),
             };
         }
     };
+    if session.content_snapshots.is_empty() {
+        sessions().insert(session_id, session);
+        return FfiEphemeralFinalizeResult {
+            success: false,
+            war_block: String::new(),
+            compact_ref: String::new(),
+            error_message: Some("No checkpoints recorded in session".to_string()),
+        };
+    }
 
     let final_hash: [u8; 32] = Sha256::digest(content.as_bytes()).into();
     let final_hash_hex = hex::encode(final_hash);

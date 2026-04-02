@@ -9,6 +9,7 @@ use std::sync::{Mutex, Once, OnceLock};
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::crypto::ProtectedBuf;
+use crate::MutexRecover;
 
 const SERVICE_NAME: &str = "com.writerslogic.identity";
 const SEED_ACCOUNT: &str = "default_seed";
@@ -428,20 +429,22 @@ impl SecureStorage {
 
     /// Load the identity seed from the platform keychain, with caching.
     pub fn load_seed() -> Result<Option<Zeroizing<Vec<u8>>>> {
-        match SEED_CACHE.lock() {
-            Ok(guard) => {
-                if let Some(ref cached) = *guard {
-                    return Ok(Some(Zeroizing::new(cached.as_slice().to_vec())));
-                }
-            }
-            Err(e) => log::error!("Seed cache poisoned: {e}"),
+        if SEED_CACHE.is_poisoned() {
+            log::warn!("SEED_CACHE mutex poisoned; recovering");
         }
+        let guard = SEED_CACHE.lock_recover();
+        if let Some(ref cached) = *guard {
+            return Ok(Some(Zeroizing::new(cached.as_slice().to_vec())));
+        }
+        drop(guard);
+
         let res = Self::load(SEED_ACCOUNT)?;
         if let Some(data) = res {
-            match SEED_CACHE.lock() {
-                Ok(mut guard) => *guard = Some(ProtectedBuf::new(data.to_vec())),
-                Err(e) => log::error!("Seed cache poisoned: {e}"),
+            if SEED_CACHE.is_poisoned() {
+                log::warn!("SEED_CACHE mutex poisoned; recovering for cache write");
             }
+            let mut guard = SEED_CACHE.lock_recover();
+            *guard = Some(ProtectedBuf::new(data.to_vec()));
             Ok(Some(data))
         } else {
             Ok(None)
@@ -457,10 +460,10 @@ impl SecureStorage {
 
     /// Reset the seed cache, forcing the next load to read from keychain.
     pub fn reset_seed_cache() {
-        match SEED_CACHE.lock() {
-            Ok(mut guard) => *guard = None,
-            Err(e) => log::error!("Seed cache poisoned: {e}"),
+        if SEED_CACHE.is_poisoned() {
+            log::warn!("SEED_CACHE mutex poisoned; recovering for cache reset");
         }
+        *SEED_CACHE.lock_recover() = None;
     }
 
     /// Store the HMAC key in the platform keychain and update the cache.
