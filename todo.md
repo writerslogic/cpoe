@@ -11,8 +11,8 @@
 ## Summary
 | Severity | Open | Fixed | Skipped |
 |----------|------|-------|---------|
-| CRITICAL | 7    | 5     | 0       |
-| HIGH     | 42   | 90    | 0       |
+| CRITICAL | 6    | 6     | 0       |
+| HIGH     | 40   | 92    | 0       |
 | MEDIUM   | 99   | 170   | 0       |
 
 ---
@@ -41,9 +41,9 @@ All 265 findings from prior audit (2026-03-30) and 255 from 2026-03-25 are resol
   Files: `forensics/analysis.rs:344`, `forensics/assessment.rs:316`, `forensics/cadence.rs:64`, `forensics/cross_modal.rs:270`, `forensics/forgery_cost.rs:314`, `analysis/behavioral_fingerprint.rs:110,226,268`, `analysis/hurst.rs:115`, `analysis/pink_noise.rs:117`, `analysis/labyrinth.rs:309`
   Fix: Guard every division, log, exp, and regression output with `is_finite()` check before use. Crate-wide `fn safe_div(a: f64, b: f64) -> f64` helper.
 
-- [ ] **SYS-002** `silent_error_swallow`, 8+ files, HIGH
+- [ ] **SYS-002** `silent_error_swallow`, 7+ files, HIGH (crypto.rs:198 FIXED)
   <!-- pid:silent_error | first:2026-03-03 | last:2026-04-02 -->
-  Files: `crypto.rs:198`, `sentinel/core.rs:797`, `sentinel/ipc_handler.rs:405`, `sentinel/helpers.rs:283`, `ffi/report.rs:151`, `evidence/wire_conversion.rs:238,275`, `cpop_jitter_bridge/session.rs:284`
+  Files: ~~`crypto.rs:198`~~, `sentinel/core.rs:797`, `sentinel/ipc_handler.rs:405`, `sentinel/helpers.rs:283`, `ffi/report.rs:151`, `evidence/wire_conversion.rs:238,275`, `cpop_jitter_bridge/session.rs:284`
   Fix: Replace `log::warn + continue` with `Result` propagation or explicit `ErrorPolicy::AllowPartial` flag.
 
 - [ ] **SYS-003** `duplicated_forensic_logic`, 3+ sites, HIGH
@@ -51,19 +51,19 @@ All 265 findings from prior audit (2026-03-30) and 255 from 2026-03-25 are resol
   Files: `ffi/report.rs:376`, `ffi/system.rs:275`, `ffi/sentinel_witnessing.rs:256`
   Fix: Extract cadence_score, focus_penalty, session_detection to `crate::forensics` module; call from all sites.
 
-- [ ] **SYS-004** `debug_output_in_production`, 3 files, HIGH
+- [x] **SYS-004** `debug_output_in_production`, 3 files, HIGH -- FIXED 2026-04-02
   <!-- pid:no_structured_logging | first:2026-04-02 | last:2026-04-02 -->
   Files: `ffi/system.rs:12` (eprintln!), `ffi/sentinel.rs:48` (file write), `ffi/sentinel_witnessing.rs:221` (file write)
-  Fix: Replace all eprintln!/file debug writes with `log::debug!()`.
+  Fix: Replaced all eprintln!/file debug writes with log::debug!().
 
 - [ ] **SYS-005** `magic_values_in_formulas`, 12+ files, MEDIUM
   <!-- pid:magic_value | first:2026-03-03 | last:2026-04-02 -->
   Files: `forensics/assessment.rs:24-45`, `forensics/types.rs:18-64`, `analysis/behavioral_fingerprint.rs:9-53`, `sentinel/ipc_handler.rs:405`, `sentinel/daemon.rs:347`, `evidence/packet.rs:215`
   Fix: Group into named const structs per domain (CADENCE_THRESHOLDS, VELOCITY_THRESHOLDS, etc.).
 
-- [ ] **SYS-006** `toctou_symlink_attacks`, 4+ files, HIGH
+- [ ] **SYS-006** `toctou_symlink_attacks`, 3+ files, HIGH (ffi/sentinel_witnessing.rs FIXED)
   <!-- pid:toctou | first:2026-03-10 | last:2026-04-02 -->
-  Files: `sentinel/helpers.rs:596,634`, `identity/secure_storage.rs:331`, `platform/macos/keystroke.rs:29`, `ffi/sentinel_witnessing.rs:36`
+  Files: `sentinel/helpers.rs:596,634`, `identity/secure_storage.rs:331`, `platform/macos/keystroke.rs:29`, ~~`ffi/sentinel_witnessing.rs:36`~~
   Fix: Use O_NOFOLLOW on all file opens; canonicalize after open, not before.
 
 - [ ] **SYS-007** `key_zeroize_inconsistency`, 4+ files, MEDIUM
@@ -85,9 +85,9 @@ All 265 findings from prior audit (2026-03-30) and 255 from 2026-03-25 are resol
   <!-- pid:hardcoded_secret | batch:9 | verified:true | first:2026-04-02 | last:2026-04-02 -->
   Impact: After 2036, beacon verification fails permanently; no key rotation ceremony defined | Fix: Add key rotation with versioned CA key list; fail hard if signature timestamp > key expiry | Effort: large
 
-- [ ] **C-004** `[security]` `crypto.rs:198`: sign_event_lamport() silently returns without Lamport signature on HKDF expand failure
+- [x] **C-004** `[security]` `crypto.rs:198`: sign_event_lamport() silently returns without Lamport signature on HKDF expand failure -- FIXED 2026-04-02
   <!-- pid:silent_error | batch:3 | verified:true | first:2026-04-02 | last:2026-04-02 -->
-  Impact: Event loses post-quantum double-sign protection without alerting caller; forgery detection impossible for that event | Fix: Return Result; let caller decide whether to abort or continue | Effort: small
+  Impact: Event loses post-quantum double-sign protection without alerting caller | Fix: Now returns Result<(), Error>; caller propagates via ?
 
 - [ ] **C-005** `[security]` `keyhierarchy/puf.rs:93-107`: Seed persistence writes file then keychain without atomic guarantee
   <!-- pid:toctou | batch:9 | verified:true | first:2026-04-02 | last:2026-04-02 -->
@@ -175,17 +175,17 @@ All 265 findings from prior audit (2026-03-30) and 255 from 2026-03-25 are resol
   <!-- pid:data_race | batch:5 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
   Impact: Synthetic keystroke injection exceeds rate limit | Fix: Use atomic compare_exchange in loop | Effort: medium
 
-- [ ] **H-018** `[security]` `ffi/sentinel_witnessing.rs:36`: Path validation checks contains("..") but doesn't canonicalize; symlinks bypass
+- [x] **H-018** `[security]` `ffi/sentinel_witnessing.rs:36`: Path validation checks contains("..") but doesn't canonicalize; symlinks bypass -- FIXED 2026-04-02
   <!-- pid:path_traversal | batch:5 | verified:true | first:2026-04-02 | last:2026-04-02 -->
-  Impact: Attacker can witness /etc/hosts via symlink | Fix: Call validate_path() from sentinel::helpers | Effort: small
+  Impact: Attacker can witness /etc/hosts via symlink | Fix: Now calls sentinel::helpers::validate_path() with full canonicalization
 
 - [ ] **H-019** `[architecture]` `ffi/report.rs:42`: Business logic (forensic analysis, session detection, penalty computation) embedded in FFI layer
   <!-- pid:logic_in_boundary | batch:5 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
   Impact: Cannot unit-test without FFI; changes require recompilation | Fix: Move to crate::report module | Effort: large
 
-- [ ] **H-020** `[code_quality]` `ffi/system.rs:12`: eprintln!() in production FFI code bypasses log level control
+- [x] **H-020** `[code_quality]` `ffi/system.rs:12`: eprintln!() in production FFI code bypasses log level control -- FIXED 2026-04-02
   <!-- pid:no_structured_logging | batch:5 | verified:true | first:2026-04-02 | last:2026-04-02 -->
-  Impact: Console spam in production; not suppressible | Fix: Use log::debug!() | Effort: small
+  Impact: Console spam in production | Fix: Replaced with log::debug!()
 
 ### Anchors
 - [ ] **H-021** `[security]` `anchors/rfc3161.rs:188`: CMS signature verification NOT implemented; only hash checked
