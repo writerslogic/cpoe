@@ -18,11 +18,12 @@ pub struct SimpleJitterSample {
     pub zone: u8,
     /// How long the key was held down (keyDown to keyUp), in nanoseconds.
     /// None if keyUp was not captured for this key.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Skipped in bincode IPC serialization for backward compatibility.
+    #[serde(skip)]
     pub dwell_time_ns: Option<u64>,
     /// Time from the previous key's release to this key's press, in nanoseconds.
     /// None if the previous keyUp was not captured.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip)]
     pub flight_time_ns: Option<u64>,
 }
 
