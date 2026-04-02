@@ -225,8 +225,11 @@ pub fn compute_with_algorithm(
 
     let iterations = params.iterations as usize;
     let start = Instant::now();
-    let mut leaves = Vec::with_capacity(iterations);
-    let mut raw_outputs = Vec::with_capacity(iterations);
+    // Cap pre-allocation to avoid OOM on large iteration counts (10M * 32B = 320MB).
+    // Vec grows naturally beyond the initial capacity.
+    let prealloc = iterations.min(65_536);
+    let mut leaves = Vec::with_capacity(prealloc);
+    let mut raw_outputs = Vec::with_capacity(prealloc);
     let mut current = input;
 
     let prev_priority = lower_thread_priority();
