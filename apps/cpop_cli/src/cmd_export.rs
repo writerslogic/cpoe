@@ -711,7 +711,8 @@ fn build_wire_packet_from_events(
         .map(|n| n.to_string_lossy().to_string());
 
     let document = DocumentRef {
-        content_hash: HashValue::sha256(latest.content_hash.to_vec()),
+        content_hash: HashValue::try_sha256(latest.content_hash.to_vec())
+            .map_err(|e| anyhow::anyhow!(e))?,
         filename,
         byte_length: latest.file_size.max(0) as u64,
         char_count: latest.file_size.max(0) as u64,
@@ -759,7 +760,8 @@ fn build_wire_packet_from_events(
                 sequence: i as u64,
                 checkpoint_id: cp_id,
                 timestamp: (ev.timestamp_ns / 1_000_000).max(0) as u64,
-                content_hash: HashValue::sha256(ev.content_hash.to_vec()),
+                content_hash: HashValue::try_sha256(ev.content_hash.to_vec())
+                    .expect("content_hash is 32 bytes"),
                 char_count: ev.file_size.max(0) as u64,
                 delta: EditDelta {
                     chars_added: if ev.size_delta > 0 {
@@ -779,8 +781,10 @@ fn build_wire_packet_from_events(
                     revision_depth_histogram: None,
                     pause_duration_histogram: None,
                 },
-                prev_hash: HashValue::sha256(ev.previous_hash.to_vec()),
-                checkpoint_hash: HashValue::sha256(vec![0u8; 32]),
+                prev_hash: HashValue::try_sha256(ev.previous_hash.to_vec())
+                    .expect("previous_hash is 32 bytes"),
+                checkpoint_hash: HashValue::try_sha256(vec![0u8; 32])
+                    .expect("zeroed hash is 32 bytes"),
                 process_proof,
                 jitter_binding: None,
                 physical_state: None,

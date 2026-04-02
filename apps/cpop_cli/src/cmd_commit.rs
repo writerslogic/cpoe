@@ -107,7 +107,7 @@ pub(crate) fn cmd_commit(
             let ts = Utc::now()
                 .timestamp_nanos_opt()
                 .unwrap_or_else(|| Utc::now().timestamp_millis().saturating_mul(1_000_000));
-            if ts < MIN_VALID_NS || ts > MAX_VALID_NS {
+            if !(MIN_VALID_NS..=MAX_VALID_NS).contains(&ts) {
                 Utc::now().timestamp() * 1_000_000_000
             } else {
                 ts

@@ -186,9 +186,10 @@ pub(crate) fn cmd_fingerprint(action: FingerprintAction, out: &OutputMode) -> Re
                 Err(e) => {
                     // Check for IO NotFound first (typed), then fall back to string match
                     // for the anyhow "Profile not found" message from upstream.
-                    let is_not_found = e.downcast_ref::<std::io::Error>().map_or(false, |io_err| {
-                        io_err.kind() == std::io::ErrorKind::NotFound
-                    }) || e.to_string().contains("not found");
+                    let is_not_found = e
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|io_err| io_err.kind() == std::io::ErrorKind::NotFound)
+                        || e.to_string().contains("not found");
                     if is_not_found {
                         return Err(anyhow!("Profile not found: {}", profile_id));
                     }

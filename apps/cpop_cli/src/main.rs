@@ -131,7 +131,7 @@ async fn maybe_auto_start(cli: &Cli, out: &OutputMode) -> Result<()> {
         || cli
             .command
             .as_ref()
-            .map_or(false, |cmd| cmd.needs_auto_start());
+            .is_some_and(|cmd| cmd.needs_auto_start());
 
     if !should_start {
         return Ok(());
