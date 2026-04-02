@@ -4,6 +4,7 @@ use super::shadow::ShadowManager;
 use super::types::*;
 use crate::config::SentinelConfig;
 use crate::wal::{EntryType, Wal};
+
 use crate::RwLockRecover;
 use ed25519_dalek::SigningKey;
 use std::collections::HashMap;
@@ -43,12 +44,26 @@ pub fn handle_focus_event_sync(
         }
     }
 
+    super::trace!(
+        "[FOCUS] type={:?} bundle={} path={:?} app={}",
+        event.event_type,
+        event.app_bundle_id,
+        event.path,
+        event.app_name
+    );
+
     if !config.is_app_allowed(&event.app_bundle_id, &event.app_name) {
+        super::trace!(
+            "[FOCUS] BLOCKED app={} bundle={}",
+            event.app_name,
+            event.app_bundle_id
+        );
         let path_to_unfocus = {
             let focus = current_focus.read_recover();
             focus.clone()
         };
         if let Some(path) = path_to_unfocus {
+            super::trace!("[FOCUS] unfocusing {:?} due to blocked app", path);
             unfocus_document_sync(&path, sessions, session_events_tx);
             *current_focus.write_recover() = None;
         }
@@ -59,24 +74,25 @@ pub fn handle_focus_event_sync(
         FocusEventType::FocusGained => {
             let doc_path = if event.path.is_empty() {
                 if !event.shadow_id.is_empty() {
+                    super::trace!("[FOCUS] using shadow://{}", event.shadow_id);
                     format!("shadow://{}", event.shadow_id)
                 } else {
-                    // No document path available. Fall back to existing
-                    // current_focus if set (common after stop/restart where
-                    // AX is slow to respond for the already-open document).
                     let fallback = { current_focus.read_recover().clone() };
                     if let Some(path) = fallback {
+                        super::trace!("[FOCUS] empty path, fallback to {:?}", path);
                         if let Some(session) = sessions.write_recover().get_mut(path.as_str()) {
                             session.focus_gained();
                         }
                         return;
                     }
-                    // No path, no shadow, no fallback: nothing to track.
+                    super::trace!("[FOCUS] empty path, no fallback, dropping");
                     return;
                 }
             } else {
                 event.path.clone()
             };
+
+            super::trace!("[FOCUS] doc_path={:?}", doc_path);
 
             let path_to_unfocus = {
                 let focus = current_focus.read_recover();
@@ -130,6 +146,7 @@ pub fn handle_focus_event_sync(
                 wal_dir,
                 session_events_tx,
             );
+            super::trace!("[FOCUS] set current_focus={:?}", doc_path);
             *current_focus.write_recover() = Some(doc_path);
         }
         FocusEventType::FocusLost | FocusEventType::FocusUnknown => {
@@ -137,6 +154,10 @@ pub fn handle_focus_event_sync(
                 let focus = current_focus.read_recover();
                 focus.clone()
             };
+            super::trace!(
+                "[FOCUS] FocusLost, clearing current_focus (was {:?})",
+                prev_path
+            );
             if let Some(path) = prev_path {
                 unfocus_document_sync(&path, sessions, session_events_tx);
                 *current_focus.write_recover() = None;

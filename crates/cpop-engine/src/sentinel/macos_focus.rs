@@ -52,6 +52,14 @@ impl MacOSFocusMonitor {
                 .or_else(|| self.get_window_title_via_cgwindow(pid));
             let title_str = window_title.unwrap_or_default();
 
+            super::trace!(
+                "[AX_PROBE] app={} bundle={} ax_path={:?} title={:?}",
+                app_name,
+                bundle_id_str,
+                doc_path,
+                title_str
+            );
+
             let doc_path = doc_path.or_else(|| {
                 let inferred = super::types::infer_document_path_from_title_with_bundle(
                     &title_str,

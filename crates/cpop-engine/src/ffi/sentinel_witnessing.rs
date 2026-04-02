@@ -170,19 +170,36 @@ pub fn ffi_sentinel_witnessing_status() -> FfiWitnessingStatus {
     // 3. Any active session as fallback
     let current_path = sentinel.current_focus();
     let sessions = sentinel.sessions();
+    let session_paths: Vec<(&str, &str, u64)> = sessions
+        .iter()
+        .map(|s| (s.path.as_str(), s.app_bundle_id.as_str(), s.keystroke_count))
+        .collect();
+    crate::sentinel::trace!(
+        "[STATUS] focus={:?} capture_active={} sessions={:?}",
+        current_path,
+        capture_active,
+        session_paths
+    );
     let session = current_path
         .as_ref()
         .and_then(|p| sessions.iter().find(|s| &s.path == p))
         .or_else(|| {
-            // Prefer manually-tracked sessions over auto-witnessed ones
             sessions
                 .iter()
                 .find(|s| s.app_bundle_id == "cli")
                 .or_else(|| sessions.first())
         });
     let session = match session {
-        Some(s) => s,
+        Some(s) => {
+            crate::sentinel::trace!(
+                "[STATUS] showing session path={:?} keystrokes={}",
+                s.path,
+                s.total_keystrokes()
+            );
+            s
+        }
         None => {
+            crate::sentinel::trace!("[STATUS] no session found");
             return FfiWitnessingStatus {
                 is_tracking: false,
                 document_path: None,

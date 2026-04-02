@@ -158,6 +158,7 @@ pub fn ffi_sentinel_start() -> FfiResult {
             };
         }
     };
+    crate::sentinel::trace!("[FFI] ffi_sentinel_start calling sentinel.start()");
     let start_result = rt.block_on(async {
         tokio::time::timeout(std::time::Duration::from_secs(10), sentinel.start()).await
     });
