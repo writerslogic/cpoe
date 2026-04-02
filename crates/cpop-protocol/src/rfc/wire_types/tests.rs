@@ -2,16 +2,14 @@
 
 //! Tests for wire-format types.
 
-#![allow(deprecated)] // Tests use deprecated HashValue constructors with known-good lengths
-
 use crate::codec;
 use crate::rfc::wire_types::*;
 
 #[test]
 fn test_checkpoint_wire_cbor_roundtrip() {
-    let content_hash = HashValue::sha256(vec![0xAA; 32]);
+    let content_hash = HashValue::try_sha256(vec![0xAA; 32]).unwrap();
     let prev_hash = HashValue::zero_sha256();
-    let checkpoint_hash = HashValue::sha256(vec![0xCC; 32]);
+    let checkpoint_hash = HashValue::try_sha256(vec![0xCC; 32]).unwrap();
 
     let checkpoint = CheckpointWire {
         sequence: 0,
@@ -71,9 +69,9 @@ fn test_checkpoint_wire_cbor_roundtrip() {
 
 /// Create a minimal test evidence packet.
 fn create_test_evidence_packet() -> EvidencePacketWire {
-    let content_hash = HashValue::sha256(vec![0xAA; 32]);
+    let content_hash = HashValue::try_sha256(vec![0xAA; 32]).unwrap();
     let prev_hash = HashValue::zero_sha256();
-    let checkpoint_hash = HashValue::sha256(vec![0xCC; 32]);
+    let checkpoint_hash = HashValue::try_sha256(vec![0xCC; 32]).unwrap();
 
     let checkpoint = CheckpointWire {
         sequence: 0,
@@ -165,7 +163,7 @@ fn create_test_evidence_packet() -> EvidencePacketWire {
 fn create_test_attestation_result() -> AttestationResultWire {
     AttestationResultWire {
         version: 1,
-        evidence_ref: HashValue::sha256(vec![0xBB; 32]),
+        evidence_ref: HashValue::try_sha256(vec![0xBB; 32]).unwrap(),
         verdict: Verdict::Authentic,
         assessed_tier: AttestationTier::SoftwareOnly,
         chain_length: 10,
@@ -353,7 +351,7 @@ fn test_evidence_packet_with_optional_fields() {
         feature_flags: vec![1, 3, 5],
     });
 
-    packet.previous_packet_ref = Some(HashValue::sha256(vec![0xEE; 32]));
+    packet.previous_packet_ref = Some(HashValue::try_sha256(vec![0xEE; 32]).unwrap());
     packet.packet_sequence = Some(2);
 
     let encoded = packet.encode_cbor().expect("encode");
@@ -464,8 +462,8 @@ fn test_checkpoint_with_self_receipts() {
 
     packet.checkpoints[0].receipts = Some(vec![Receipt::SelfReceipt(SelfReceipt {
         tool_id: "vscode-writerslogic".to_string(),
-        output_commit: HashValue::sha256(vec![0xAA; 32]),
-        evidence_ref: HashValue::sha256(vec![0xBB; 32]),
+        output_commit: HashValue::try_sha256(vec![0xAA; 32]).unwrap(),
+        evidence_ref: HashValue::try_sha256(vec![0xBB; 32]).unwrap(),
         transfer_time: 1700000002000,
     })]);
 
@@ -533,15 +531,15 @@ fn test_evidence_packet_with_presence_and_channel() {
 
 #[test]
 fn test_hash_value_constructors() {
-    let h256 = HashValue::sha256(vec![1; 32]);
+    let h256 = HashValue::try_sha256(vec![1; 32]).unwrap();
     assert_eq!(h256.algorithm, HashAlgorithm::Sha256);
     assert_eq!(h256.digest.len(), 32);
 
-    let h384 = HashValue::sha384(vec![2; 48]);
+    let h384 = HashValue::try_sha384(vec![2; 48]).unwrap();
     assert_eq!(h384.algorithm, HashAlgorithm::Sha384);
     assert_eq!(h384.digest.len(), 48);
 
-    let h512 = HashValue::sha512(vec![3; 64]);
+    let h512 = HashValue::try_sha512(vec![3; 64]).unwrap();
     assert_eq!(h512.algorithm, HashAlgorithm::Sha512);
     assert_eq!(h512.digest.len(), 64);
 
