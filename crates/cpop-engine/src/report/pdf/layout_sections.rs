@@ -3,11 +3,21 @@
 //! Individual page section renderers for PDF reports (pages 2 and 3).
 
 use super::layout::{
-    fill_rect, text, wrap_text_lines, BLACK, CONTENT_WIDTH, GRAY, MARGIN_LEFT, PAGE_TOP,
+    fill_rect, stroke_rect, text, wrap_text_lines, BLACK, CONTENT_WIDTH, GRAY, MARGIN_LEFT,
+    PAGE_TOP,
 };
 use super::PdfFonts;
 use crate::report::types::*;
 use printpdf::*;
+
+/// Light border color used for card outlines.
+const BORDER_COLOR: (f32, f32, f32) = (0.88, 0.88, 0.88);
+/// Border thickness in mm (maps to ~0.85 pt).
+const BORDER_THICKNESS: f32 = 0.3;
+/// White background for cards.
+const WHITE: (f32, f32, f32) = (1.0, 1.0, 1.0);
+/// Subtle alternating-row tint for tables.
+const ALT_ROW: (f32, f32, f32) = (0.98, 0.98, 0.98);
 
 // ── Page 2 ────────────────────────────────────────────────────────────
 
@@ -28,23 +38,26 @@ pub fn draw_page2(layer: &PdfLayerReference, r: &WarReport, fonts: &PdfFonts) {
         y -= 7.0;
 
         for s in &r.sessions {
-            fill_rect(
+            // White card with thin border
+            fill_rect(layer, MARGIN_LEFT, y - 4.0, CONTENT_WIDTH, 12.0, WHITE);
+            stroke_rect(
                 layer,
                 MARGIN_LEFT,
-                y - 3.0,
+                y - 4.0,
                 CONTENT_WIDTH,
-                10.0,
-                (0.96, 0.96, 0.96),
+                12.0,
+                BORDER_THICKNESS,
+                BORDER_COLOR,
             );
-            // Green left border
-            fill_rect(layer, MARGIN_LEFT, y - 3.0, 1.5, 10.0, (0.18, 0.49, 0.20));
+            // Green left accent border (2mm wide)
+            fill_rect(layer, MARGIN_LEFT, y - 4.0, 2.0, 12.0, (0.18, 0.49, 0.20));
 
             text(
                 layer,
                 &format!("Session {} — {:.0} min", s.index, s.duration_min),
                 8.0,
-                MARGIN_LEFT + 4.0,
-                y + 2.0,
+                MARGIN_LEFT + 6.0,
+                y + 3.0,
                 &fonts.bold,
                 BLACK,
             );
@@ -52,15 +65,15 @@ pub fn draw_page2(layer: &PdfLayerReference, r: &WarReport, fonts: &PdfFonts) {
                 layer,
                 &s.summary,
                 6.0,
-                MARGIN_LEFT + 4.0,
-                y - 2.0,
+                MARGIN_LEFT + 6.0,
+                y - 1.5,
                 &fonts.regular,
                 GRAY,
             );
-            y -= 14.0;
+            y -= 16.0;
         }
     }
-    y -= 4.0;
+    y -= 7.0;
 
     // ── Process Evidence ──
     text(
@@ -143,13 +156,23 @@ pub fn draw_page2(layer: &PdfLayerReference, r: &WarReport, fonts: &PdfFonts) {
         let col = i % 2;
         let row = i / 2;
         let ex = MARGIN_LEFT + col as f32 * (col_w + 2.0);
-        let ey = y - row as f32 * 14.0;
+        let ey = y - row as f32 * 16.0;
 
-        fill_rect(layer, ex, ey - 4.0, col_w - 2.0, 12.0, (0.96, 0.96, 0.96));
-        text(layer, label, 7.0, ex + 2.0, ey + 3.0, &fonts.bold, BLACK);
-        text(layer, value, 6.5, ex + 2.0, ey - 1.5, &fonts.regular, GRAY);
+        // White card with thin border
+        fill_rect(layer, ex, ey - 5.0, col_w - 2.0, 14.0, WHITE);
+        stroke_rect(
+            layer,
+            ex,
+            ey - 5.0,
+            col_w - 2.0,
+            14.0,
+            BORDER_THICKNESS,
+            BORDER_COLOR,
+        );
+        text(layer, label, 7.0, ex + 4.0, ey + 4.0, &fonts.bold, BLACK);
+        text(layer, value, 6.5, ex + 4.0, ey - 0.5, &fonts.regular, GRAY);
     }
-    y -= (evidence_items.len() as f32 / 2.0).ceil() * 14.0 + 6.0;
+    y -= (evidence_items.len() as f32 / 2.0).ceil() * 16.0 + 7.0;
 
     // ── Analysis Flags ──
     if !r.flags.is_empty() {
@@ -196,7 +219,12 @@ pub fn draw_page2(layer: &PdfLayerReference, r: &WarReport, fonts: &PdfFonts) {
         );
         y -= 4.0;
 
-        for f in &r.flags {
+        for (row_idx, f) in r.flags.iter().enumerate() {
+            // Alternating row backgrounds
+            if row_idx % 2 == 0 {
+                fill_rect(layer, MARGIN_LEFT, y - 2.0, CONTENT_WIDTH, 5.0, ALT_ROW);
+            }
+
             let signal_color = match f.signal {
                 FlagSignal::Human => (0.18_f32, 0.49, 0.20),
                 FlagSignal::Synthetic => (0.78, 0.16, 0.16),
@@ -223,7 +251,7 @@ pub fn draw_page2(layer: &PdfLayerReference, r: &WarReport, fonts: &PdfFonts) {
             text(
                 layer,
                 &category_display,
-                6.0,
+                6.5,
                 MARGIN_LEFT + 2.0,
                 y,
                 &fonts.regular,
@@ -232,7 +260,7 @@ pub fn draw_page2(layer: &PdfLayerReference, r: &WarReport, fonts: &PdfFonts) {
             text(
                 layer,
                 &flag_display,
-                6.0,
+                6.5,
                 MARGIN_LEFT + 30.0,
                 y,
                 &fonts.regular,
@@ -241,13 +269,13 @@ pub fn draw_page2(layer: &PdfLayerReference, r: &WarReport, fonts: &PdfFonts) {
             text(
                 layer,
                 &format!("{} {}", icon, f.signal.label()),
-                6.0,
+                6.5,
                 MARGIN_LEFT + 130.0,
                 y,
                 &fonts.bold,
                 signal_color,
             );
-            y -= 4.5;
+            y -= 5.0;
         }
     }
 
@@ -338,7 +366,7 @@ pub fn draw_page3(layer: &PdfLayerReference, r: &WarReport, fonts: &PdfFonts) {
         );
         y -= 4.0;
     }
-    y -= 6.0;
+    y -= 7.0;
 
     // ── Verification Instructions ──
     text(
@@ -352,20 +380,25 @@ pub fn draw_page3(layer: &PdfLayerReference, r: &WarReport, fonts: &PdfFonts) {
     );
     y -= 8.0;
 
-    // Offline box
-    fill_rect(
+    let box_h = 28.0;
+    let half_w = CONTENT_WIDTH / 2.0 - 2.0;
+
+    // Offline box: white with border
+    fill_rect(layer, MARGIN_LEFT, y - 24.0, half_w, box_h, WHITE);
+    stroke_rect(
         layer,
         MARGIN_LEFT,
-        y - 20.0,
-        CONTENT_WIDTH / 2.0 - 2.0,
-        24.0,
-        (0.96, 0.96, 0.96),
+        y - 24.0,
+        half_w,
+        box_h,
+        BORDER_THICKNESS,
+        BORDER_COLOR,
     );
     text(
         layer,
         "OFFLINE VERIFICATION",
         7.0,
-        MARGIN_LEFT + 3.0,
+        MARGIN_LEFT + 5.0,
         y,
         &fonts.bold,
         BLACK,
@@ -374,7 +407,7 @@ pub fn draw_page3(layer: &PdfLayerReference, r: &WarReport, fonts: &PdfFonts) {
         layer,
         "Extract WAR seal from PDF → verify Ed25519",
         5.5,
-        MARGIN_LEFT + 3.0,
+        MARGIN_LEFT + 5.0,
         y - 5.0,
         &fonts.regular,
         GRAY,
@@ -383,7 +416,7 @@ pub fn draw_page3(layer: &PdfLayerReference, r: &WarReport, fonts: &PdfFonts) {
         layer,
         "signature → verify enrollment cert chain",
         5.5,
-        MARGIN_LEFT + 3.0,
+        MARGIN_LEFT + 5.0,
         y - 9.0,
         &fonts.regular,
         GRAY,
@@ -392,27 +425,29 @@ pub fn draw_page3(layer: &PdfLayerReference, r: &WarReport, fonts: &PdfFonts) {
         layer,
         "Run: cpop verify <file.pdf>",
         6.0,
-        MARGIN_LEFT + 3.0,
-        y - 15.0,
+        MARGIN_LEFT + 5.0,
+        y - 17.0,
         &fonts.mono,
         BLACK,
     );
 
-    // Online box
+    // Online box: white with border
     let ox = MARGIN_LEFT + CONTENT_WIDTH / 2.0 + 2.0;
-    fill_rect(
+    fill_rect(layer, ox, y - 24.0, half_w, box_h, WHITE);
+    stroke_rect(
         layer,
         ox,
-        y - 20.0,
-        CONTENT_WIDTH / 2.0 - 2.0,
-        24.0,
-        (0.96, 0.96, 0.96),
+        y - 24.0,
+        half_w,
+        box_h,
+        BORDER_THICKNESS,
+        BORDER_COLOR,
     );
     text(
         layer,
         "ONLINE VERIFICATION",
         7.0,
-        ox + 3.0,
+        ox + 5.0,
         y,
         &fonts.bold,
         BLACK,
@@ -421,7 +456,7 @@ pub fn draw_page3(layer: &PdfLayerReference, r: &WarReport, fonts: &PdfFonts) {
         layer,
         "All offline checks + transparency log",
         5.5,
-        ox + 3.0,
+        ox + 5.0,
         y - 5.0,
         &fonts.regular,
         GRAY,
@@ -430,7 +465,7 @@ pub fn draw_page3(layer: &PdfLayerReference, r: &WarReport, fonts: &PdfFonts) {
         layer,
         "anchor + certificate revocation check",
         5.5,
-        ox + 3.0,
+        ox + 5.0,
         y - 9.0,
         &fonts.regular,
         GRAY,
@@ -439,12 +474,12 @@ pub fn draw_page3(layer: &PdfLayerReference, r: &WarReport, fonts: &PdfFonts) {
         layer,
         "Scan QR or visit writerslogic.com/verify",
         6.0,
-        ox + 3.0,
-        y - 15.0,
+        ox + 5.0,
+        y - 17.0,
         &fonts.mono,
         BLACK,
     );
-    y -= 30.0;
+    y -= 34.0;
 
     // ── Additional Limitations ──
     if !r.limitations.is_empty() {
@@ -471,7 +506,7 @@ pub fn draw_page3(layer: &PdfLayerReference, r: &WarReport, fonts: &PdfFonts) {
             y -= 4.0;
         }
     }
-    y -= 6.0;
+    y -= 7.0;
 
     // ── Analyzed Text (if available) ──
     if let Some(ref analyzed) = r.analyzed_text {
@@ -496,34 +531,37 @@ pub fn draw_page3(layer: &PdfLayerReference, r: &WarReport, fonts: &PdfFonts) {
         );
         y -= 5.0;
 
-        fill_rect(
+        // White box with thin border
+        fill_rect(layer, MARGIN_LEFT, y - 60.0, CONTENT_WIDTH, 62.0, WHITE);
+        stroke_rect(
             layer,
             MARGIN_LEFT,
             y - 60.0,
             CONTENT_WIDTH,
             62.0,
-            (0.98, 0.98, 0.98),
+            BORDER_THICKNESS,
+            BORDER_COLOR,
         );
 
         // Word-wrap the text into the box
-        let mut ty = y - 2.0;
+        let mut ty = y - 3.0;
         for line in wrap_text_lines(analyzed, 100) {
             text(
                 layer,
                 &line,
-                6.0,
-                MARGIN_LEFT + 3.0,
+                6.5,
+                MARGIN_LEFT + 5.0,
                 ty,
                 &fonts.regular,
                 BLACK,
             );
-            ty -= 3.5;
+            ty -= 4.0;
             if ty < y - 58.0 {
                 text(
                     layer,
                     "[continued...]",
                     5.5,
-                    MARGIN_LEFT + 3.0,
+                    MARGIN_LEFT + 5.0,
                     ty,
                     &fonts.regular,
                     GRAY,
