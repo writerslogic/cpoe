@@ -1,268 +1,533 @@
-# CPOP Project Audit — Consolidated Findings
+# CPOP Project Audit -- Consolidated Findings
 
-**Updated**: 2026-03-30
-**Scope**: Full workspace scan — CLI (19 files), Engine (170+ files), Protocol (16 files), Jitter (3 files)
-**Previous audit**: 2026-03-25 — 255 findings, all resolved
+<!-- suggest | Updated: 2026-04-02 | Domain: code | Languages: rust | Files: 374 | Issues: 148 -->
+
+**Updated**: 2026-04-02
+**Scope**: Full workspace scan -- CLI (21 files), Engine (290+ files), Protocol (22 files), Jitter (4 files)
+**Previous audit**: 2026-03-30 -- 265 findings, all resolved
 **macOS app**: 381 findings fixed, 0 open (see apps/cpop_macos/audit-todo.md)
-**Baseline**: 1024 pass, 0 fail, 1 ignored (cpop-engine --lib)
+**Baseline**: 1029 pass, 0 fail, 1 ignored (cpop-engine --lib)
 
 ## Summary
-| Severity | Open | Fixed | Component |
-|----------|------|-------|-----------|
-| CRITICAL | 0    | 5     | (all prior resolved) |
-| HIGH     | 0    | 90    | CLI (4), Engine (19), Protocol (7) |
-| MEDIUM   | 0    | 170   | CLI (12), Engine (28), Protocol (10) |
+| Severity | Open | Fixed | Skipped |
+|----------|------|-------|---------|
+| CRITICAL | 7    | 5     | 0       |
+| HIGH     | 42   | 90    | 0       |
+| MEDIUM   | 99   | 170   | 0       |
 
 ---
 
-## Prior Audit (2026-03-25) — All Resolved
+## Prior Audits -- All Resolved
 
-All 255 findings from the prior audit (C-001..EC-003, H-001..EH-051, M-001..EM-050, L-001..L-015) are resolved. See git history for details.
+All 265 findings from prior audit (2026-03-30) and 255 from 2026-03-25 are resolved. See git history.
 
 ---
 
-## High (2026-03-30 scan)
+## Compound Risk
 
-### CLI
+- [ ] **CLU-001** `silent_crypto_downgrade`, CRITICAL, components: C-004, H-006
+  <!-- compound_impact: Lamport signing fails silently + CBOR truncation accepted = forged events pass both layers -->
 
-- [x] **H-052** `[security]` `apps/cpop_cli/src/native_messaging_host.rs:85` — Session struct holds session_nonce [u8;16] and prev_commitment [u8;32] without Zeroize/Drop impl. Violates key material zeroization policy.
-  Impact: Session secrets persist in memory after drop. Fix: Derive Zeroize + ZeroizeOnDrop on Session. Effort: small
+- [ ] **CLU-002** `lock_toctou_cascade`, HIGH, components: H-002, H-010, H-013
+  <!-- compound_impact: Lock reacquisition + file hash TOCTOU + symlink TOCTOU = session state can be manipulated during focus transitions -->
 
-- [x] **H-053** `[error_handling]` `apps/cpop_cli/src/util.rs:287` — retry_on_busy() uses .expect() after all retries exhausted; panics CLI on legitimately busy database.
-  Impact: Users see panic backtrace instead of actionable error. Fix: Return anyhow::Error. Effort: small
+- [ ] **CLU-003** `ffi_panic_cascade`, HIGH, components: C-001, C-002, H-019
+  <!-- compound_impact: Multiple FFI panic vectors crash Swift/Kotlin callers without recovery -->
 
-- [x] **H-054** `[security]` `apps/cpop_cli/src/cmd_presence.rs:23` — Session lock released during stdin interaction; TOCTOU between release and re-acquisition at line 279.
-  Impact: Concurrent session modifications possible during user input phase. Fix: Hold advisory lock or store in-memory. Effort: medium
+## Systemic Issues
 
-- [x] **H-055** `[error_handling]` `apps/cpop_cli/src/cmd_config.rs:117` — Voice fingerprinting consent errors propagated as generic anyhow without recovery guidance.
-  Impact: Users get opaque error with no recovery path. Fix: Wrap with context message suggesting rm consent.json. Effort: small
+- [ ] **SYS-001** `nan_inf_unguarded`, 10+ files, HIGH
+  <!-- pid:nan_inf_unguarded | first:2026-03-03 | last:2026-04-02 -->
+  Files: `forensics/analysis.rs:344`, `forensics/assessment.rs:316`, `forensics/cadence.rs:64`, `forensics/cross_modal.rs:270`, `forensics/forgery_cost.rs:314`, `analysis/behavioral_fingerprint.rs:110,226,268`, `analysis/hurst.rs:115`, `analysis/pink_noise.rs:117`, `analysis/labyrinth.rs:309`
+  Fix: Guard every division, log, exp, and regression output with `is_finite()` check before use. Crate-wide `fn safe_div(a: f64, b: f64) -> f64` helper.
 
-### Engine — IPC/FFI
+- [ ] **SYS-002** `silent_error_swallow`, 8+ files, HIGH
+  <!-- pid:silent_error | first:2026-03-03 | last:2026-04-02 -->
+  Files: `crypto.rs:198`, `sentinel/core.rs:797`, `sentinel/ipc_handler.rs:405`, `sentinel/helpers.rs:283`, `ffi/report.rs:151`, `evidence/wire_conversion.rs:238,275`, `cpop_jitter_bridge/session.rs:284`
+  Fix: Replace `log::warn + continue` with `Result` propagation or explicit `ErrorPolicy::AllowPartial` flag.
 
-- [x] **H-056** `[concurrency]` `crates/cpop-engine/src/ipc/crypto.rs:176` — Sequence number CAS validation and rx_sequence advancement are not atomic; concurrent packets can race past replay check.
-  Impact: Replay attack window during concurrent IPC message processing. Fix: Atomic compare-and-swap with SeqCst. Effort: medium
+- [ ] **SYS-003** `duplicated_forensic_logic`, 3+ sites, HIGH
+  <!-- pid:duplicated_logic | first:2026-03-03 | last:2026-04-02 -->
+  Files: `ffi/report.rs:376`, `ffi/system.rs:275`, `ffi/sentinel_witnessing.rs:256`
+  Fix: Extract cadence_score, focus_penalty, session_detection to `crate::forensics` module; call from all sites.
 
-- [x] **H-057** `[error_handling]` `crates/cpop-engine/src/ipc/server_handler.rs:224` — Rate limiter lock_recover() silently swallows poisoning; may bypass rate limiting on poisoned mutex.
-  Impact: Rate limiting silently disabled after handler panic. Fix: Return error on poisoned state. Effort: small
+- [ ] **SYS-004** `debug_output_in_production`, 3 files, HIGH
+  <!-- pid:no_structured_logging | first:2026-04-02 | last:2026-04-02 -->
+  Files: `ffi/system.rs:12` (eprintln!), `ffi/sentinel.rs:48` (file write), `ffi/sentinel_witnessing.rs:221` (file write)
+  Fix: Replace all eprintln!/file debug writes with `log::debug!()`.
 
-- [x] **H-058** `[security]` `crates/cpop-engine/src/ffi/ephemeral.rs:656` — Signing key bytes not zeroized after constructing SigningKey; key_bytes Vec persists on heap.
-  Impact: Key material exposure in memory. Fix: Wrap in Zeroizing<Vec<u8>>. Effort: small
+- [ ] **SYS-005** `magic_values_in_formulas`, 12+ files, MEDIUM
+  <!-- pid:magic_value | first:2026-03-03 | last:2026-04-02 -->
+  Files: `forensics/assessment.rs:24-45`, `forensics/types.rs:18-64`, `analysis/behavioral_fingerprint.rs:9-53`, `sentinel/ipc_handler.rs:405`, `sentinel/daemon.rs:347`, `evidence/packet.rs:215`
+  Fix: Group into named const structs per domain (CADENCE_THRESHOLDS, VELOCITY_THRESHOLDS, etc.).
 
-### Engine — Sentinel/Platform
+- [ ] **SYS-006** `toctou_symlink_attacks`, 4+ files, HIGH
+  <!-- pid:toctou | first:2026-03-10 | last:2026-04-02 -->
+  Files: `sentinel/helpers.rs:596,634`, `identity/secure_storage.rs:331`, `platform/macos/keystroke.rs:29`, `ffi/sentinel_witnessing.rs:36`
+  Fix: Use O_NOFOLLOW on all file opens; canonicalize after open, not before.
 
-- [x] **H-059** `[security]` `crates/cpop-engine/src/sentinel/ipc_handler.rs:36` — HMAC key escapes Zeroizing wrapper via mem::take(); not zeroized if SecureStore::open() fails.
-  Impact: Key material leaked on database open failure. Fix: Replaced mem::take with .to_vec(); Zeroizing wrapper drops naturally.
+- [ ] **SYS-007** `key_zeroize_inconsistency`, 4+ files, MEDIUM
+  <!-- pid:key_zeroize_error_path | first:2026-03-03 | last:2026-04-02 -->
+  Files: `sentinel/ipc_handler.rs:319`, `ffi/ephemeral.rs:656`, `identity/mnemonic.rs:36`, `keyhierarchy/session.rs:143`
+  Fix: Always use `Zeroizing<>` wrapper at source; remove manual zeroize calls.
 
-- [x] **H-060** `[concurrency]` `crates/cpop-engine/src/sentinel/daemon.rs:436` — PID file acquired AFTER sentinel.start() and IPC bind; crash between start and PID write leaves stale PID.
-  Impact: Daemon fails to restart; requires manual PID cleanup. Fix: Moved acquire_pid_file() before sentinel.start() with cleanup on failure.
+## Critical
 
-- [x] **H-061** `[concurrency]` `crates/cpop-engine/src/sentinel/core.rs:493` — Session keystroke attribution: read lock check followed by write lock update; session can be removed between checks.
-  Impact: Keystroke silently lost if session ends between check and update. Fix: Already uses single write lock in current code.
+- [ ] **C-001** `[error_handling]` `ffi/ephemeral.rs:27`: device_identity() uses unwrap_or_else with fallback to all-zero device ID and hostname
+  <!-- pid:silent_error | batch:5 | verified:true | first:2026-04-02 | last:2026-04-02 -->
+  Impact: All-zero device ID silently used if SecureStorage fails; evidence packets have no real device binding | Fix: Return Result, propagate error to caller | Effort: small
 
-- [x] **H-062** `[concurrency]` `crates/cpop-engine/src/sentinel/core.rs:856` — Event loop handle may not be stored if lock fails; orphaned Tokio task continues after Sentinel drop.
-  Impact: Task leak; orphaned task may access freed Arc clones. Fix: Changed to lock_recover() in Drop impl.
+- [ ] **C-002** `[error_handling]` `codec/cbor.rs:29`: check_cbor_depth returns true on truncated CBOR, letting ciborium parse potentially malicious input
+  <!-- pid:unsafe_deser | batch:7 | verified:true | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Library crate accepts truncated CBOR as valid depth-check; ciborium may still reject but defense-in-depth violated | Fix: Return false on truncated input; let caller decide | Effort: small
 
-- [x] **H-063** `[concurrency]` `crates/cpop-engine/src/platform/windows.rs:169` — MONITOR_ACTIVE check not held during hook installation; second monitor can start between check and hook setup.
-  Impact: Two monitors feed same GLOBAL_SESSION; events interleave. Fix: Extend CAS to cover hook install. Effort: medium
+- [ ] **C-003** `[security]` `war/verification.rs:491`: CA public key hardcoded with fixed expiry (2036-03-18), no rotation mechanism
+  <!-- pid:hardcoded_secret | batch:9 | verified:true | first:2026-04-02 | last:2026-04-02 -->
+  Impact: After 2036, beacon verification fails permanently; no key rotation ceremony defined | Fix: Add key rotation with versioned CA key list; fail hard if signature timestamp > key expiry | Effort: large
 
-### Engine — Evidence/Checkpoint
+- [ ] **C-004** `[security]` `crypto.rs:198`: sign_event_lamport() silently returns without Lamport signature on HKDF expand failure
+  <!-- pid:silent_error | batch:3 | verified:true | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Event loses post-quantum double-sign protection without alerting caller; forgery detection impossible for that event | Fix: Return Result; let caller decide whether to abort or continue | Effort: small
 
-- [x] **H-064** `[data_integrity]` `crates/cpop-engine/src/evidence/wire_conversion.rs:225` — CBOR encoding failure silently returns empty Vec for jitter seal computation.
-  Impact: Invalid jitter_seal (zeros) breaks downstream verification. Fix: Return error on encode failure. Effort: small
+- [ ] **C-005** `[security]` `keyhierarchy/puf.rs:93-107`: Seed persistence writes file then keychain without atomic guarantee
+  <!-- pid:toctou | batch:9 | verified:true | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Crash between file write and keychain save can leave seed in inconsistent state | Fix: Atomic file rename (already done), then keychain as secondary; document that file is authoritative | Effort: medium
 
-- [x] **H-065** `[data_integrity]` `crates/cpop-engine/src/evidence/wire_conversion.rs:257` — CBOR encoding of jitter binding silently fails; entangled MAC computed with empty bytes.
-  Impact: Entangled checkpoint loses binding strength. Fix: Propagate encode error. Effort: small
+- [ ] **C-006** `[concurrency]` `sentinel/helpers.rs:111`: focus_document_sync acquires/releases write lock 4 times, creating TOCTOU windows
+  <!-- pid:toctou | batch:2 | verified:true | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Session state can change between lock acquisitions during every focus event | Fix: Acquire single write lock at function start, perform all mutations, release at end | Effort: medium
 
-- [x] **H-066** `[security]` `crates/cpop-engine/src/evidence/builder/setters.rs:337` — Ratchet index clamped to i32::MAX instead of error when exceeding 2^31.
-  Impact: Silent index clamping breaks signature verification on very long chains. Fix: Return error. Effort: small
+- [ ] **C-007** `[concurrency]` `sentinel/core.rs:649`: pending_downs HashMap unbounded; stuck key creates memory exhaustion
+  <!-- pid:no_backpressure | batch:2 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Stuck key at 10K repeats/sec grows HashMap without bound; CPU spike on next tick iterating all entries | Fix: Add MAX_PENDING_DOWNS = 1000; evict oldest on overflow | Effort: small
 
-### Engine — Forensics/Analysis
+## High
 
-- [x] **H-067** `[code_quality]` `crates/cpop-engine/src/forensics/assessment.rs:292` — normalized_entropy can exceed 1.0; no clamp before penalty calculation.
-  Impact: Forgery detection unreliable with poisoned entropy inputs. Fix: .min(1.0) after normalization. Effort: small
+### Sentinel/Concurrency
+- [ ] **H-001** `[concurrency]` `sentinel/core.rs:1004`: Unfocus loop iterates cloned keys; concurrent session add causes non-deterministic event ordering
+  <!-- pid:nondeterministic | batch:2 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Session end events fire in random order | Fix: Drain under single write lock | Effort: small
 
-- [x] **H-068** `[error_handling]` `crates/cpop-engine/src/forensics/topology.rs:99` — No validation that inter-event intervals are positive before computing median.
-  Impact: Negative intervals from out-of-order events corrupt all downstream metrics. Fix: Clamp to [0, max]. Effort: small
+- [ ] **H-002** `[concurrency]` `sentinel/core.rs:659`: Read lock then write lock for keystroke counting; lock thrashing per keystroke
+  <!-- pid:lock_held_await | batch:2 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: 50 sessions = 50 clones per keystroke | Fix: Acquire write lock directly | Effort: medium
 
-- [x] **H-069** `[numeric]` `crates/cpop-engine/src/analysis/behavioral_fingerprint.rs:226` — burst_speed_variance divides by (n-1) where n=1; division by zero.
-  Impact: Panic during behavioral fingerprint generation. Fix: Guard len < 2. Effort: small
+- [ ] **H-003** `[error_handling]` `sentinel/core.rs:797`: Bridge thread death logged but sentinel continues in degraded mode
+  <!-- pid:silent_error | batch:2 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Keystroke/mouse capture dies silently; data loss | Fix: Track death count; stop() after 2+ failures | Effort: medium
 
-- [x] **H-070** `[numeric]` `crates/cpop-engine/src/analysis/snr.rs:80` — log10(0) produces -inf when signal_power=0; not explicitly handled.
-  Impact: SNR becomes -inf instead of explicit zero-signal flag. Fix: Guard signal_power > 0. Effort: small
+- [ ] **H-004** `[concurrency]` `sentinel/helpers.rs:283`: signing_key read then sessions write violates AUD-041 lock ordering
+  <!-- pid:lock_ordering | batch:2 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Signing key may change between read and WAL append | Fix: Acquire both in AUD-041 order upfront | Effort: medium
 
-### Engine — Other
+- [ ] **H-005** `[security]` `sentinel/helpers.rs:634`: canonicalize() resolves symlinks; attacker replaces validated path after check
+  <!-- pid:toctou | batch:2 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Symlink attack can redirect to arbitrary files | Fix: Use O_NOFOLLOW; check read_link().is_err() | Effort: medium
 
-- [x] **H-071** `[security]` `crates/cpop-engine/src/writersproof/client.rs:50` — JWT token stored as plain String without zeroization on Drop.
-  Impact: Bearer tokens persist in memory dumps. Fix: Wrap with Zeroizing<String>. Effort: small
+- [ ] **H-006** `[code_quality]` `sentinel/helpers.rs:517`: copy_from_slice on unknown slice length; panics if hash_bytes.len() != 32
+  <!-- pid:unwrap_on_io | batch:2 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Panic in WAL append; event loss | Fix: Validate length upfront | Effort: small
 
-- [x] **H-072** `[security]` `crates/cpop-engine/src/war/profiles/standards.rs:347` — DID method extraction uses split(':').nth(1); truncates multi-component DIDs.
-  Impact: Authentication metadata lost for complex DID methods. Fix: Return full DID after 'did:' prefix. Effort: small
+- [ ] **H-007** `[security]` `sentinel/ipc_handler.rs:141`: fs::read() without size limit; /dev/zero causes OOM
+  <!-- pid:missing_validation | batch:2 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: DoS via crafted IPC message | Fix: Check meta.len() < MAX_EVIDENCE_SIZE before read | Effort: small
 
-- [x] **H-073** `[concurrency]` `crates/cpop-engine/src/tpm/windows/provider.rs:218` — Counter not atomically incremented with binding creation; duplicate counter values possible.
-  Impact: Monotonicity violation in attestation chain. Fix: Atomic increment or lock both together. Effort: medium
+### IPC/Crypto
+- [ ] **H-008** `[security]` `ipc/crypto.rs:177`: Replay detection rejects legitimate retries; connection-fatal on any error
+  <!-- pid:missing_validation | batch:3 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Clients cannot safely retry on network hiccup | Fix: Document behavior; implement retry handler above crypto layer | Effort: medium
 
-- [x] **H-074** `[security]` `crates/cpop-engine/src/tpm/secure_enclave/signing.rs:34` — CFRelease called on potentially null CFErrorRef pointer.
-  Impact: Memory corruption on SE signing failure path. Fix: Check !error.is_null() before CFRelease. Effort: small
+- [ ] **H-009** `[security]` `ipc/rbac.rs:18`: Default role is User; should fail closed to ReadOnly
+  <!-- pid:missing_validation | batch:3 | verified:true | first:2026-04-02 | last:2026-04-02 -->
+  Impact: If UID check bypassed, attacker gets User role by default | Fix: Default to ReadOnly; require explicit role negotiation | Effort: small
 
-- [x] **H-075** `[numeric]` `crates/cpop-engine/src/jitter/session.rs:186` — compute_jitter_value: JITTER_RANGE can be 0 if min==max; modulo by zero.
-  Impact: Panic in jitter computation. Fix: Guard params.jitter_range == 0. Effort: small
+- [ ] **H-010** `[security]` `store/integrity.rs:228`: previous_hash comparison uses `==` (not constant-time) while other hash comparisons use ct_eq
+  <!-- pid:toctou | batch:3 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Timing side-channel on chain structure | Fix: Use ct_eq consistently | Effort: small
 
-- [x] **H-076** `[error_handling]` `crates/cpop-engine/src/fingerprint/storage.rs:216` — delete_all_voice_data silently deletes on decrypt failure.
-  Impact: Unrecoverable data loss without user notification. Fix: Return error on decrypt failure. Effort: small
+### Evidence/Checkpoint
+- [ ] **H-011** `[security]` `evidence/builder/mod.rs:304`: period_type stored as String instead of enum
+  <!-- pid:missing_validation | batch:4 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Arbitrary values at wire time; evades authorship analysis | Fix: Create ContextPeriodType enum | Effort: large
+
+- [ ] **H-012** `[security]` `evidence/packet.rs:189`: baseline_verification uses signing_public_key from same packet (self-signed)
+  <!-- pid:missing_validation | batch:4 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Attacker can substitute public key; self-signing provides no protection | Fix: Require external trusted key parameter | Effort: medium
+
+- [ ] **H-013** `[error_handling]` `checkpoint/chain.rs:159`: VDF skipped for genesis checkpoint in Legacy mode
+  <!-- pid:silent_error | batch:4 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Genesis can be forged without VDF proof | Fix: Require VDF for genesis in all modes | Effort: large
+
+- [ ] **H-014** `[error_handling]` `checkpoint/chain_verification.rs:32`: verify_hash_chain returns bool with no error context
+  <!-- pid:unhelpful_error_msg | batch:4 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Cannot determine which chain link broke | Fix: Return Result<(), ChainError> with position | Effort: medium
+
+- [ ] **H-015** `[error_handling]` `checkpoint_mmr.rs:42`: Idempotent append silently returns existing proof on duplicate
+  <!-- pid:silent_error | batch:4 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Caller cannot distinguish fresh append from duplicate | Fix: Return (proof, is_new: bool) | Effort: small
+
+### FFI
+- [ ] **H-016** `[security]` `ffi/system.rs:34`: Signing key file permissions not verified after atomic rename
+  <!-- pid:toctou | batch:5 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Temp file readable between write and rename | Fix: stat() after rename; verify 0600 | Effort: small
+
+- [ ] **H-017** `[security]` `ffi/sentinel_inject.rs:74`: Rate limiting uses non-atomic fetch_add; race allows burst above 50 KPS
+  <!-- pid:data_race | batch:5 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Synthetic keystroke injection exceeds rate limit | Fix: Use atomic compare_exchange in loop | Effort: medium
+
+- [ ] **H-018** `[security]` `ffi/sentinel_witnessing.rs:36`: Path validation checks contains("..") but doesn't canonicalize; symlinks bypass
+  <!-- pid:path_traversal | batch:5 | verified:true | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Attacker can witness /etc/hosts via symlink | Fix: Call validate_path() from sentinel::helpers | Effort: small
+
+- [ ] **H-019** `[architecture]` `ffi/report.rs:42`: Business logic (forensic analysis, session detection, penalty computation) embedded in FFI layer
+  <!-- pid:logic_in_boundary | batch:5 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Cannot unit-test without FFI; changes require recompilation | Fix: Move to crate::report module | Effort: large
+
+- [ ] **H-020** `[code_quality]` `ffi/system.rs:12`: eprintln!() in production FFI code bypasses log level control
+  <!-- pid:no_structured_logging | batch:5 | verified:true | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Console spam in production; not suppressible | Fix: Use log::debug!() | Effort: small
+
+### Anchors
+- [ ] **H-021** `[security]` `anchors/rfc3161.rs:188`: CMS signature verification NOT implemented; only hash checked
+  <!-- pid:missing_validation | batch:1 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Forged timestamps with correct hash pass verification | Fix: Implement CMS/PKCS#7 signature verification per RFC 5652 | Effort: large
+
+- [ ] **H-022** `[security]` `anchors/ots.rs:298`: Bitcoin block header cross-check not implemented
+  <!-- pid:missing_validation | batch:1 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: OTS proofs without Bitcoin confirmation treated as valid | Fix: Fetch and validate Bitcoin block header | Effort: large
 
 ### Protocol
+- [ ] **H-023** `[security]` `codec/cbor.rs:98`: Indefinite-length string handling skips malformed chunks with saturating_add
+  <!-- pid:unsafe_deser | batch:7 | verified:true | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Incomplete tag validation on truncated indefinite strings | Fix: Reject truncated chunks; return false | Effort: medium
 
-- [x] **H-077** `[numeric]` `crates/cpop-protocol/src/rfc/fixed_point.rs:51` — f64 to i32 cast without overflow check in from_float macro.
-  Impact: Silent wraparound corrupts fixed-point scores. Fix: Clamp before cast. Effort: small
+- [ ] **H-024** `[security]` `rfc/wire_types/components.rs:558`: wrap_device_signature_cose accepts arbitrary platform_attestation bytes
+  <!-- pid:missing_validation | batch:7 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Crafted COSE header injection via unvalidated attestation | Fix: Validate length and structure | Effort: medium
 
-- [x] **H-078** `[security]` `crates/cpop-protocol/src/codec/cbor.rs:28` — CBOR deserialization has no recursive depth limit; deeply nested structures within 16MB can cause stack overflow.
-  Impact: Stack overflow DoS on malicious CBOR input. Fix: Add max_depth=32 pre-flight validation. Effort: large
+- [ ] **H-025** `[security]` `rfc/wire_types/attestation.rs:395`: confidence_tier enum allows raw(0) which becomes invalid after u8 cast
+  <!-- pid:missing_validation | batch:7 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Invalid confidence tier passes validation | Fix: Use enum bounds check | Effort: small
 
-- [x] **H-079** `[security]` `crates/cpop-protocol/src/evidence.rs:101` — Zero entropy hash check insufficient; PhysJitter silent failure allows weak causality locks.
-  Impact: Forgeable evidence packets with zero-entropy checkpoints. Fix: Require entropy_bits >= 8. Effort: small
+- [ ] **H-026** `[security]` `protocol/evidence.rs:113`: Causality lock V2 packet_id not validated for uniqueness/entropy
+  <!-- pid:missing_validation | batch:7 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Collisions bypass causality verification | Fix: Validate packet_id entropy | Effort: small
 
-- [x] **H-080** `[error_handling]` `crates/cpop-protocol/src/codec/mod.rs:105` — decode() ignores Format::CborWar; calls cbor::decode instead of cbor::decode_cwar.
-  Impact: CWAR tag validation bypassed; wrong-tagged CBOR silently accepted. Fix: Match CborWar explicitly. Effort: small
+### Key Hierarchy/Identity/WAR
+- [ ] **H-027** `[security]` `keyhierarchy/session.rs:374`: Recovery state encryption has no monotonic counter; replayable
+  <!-- pid:missing_validation | batch:9 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Old recovery states can be replayed | Fix: Add external counter (TPM or sealed blob) | Effort: large
 
-- [x] **H-081** `[numeric]` `crates/cpop-engine/src/vdf/swf_argon2.rs:233` — Loop caps at MAX_ITERATIONS but later code assumes leaves.len() == params.iterations; OOB panic.
-  Impact: Panic when building Merkle proofs if iterations > MAX_ITERATIONS. Fix: Validate at entry. Effort: small
+- [ ] **H-028** `[security]` `identity/secure_storage.rs:282`: Symlink attack on migration flag file (TOCTOU between exists() and readlink())
+  <!-- pid:toctou | batch:9 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Attacker can redirect migration to controlled path | Fix: Use O_NOFOLLOW | Effort: medium
 
----
+- [ ] **H-029** `[security]` `identity/secure_storage.rs:54`: Platform keychain encoding mismatch between macOS and non-macOS
+  <!-- pid:missing_validation | batch:9 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Migration breaks cross-platform | Fix: Unify encoding or add version field | Effort: medium
 
-## Medium (2026-03-30 scan)
+- [ ] **H-030** `[security]` `sealed_identity/store.rs:64`: Key derivation uses PUF response without salt on unseal failure path
+  <!-- pid:missing_validation | batch:9 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Reduced entropy on unseal fallback | Fix: Use consistent HKDF salt | Effort: small
+
+- [ ] **H-031** `[security]` `sealed_identity/store.rs:128`: Anti-rollback counter check inconsistent (both counters not required)
+  <!-- pid:missing_validation | batch:9 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Migration gap allows rollback | Fix: Require both counters; fail hard | Effort: medium
+
+- [ ] **H-032** `[security]` `war/verification.rs:512`: CA key unwrap on try_into after length check; fragile
+  <!-- pid:unwrap_on_io | batch:9 | verified:true | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Panic if length check ever changes | Fix: Use expect() with context | Effort: small
+
+- [ ] **H-033** `[security]` `war/profiles/vc.rs:245`: COSE_Sign1 signing error swallows signature; empty sig returned
+  <!-- pid:silent_error | batch:9 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Caller cannot detect signing failure | Fix: Return error if signature empty | Effort: small
+
+- [ ] **H-034** `[security]` `war/encoding.rs:64`: ASCII block decode accepts null bytes; split_whitespace vulnerable
+  <!-- pid:unsafe_deser | batch:9 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Malformed WAR blocks parsed incorrectly | Fix: Reject null bytes before parsing | Effort: small
+
+### Platform/VDF/WAL
+- [ ] **H-035** `[performance]` `vdf/swf_argon2.rs:228`: Vec::with_capacity(iterations) where iterations can be 10M+; allocates 320MB+
+  <!-- pid:alloc_in_loop | batch:10 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: OOM on large VDF computations | Fix: Stream computation; don't store all intermediate results | Effort: large
+
+- [ ] **H-036** `[error_handling]` `wal/operations.rs:387`: File handle stale after rename; reopen failure causes WAL corruption
+  <!-- pid:toctou | batch:10 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: WAL writes to archived file | Fix: Set inconsistent=true AFTER successful reopen | Effort: small
+
+- [ ] **H-037** `[error_handling]` `wal/operations.rs:677`: Silent truncation on corruption; data loss without recovery context
+  <!-- pid:silent_error | batch:10 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Corrupted entries silently dropped | Fix: Log checkpoint of last valid entry; report loss count | Effort: small
+
+- [ ] **H-038** `[error_handling]` `wal/operations.rs:682`: Unsigned underflow: lost = file_len - offset without checked_sub
+  <!-- pid:unwrap_on_io | batch:10 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Recovery estimate wraps to huge value | Fix: Use checked_sub() | Effort: small
+
+- [ ] **H-039** `[concurrency]` `platform/windows.rs:197`: Infinite spin-wait on pump thread milestone without timeout
+  <!-- pid:lock_held_await | batch:10 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Thread hangs forever if pump thread fails | Fix: Add timeout; return error | Effort: small
+
+- [ ] **H-040** `[concurrency]` `platform/windows.rs:268`: Non-recursive Mutex in keyboard hook callback; potential reentrancy panic
+  <!-- pid:lock_ordering | batch:10 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Hook reentry deadlocks or panics | Fix: Use non-blocking try_lock(); skip on contention | Effort: medium
+
+- [ ] **H-041** `[concurrency]` `platform/macos/keystroke.rs:156`: EventTapRunner thread join without timeout
+  <!-- pid:lock_held_await | batch:10 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: stop() blocks forever if tap thread deadlocks in CFRunLoopRun | Fix: Add join timeout; force-kill after 5s | Effort: medium
+
+- [ ] **H-042** `[code_quality]` `mmr/proof.rs:362`: Unreachable safety check in RangeProof verify; masks logic error
+  <!-- pid:dead_code | batch:10 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: Dead code indicates loop invariant may be wrong | Fix: Remove or convert to debug_assert | Effort: small
 
 ### CLI
-- [x] **M-032** `[security]` `native_messaging_host.rs:287` — Evidence file created before chmod; brief TOCTOU window.
-- [x] **M-033** `[security]` `native_messaging_host.rs:636` — Symlink check after canonicalize uses original path reference.
-- [x] **M-034** `[security]` `native_messaging_host.rs:470` — Hex decode timing leak in commitment verification.
-- [x] **M-035** `[code_quality]` `cmd_track.rs:151` — is_within_target() uses lexical starts_with; unsafe for non-canonical paths.
-- [x] **M-036** `[code_quality]` `cmd_export.rs:660` — default_output_path() no traversal check on relative paths.
-- [x] **M-037** `[input_validation]` `cmd_config.rs:209` — parse_editor_value doesn't handle quoted paths.
-- [x] **M-038** `[code_quality]` `smart_defaults.rs:82` — File selection ambiguous with similar names.
-- [x] **M-039** `[error_handling]` `cmd_fingerprint.rs:189` — Error handling via string matching instead of types.
-- [x] **M-040** `[error_handling]` `config/loading.rs:45` — Legacy config parse failure silently uses defaults.
-- [x] **M-041** `[input_validation]` `main.rs:229` — Path traversal warning not enforced.
-- [x] **M-042** `[code_quality]` `main.rs:131` — Auto-start logic fragile; adding commands requires manual update.
-- [x] **M-043** `[error_handling]` `config/types.rs:353` — Config validation lacks reasonable bounds on timing intervals.
+- [ ] **H-043** `[security]` `native_messaging_host.rs:195`: Domain whitelist uses ends_with() suffix match instead of proper subdomain check
+  <!-- pid:missing_validation | batch:8 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
+  Impact: evil-google.com passes suffix check for google.com | Fix: Require exact match or .domain suffix | Effort: small
 
-### Engine — IPC/FFI
-- [x] **M-044** `[security]` `ipc/messages.rs:36` — Path validation race between canonicalize and symlink check.
-- [x] **M-045** `[security]` `ipc/messages.rs:108` — Windows UNC path normalization incomplete.
-- [x] **M-046** `[concurrency]` `ffi/sentinel_inject.rs:136` — Pre-witness buffer and session creation TOCTOU race.
-- [x] **M-047** `[code_quality]` `ffi/ephemeral.rs:295` — Jitter interval filtering reports no rejection count to caller.
-- [x] **M-048** `[error_handling]` `ffi/beacon.rs:104` — Empty API key not validated before client creation.
-- [x] **M-049** `[error_handling]` `ipc/async_client.rs:366` — Poisoned stream after partial send/recv; no auto-reconnect.
-- [x] **M-050** `[error_handling]` `ipc/server.rs:62` — Stale socket test connection not properly closed.
-- [x] **M-051** `[security]` `ipc/messages.rs:344` — Pulse timestamp_ns not validated against wall clock.
-- [x] **M-052** `[code_quality]` `ffi/ephemeral.rs:117` — Sessions DashMap has no LRU eviction; memory exhaustion DoS.
-- [x] **M-053** `[security]` `ipc/secure_channel.rs:40` — ChaCha20Poly1305 cipher key not zeroized on Drop.
-- [x] **M-054** `[code_quality]` `ffi/sentinel_witnessing.rs:249` — Forensic score blending has overlapping conditions.
-- [x] **M-055** `[error_handling]` `ffi/evidence_derivative.rs:82` — File size TOCTOU between validation and hashing.
-- [x] **M-056** `[error_handling]` `ffi/beacon.rs:57` — Beacon runtime OnceLock caches failure permanently.
+## Medium
 
-### Engine — Sentinel/Platform
-- [x] **M-057** `[error_handling]` `sentinel/core.rs:348` — Channel full drops keystrokes silently; no metrics.
-- [x] **M-058** `[concurrency]` `sentinel/core.rs:620` — Mouse timing uses system clock; clock jump causes false positives.
-  Verified: mouse_duration_ns is unused; is_during_typing uses monotonic Instant. No fix needed.
-- [x] **M-059** `[code_quality]` `sentinel/core.rs:559` — File exists check outside session lock; file could be deleted.
-  Fix: Added benign-race comment; session for deleted file ends naturally on idle sweep.
-- [x] **M-060** `[error_handling]` `sentinel/core.rs:796` — Auto-checkpoint event may be orphaned if session ends.
-  Fix: Added benign-race comment; extra checkpoint is valid evidence data.
-- [x] **M-061** `[concurrency]` `sentinel/daemon.rs:181` — Stale PID cleanup races with concurrent daemon startup.
-  Fix: Added TOCTOU race comment; retry-once pattern limits impact.
-- [x] **M-062** `[code_quality]` `platform/windows.rs:386` — Global static mutex poisoning silently swallowed.
-- [x] **M-063** `[security]` `sentinel/ipc_handler.rs:54` — Enumerate index cast to i64 without overflow check.
-- [x] **M-064** `[code_quality]` `platform/synthetic.rs:163` — Replay threshold uses > instead of >=; edge case.
-- [x] **M-065** `[error_handling]` `platform/macos/keystroke.rs:189` — CGEventTap re-enable result not checked.
-- [x] **M-066** `[error_handling]` `sentinel/helpers.rs:523` — Hash slice bound may truncate below 32 bytes.
-  Fix: Replaced with fixed-size [0u8; 32] array and bounded copy.
+### Sentinel
+- [ ] **M-001** `[architecture]` `sentinel/core.rs:98`: God module, 1162 lines, 18 Arc<RwLock<>> fields
+  <!-- pid:god_module | batch:2 | verified:true -->
+- [ ] **M-002** `[maintainability]` `sentinel/types.rs:356`: DOC_EXTENSIONS array hardcoded; 40+ extensions
+  <!-- pid:hardcoded_config | batch:2 -->
+- [ ] **M-003** `[code_quality]` `sentinel/ipc_handler.rs:405`: Magic numbers in process score computation (0.3, 0.3, 0.4 weights)
+  <!-- pid:magic_value | batch:2 -->
+- [ ] **M-004** `[security]` `sentinel/helpers.rs:238`: File hash computed outside critical section; TOCTOU with session insert
+  <!-- pid:toctou | batch:2 -->
+- [ ] **M-005** `[concurrency]` `sentinel/focus.rs:109`: Running flag polled via read_recover(); race with stop()
+  <!-- pid:data_race | batch:2 -->
+- [ ] **M-006** `[code_quality]` `sentinel/daemon.rs:347`: unwrap_or() on try_from without logging; corrupt started_at becomes epoch silently
+  <!-- pid:silent_error | batch:2 -->
+- [ ] **M-007** `[code_quality]` `sentinel/daemon.rs:110`: write_pid() and write_pid_value() are 99% identical
+  <!-- pid:duplicated_logic | batch:2 -->
+- [ ] **M-008** `[code_quality]` `sentinel/core_session.rs:238`: open_event_store duplicated 4 times across codebase
+  <!-- pid:duplicated_logic | batch:2 -->
+- [ ] **M-009** `[code_quality]` `sentinel/core_session.rs:48`: AUD-041 lock ordering documented but not mechanically enforced
+  <!-- pid:lock_ordering | batch:2 -->
+- [ ] **M-010** `[performance]` `sentinel/daemon.rs:208`: DaemonStatus reads state file 3 times
+  <!-- pid:alloc_in_loop | batch:2 -->
+- [ ] **M-011** `[performance]` `sentinel/helpers.rs:282`: compute_file_hash for every focused document; no size limit
+  <!-- pid:missing_validation | batch:2 -->
+- [ ] **M-012** `[maintainability]` `sentinel/core.rs:585`: Intervals (60s idle, 1000 checkpoint) scattered; not in SentinelConfig
+  <!-- pid:hardcoded_config | batch:2 -->
+- [ ] **M-013** `[architecture]` `sentinel/ipc_handler.rs:48`: to_forensic_data() duplicates EventData conversion
+  <!-- pid:duplicated_logic | batch:2 -->
+- [ ] **M-014** `[security]` `sentinel/core.rs:278`: All-zero key check inconsistent between set_signing_key and set_hmac_key
+  <!-- pid:missing_validation | batch:2 -->
 
-### Engine — Evidence/Checkpoint
-- [x] **M-067** `[code_quality]` `checkpoint/chain.rs:129` — expect() on checkpoint count conversion.
-- [x] **M-068** `[code_quality]` `checkpoint/chain.rs:162` — expect() after push; logically safe but library anti-pattern.
+### IPC/Crypto/Store
+- [ ] **M-015** `[code_quality]` `ipc/messages.rs:290`: Validation limits (MAX_JITTER_INTERVAL_NS, etc.) defined inline; not module-level
+  <!-- pid:magic_value | batch:3 -->
+- [ ] **M-016** `[error_handling]` `ipc/server_handler.rs:175`: Stream read_exact errors not logged on disconnect
+  <!-- pid:silent_error | batch:3 -->
+- [ ] **M-017** `[concurrency]` `ipc/server_handler.rs:226`: Poisoned rate limiter blocks all subsequent clients
+  <!-- pid:lock_ordering | batch:3 -->
+- [ ] **M-018** `[code_quality]` `ipc/server_handler.rs:322`: Panic in handler leaks connection slot from active_connections
+  <!-- pid:no_resource_cleanup | batch:3 -->
+- [ ] **M-019** `[security]` `store/events.rs:77`: vdf_iterations silently clamped to i64::MAX on overflow
+  <!-- pid:silent_error | batch:3 -->
+- [ ] **M-020** `[security]` `store/access_log.rs:223`: CSV export vulnerable to formula injection (=, @ prefix)
+  <!-- pid:command_injection | batch:3 -->
+- [ ] **M-021** `[maintainability]` `store/access_log.rs:97`: busy_timeout=5000 hardcoded
+  <!-- pid:hardcoded_config | batch:3 -->
+- [ ] **M-022** `[security]` `ipc/messages.rs:356`: Pulse timestamp validation uses wall-clock with 5-min tolerance
+  <!-- pid:toctou | batch:3 -->
+- [ ] **M-023** `[security]` `ipc/server.rs:62`: TOCTOU race in socket bind between connect check and remove
+  <!-- pid:toctou | batch:3 -->
+- [ ] **M-024** `[code_quality]` `crypto.rs:125`: derive_hmac_key() uses SHA256 directly (legacy); name doesn't signal non-standard pattern
+  <!-- pid:inconsistent_naming | batch:3 -->
+- [ ] **M-025** `[code_quality]` `crypto.rs:89`: expect() on HMAC/HKDF ops; fragile if key sizes change
+  <!-- pid:unwrap_on_io | batch:3 -->
 
-### Engine — Forensics/Analysis/VDF
-- [x] **M-069** `[numeric]` `analysis/perplexity.rs:88` — Laplace smoothing uses 0.1 not 1.0; inconsistent with standard formulation.
-- [x] **M-070** `[error_handling]` `analysis/hurst.rs:115` — Degenerate regression NaN caught but error message generic.
-- [x] **M-071** `[code_quality]` `analysis/stats.rs:15` — Single-sample std_dev returns 0.0 undocumented.
-- [x] **M-072** `[numeric]` `forensics/dictation.rs:60` — f64::EPSILON used as zero-WPM threshold; inappropriate.
-- [x] **M-073** `[numeric]` `forensics/cross_modal.rs:203` — safe_ln(0) = 0.0 biases interval similarity upward.
-- [x] **M-074** `[numeric]` `forensics/cadence.rs:168` — Percentile rounding may select wrong index for small datasets.
-- [x] **M-075** `[code_quality]` `forensics/comparison.rs:79` — NaN weight redistribution implicit and undocumented.
-- [x] **M-076** `[numeric]` `forensics/analysis.rs:62` — Timestamp range not validated; i64::MAX corrupts time_span.
-- [x] **M-077** `[numeric]` `vdf/params.rs:61` — Calibration duration truncated; biased low on fast hardware.
-- [x] **M-078** `[error_handling]` `vdf/proof.rs:110` — VDF duration_nanos no plausibility check.
-- [x] **M-079** `[error_handling]` `vdf/swf_argon2.rs:510` — Undersample returns fewer indices than requested without error.
-- [x] **M-080** `[security]` `forensics/event_validation.rs:296` — Burst detection assumes monotonic timestamps; no validation.
+### Evidence/Checkpoint
+- [ ] **M-026** `[error_handling]` `evidence/wire_conversion.rs:238`: CBOR encode failure returns zero vector for jitter seal
+  <!-- pid:silent_error | batch:4 -->
+- [ ] **M-027** `[error_handling]` `evidence/wire_conversion.rs:275`: Entangled MAC returns None on CBOR failure; indistinguishable from intentional None
+  <!-- pid:silent_error | batch:4 -->
+- [ ] **M-028** `[performance]` `evidence/builder/setters.rs:445`: Clone Vec before sort_unstable_by for percentile computation
+  <!-- pid:clone_in_loop | batch:4 -->
+- [ ] **M-029** `[performance]` `evidence/packet.rs:326`: Clone entire 30-field Packet for content_hash; only 3 fields cleared
+  <!-- pid:clone_in_loop | batch:4 -->
+- [ ] **M-030** `[error_handling]` `evidence/packet.rs:246`: decode() doesn't validate CBOR tag before parsing
+  <!-- pid:missing_validation | batch:4 -->
+- [ ] **M-031** `[error_handling]` `checkpoint/chain.rs:154`: Clock regression handled with warn+continue; 1s drift arbitrary
+  <!-- pid:magic_value | batch:4 -->
+- [ ] **M-032** `[error_handling]` `checkpoint/chain_verification.rs:45`: genesis_prev_hash failure silently passes verification
+  <!-- pid:silent_error | batch:4 -->
+- [ ] **M-033** `[architecture]` `checkpoint/types.rs:220`: Hash domain version inferred from field presence; should be explicit
+  <!-- pid:missing_validation | batch:4 -->
+- [ ] **M-034** `[architecture]` `checkpoint_mmr.rs:1`: CheckpointMmr accepts any [u8;32]; no type safety for leaves
+  <!-- pid:missing_validation | batch:4 -->
+- [ ] **M-035** `[error_handling]` `checkpoint/types.rs:239`: timestamp_nanos_safe could overflow; pre-epoch wraps to large u64
+  <!-- pid:unwrap_on_io | batch:4 -->
 
-### Engine — WAR/Trust/Anchors
-- [x] **M-081** `[code_quality]` `trust_policy/evaluation.rs:66` — GeometricMean empty factors produces inf/nan.
-- [x] **M-082** `[security]` `anchors/ethereum.rs:234` — EIP-155 v value computation may overflow for large chain_id.
-- [x] **M-083** `[error_handling]` `writersproof/queue.rs:49` — home directory expect() panics in daemon context.
-- [x] **M-084** `[error_handling]` `writersproof/client.rs:30` — Debug builds accept HTTP without strong indication.
+### FFI
+- [ ] **M-036** `[security]` `ffi/ephemeral.rs:210`: No per-session rate limiter for checkpoint frequency
+  <!-- pid:no_rate_limiting | batch:5 -->
+- [ ] **M-037** `[security]` `ffi/helpers.rs:162`: HMAC key recovery creates inconsistent DB state on migration failure
+  <!-- pid:toctou | batch:5 -->
+- [ ] **M-038** `[security]` `ffi/evidence_export.rs:258`: File read for char_count TOCTOU with size validation
+  <!-- pid:toctou | batch:5 -->
+- [ ] **M-039** `[performance]` `ffi/system.rs:173`: ffi_list_tracked_files O(n^2) DB queries per file
+  <!-- pid:n_plus_one | batch:5 -->
+- [ ] **M-040** `[code_quality]` `ffi/helpers.rs:54`: load_hmac_key and derive_hmac duplicated
+  <!-- pid:duplicated_logic | batch:5 -->
+- [ ] **M-041** `[code_quality]` `ffi/beacon.rs:6`: BEACON_RUNTIME OnceLock without shutdown mechanism
+  <!-- pid:no_resource_cleanup | batch:5 -->
+- [ ] **M-042** `[code_quality]` `ffi/attestation.rs:198`: Blocking shell commands in OnceLock init path
+  <!-- pid:alloc_in_loop | batch:5 -->
+- [ ] **M-043** `[code_quality]` `ffi/verify_detail.rs:80`: Wire-to-packet hex conversion without normalization
+  <!-- pid:missing_validation | batch:5 -->
+- [ ] **M-044** `[architecture]` `ffi/ephemeral.rs:81`: Global DashMap with no cleanup on app exit
+  <!-- pid:no_resource_cleanup | batch:5 -->
+- [ ] **M-045** `[maintainability]` `ffi/ephemeral.rs:40`: FFI boundary constants not synchronized with Swift side
+  <!-- pid:hardcoded_config | batch:5 -->
+- [ ] **M-046** `[maintainability]` `ffi/sentinel_inject.rs:20`: MAX_INJECT_RATE_PER_SEC hardcoded with no config option
+  <!-- pid:hardcoded_config | batch:5 -->
+- [ ] **M-047** `[concurrency]` `ffi/sentinel.rs:15`: Poisoned SENTINEL lock silently recovered without logging
+  <!-- pid:silent_error | batch:5 -->
+- [ ] **M-048** `[concurrency]` `ffi/ephemeral.rs:81`: evict_stale_sessions TOCTOU on session removal
+  <!-- pid:toctou | batch:5 -->
+- [ ] **M-049** `[maintainability]` `ffi/report.rs:376`: Session gap threshold (30 min) hardcoded; duplicates sentinel logic
+  <!-- pid:duplicated_logic | batch:5 -->
 
-### Engine — TPM/Jitter/MMR/Other
-- [x] **M-085** `[code_quality]` `tpm/windows/provider_signing.rs:151` — TPM return code not validated after sign/create.
-- [x] **M-086** `[security]` `tpm/secure_enclave/key_management.rs:161` — No null check after SecKeyCopyPublicKey.
-- [x] **M-087** `[code_quality]` `jitter/session.rs:175` — Keystroke counter saturates at u64::MAX; sampling stops.
-- [x] **M-088** `[security]` `fingerprint/storage.rs:332` — Legacy key migration path lacks traversal check.
-- [x] **M-089** `[security]` `mmr/proof.rs:176` — RangeProof accepts extra siblings; sibling_idx validated late.
-- [x] **M-090** `[numeric]` `mmr/proof.rs:299` — 1u64 << (height+1) overflows if height >= 63.
-- [x] **M-091** `[numeric]` `mmr/mmr.rs:127` — get_leaf_index overflows at u64::MAX.
-- [x] **M-092** `[error_handling]` `cpop-jitter/src/evidence.rs:185` — TryFrom doesn't validate sequence uniqueness.
-- [x] **M-093** `[security]` `steganography/embedding.rs:167` — Seed bytes not zeroized after Fisher-Yates derivation.
+### Forensics/Analysis
+- [ ] **M-050** `[performance]` `forensics/analysis.rs:56`: Clone events Vec for sorting
+  <!-- pid:clone_in_loop | batch:6 -->
+- [ ] **M-051** `[performance]` `forensics/cadence.rs:90`: Clone IKIs Vec before sort
+  <!-- pid:clone_in_loop | batch:6 -->
+- [ ] **M-052** `[performance]` `analysis/labyrinth.rs:409`: O(n^2) distance computation in correlation_dimension
+  <!-- pid:clone_in_loop | batch:6 -->
+- [ ] **M-053** `[performance]` `analysis/labyrinth.rs:342`: O(n^2) recurrence plot computation
+  <!-- pid:clone_in_loop | batch:6 -->
+- [ ] **M-054** `[architecture]` `forensics/analysis.rs:1`: God module (540 lines); mixed orchestration + focus + checkpoint analysis
+  <!-- pid:god_module | batch:6 -->
+- [ ] **M-055** `[architecture]` `analysis/labyrinth.rs:1`: God module (628 lines); Takens + recurrence + correlation + Betti + FNN
+  <!-- pid:god_module | batch:6 -->
 
 ### Protocol
-- [x] **M-094** `[numeric]` `rfc/fixed_point.rs:134` — Microdollars from_dollars f64 to i64 overflow unchecked.
-- [x] **M-095** `[security]` `rfc/jitter_binding.rs:562` — Source weight sum may overflow u32 with corrupted data.
-- [x] **M-096** `[error_handling]` `forensics/engine.rs:122` — saturating_sub masks out-of-order timestamps.
-- [x] **M-097** `[code_quality]` `rfc/time_evidence.rs:233` — Negative timestamp silently clamped to 0.
-- [x] **M-098** `[code_quality]` `rfc/wire_types/components.rs:143` — CDDL limits not documented as spec constraints.
-- [x] **M-099** `[error_handling]` `rfc/vdf.rs:64` — minimum_elapsed_ms division by zero if iterations_per_second=0.
-- [x] **M-100** `[code_quality]` `rfc/packet.rs:446` — VDF input/output length not validated against CDDL.
-- [x] **M-101** `[code_quality]` `baseline.rs:198` — f32/f64 precision mismatch between baseline.rs and wire_types.
-- [x] **M-102** `[security]` `rfc/wire_types/attestation.rs:314` — Deferred deserialization validation; nested CBOR pre-decode.
-- [x] **M-103** `[code_quality]` `codec/mod.rs:105` — ConfidenceTier validation fragile; manual bounds vs enum.
+- [ ] **M-056** `[architecture]` `c2pa.rs:1`: God module (1255 lines); JUMBF + JSON + COSE in single file
+  <!-- pid:god_module | batch:7 -->
+- [ ] **M-057** `[maintainability]` `codec/cbor.rs:677`: Custom CBOR parser duplicates ciborium; not documented
+  <!-- pid:duplicated_logic | batch:7 -->
+- [ ] **M-058** `[security]` `rfc/biology.rs:508`: Weight sum tolerance hardcoded at 0.01
+  <!-- pid:magic_value | batch:7 -->
+- [ ] **M-059** `[security]` `rfc/vdf.rs:127`: iterations_per_second=0 edge case allows division by zero
+  <!-- pid:nan_inf_unguarded | batch:7 -->
+- [ ] **M-060** `[security]` `rfc/packet.rs:564`: Extensions field accepts arbitrary serde_json::Value
+  <!-- pid:unsafe_deser | batch:7 -->
+- [ ] **M-061** `[security]` `rfc/wire_types/packet.rs:153`: packet_id == [0u8;16] check is weak; should require entropy
+  <!-- pid:missing_validation | batch:7 -->
+- [ ] **M-062** `[security]` `rfc/checkpoint.rs:131`: CHECKPOINT_HASH_DST hardcoded with legacy misspelling; no migration path
+  <!-- pid:hardcoded_config | batch:7 -->
+- [ ] **M-063** `[error_handling]` `rfc/wire_types/checkpoint.rs:152`: compute_hash calls CBOR encode but unwraps
+  <!-- pid:unwrap_on_io | batch:7 -->
+- [ ] **M-064** `[error_handling]` `rfc/fixed_point.rs:51`: from_float returns 0 on !is_finite without logging
+  <!-- pid:silent_error | batch:7 -->
+- [ ] **M-065** `[error_handling]` `codec/mod.rs:317`: Format::detect returns None without error context
+  <!-- pid:unhelpful_error_msg | batch:7 -->
+- [ ] **M-066** `[maintainability]` `rfc/mod.rs:229`: CBOR_TAG_* constants duplicated in multiple modules
+  <!-- pid:duplicated_logic | batch:7 -->
+- [ ] **M-067** `[maintainability]` `war/ear.rs:62`: Ar4siStatus::from_i8 maps unknown to Contraindicated without logging
+  <!-- pid:silent_error | batch:7 -->
+- [ ] **M-068** `[security]` `compact_ref.rs:280`: signable_payload excludes metadata but allows evidence_uri omission
+  <!-- pid:missing_validation | batch:7 -->
 
-### Engine — Config/Report/Other
-- [x] **M-104** `[security]` `config/types.rs:335` — App allowlist case sensitivity inconsistent across platforms.
-- [x] **M-105** `[code_quality]` `collaboration.rs:243` — Out-of-bounds checkpoint ranges silently clamped.
-- [x] **M-106** `[code_quality]` `continuation.rs:153` — Mixed byte ordering (big/little-endian) in VDF context.
-- [x] **M-107** `[security]` `report/html/sections.rs:10` — sanitize_css_color allows non-standard 5-char hex.
+### Key Hierarchy/Identity/WAR
+- [ ] **M-069** `[error_handling]` `keyhierarchy/session.rs:260`: Silent fallback on TPM quote serialization
+  <!-- pid:silent_error | batch:9 -->
+- [ ] **M-070** `[error_handling]` `keyhierarchy/verification.rs:117`: Lamport fallback to structural validation on missing pubkey
+  <!-- pid:missing_validation | batch:9 -->
+- [ ] **M-071** `[security]` `keyhierarchy/puf.rs:114`: Machine fingerprinting uses hostname+home_dir (user-controlled)
+  <!-- pid:missing_validation | batch:9 -->
+- [ ] **M-072** `[error_handling]` `identity/secure_storage.rs:405`: Mutex poison on SEED_CACHE logged but continues
+  <!-- pid:silent_error | batch:9 -->
+- [ ] **M-073** `[security]` `identity/secure_storage.rs:356`: Partial migration rollback on keychain save failure
+  <!-- pid:toctou | batch:9 -->
+- [ ] **M-074** `[security]` `sealed_identity/store.rs:183`: Public key mismatch detection after unseal success; HMAC not verified first
+  <!-- pid:missing_validation | batch:9 -->
+- [ ] **M-075** `[security]` `sealed_chain.rs:161`: document_id read unverified before decryption; header tamperable
+  <!-- pid:toctou | batch:9 -->
+- [ ] **M-076** `[security]` `war/appraisal.rs:203`: Keystroke rate anomaly degrades only sourced_data, not overall verdict
+  <!-- pid:missing_validation | batch:9 -->
+- [ ] **M-077** `[code_quality]` `war/appraisal.rs:279`: packet_hash uses serde_json round-trip for canonicalization; platform-dependent
+  <!-- pid:missing_validation | batch:9 -->
+- [ ] **M-078** `[security]` `war/compat.rs:77`: from_ear() reconstruction uses zero-initialized Seal fallback without flag
+  <!-- pid:silent_error | batch:9 -->
+- [ ] **M-079** `[error_handling]` `war/compat.rs:147`: to_ear() loses forensic_summary on roundtrip
+  <!-- pid:silent_error | batch:9 -->
+- [ ] **M-080** `[security]` `war/ear.rs:159`: TrustworthinessVector parse_header assumes fixed 8-component order
+  <!-- pid:missing_validation | batch:9 -->
+- [ ] **M-081** `[security]` `war/profiles/eu_ai_act.rs:84`: evidence_backed flag based on jitter_sealed without crypto verification
+  <!-- pid:missing_validation | batch:9 -->
 
----
+### Anchors/Bridge
+- [ ] **M-082** `[error_handling]` `anchors/ots.rs:352`: unwrap_or on Option<AnchorError> loses error context
+  <!-- pid:unhelpful_error_msg | batch:1 -->
+- [ ] **M-083** `[error_handling]` `anchors/rfc3161.rs:562`: Same error context loss pattern as ots.rs
+  <!-- pid:unhelpful_error_msg | batch:1 -->
+- [ ] **M-084** `[code_quality]` `anchors/rfc3161.rs:146`: DER length encoding uses unchecked as u8 cast
+  <!-- pid:unwrap_on_io | batch:1 -->
+- [ ] **M-085** `[performance]` `cpop_jitter_bridge/session.rs:180`: session_id String cloned per sample
+  <!-- pid:clone_in_loop | batch:1 -->
+- [ ] **M-086** `[performance]` `cpop_jitter_bridge/session.rs:263`: export() clones entire Vec<HybridSample>
+  <!-- pid:clone_in_loop | batch:1 -->
+- [ ] **M-087** `[error_handling]` `cpop_jitter_bridge/session.rs:381`: fs::remove_file error discarded with let _ =
+  <!-- pid:silent_error | batch:1 -->
+- [ ] **M-088** `[code_quality]` `cpop_jitter_bridge/zone_engine.rs:49`: Unwrap on signed_duration_since; panics on clock skew
+  <!-- pid:unwrap_on_io | batch:1 -->
+- [ ] **M-089** `[code_quality]` `anchors/ots.rs:104,112,120`: TODO(WU-14) markers for unimplemented OTS parsing
+  <!-- pid:todo_fixme | batch:1 -->
 
-## Quick Wins (effort=small, HIGH severity)
-| ID | File:Line | Issue |
-|----|-----------|-------|
-| H-052 | native_messaging_host.rs:85 | Session struct missing Zeroize |
-| H-053 | util.rs:287 | retry_on_busy expect/panic |
-| H-055 | cmd_config.rs:117 | Opaque consent error |
-| H-057 | server_handler.rs:224 | Rate limiter poison swallowed |
-| H-058 | ephemeral.rs:656 | Signing key not zeroized |
-| H-059 | ipc_handler.rs:36 | HMAC key zeroize gap |
-| H-061 | core.rs:493 | Session TOCTOU |
-| H-062 | core.rs:856 | Task leak on lock fail |
-| H-064 | wire_conversion.rs:225 | CBOR encode fallback |
-| H-065 | wire_conversion.rs:257 | Entangled MAC encode |
-| H-066 | setters.rs:337 | Ratchet index clamp |
-| H-067 | assessment.rs:292 | Unbounded entropy |
-| H-068 | topology.rs:99 | Unsorted interval |
-| H-069 | behavioral_fingerprint.rs:226 | Div by zero |
-| H-070 | snr.rs:80 | Zero signal SNR |
-| H-071 | client.rs:50 | JWT no zeroize |
-| H-072 | standards.rs:347 | DID parsing |
-| H-074 | signing.rs:34 | CFRelease null check |
-| H-075 | session.rs:186 | Jitter modulo zero |
-| H-077 | fixed_point.rs:51 | Float overflow |
-| H-079 | evidence.rs:101 | Zero entropy |
-| H-080 | codec/mod.rs:105 | CborWar tag bypass |
-| H-081 | swf_argon2.rs:233 | VDF iteration bounds |
+### CLI
+- [ ] **M-090** `[architecture]` `native_messaging_host.rs:1`: God module (1786 lines); all NMH logic in one file
+  <!-- pid:god_module | batch:8 -->
+- [ ] **M-091** `[architecture]` `cmd_track.rs:1`: God module (1504 lines); mixed concerns
+  <!-- pid:god_module | batch:8 -->
+- [ ] **M-092** `[architecture]` `cmd_export.rs:1`: God module (1384 lines); mixed concerns
+  <!-- pid:god_module | batch:8 -->
+- [ ] **M-093** `[security]` `native_messaging_host.rs:630`: handle_stop_session doesn't fsync evidence file
+  <!-- pid:no_resource_cleanup | batch:8 -->
+- [ ] **M-094** `[security]` `native_messaging_host.rs:670`: Rate limit uses f64 arithmetic; precision accumulates
+  <!-- pid:magic_value | batch:8 -->
+- [ ] **M-095** `[security]` `cmd_track.rs:150`: Symlink tracking warns but doesn't reject
+  <!-- pid:path_traversal | batch:8 -->
+- [ ] **M-096** `[performance]` `cmd_export.rs:95`: Full file read for checksum; no streaming hash
+  <!-- pid:alloc_in_loop | batch:8 -->
+- [ ] **M-097** `[error_handling]` `cmd_export.rs:764,785,800`: expect() on 32-byte hash assumptions
+  <!-- pid:unwrap_on_io | batch:8 -->
+- [ ] **M-098** `[security]` `main.rs:220`: Interactive menu path validation doesn't canonicalize symlinks
+  <!-- pid:path_traversal | batch:8 -->
+- [ ] **M-099** `[maintainability]` `native_messaging_host.rs:1`: Browser protocol not versioned; no backcompat
+  <!-- pid:hardcoded_config | batch:8 -->
 
----
+## Quick Wins
+| ID | Sev | File:Line | Issue | Effort |
+|----|-----|-----------|-------|--------|
+| C-004 | CRITICAL | crypto.rs:198 | Lamport signing silent failure | small |
+| C-007 | CRITICAL | sentinel/core.rs:649 | Unbounded pending_downs HashMap | small |
+| H-006 | HIGH | sentinel/helpers.rs:517 | Unchecked slice copy panics | small |
+| H-007 | HIGH | sentinel/ipc_handler.rs:141 | Unbounded file read DoS | small |
+| H-009 | HIGH | ipc/rbac.rs:18 | Default role should be ReadOnly | small |
+| H-010 | HIGH | store/integrity.rs:228 | Non-constant-time hash comparison | small |
+| H-015 | HIGH | checkpoint_mmr.rs:42 | Idempotent append hides duplicates | small |
+| H-018 | HIGH | ffi/sentinel_witnessing.rs:36 | Path validation bypass via symlink | small |
+| H-020 | HIGH | ffi/system.rs:12 | eprintln in production FFI | small |
+| H-025 | HIGH | rfc/wire_types/attestation.rs:395 | Invalid confidence tier passes | small |
+| H-026 | HIGH | protocol/evidence.rs:113 | packet_id not validated | small |
+| H-030 | HIGH | sealed_identity/store.rs:64 | Missing HKDF salt on unseal | small |
+| H-032 | HIGH | war/verification.rs:512 | Fragile unwrap on CA key | small |
+| H-033 | HIGH | war/profiles/vc.rs:245 | Empty signature on error | small |
+| H-034 | HIGH | war/encoding.rs:64 | Null bytes in WAR block | small |
+| H-036 | HIGH | wal/operations.rs:387 | Stale file handle after rename | small |
+| H-037 | HIGH | wal/operations.rs:677 | Silent data loss on corruption | small |
+| H-038 | HIGH | wal/operations.rs:682 | Unsigned underflow in recovery | small |
+| H-039 | HIGH | platform/windows.rs:197 | Infinite spin-wait | small |
+| H-042 | HIGH | mmr/proof.rs:362 | Unreachable dead code | small |
+| H-043 | HIGH | native_messaging_host.rs:195 | Domain whitelist suffix match | small |
 
 ## Coverage
-<!-- 384 source files in workspace, 199 reviewed across 10 batches -->
-<!-- Wave 1: CLI, Crypto/Identity, IPC/FFI, Evidence/Checkpoint, Forensics/Analysis -->
-<!-- Wave 2: Sentinel/Platform, WAR/Trust/Anchors, Protocol, TPM/Jitter/MMR, Remaining -->
-<!-- Uncovered: ~185 small files (<200 lines each), mostly mod.rs, types, helpers -->
+<!-- reviewed: 374 non-test files across 10 batches, 2 waves -->
+<!-- confirmed_clean: vdf/params.rs, vdf/proof.rs, vdf/roughtime_client.rs, error.rs, cpop-jitter/evidence.rs, mmr/mmr.rs -->
+<!-- completeness: 10 batches, 2 waves, all files covered -->
