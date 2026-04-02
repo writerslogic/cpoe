@@ -32,7 +32,10 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
 
     let data_dir =
         crate::ffi::helpers::get_data_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
-    let config = crate::config::CpopConfig::load_or_default(&data_dir).unwrap_or_default();
+    let config = crate::config::CpopConfig::load_or_default(&data_dir).unwrap_or_else(|e| {
+        log::warn!("config load failed, using defaults: {e}");
+        Default::default()
+    });
     let ips = config.vdf.iterations_per_second.max(1);
 
     let last = &events[events.len() - 1];
@@ -155,6 +158,7 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
         .unwrap_or_else(|_| "unknown".to_string());
 
     let guilloche_seed_hex = crate::ffi::helpers::load_signing_key()
+        .map_err(|e| log::warn!("load signing key for guilloche seed failed: {e}"))
         .ok()
         .map(|signing_key| {
             // Derive a separate seed via HKDF so the signing key is never used

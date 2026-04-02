@@ -33,7 +33,7 @@ impl SecureStore {
         );
 
         if let Some(sk) = signing_key {
-            crypto::sign_event_lamport(sk, e);
+            crypto::sign_event_lamport(sk, e)?;
         }
 
         let hmac = crypto::compute_event_hmac(

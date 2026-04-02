@@ -146,13 +146,17 @@ pub fn ffi_submit_beacon(document_path: String, timeout_secs: u64) -> FfiBeaconR
             "Beacon request timed out after {effective_timeout}s"
         )),
         Ok((beacon_res, anchor_res)) => {
-            let anchor_id = anchor_res.ok().map(|r| r.anchor_id);
+            let anchor_id = anchor_res
+                .map_err(|e| log::warn!("beacon anchor request failed: {e}"))
+                .ok()
+                .map(|r| r.anchor_id);
 
             match beacon_res {
                 Err(e) => err_beacon(format!("Beacon fetch failed: {e}")),
                 Ok(beacon) => {
                     let ts_ms = chrono::DateTime::parse_from_rfc3339(&beacon.fetched_at)
                         .map(|dt| dt.timestamp_millis())
+                        .map_err(|e| log::warn!("beacon timestamp parse failed: {e}"))
                         .ok();
 
                     FfiBeaconResult {
@@ -197,6 +201,7 @@ pub fn ffi_check_beacon_status(document_path: String) -> FfiBeaconResult {
         Some(beacon) => {
             let ts_ms = chrono::DateTime::parse_from_rfc3339(&beacon.fetched_at)
                 .map(|dt| dt.timestamp_millis())
+                .map_err(|e| log::warn!("beacon timestamp parse failed: {e}"))
                 .ok();
 
             FfiBeaconResult {
@@ -290,6 +295,7 @@ pub fn ffi_list_beacons(document_path: String) -> FfiBeaconListResult {
     if let Some(beacon) = packet.beacon_attestation {
         let ts_ms = chrono::DateTime::parse_from_rfc3339(&beacon.fetched_at)
             .map(|dt| dt.timestamp_millis())
+            .map_err(|e| log::warn!("beacon timestamp parse failed: {e}"))
             .ok();
 
         beacons.push(FfiBeaconResult {

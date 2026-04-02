@@ -42,21 +42,7 @@ fn ffi_runtime() -> Result<Arc<tokio::runtime::Runtime>, String> {
 /// Start the sentinel daemon in-process.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn ffi_sentinel_start() -> FfiResult {
-    // Debug: write to data dir (sandbox blocks /tmp)
-    #[cfg(debug_assertions)]
-    {
-        use std::io::Write;
-        let debug_path = std::env::var("CPOP_DATA_DIR")
-            .map(|d| format!("{}/sentinel_debug.txt", d))
-            .unwrap_or_else(|_| "/tmp/cpop_sentinel_debug.txt".to_string());
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&debug_path)
-        {
-            let _ = writeln!(f, "ffi_sentinel_start called");
-        }
-    }
+    log::debug!("ffi_sentinel_start called");
     // If a sentinel already exists, reuse it (handles restart after stop)
     let existing = get_sentinel();
     if existing.as_ref().is_some_and(|s| s.is_running()) {

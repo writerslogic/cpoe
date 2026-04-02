@@ -256,6 +256,7 @@ pub fn ffi_export_evidence(path: String, tier: String, output: String) -> FfiRes
     // Falls back to byte count for non-UTF-8 files.
     let byte_length = latest.file_size as u64;
     let char_count = std::fs::read(&file_path)
+        .map_err(|e| log::warn!("read file for char count failed: {e}"))
         .ok()
         .and_then(|bytes| String::from_utf8(bytes).ok())
         .map(|s| s.chars().count() as u64)
@@ -264,6 +265,7 @@ pub fn ffi_export_evidence(path: String, tier: String, output: String) -> FfiRes
     // Embed the signing public key so verifiers can identify the signer
     // without requiring out-of-band key distribution.
     let signing_pub = crate::ffi::helpers::load_signing_key()
+        .map_err(|e| log::warn!("load signing key for evidence export failed: {e}"))
         .ok()
         .map(|sk| serde_bytes::ByteBuf::from(sk.verifying_key().to_bytes().to_vec()));
 

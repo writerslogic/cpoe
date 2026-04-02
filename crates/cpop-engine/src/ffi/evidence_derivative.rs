@@ -155,7 +155,10 @@ pub fn ffi_link_derivative(source_path: String, export_path: String, message: St
     // Load VDF params
     let data_dir =
         crate::ffi::helpers::get_data_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
-    let config = crate::config::CpopConfig::load_or_default(&data_dir).unwrap_or_default();
+    let config = crate::config::CpopConfig::load_or_default(&data_dir).unwrap_or_else(|e| {
+        log::warn!("config load failed, using defaults: {e}");
+        Default::default()
+    });
     let vdf_params = crate::vdf::params::Parameters {
         iterations_per_second: config.vdf.iterations_per_second.max(1),
         min_iterations: config.vdf.min_iterations,
@@ -505,6 +508,7 @@ fn decode_evidence_for_c2pa(
             filename: Some(doc.title.clone()),
             byte_length: doc.final_size,
             char_count: std::fs::read(&doc.path)
+                .map_err(|e| log::warn!("read file for char count failed: {e}"))
                 .ok()
                 .and_then(|bytes| String::from_utf8(bytes).ok())
                 .map(|s| s.chars().count() as u64)
