@@ -13,7 +13,7 @@
 |----------|------|-------|---------|
 | CRITICAL | 6    | 6     | 0       |
 | HIGH     | 40   | 92    | 0       |
-| MEDIUM   | 84   | 179   | 6       |
+| MEDIUM   | 69   | 186   | 14      |
 
 ---
 
@@ -291,7 +291,7 @@ All 265 findings from prior audit (2026-03-30) and 255 from 2026-03-25 are resol
   <!-- pid:god_module | batch:2 | verified:true -->
 - [ ] **M-002** `[maintainability]` `sentinel/types.rs:356`: DOC_EXTENSIONS array hardcoded; 40+ extensions
   <!-- pid:hardcoded_config | batch:2 -->
-- [x] **M-003** `[code_quality]` `sentinel/ipc_handler.rs:405`: Magic numbers in process score computation -- FIXED 2026-04-02
+- [x] **M-003** `[code_quality]` `sentinel/ipc_handler.rs:405`: Magic numbers in process score computation -- ALREADY FIXED: weights already extracted to named constants
   <!-- pid:magic_value | batch:2 -->
 - [ ] **M-004** `[security]` `sentinel/helpers.rs:238`: File hash computed outside critical section; TOCTOU with session insert
   <!-- pid:toctou | batch:2 -->
@@ -299,7 +299,7 @@ All 265 findings from prior audit (2026-03-30) and 255 from 2026-03-25 are resol
   <!-- pid:data_race | batch:2 -->
 - [x] **M-006** `[code_quality]` `sentinel/daemon.rs:347`: unwrap_or() on try_from without logging; corrupt started_at becomes epoch silently -- FIXED 2026-04-02
   <!-- pid:silent_error | batch:2 -->
-- [ ] **M-007** `[code_quality]` `sentinel/daemon.rs:110`: write_pid() and write_pid_value() are 99% identical
+- [x] **M-007** `[code_quality]` `sentinel/daemon.rs:110`: write_pid() and write_pid_value() are 99% identical -- FIXED 2026-04-02
   <!-- pid:duplicated_logic | batch:2 -->
 - [ ] **M-008** `[code_quality]` `sentinel/core_session.rs:238`: open_event_store duplicated 4 times across codebase
   <!-- pid:duplicated_logic | batch:2 -->
@@ -313,7 +313,7 @@ All 265 findings from prior audit (2026-03-30) and 255 from 2026-03-25 are resol
   <!-- pid:hardcoded_config | batch:2 -->
 - [ ] **M-013** `[architecture]` `sentinel/ipc_handler.rs:48`: to_forensic_data() duplicates EventData conversion
   <!-- pid:duplicated_logic | batch:2 -->
-- [ ] **M-014** `[security]` `sentinel/core.rs:278`: All-zero key check inconsistent between set_signing_key and set_hmac_key
+- [x] **M-014** `[security]` `sentinel/core.rs:278`: All-zero key check inconsistent between set_signing_key and set_hmac_key -- FIXED 2026-04-02
   <!-- pid:missing_validation | batch:2 -->
 
 ### IPC/Crypto/Store
@@ -321,9 +321,9 @@ All 265 findings from prior audit (2026-03-30) and 255 from 2026-03-25 are resol
   <!-- pid:magic_value | batch:3 -->
 - [x] **M-016** `[error_handling]` `ipc/server_handler.rs:175`: Stream read_exact errors not logged on disconnect -- FIXED 2026-04-02
   <!-- pid:silent_error | batch:3 -->
-- [ ] **M-017** `[concurrency]` `ipc/server_handler.rs:226`: Poisoned rate limiter blocks all subsequent clients
+- [x] **M-017** `[concurrency]` `ipc/server_handler.rs:226`: Poisoned rate limiter blocks all subsequent clients -- FIXED 2026-04-02
   <!-- pid:lock_ordering | batch:3 -->
-- [ ] **M-018** `[code_quality]` `ipc/server_handler.rs:322`: Panic in handler leaks connection slot from active_connections
+- [x] **M-018** `[code_quality]` `ipc/server_handler.rs:322`: Panic in handler leaks connection slot from active_connections -- ALREADY FIXED: spawn_blocking catches panics; conn_count decrements unconditionally
   <!-- pid:no_resource_cleanup | batch:3 -->
 - [x] **M-019** `[security]` `store/events.rs:77`: vdf_iterations silently clamped to i64::MAX on overflow -- FIXED 2026-04-02
   <!-- pid:silent_error | batch:3 -->
@@ -341,9 +341,9 @@ All 265 findings from prior audit (2026-03-30) and 255 from 2026-03-25 are resol
   <!-- pid:unwrap_on_io | batch:3 -->
 
 ### Evidence/Checkpoint
-- [ ] **M-026** `[error_handling]` `evidence/wire_conversion.rs:238`: CBOR encode failure returns zero vector for jitter seal
+- [-] **M-026** `[error_handling]` `evidence/wire_conversion.rs:238`: CBOR encode failure returns zero vector for jitter seal -- FALSE POSITIVE: zero vector is consistent no-seal sentinel; error logged
   <!-- pid:silent_error | batch:4 -->
-- [ ] **M-027** `[error_handling]` `evidence/wire_conversion.rs:275`: Entangled MAC returns None on CBOR failure; indistinguishable from intentional None
+- [-] **M-027** `[error_handling]` `evidence/wire_conversion.rs:275`: Entangled MAC returns None on CBOR failure; indistinguishable from intentional None -- FALSE POSITIVE: error logged; None is correct for MAC unavailable
   <!-- pid:silent_error | batch:4 -->
 - [ ] **M-028** `[performance]` `evidence/builder/setters.rs:445`: Clone Vec before sort_unstable_by for percentile computation
   <!-- pid:clone_in_loop | batch:4 -->
@@ -353,7 +353,7 @@ All 265 findings from prior audit (2026-03-30) and 255 from 2026-03-25 are resol
   <!-- pid:missing_validation | batch:4 -->
 - [ ] **M-031** `[error_handling]` `checkpoint/chain.rs:154`: Clock regression handled with warn+continue; 1s drift arbitrary
   <!-- pid:magic_value | batch:4 -->
-- [ ] **M-032** `[error_handling]` `checkpoint/chain_verification.rs:45`: genesis_prev_hash failure silently passes verification
+- [-] **M-032** `[error_handling]` `checkpoint/chain_verification.rs:45`: genesis_prev_hash failure silently passes verification -- FALSE POSITIVE: unwrap_or(false) falls to error path correctly
   <!-- pid:silent_error | batch:4 -->
 - [ ] **M-033** `[architecture]` `checkpoint/types.rs:220`: Hash domain version inferred from field presence; should be explicit
   <!-- pid:missing_validation | batch:4 -->
@@ -377,7 +377,7 @@ All 265 findings from prior audit (2026-03-30) and 255 from 2026-03-25 are resol
   <!-- pid:no_resource_cleanup | batch:5 -->
 - [ ] **M-042** `[code_quality]` `ffi/attestation.rs:198`: Blocking shell commands in OnceLock init path
   <!-- pid:alloc_in_loop | batch:5 -->
-- [ ] **M-043** `[code_quality]` `ffi/verify_detail.rs:80`: Wire-to-packet hex conversion without normalization
+- [-] **M-043** `[code_quality]` `ffi/verify_detail.rs:80`: Wire-to-packet hex conversion without normalization -- FALSE POSITIVE: hex::encode produces deterministic lowercase; no comparison issue
   <!-- pid:missing_validation | batch:5 -->
 - [ ] **M-044** `[architecture]` `ffi/ephemeral.rs:81`: Global DashMap with no cleanup on app exit
   <!-- pid:no_resource_cleanup | batch:5 -->
@@ -421,7 +421,7 @@ All 265 findings from prior audit (2026-03-30) and 255 from 2026-03-25 are resol
   <!-- pid:missing_validation | batch:7 -->
 - [ ] **M-062** `[security]` `rfc/checkpoint.rs:131`: CHECKPOINT_HASH_DST hardcoded with legacy misspelling; no migration path
   <!-- pid:hardcoded_config | batch:7 -->
-- [x] **M-063** `[error_handling]` `rfc/wire_types/checkpoint.rs:152`: compute_hash calls CBOR encode but unwraps -- ALREADY FIXED
+- [x] **M-063** `[error_handling]` `rfc/wire_types/checkpoint.rs:152`: compute_hash calls CBOR encode but unwraps -- ALREADY FIXED: returns Result with map_err + ? propagation
   <!-- pid:unwrap_on_io | batch:7 -->
 - [-] **M-064** `[error_handling]` `rfc/fixed_point.rs:51`: from_float returns 0 on !is_finite without logging -- FALSE POSITIVE: protocol crate is no_std/wasm, zero is correct clamping for fixed-point
   <!-- pid:silent_error | batch:7 -->
@@ -435,7 +435,7 @@ All 265 findings from prior audit (2026-03-30) and 255 from 2026-03-25 are resol
   <!-- pid:missing_validation | batch:7 -->
 
 ### Key Hierarchy/Identity/WAR
-- [ ] **M-069** `[error_handling]` `keyhierarchy/session.rs:260`: Silent fallback on TPM quote serialization
+- [-] **M-069** `[error_handling]` `keyhierarchy/session.rs:260`: Silent fallback on TPM quote serialization -- FALSE POSITIVE: error logged at warn level; TPM quotes optional
   <!-- pid:silent_error | batch:9 -->
 - [ ] **M-070** `[error_handling]` `keyhierarchy/verification.rs:117`: Lamport fallback to structural validation on missing pubkey
   <!-- pid:missing_validation | batch:9 -->
@@ -449,13 +449,13 @@ All 265 findings from prior audit (2026-03-30) and 255 from 2026-03-25 are resol
   <!-- pid:missing_validation | batch:9 -->
 - [ ] **M-075** `[security]` `sealed_chain.rs:161`: document_id read unverified before decryption; header tamperable
   <!-- pid:toctou | batch:9 -->
-- [ ] **M-076** `[security]` `war/appraisal.rs:203`: Keystroke rate anomaly degrades only sourced_data, not overall verdict
+- [-] **M-076** `[security]` `war/appraisal.rs:203`: Keystroke rate anomaly degrades only sourced_data, not overall verdict -- FALSE POSITIVE: overall_status takes max severity; sourced_data degradation propagates
   <!-- pid:missing_validation | batch:9 -->
 - [ ] **M-077** `[code_quality]` `war/appraisal.rs:279`: packet_hash uses serde_json round-trip for canonicalization; platform-dependent
   <!-- pid:missing_validation | batch:9 -->
 - [ ] **M-078** `[security]` `war/compat.rs:77`: from_ear() reconstruction uses zero-initialized Seal fallback without flag
   <!-- pid:silent_error | batch:9 -->
-- [ ] **M-079** `[error_handling]` `war/compat.rs:147`: to_ear() loses forensic_summary on roundtrip
+- [-] **M-079** `[error_handling]` `war/compat.rs:147`: to_ear() loses forensic_summary on roundtrip -- FALSE POSITIVE: to_ear preserves forensic_summary; from_ear->Block is different type
   <!-- pid:silent_error | batch:9 -->
 - [ ] **M-080** `[security]` `war/ear.rs:159`: TrustworthinessVector parse_header assumes fixed 8-component order
   <!-- pid:missing_validation | batch:9 -->
@@ -463,9 +463,9 @@ All 265 findings from prior audit (2026-03-30) and 255 from 2026-03-25 are resol
   <!-- pid:missing_validation | batch:9 -->
 
 ### Anchors/Bridge
-- [x] **M-082** `[error_handling]` `anchors/ots.rs:352`: unwrap_or on Option<AnchorError> loses error context -- FIXED 2026-04-02
+- [-] **M-082** `[error_handling]` `anchors/ots.rs:352`: unwrap_or on Option<AnchorError> loses error context -- FALSE POSITIVE: unwrap_or_else correctly handles no-calendars case
   <!-- pid:unhelpful_error_msg | batch:1 -->
-- [ ] **M-083** `[error_handling]` `anchors/rfc3161.rs:562`: Same error context loss pattern as ots.rs
+- [x] **M-083** `[error_handling]` `anchors/rfc3161.rs:562`: Same error context loss pattern as ots.rs -- FIXED 2026-04-02
   <!-- pid:unhelpful_error_msg | batch:1 -->
 - [x] **M-084** `[code_quality]` `anchors/rfc3161.rs:146`: DER length encoding uses unchecked as u8 cast -- FIXED 2026-04-02
   <!-- pid:unwrap_on_io | batch:1 -->
