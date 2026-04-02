@@ -13,356 +13,564 @@ pub(super) fn write_head(html: &mut String, r: &WarReport) -> fmt::Result {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CPOP Authorship Report — {report_id}</title>
+<title>Forensic Authorship Examination Report — {report_id}</title>
 <style>
 :root {{
-  --green: #16a34a;
-  --green-light: #f0fdf4;
-  --green-muted: #bbf7d0;
-  --orange: #ea580c;
-  --orange-light: #fff7ed;
-  --red: #dc2626;
-  --red-light: #fef2f2;
-  --blue: #2563eb;
-  --purple: #7c3aed;
-  --gray-50: #fafafa;
-  --gray-100: #f4f4f5;
-  --gray-200: #e4e4e7;
-  --gray-300: #d4d4d8;
-  --gray-400: #a1a1aa;
-  --gray-500: #71717a;
-  --gray-600: #52525b;
-  --gray-700: #3f3f46;
-  --gray-800: #27272a;
-  --gray-900: #18181b;
+  --navy: #1a2744;
+  --navy-light: #2c3e6b;
+  --navy-muted: #e8ecf4;
+  --accent: #1a4d2e;
+  --accent-light: #eaf5ee;
+  --caution: #8b6914;
+  --caution-light: #fef9e7;
+  --alert: #8b1a1a;
+  --alert-light: #fdf0f0;
+  --rule: #1a2744;
+  --rule-light: #c5cad6;
+  --text: #1a1a1a;
+  --text-secondary: #4a4a4a;
+  --text-muted: #6b6b6b;
+  --bg: #ffffff;
+  --bg-warm: #fafaf8;
+  --border: #d0d0d0;
+  --border-light: #e8e8e5;
+}}
+@page {{
+  size: letter;
+  margin: 1in 0.75in;
+  @bottom-center {{ content: "Page " counter(page) " of " counter(pages); font-size: 9pt; color: #999; }}
 }}
 * {{ margin: 0; padding: 0; box-sizing: border-box; }}
 body {{
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  color: var(--gray-800);
-  background: var(--gray-50);
-  line-height: 1.6;
-  font-size: 14px;
+  font-family: Georgia, "Times New Roman", "Noto Serif", serif;
+  color: var(--text);
+  background: var(--bg);
+  line-height: 1.7;
+  font-size: 13.5px;
   -webkit-font-smoothing: antialiased;
 }}
-.container {{ max-width: 720px; margin: 0 auto; padding: 48px 24px; }}
-h1 {{ font-size: 24px; font-weight: 600; letter-spacing: -0.02em; margin-bottom: 2px; }}
-h2 {{ font-size: 15px; font-weight: 600; margin: 40px 0 16px; color: var(--gray-500); text-transform: uppercase; letter-spacing: 0.05em; border: none; padding: 0; }}
-h3 {{ font-size: 15px; font-weight: 600; margin: 16px 0 8px; color: var(--gray-800); }}
+.report {{
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 40px 32px;
+}}
+
+/* --- Typography --- */
+h1 {{
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--navy);
+  letter-spacing: -0.01em;
+  text-transform: uppercase;
+  border-bottom: 3px double var(--rule);
+  padding-bottom: 12px;
+  margin-bottom: 6px;
+}}
+h2 {{
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--navy);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: 36px 0 14px;
+  padding: 6px 0;
+  border-top: 2px solid var(--rule);
+  border-bottom: 1px solid var(--rule-light);
+}}
+h3 {{
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 14px 0 6px;
+}}
+.section-number {{
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-weight: 700;
+  color: var(--navy);
+  margin-right: 8px;
+}}
+.subtitle {{
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 24px;
+  font-style: italic;
+}}
 .sample-badge {{
   display: inline-block;
-  background: var(--gray-400);
+  background: var(--caution);
   color: #fff;
-  font-size: 10px;
-  font-weight: 600;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 9px;
+  font-weight: 700;
   padding: 2px 8px;
-  border-radius: 10px;
+  border-radius: 2px;
   vertical-align: middle;
   margin-left: 8px;
   letter-spacing: 0.5px;
   text-transform: uppercase;
 }}
-.subtitle {{ color: var(--gray-500); font-size: 13px; margin-bottom: 32px; }}
-hr {{ border: none; border-top: 1px solid var(--gray-200); margin: 32px 0; }}
-
-/* Verdict — clean card with colored left border */
-.verdict {{
-  background: #fff;
-  border: 1px solid var(--gray-200);
-  border-left: 4px solid var(--green);
-  border-radius: 8px;
-  padding: 24px;
+hr {{
+  border: none;
+  border-top: 1px solid var(--border-light);
   margin: 24px 0;
-  display: flex;
-  align-items: center;
-  gap: 24px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
 }}
-.verdict-score {{
-  font-size: 48px;
+code {{
+  font-family: "SF Mono", "Fira Code", "Cascadia Code", "Consolas", monospace;
+  font-size: 11.5px;
+  background: var(--bg-warm);
+  padding: 1px 4px;
+  border-radius: 2px;
+}}
+
+/* --- Declaration (verdict) --- */
+.declaration {{
+  border: 2px solid var(--rule);
+  padding: 24px 28px;
+  margin: 20px 0 28px;
+  position: relative;
+}}
+.declaration-header {{
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 11px;
   font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--navy);
+  margin-bottom: 12px;
+}}
+.declaration-body {{
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+}}
+.declaration-score {{
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 44px;
+  font-weight: 800;
   line-height: 1;
   text-align: center;
-  min-width: 72px;
+  min-width: 68px;
 }}
-.verdict-score small {{ font-size: 14px; font-weight: 400; display: block; color: var(--gray-500); }}
-.verdict-body {{ flex: 1; }}
-.verdict-body h2 {{ color: var(--gray-900); border: none; margin: 0 0 4px; padding: 0; font-size: 18px; text-transform: none; letter-spacing: 0; }}
-.verdict-body p {{ margin: 0; font-size: 13px; color: var(--gray-600); }}
-.verdict-lr {{
+.declaration-score small {{
+  display: block;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-muted);
+  margin-top: 2px;
+}}
+.declaration-text {{ flex: 1; }}
+.declaration-text .verdict-label {{
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-weight: 700;
+  font-size: 16px;
+  margin-bottom: 4px;
+}}
+.declaration-text p {{
+  font-size: 13px;
+  margin: 0;
+  color: var(--text-secondary);
+}}
+.declaration-lr {{
   text-align: right;
-  min-width: 100px;
+  min-width: 90px;
+  padding-top: 2px;
 }}
-.verdict-lr .lr-value {{ font-size: 28px; font-weight: 700; color: var(--gray-800); }}
-.verdict-lr .lr-label {{ font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--gray-500); }}
-.verdict-lr .lr-tier {{ font-size: 12px; font-weight: 600; color: var(--gray-600); }}
+.declaration-lr .lr-value {{
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--navy);
+}}
+.declaration-lr .lr-label {{
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+}}
+.declaration-lr .lr-tier {{
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--navy-light);
+}}
 
-/* ENFSI scale — slim bar */
-.enfsi-scale {{ display: flex; gap: 2px; margin: 4px 0 24px; font-size: 10px; font-weight: 600; border-radius: 4px; overflow: hidden; }}
+/* --- ENFSI scale --- */
+.enfsi-label {{
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+  font-weight: 500;
+}}
+.enfsi-scale {{
+  display: flex;
+  gap: 1px;
+  margin-bottom: 20px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 9px;
+  font-weight: 600;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}}
 .enfsi-scale span {{
   flex: 1;
   text-align: center;
-  padding: 4px 2px;
+  padding: 5px 2px;
   color: #fff;
-  opacity: 0.6;
+  opacity: 0.5;
 }}
-.enfsi-against {{ background: #ef4444; }}
-.enfsi-weak {{ background: #f97316; }}
-.enfsi-moderate {{ background: #eab308; color: var(--gray-800) !important; }}
-.enfsi-modstrong {{ background: #22c55e; }}
-.enfsi-strong {{ background: #16a34a; }}
-.enfsi-vstrong {{ background: #15803d; }}
-.enfsi-active {{ opacity: 1 !important; font-weight: 800; box-shadow: inset 0 -2px 0 rgba(0,0,0,0.2); }}
+.enfsi-against {{ background: #8b1a1a; }}
+.enfsi-weak {{ background: #b45309; }}
+.enfsi-moderate {{ background: #8b6914; color: #fff !important; }}
+.enfsi-modstrong {{ background: #3d7a4a; }}
+.enfsi-strong {{ background: #1a5c2e; }}
+.enfsi-vstrong {{ background: #0d3d1a; }}
+.enfsi-active {{
+  opacity: 1 !important;
+  font-weight: 800;
+  box-shadow: inset 0 -3px 0 rgba(0,0,0,0.25);
+  font-size: 10px;
+}}
 
-/* Info box — clean white card */
+/* --- Info box (chain of custody) --- */
 .info-box {{
-  background: #fff;
-  border: 1px solid var(--gray-200);
-  border-radius: 8px;
-  padding: 16px 20px;
-  margin: 12px 0;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+  border: 1px solid var(--border);
+  padding: 14px 18px;
+  margin: 10px 0;
+  background: var(--bg-warm);
 }}
-.info-box table {{ width: 100%; }}
-.info-box td {{ padding: 4px 0; vertical-align: top; font-size: 13px; }}
-.info-box td:first-child {{ font-weight: 500; white-space: nowrap; padding-right: 16px; min-width: 180px; color: var(--gray-500); }}
-.info-box td:last-child {{ color: var(--gray-700); font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace; font-size: 12px; }}
+.info-box table {{ width: 100%; border-collapse: collapse; }}
+.info-box td {{
+  padding: 5px 0;
+  vertical-align: top;
+  font-size: 12.5px;
+  border-bottom: 1px solid var(--border-light);
+}}
+.info-box tr:last-child td {{ border-bottom: none; }}
+.info-box td:first-child {{
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  padding-right: 16px;
+  min-width: 180px;
+  color: var(--text-muted);
+}}
+.info-box td:last-child {{
+  font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+  font-size: 11px;
+  color: var(--text);
+  word-break: break-all;
+}}
 
-/* Evidence cards — white cards with subtle border */
+/* --- Evidence exhibit cards --- */
 .evidence-grid {{
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  margin: 16px 0;
+  gap: 10px;
+  margin: 14px 0;
 }}
 .evidence-card {{
-  background: #fff;
-  border: 1px solid var(--gray-200);
-  border-radius: 8px;
-  padding: 16px;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+  border: 1px solid var(--border);
+  padding: 14px 16px;
+  background: var(--bg-warm);
 }}
-.evidence-card h4 {{ font-size: 12px; font-weight: 600; margin-bottom: 8px; color: var(--gray-500); text-transform: uppercase; letter-spacing: 0.03em; }}
-.evidence-card .metric {{ font-size: 20px; font-weight: 600; margin-bottom: 2px; color: var(--gray-900); }}
-.evidence-card .note {{ font-size: 12px; color: var(--gray-500); }}
-
-/* Tables — clean with thin borders */
-table.data {{ width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px; }}
-table.data th {{
-  text-align: left;
-  padding: 8px 12px;
-  background: transparent;
-  font-weight: 500;
-  font-size: 11px;
+.evidence-card h4 {{
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  margin-bottom: 6px;
+  color: var(--navy);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--gray-500);
-  border-bottom: 2px solid var(--gray-200);
+  letter-spacing: 0.04em;
 }}
-table.data td {{ padding: 10px 12px; border-bottom: 1px solid var(--gray-100); color: var(--gray-700); }}
+.evidence-card .metric {{
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 2px;
+  color: var(--text);
+}}
+.evidence-card .note {{
+  font-size: 11.5px;
+  color: var(--text-muted);
+  font-style: italic;
+}}
+
+/* --- Tables --- */
+table.data {{
+  width: 100%;
+  border-collapse: collapse;
+  margin: 14px 0;
+  font-size: 12px;
+}}
+table.data thead {{
+  border-top: 2px solid var(--rule);
+  border-bottom: 2px solid var(--rule);
+}}
+table.data th {{
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  text-align: left;
+  padding: 8px 10px;
+  font-weight: 700;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--navy);
+  background: transparent;
+}}
+table.data tbody {{ border-bottom: 2px solid var(--rule); }}
+table.data td {{
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border-light);
+  color: var(--text-secondary);
+}}
 table.data tr:last-child td {{ border-bottom: none; }}
-table.data td:first-child {{ font-weight: 500; color: var(--gray-800); }}
+table.data td:first-child {{ font-weight: 500; color: var(--text); }}
 
-/* Checkpoint chain */
-.checkpoint {{ display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 12px; font-family: "SF Mono", "Fira Code", monospace; }}
-.checkpoint .ord {{ font-weight: 600; min-width: 24px; color: var(--gray-800); }}
-.checkpoint .hash {{ color: var(--gray-500); }}
-.checkpoint .time {{ color: var(--gray-400); font-size: 11px; }}
-.checkpoint-arrow {{ color: var(--gray-300); font-size: 14px; text-align: center; }}
-
-/* Flags */
-.flag-human {{ color: var(--green); font-weight: 500; }}
-.flag-synthetic {{ color: var(--red); font-weight: 500; }}
-.flag-neutral {{ color: var(--gray-400); font-weight: 500; }}
-
-/* Session timeline */
+/* --- Session timeline --- */
 .session-box {{
-  background: #fff;
-  border: 1px solid var(--gray-200);
-  border-left: 3px solid var(--green);
-  padding: 12px 16px;
+  border-left: 3px solid var(--navy);
+  padding: 10px 14px;
   margin: 8px 0;
-  border-radius: 0 8px 8px 0;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+  background: var(--bg-warm);
 }}
-.session-box h4 {{ margin-bottom: 2px; font-size: 14px; }}
-.session-box p {{ font-size: 13px; color: var(--gray-600); margin: 0; }}
-
-/* Forgery */
-.forgery-bar {{
-  height: 6px;
-  border-radius: 3px;
-  background: var(--gray-200);
-  margin: 4px 0 2px;
+.session-box h4 {{
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 12.5px;
+  font-weight: 600;
+  margin-bottom: 2px;
+  color: var(--navy);
 }}
-.forgery-fill {{ height: 100%; border-radius: 3px; }}
+.session-box p {{ font-size: 12px; color: var(--text-secondary); margin: 0; }}
 
-/* Scope */
-.scope-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 16px 0; }}
-.scope-grid ul {{ margin: 0; padding-left: 18px; font-size: 13px; color: var(--gray-600); }}
-.scope-grid li {{ margin-bottom: 6px; }}
-
-/* Analyzed text */
-.analyzed-text {{
-  background: #fff;
-  border: 1px solid var(--gray-200);
-  padding: 24px;
-  border-radius: 8px;
-  font-size: 14px;
-  line-height: 1.8;
-  column-count: 2;
-  column-gap: 32px;
-  margin: 16px 0;
-}}
-
-/* Category scores */
+/* --- Category scores --- */
 .category-scores {{
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 24px;
-  margin: 16px 0;
+  gap: 20px;
+  margin: 14px 0;
 }}
 .score-bars {{ }}
 .score-bar-row {{
   display: flex;
   align-items: center;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }}
-.score-bar-label {{ font-weight: 500; font-size: 13px; min-width: 90px; color: var(--gray-700); }}
+.score-bar-label {{
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-weight: 600;
+  font-size: 11px;
+  min-width: 85px;
+  color: var(--text-secondary);
+}}
 .score-bar-track {{
   flex: 1;
-  height: 8px;
-  background: var(--gray-200);
-  border-radius: 4px;
+  height: 7px;
+  background: var(--border-light);
   overflow: hidden;
-  margin: 0 10px;
+  margin: 0 8px;
 }}
 .score-bar-fill {{
   height: 100%;
-  border-radius: 4px;
 }}
-.score-bar-value {{ font-weight: 600; min-width: 28px; text-align: right; font-size: 13px; color: var(--gray-700); }}
-.composite-note {{ font-size: 12px; color: var(--gray-500); margin-top: 8px; }}
+.score-bar-value {{
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-weight: 700;
+  min-width: 24px;
+  text-align: right;
+  font-size: 12px;
+  color: var(--text);
+}}
+.composite-note {{
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+  margin-top: 6px;
+}}
 
-/* Writing flow */
+/* --- Writing flow --- */
 .flow-chart {{
   position: relative;
-  height: 100px;
-  background: #fff;
-  border: 1px solid var(--gray-200);
-  border-radius: 8px;
+  height: 80px;
+  border: 1px solid var(--border);
+  background: var(--bg-warm);
   display: flex;
   align-items: flex-end;
-  padding: 8px 4px;
+  padding: 6px 3px;
   gap: 1px;
   overflow: hidden;
 }}
 .flow-bar {{
   flex: 1;
   min-width: 2px;
-  border-radius: 2px 2px 0 0;
+  border-radius: 1px 1px 0 0;
 }}
 .flow-labels {{
   display: flex;
   justify-content: space-between;
-  font-size: 10px;
-  color: var(--gray-400);
-  margin-top: 4px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 9px;
+  color: var(--text-muted);
+  margin-top: 3px;
 }}
 .flow-caption {{
   font-size: 11px;
-  color: var(--gray-500);
-  margin-top: 6px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  font-style: italic;
 }}
 
-/* Dimension analysis */
+/* --- Dimension analysis --- */
 .dimension-card {{
-  background: #fff;
-  border: 1px solid var(--gray-200);
-  border-radius: 8px;
-  padding: 16px 20px;
-  margin: 12px 0;
+  border: 1px solid var(--border);
+  padding: 14px 18px;
+  margin: 10px 0;
   position: relative;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+  background: var(--bg-warm);
 }}
 .dimension-card h3 {{
-  font-size: 15px;
-  margin: 0 0 8px;
+  font-size: 13px;
+  margin: 0 0 6px;
   text-transform: none;
   letter-spacing: 0;
 }}
 .dimension-badge {{
   position: absolute;
-  top: 16px;
-  right: 20px;
-  width: 32px;
-  height: 32px;
-  border-radius: 6px;
+  top: 14px;
+  right: 18px;
+  width: 30px;
+  height: 30px;
   color: #fff;
-  font-weight: 600;
-  font-size: 14px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-weight: 700;
+  font-size: 13px;
   display: flex;
   align-items: center;
   justify-content: center;
 }}
-.dimension-detail {{ font-size: 13px; margin-bottom: 4px; color: var(--gray-600); }}
-.dimension-detail strong {{ font-weight: 500; color: var(--gray-800); }}
+.dimension-detail {{ font-size: 12px; margin-bottom: 3px; color: var(--text-secondary); }}
+.dimension-detail strong {{ font-weight: 600; color: var(--text); }}
 
-/* Methodology */
+/* --- Methodology --- */
 .methodology-grid {{
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
-  gap: 12px;
-  margin: 16px 0;
+  gap: 10px;
+  margin: 14px 0;
 }}
 .methodology-card {{
-  background: #fff;
-  border: 1px solid var(--gray-200);
-  border-radius: 8px;
-  padding: 14px 16px;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+  border: 1px solid var(--border);
+  padding: 12px 14px;
+  background: var(--bg-warm);
 }}
-.methodology-card h4 {{ font-size: 12px; font-weight: 600; margin-bottom: 6px; color: var(--gray-500); text-transform: uppercase; letter-spacing: 0.03em; }}
-.methodology-card p {{ font-size: 12px; color: var(--gray-600); margin: 0; }}
+.methodology-card h4 {{
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  margin-bottom: 5px;
+  color: var(--navy);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}}
+.methodology-card p {{ font-size: 11.5px; color: var(--text-secondary); margin: 0; }}
 
-/* LR table confidence bar */
+/* --- Forgery bar --- */
+.forgery-bar {{
+  height: 5px;
+  background: var(--border-light);
+  margin: 3px 0 2px;
+}}
+.forgery-fill {{ height: 100%; }}
+
+/* --- Flags --- */
+.flag-human {{ color: var(--accent); font-weight: 600; }}
+.flag-synthetic {{ color: var(--alert); font-weight: 600; }}
+.flag-neutral {{ color: var(--text-muted); font-weight: 500; }}
+
+/* --- Confidence bar --- */
 .confidence-bar {{
   display: inline-block;
-  height: 6px;
-  border-radius: 3px;
-  min-width: 40px;
-  max-width: 100px;
+  height: 5px;
+  min-width: 30px;
+  max-width: 80px;
 }}
 
-/* Footer */
+/* --- Scope --- */
+.scope-grid {{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  margin: 14px 0;
+}}
+.scope-grid ul {{
+  margin: 0;
+  padding-left: 16px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}}
+.scope-grid li {{ margin-bottom: 5px; }}
+
+/* --- Analyzed text --- */
+.analyzed-text {{
+  border: 1px solid var(--border);
+  padding: 20px 24px;
+  font-size: 13px;
+  line-height: 1.8;
+  column-count: 2;
+  column-gap: 28px;
+  margin: 14px 0;
+  background: var(--bg-warm);
+}}
+
+/* --- Footer / Certification --- */
 .report-footer {{
-  border-top: 1px solid var(--gray-200);
-  padding-top: 16px;
-  margin-top: 48px;
-  font-size: 11px;
-  color: var(--gray-400);
+  border-top: 3px double var(--rule);
+  padding-top: 14px;
+  margin-top: 40px;
+  font-size: 10.5px;
+  color: var(--text-muted);
   text-align: center;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}}
+.report-footer .certification {{
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
 }}
 
+/* --- Print --- */
 @media print {{
-  body {{ font-size: 12px; background: #fff; }}
-  .container {{ padding: 20px; }}
-  .verdict {{ break-inside: avoid; }}
+  body {{ font-size: 11pt; }}
+  .report {{ padding: 0; max-width: none; }}
+  .declaration {{ break-inside: avoid; }}
   .evidence-grid {{ break-inside: avoid; }}
-  h2 {{ break-after: avoid; }}
+  .dimension-card {{ break-inside: avoid; }}
   .session-box {{ break-inside: avoid; }}
+  h2 {{ break-after: avoid; }}
+  table.data {{ break-inside: auto; }}
+  table.data tr {{ break-inside: avoid; }}
 }}
 @media (max-width: 600px) {{
   .evidence-grid {{ grid-template-columns: 1fr; }}
   .scope-grid {{ grid-template-columns: 1fr; }}
   .analyzed-text {{ column-count: 1; }}
-  .verdict {{ flex-direction: column; text-align: center; }}
+  .declaration-body {{ flex-direction: column; text-align: center; }}
   .methodology-grid {{ grid-template-columns: 1fr; }}
+  .category-scores {{ grid-template-columns: 1fr; }}
 }}
 </style>
 </head>
 <body>
-<div class="container">
+<div class="report">
 "#,
         report_id = report_id_escaped
     )
