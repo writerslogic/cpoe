@@ -9,6 +9,21 @@
 //! - Multi-document session management with shadow buffers
 //! - Platform-specific focus detection (macOS, Linux, Windows)
 
+/// Write a trace line for runtime diagnostics.
+macro_rules! trace {
+    ($($arg:tt)*) => {{
+        use std::io::Write as _;
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/var/tmp/cpop_trace.txt")
+        {
+            let _ = writeln!(f, "{}", format!($($arg)*));
+        }
+    }};
+}
+pub(crate) use trace;
+
 pub mod core;
 pub mod core_session;
 pub mod daemon;
@@ -51,3 +66,63 @@ pub use self::types::{
     ChangeEvent, ChangeEventType, DocumentSession, FocusEvent, FocusEventType, FocusSwitchRecord,
     SessionBinding, SessionEvent, SessionEventType, WindowInfo,
 };
+
+// ---------------------------------------------------------------------------
+// IOKit HID capture lifecycle (macOS only)
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "macos")]
+static HID_CAPTURE: std::sync::Mutex<Option<crate::platform::HidInputCapture>> =
+    std::sync::Mutex::new(None);
+
+/// Start IOKit HID capture for dual-layer keystroke validation.
+/// No-op on non-macOS platforms.
+#[cfg(target_os = "macos")]
+pub(crate) fn start_hid_capture() {
+    use crate::MutexRecover;
+    let mut guard = HID_CAPTURE.lock_recover();
+    if guard.is_some() {
+        return; // Already running.
+    }
+    match crate::platform::HidInputCapture::start() {
+        Some(capture) => {
+            log::info!("IOKit HID capture started for dual-layer validation");
+            *guard = Some(capture);
+        }
+        None => {
+            log::info!("IOKit HID capture unavailable; dual-layer validation disabled");
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn start_hid_capture() {}
+
+/// Stop IOKit HID capture. Called during sentinel shutdown.
+#[cfg(target_os = "macos")]
+pub(crate) fn stop_hid_capture() {
+    use crate::MutexRecover;
+    let mut guard = HID_CAPTURE.lock_recover();
+    if let Some(mut capture) = guard.take() {
+        capture.stop();
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn stop_hid_capture() {}
+
+/// Get the HID keyDown count for dual-layer validation. Returns 0 if not running.
+#[cfg(target_os = "macos")]
+pub fn hid_key_down_count() -> u64 {
+    use crate::MutexRecover;
+    HID_CAPTURE
+        .lock_recover()
+        .as_ref()
+        .map(|c| c.key_down_count())
+        .unwrap_or(0)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn hid_key_down_count() -> u64 {
+    0
+}

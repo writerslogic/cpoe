@@ -458,6 +458,10 @@ impl Sentinel {
             }
         }
 
+        // Start IOKit HID capture for dual-layer keystroke validation.
+        // This runs alongside CGEventTap; HID provides hardware ground truth.
+        super::start_hid_capture();
+
         let (mouse_tx, mut mouse_rx) =
             tokio::sync::mpsc::channel::<crate::platform::MouseEvent>(1000);
         let mouse_running = Arc::clone(&running);
@@ -914,6 +918,7 @@ impl Sentinel {
         if let Some(mut cap) = self.mouse_capture.lock_recover().take() {
             let _ = cap.stop();
         }
+        super::stop_hid_capture();
 
         // Persist cumulative stats and unfocus all sessions so keystroke
         // counts survive across stop/start cycles.
