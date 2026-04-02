@@ -107,9 +107,13 @@ pub fn handle_focus_event_sync(
                 }
             };
 
-            if let Some(ref path) = path_to_unfocus {
-                {
-                    let mut sessions_map = sessions.write_recover();
+            // Single write lock for the entire unfocus + regained_at stamp
+            // to prevent TOCTOU races between lock acquisitions.
+            {
+                let mut sessions_map = sessions.write_recover();
+
+                // Record focus switch and unfocus the previous document.
+                if let Some(ref path) = path_to_unfocus {
                     if let Some(session) = sessions_map.get_mut(path.as_str()) {
                         session.focus_switches.push(FocusSwitchRecord {
                             lost_at: SystemTime::now(),
@@ -117,16 +121,18 @@ pub fn handle_focus_event_sync(
                             target_app: event.app_name.clone(),
                             target_bundle_id: event.app_bundle_id.clone(),
                         });
+                        session.focus_lost();
+                        let _ = session_events_tx.send(SessionEvent {
+                            event_type: SessionEventType::Unfocused,
+                            session_id: session.session_id.clone(),
+                            document_path: path.to_string(),
+                            timestamp: SystemTime::now(),
+                        });
                     }
                 }
-                unfocus_document_sync(path, sessions, session_events_tx);
-                *current_focus.write_recover() = None;
-            }
 
-            // If this document is regaining focus, stamp regained_at on its
-            // most recent open switch record.
-            {
-                let mut sessions_map = sessions.write_recover();
+                // If this document is regaining focus, stamp regained_at on its
+                // most recent open switch record.
                 if let Some(session) = sessions_map.get_mut(doc_path.as_str()) {
                     if let Some(last) = session.focus_switches.last_mut() {
                         if last.regained_at.is_none() {
@@ -134,6 +140,10 @@ pub fn handle_focus_event_sync(
                         }
                     }
                 }
+            }
+
+            if path_to_unfocus.is_some() {
+                *current_focus.write_recover() = None;
             }
 
             focus_document_sync(

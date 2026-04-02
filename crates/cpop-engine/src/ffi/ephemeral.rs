@@ -26,14 +26,19 @@ static DEVICE_IDENTITY: OnceLock<([u8; 16], String)> = OnceLock::new();
 
 fn device_identity() -> &'static ([u8; 16], String) {
     DEVICE_IDENTITY.get_or_init(|| {
-        crate::identity::secure_storage::SecureStorage::load_device_identity()
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| {
+        match crate::identity::secure_storage::SecureStorage::load_device_identity() {
+            Ok(Some(identity)) => identity,
+            Ok(None) | Err(_) => {
+                log::error!(
+                    "SecureStorage device identity unavailable; using random ephemeral device ID"
+                );
+                let mut fallback_id = [0u8; 16];
+                rand::RngCore::fill_bytes(&mut rand::rng(), &mut fallback_id);
                 let machine_id =
                     sysinfo::System::host_name().unwrap_or_else(|| "unknown".to_string());
-                ([0u8; 16], machine_id)
-            })
+                (fallback_id, machine_id)
+            }
+        }
     })
 }
 

@@ -613,12 +613,16 @@ impl Sentinel {
                             continue; // dedup
                         }
 
-                        // Track this keyDown for dwell time (computed when keyUp arrives)
-                        pending_downs.insert(event.keycode, event.timestamp_ns);
-                        // Evict stale entries (keys held > 10s are likely stuck)
+                        // Track this keyDown for dwell time (computed when keyUp arrives).
+                        // Evict stale entries (keys held > 10s are likely stuck).
                         pending_downs.retain(|_, ts| {
                             event.timestamp_ns.saturating_sub(*ts) < 10_000_000_000
                         });
+                        // Cap at 256 entries (one per physical key is ~104; 256 is generous).
+                        // A real keyboard cannot have more than ~256 simultaneous key-downs.
+                        if pending_downs.len() < 256 {
+                            pending_downs.insert(event.keycode, event.timestamp_ns);
+                        }
 
                         // Inter-keyDown duration
                         let duration_since_last_ns: u64 = if last_keydown_ts_ns > 0 {

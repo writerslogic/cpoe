@@ -25,8 +25,8 @@ pub const MAX_CBOR_DEPTH: usize = 32;
 ///
 /// Walks CBOR item headers with a stack tracking remaining items in each
 /// open container. Returns `true` if depth is within limits, `false` if
-/// it exceeds `max_depth`. Truncated or malformed input returns `true`
-/// to let ciborium produce the appropriate decode error.
+/// it exceeds `max_depth`. Truncated or malformed input returns `false`
+/// to reject payloads whose depth cannot be fully verified.
 fn check_cbor_depth(data: &[u8], max_depth: usize) -> bool {
     // Stack entries: remaining data items in each open definite-length
     // container. u64::MAX marks indefinite-length containers.
@@ -56,7 +56,7 @@ fn check_cbor_depth(data: &[u8], max_depth: usize) -> bool {
             0..=23 => additional as u64,
             24 => {
                 if pos >= data.len() {
-                    return true;
+                    return false;
                 }
                 let v = data[pos] as u64;
                 pos += 1;
@@ -64,7 +64,7 @@ fn check_cbor_depth(data: &[u8], max_depth: usize) -> bool {
             }
             25 => {
                 if pos + 2 > data.len() {
-                    return true;
+                    return false;
                 }
                 let v = u16::from_be_bytes([data[pos], data[pos + 1]]) as u64;
                 pos += 2;
@@ -72,7 +72,7 @@ fn check_cbor_depth(data: &[u8], max_depth: usize) -> bool {
             }
             26 => {
                 if pos + 4 > data.len() {
-                    return true;
+                    return false;
                 }
                 let bytes: [u8; 4] = data[pos..pos + 4].try_into().unwrap();
                 pos += 4;
@@ -80,7 +80,7 @@ fn check_cbor_depth(data: &[u8], max_depth: usize) -> bool {
             }
             27 => {
                 if pos + 8 > data.len() {
-                    return true;
+                    return false;
                 }
                 let bytes: [u8; 8] = data[pos..pos + 8].try_into().unwrap();
                 pos += 8;
@@ -99,7 +99,7 @@ fn check_cbor_depth(data: &[u8], max_depth: usize) -> bool {
                     // Indefinite byte/text string; skip chunks until break.
                     loop {
                         if pos >= data.len() {
-                            return true;
+                            return false;
                         }
                         if data[pos] == 0xFF {
                             pos += 1;
@@ -112,7 +112,7 @@ fn check_cbor_depth(data: &[u8], max_depth: usize) -> bool {
                             0..=23 => ch_add as u64,
                             24 => {
                                 if pos >= data.len() {
-                                    return true;
+                                    return false;
                                 }
                                 let v = data[pos] as u64;
                                 pos += 1;
@@ -120,7 +120,7 @@ fn check_cbor_depth(data: &[u8], max_depth: usize) -> bool {
                             }
                             25 => {
                                 if pos + 2 > data.len() {
-                                    return true;
+                                    return false;
                                 }
                                 let v = u16::from_be_bytes([data[pos], data[pos + 1]]) as u64;
                                 pos += 2;
@@ -128,7 +128,7 @@ fn check_cbor_depth(data: &[u8], max_depth: usize) -> bool {
                             }
                             26 => {
                                 if pos + 4 > data.len() {
-                                    return true;
+                                    return false;
                                 }
                                 let b: [u8; 4] = data[pos..pos + 4].try_into().unwrap();
                                 pos += 4;
@@ -136,7 +136,7 @@ fn check_cbor_depth(data: &[u8], max_depth: usize) -> bool {
                             }
                             27 => {
                                 if pos + 8 > data.len() {
-                                    return true;
+                                    return false;
                                 }
                                 let b: [u8; 8] = data[pos..pos + 8].try_into().unwrap();
                                 pos += 8;

@@ -31,17 +31,19 @@ pub fn ffi_sentinel_start_witnessing(path: String) -> FfiResult {
         };
     }
 
-    // AUD-084: Validate path to prevent traversal attacks
-    let p = std::path::Path::new(&path);
-    if path.contains("..") || !p.is_absolute() {
-        return FfiResult {
-            success: false,
-            message: None,
-            error_message: Some("Invalid path: must be absolute with no traversal".to_string()),
-        };
-    }
+    // AUD-084: Validate path to prevent traversal attacks (canonicalize to resolve symlinks)
+    let validated_path = match crate::sentinel::helpers::validate_path(&path) {
+        Ok(p) => p,
+        Err(e) => {
+            return FfiResult {
+                success: false,
+                message: None,
+                error_message: Some(format!("Invalid path: {e}")),
+            };
+        }
+    };
 
-    match sentinel.start_witnessing(p) {
+    match sentinel.start_witnessing(&validated_path) {
         Ok(()) => FfiResult {
             success: true,
             message: Some(format!("Now witnessing: {path}")),
