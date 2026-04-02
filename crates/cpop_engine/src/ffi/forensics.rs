@@ -11,7 +11,10 @@ static CALIBRATED_PARAMS: Mutex<Option<Parameters>> = Mutex::new(None);
 
 /// Read the cached calibrated parameters (if any).
 pub(crate) fn calibrated_params() -> Option<Parameters> {
-    CALIBRATED_PARAMS.lock().ok().and_then(|g| *g)
+    *CALIBRATED_PARAMS.lock().unwrap_or_else(|e| {
+        log::error!("calibrated params mutex poisoned: {e}");
+        e.into_inner()
+    })
 }
 
 /// Weights for composite process score (sum = 1.0).
@@ -255,7 +258,11 @@ pub fn ffi_calibrate_swf() -> FfiCalibrationResult {
                     )),
                 };
             }
-            if let Ok(mut cached) = CALIBRATED_PARAMS.lock() {
+            {
+                let mut cached = CALIBRATED_PARAMS.lock().unwrap_or_else(|e| {
+                    log::error!("calibrated params mutex poisoned: {e}");
+                    e.into_inner()
+                });
                 *cached = Some(params);
             }
             FfiCalibrationResult {

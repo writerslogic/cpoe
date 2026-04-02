@@ -38,7 +38,13 @@ pub(crate) fn load_hmac_key() -> Option<Zeroizing<Vec<u8>>> {
             return None;
         }
     }
-    let key_data = Zeroizing::new(std::fs::read(&key_path).ok()?);
+    let key_data = Zeroizing::new(match std::fs::read(&key_path) {
+        Ok(v) => v,
+        Err(e) => {
+            log::warn!("failed to read signing key file: {e}");
+            return None;
+        }
+    });
     let seed = if key_data.len() >= 32 {
         &key_data[..32]
     } else {
