@@ -8,7 +8,12 @@ use super::messages::MAX_MESSAGE_SIZE;
 use super::messages::{IpcErrorCode, IpcMessage};
 use p256::{ecdh::EphemeralSecret, elliptic_curve::sec1::ToEncodedPoint, PublicKey};
 use std::path::PathBuf;
+use std::time::Duration;
 use subtle::ConstantTimeEq;
+
+/// Timeout for individual IPC I/O operations. Generous to allow for
+/// VDF-heavy responses that take significant compute time on the daemon side.
+const IO_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[cfg(unix)]
 type PlatformStream = tokio::net::UnixStream;
@@ -45,6 +50,9 @@ pub enum AsyncIpcClientError {
     /// Handshake or protocol-level error.
     #[error("protocol error: {0}")]
     ProtocolError(String),
+    /// I/O operation exceeded the deadline.
+    #[error("operation timed out after {0:?}")]
+    Timeout(Duration),
 }
 
 /// Async IPC Client for connecting to the Sentinel daemon using tokio.
@@ -142,13 +150,10 @@ impl AsyncIpcClient {
 
     async fn establish_secure_session(&mut self) -> std::result::Result<(), AsyncIpcClientError> {
         // H-053: Timeout the entire ECDH handshake to prevent indefinite blocking
-        const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-        match tokio::time::timeout(HANDSHAKE_TIMEOUT, self.establish_secure_session_inner()).await {
-            Ok(result) => result,
-            Err(_) => Err(AsyncIpcClientError::ProtocolError(
-                "ECDH handshake timed out after 5s".into(),
-            )),
-        }
+        const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
+        tokio::time::timeout(HANDSHAKE_TIMEOUT, self.establish_secure_session_inner())
+            .await
+            .map_err(|_| AsyncIpcClientError::Timeout(HANDSHAKE_TIMEOUT))?
     }
 
     async fn establish_secure_session_inner(
@@ -303,20 +308,23 @@ impl AsyncIpcClient {
         }
 
         let len = payload.len() as u32;
-        stream
-            .write_all(&len.to_le_bytes())
-            .await
-            .map_err(AsyncIpcClientError::SendFailed)?;
-        stream
-            .write_all(&payload)
-            .await
-            .map_err(AsyncIpcClientError::SendFailed)?;
-        stream
-            .flush()
-            .await
-            .map_err(AsyncIpcClientError::SendFailed)?;
-
-        Ok(())
+        tokio::time::timeout(IO_TIMEOUT, async {
+            stream
+                .write_all(&len.to_le_bytes())
+                .await
+                .map_err(AsyncIpcClientError::SendFailed)?;
+            stream
+                .write_all(&payload)
+                .await
+                .map_err(AsyncIpcClientError::SendFailed)?;
+            stream
+                .flush()
+                .await
+                .map_err(AsyncIpcClientError::SendFailed)?;
+            Ok(())
+        })
+        .await
+        .map_err(|_| AsyncIpcClientError::Timeout(IO_TIMEOUT))?
     }
 
     /// Receive an IPC message from the daemon
@@ -330,26 +338,32 @@ impl AsyncIpcClient {
             .as_mut()
             .ok_or(AsyncIpcClientError::NotConnected)?;
 
-        let mut len_buf = [0u8; 4];
-        match stream.read_exact(&mut len_buf).await {
-            Ok(_) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                return Err(AsyncIpcClientError::ConnectionClosed);
+        let buffer = tokio::time::timeout(IO_TIMEOUT, async {
+            let mut len_buf = [0u8; 4];
+            match stream.read_exact(&mut len_buf).await {
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    return Err(AsyncIpcClientError::ConnectionClosed);
+                }
+                Err(e) => return Err(AsyncIpcClientError::ReceiveFailed(e)),
             }
-            Err(e) => return Err(AsyncIpcClientError::ReceiveFailed(e)),
-        }
 
-        let len = u32::from_le_bytes(len_buf) as usize;
+            let len = u32::from_le_bytes(len_buf) as usize;
 
-        if len > MAX_MESSAGE_SIZE {
-            return Err(AsyncIpcClientError::MessageTooLarge(len, MAX_MESSAGE_SIZE));
-        }
+            if len > MAX_MESSAGE_SIZE {
+                return Err(AsyncIpcClientError::MessageTooLarge(len, MAX_MESSAGE_SIZE));
+            }
 
-        let mut buffer = vec![0u8; len];
-        stream
-            .read_exact(&mut buffer)
-            .await
-            .map_err(AsyncIpcClientError::ReceiveFailed)?;
+            let mut buffer = vec![0u8; len];
+            stream
+                .read_exact(&mut buffer)
+                .await
+                .map_err(AsyncIpcClientError::ReceiveFailed)?;
+
+            Ok(buffer)
+        })
+        .await
+        .map_err(|_| AsyncIpcClientError::Timeout(IO_TIMEOUT))??;
 
         let plaintext = if let Some(session) = &self.secure_session {
             session.decrypt(&buffer).map_err(|e| {
