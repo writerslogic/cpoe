@@ -172,16 +172,25 @@ pub(super) async fn handle_connection_inner<
         };
 
         let mut msg_buf = vec![0u8; msg_len];
-        if stream.read_exact(&mut msg_buf).await.is_err() {
+        if let Err(e) = stream.read_exact(&mut msg_buf).await {
+            log::debug!("IPC: read_exact failed on {}: {e}", transport_label);
             break;
         }
 
         let plaintext = if let Some(ref session) = secure_session {
             match session.decrypt(&msg_buf) {
                 Ok(pt) => pt,
+                Err(e) if e.to_string().starts_with("SequenceDesync:") => {
+                    log::warn!(
+                        "IPC: sequence desync on {}: {} (skipping message)",
+                        transport_label,
+                        e
+                    );
+                    continue;
+                }
                 Err(e) => {
                     log::error!(
-                        "IPC: decrypt failed on {}: {} (closing — possible tampering)",
+                        "IPC: decrypt failed on {}: {} (closing, possible tampering)",
                         transport_label,
                         e
                     );

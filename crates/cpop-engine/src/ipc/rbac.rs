@@ -5,17 +5,14 @@ use serde::{Deserialize, Serialize};
 
 /// Role-based access control for IPC clients.
 ///
-/// The default role is `User`. This is intentional: the IPC socket is local-only
-/// and restricted to the same UID via `SecureUnixSocket` peer credential checks,
-/// so all authenticated connections belong to the same OS user that owns the
-/// daemon. RBAC differentiation (e.g., Admin) is deferred to when inter-process
-/// or network-facing auth is implemented.
+/// The default role is `ReadOnly` (fail-closed). Callers must explicitly
+/// elevate to `User` or `Admin` after authentication.
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum IpcRole {
     /// Can only read status and query information.
+    #[default]
     ReadOnly = 0,
     /// Can start/stop witnessing, create checkpoints, export evidence.
-    #[default]
     User = 1,
     /// Can change configuration, manage keys and identity.
     Admin = 2,
@@ -145,8 +142,8 @@ mod tests {
     }
 
     #[test]
-    fn test_default_role_is_user() {
-        assert_eq!(IpcRole::default(), IpcRole::User);
+    fn test_default_role_is_readonly() {
+        assert_eq!(IpcRole::default(), IpcRole::ReadOnly);
     }
 
     #[test]

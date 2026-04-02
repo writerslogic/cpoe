@@ -319,7 +319,7 @@ async fn handle_connection<H: IpcMessageHandler>(
         handler as Arc<dyn IpcMessageHandler>,
         "unix-socket",
         &rate_limiter,
-        IpcRole::default(),
+        IpcRole::User, // Authenticated via peer credentials; explicit User role
         access_log.as_ref(),
     )
     .await;

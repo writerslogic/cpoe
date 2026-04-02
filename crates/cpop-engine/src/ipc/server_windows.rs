@@ -138,7 +138,7 @@ pub(super) async fn handle_windows_connection<H: IpcMessageHandler>(
         handler as Arc<dyn IpcMessageHandler>,
         "named-pipe",
         &rate_limiter,
-        IpcRole::default(),
+        IpcRole::User, // Authenticated via SID verification; explicit User role
         access_log.as_ref(),
     )
     .await;

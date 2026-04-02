@@ -222,10 +222,10 @@ impl SecureStore {
 
                     if last_verified_seq == 0 && count == 0 {
                         // First event ever: previous_hash must be the zero sentinel.
-                        if previous_hash_arr != [0u8; 32] {
+                        if previous_hash_arr.ct_eq(&[0u8; 32]).unwrap_u8() != 1 {
                             return Err(anyhow!("First event {} has non-zero previous_hash", id));
                         }
-                    } else if previous_hash_arr != last_hash {
+                    } else if previous_hash_arr.ct_eq(&last_hash).unwrap_u8() != 1 {
                         return Err(anyhow!("Chain break at event {}", id));
                     }
 

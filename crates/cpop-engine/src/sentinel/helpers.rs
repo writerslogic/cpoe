@@ -253,9 +253,10 @@ pub fn focus_document_sync(
             }
 
             // Load cumulative stats so total_keystrokes() returns lifetime count.
+            // Use the already-cloned `key` to avoid re-acquiring signing_key
+            // lock while sessions write lock is held (AUD-041 lock ordering).
             let db_path = wal_dir.parent().unwrap_or(wal_dir).join("events.db");
-            let guard = signing_key.read_recover();
-            if let Some(ref sk) = *guard {
+            if let Some(ref sk) = key {
                 if let Ok(store) = crate::store::open_store_with_signing_key(sk, &db_path) {
                     if let Ok(Some(stats)) = store.load_document_stats(path) {
                         session.cumulative_keystrokes_base =
@@ -265,7 +266,6 @@ pub fn focus_document_sync(
                     }
                 }
             }
-            drop(guard);
 
             session
         });
@@ -566,8 +566,10 @@ pub fn create_session_start_payload(session: &DocumentSession) -> Vec<u8> {
             log::debug!("No initial hash available for session, using zero hash");
             vec![0u8; 32]
         });
-    let mut hash_fixed = [0u8; 32];
-    hash_fixed.copy_from_slice(&hash_bytes[..32]);
+    let hash_fixed: [u8; 32] = match hash_bytes.as_slice().try_into() {
+        Ok(arr) => arr,
+        Err(_) => [0u8; 32],
+    };
     payload.extend_from_slice(&hash_fixed);
 
     let timestamp = session

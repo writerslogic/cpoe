@@ -137,6 +137,16 @@ impl SentinelIpcHandler {
         expected_nonce: Option<[u8; 32]>,
     ) -> Result<IpcMessage, String> {
         let path = super::helpers::validate_path(&evidence_path)?;
+        const MAX_EVIDENCE_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10 MB
+        let meta =
+            std::fs::metadata(&path).map_err(|e| format!("Failed to stat evidence file: {e}"))?;
+        if meta.len() > MAX_EVIDENCE_FILE_SIZE {
+            return Err(format!(
+                "Evidence file too large: {} bytes (limit {})",
+                meta.len(),
+                MAX_EVIDENCE_FILE_SIZE
+            ));
+        }
         let data =
             std::fs::read(&path).map_err(|e| format!("Failed to read evidence file: {e}"))?;
         let packet = crate::evidence::Packet::decode(&data)

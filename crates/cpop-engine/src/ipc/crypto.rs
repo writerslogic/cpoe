@@ -157,7 +157,9 @@ impl SecureSession {
 
     /// Decrypt a wire message: [8-byte seq][12-byte nonce][ciphertext+tag].
     ///
-    /// Failure is connection-fatal: indicates tampering, replay, or key desync.
+    /// Sequence mismatch returns a `SequenceDesync` error that callers may
+    /// treat as non-fatal (skip the message, let the client retry).
+    /// Other failures (tampered ciphertext, wrong key) remain fatal.
     pub(crate) fn decrypt(&self, data: &[u8]) -> Result<Vec<u8>> {
         if data.len() < 36 {
             return Err(anyhow!("Encrypted message too short: {} bytes", data.len()));
@@ -176,7 +178,9 @@ impl SecureSession {
             let current = self.rx_sequence.load(Ordering::SeqCst);
             if seq.to_le_bytes().ct_eq(&current.to_le_bytes()).unwrap_u8() != 1 {
                 return Err(anyhow!(
-                    "Sequence validation failed (possible replay attack)"
+                    "SequenceDesync: expected {}, got {} (client should retry)",
+                    current,
+                    seq
                 ));
             }
             match self.rx_sequence.compare_exchange(
