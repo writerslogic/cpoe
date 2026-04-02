@@ -125,6 +125,14 @@ impl Session {
         let public_key = signing_key.verifying_key().to_bytes().to_vec();
         let signature = signing_key.sign(&checkpoint_hash).to_bytes();
 
+        // Lamport one-shot signature: derive a separate key from the ratchet
+        // using a distinct domain separator so the two schemes are independent.
+        let lamport_seed =
+            hkdf_expand(self.ratchet.current.as_bytes(), b"cpop-lamport-key-v1", &[])?;
+        let (lamport_privkey, lamport_pubkey) =
+            crate::crypto::lamport::LamportPrivateKey::from_seed(&lamport_seed);
+        let lamport_sig = lamport_privkey.sign(&checkpoint_hash);
+
         let next_ratchet = hkdf_expand(
             self.ratchet.current.as_bytes(),
             RATCHET_ADVANCE_DOMAIN.as_bytes(),
@@ -143,6 +151,8 @@ impl Session {
             checkpoint_hash,
             counter_value: None,
             counter_delta: None,
+            lamport_signature: Some(lamport_sig.to_bytes().to_vec()),
+            lamport_pubkey_fingerprint: Some(lamport_pubkey.fingerprint().to_vec()),
         };
         self.signatures.push(sig.clone());
         Ok(sig)
@@ -180,10 +190,17 @@ impl Session {
         let signing_key = SigningKey::from_bytes(&signing_seed);
         let public_key = signing_key.verifying_key().to_bytes().to_vec();
         let signature = signing_key.sign(&checkpoint_hash).to_bytes();
+
+        // Lamport one-shot signature
+        let lamport_seed =
+            hkdf_expand(self.ratchet.current.as_bytes(), b"cpop-lamport-key-v1", &[])?;
+        let (lamport_privkey, lamport_pubkey) =
+            crate::crypto::lamport::LamportPrivateKey::from_seed(&lamport_seed);
+        let lamport_sig = lamport_privkey.sign(&checkpoint_hash);
+
         drop(signing_seed);
 
-        // Hash counter_delta into the ratchet advance (makes ratchet state
-        // depend on counter progression, preventing time-skip attacks)
+        // Hash counter_delta into the ratchet advance
         let mut ratchet_input = checkpoint_hash.to_vec();
         if let Some(delta) = counter_delta {
             ratchet_input.extend_from_slice(&delta.to_be_bytes());
@@ -211,6 +228,8 @@ impl Session {
             checkpoint_hash,
             counter_value: current_counter,
             counter_delta,
+            lamport_signature: Some(lamport_sig.to_bytes().to_vec()),
+            lamport_pubkey_fingerprint: Some(lamport_pubkey.fingerprint().to_vec()),
         };
         self.signatures.push(sig.clone());
         Ok(sig)

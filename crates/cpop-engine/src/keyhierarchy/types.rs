@@ -64,6 +64,13 @@ pub struct CheckpointSignature {
     /// Delta from previous checkpoint's counter
     #[serde(default)]
     pub counter_delta: Option<u64>,
+    /// Lamport one-shot signature (8192 bytes). Any attempt to sign a
+    /// different message at the same ordinal exposes the private key.
+    #[serde(default)]
+    pub lamport_signature: Option<Vec<u8>>,
+    /// Lamport public key fingerprint (8 bytes) for compact identification.
+    #[serde(default)]
+    pub lamport_pubkey_fingerprint: Option<Vec<u8>>,
 }
 
 #[derive(Debug)]

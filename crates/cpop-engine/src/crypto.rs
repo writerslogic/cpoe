@@ -9,6 +9,7 @@ use std::path::Path;
 use zeroize::{Zeroize, Zeroizing};
 
 pub mod anti_analysis;
+pub mod lamport;
 pub mod mem;
 pub mod obfuscated;
 pub mod obfuscation;
