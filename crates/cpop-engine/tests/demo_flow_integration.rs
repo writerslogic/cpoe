@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
+#![cfg(feature = "ffi")]
 
 //! Demo-flow integration tests.
 //!
 //! Simulates the exact user journey:
 //! init -> checkpoint -> edit -> checkpoint -> export -> verify history
 //!
-//! Run: `cargo test --test demo_flow_integration`
+//! Run: `cargo test --test demo_flow_integration --features ffi`
 
 use std::io::Write;
 use std::sync::Mutex;
@@ -70,7 +71,7 @@ fn t03_create_checkpoint() {
     let (dir, _g) = setup();
     assert!(cpop_engine::ffi::system::ffi_init().success);
     let doc = create_doc(&dir, "essay.txt", "My essay content.");
-    let r = cpop_engine::ffi::evidence::ffi_create_checkpoint(doc, "Initial".into());
+    let r = cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(doc, "Initial".into());
     assert!(r.success, "checkpoint failed: {:?}", r.error_message);
     let s = cpop_engine::ffi::system::ffi_get_status();
     assert_eq!(s.tracked_file_count, 1);
@@ -89,7 +90,10 @@ fn t04_multi_checkpoint() {
 
     for i in 1..=5 {
         modify_doc(&doc, &format!("Version {i} with more text."));
-        let r = cpop_engine::ffi::evidence::ffi_create_checkpoint(doc.clone(), format!("v{i}"));
+        let r = cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(
+            doc.clone(),
+            format!("v{i}"),
+        );
         assert!(r.success, "cp{i} failed: {:?}", r.error_message);
     }
 
@@ -110,7 +114,11 @@ fn t05_export_json() {
     for i in 1..=3 {
         modify_doc(&doc, &format!("Article v{i}."));
         assert!(
-            cpop_engine::ffi::evidence::ffi_create_checkpoint(doc.clone(), format!("v{i}")).success
+            cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(
+                doc.clone(),
+                format!("v{i}")
+            )
+            .success
         );
     }
 
@@ -119,7 +127,7 @@ fn t05_export_json() {
         .join("evidence.json")
         .to_string_lossy()
         .to_string();
-    let r = cpop_engine::ffi::evidence::ffi_export_evidence(doc, "core".into(), out.clone());
+    let r = cpop_engine::ffi::evidence_export::ffi_export_evidence(doc, "core".into(), out.clone());
     assert!(r.success, "export failed: {:?}", r.error_message);
 
     let data = std::fs::read(&out).expect("read evidence");
@@ -145,7 +153,11 @@ fn t06_export_cpop() {
     for i in 1..=2 {
         modify_doc(&doc, &format!("Report v{i}."));
         assert!(
-            cpop_engine::ffi::evidence::ffi_create_checkpoint(doc.clone(), format!("v{i}")).success
+            cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(
+                doc.clone(),
+                format!("v{i}")
+            )
+            .success
         );
     }
 
@@ -154,7 +166,7 @@ fn t06_export_cpop() {
         .join("evidence.cpop")
         .to_string_lossy()
         .to_string();
-    let r = cpop_engine::ffi::evidence::ffi_export_evidence(doc, "core".into(), out.clone());
+    let r = cpop_engine::ffi::evidence_export::ffi_export_evidence(doc, "core".into(), out.clone());
     assert!(r.success, "CPOP export failed: {:?}", r.error_message);
 
     let data = std::fs::read(&out).expect("read cpop");
@@ -172,8 +184,14 @@ fn t07_history() {
 
     let doc1 = create_doc(&dir, "doc1.txt", "Doc 1.");
     let doc2 = create_doc(&dir, "doc2.txt", "Doc 2.");
-    assert!(cpop_engine::ffi::evidence::ffi_create_checkpoint(doc1.clone(), "cp".into()).success);
-    assert!(cpop_engine::ffi::evidence::ffi_create_checkpoint(doc2.clone(), "cp".into()).success);
+    assert!(
+        cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(doc1.clone(), "cp".into())
+            .success
+    );
+    assert!(
+        cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(doc2.clone(), "cp".into())
+            .success
+    );
 
     let files = cpop_engine::ffi::system::ffi_list_tracked_files();
     let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
@@ -207,7 +225,11 @@ fn t08_log_ordering() {
     for i in 1..=3 {
         modify_doc(&doc, &format!("Edit {i}."));
         assert!(
-            cpop_engine::ffi::evidence::ffi_create_checkpoint(doc.clone(), format!("e{i}")).success
+            cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(
+                doc.clone(),
+                format!("e{i}")
+            )
+            .success
         );
     }
 
@@ -229,7 +251,7 @@ fn t09_reinit_preserves_data() {
     let (dir, _g) = setup();
     assert!(cpop_engine::ffi::system::ffi_init().success);
     let doc = create_doc(&dir, "persist.txt", "Data.");
-    assert!(cpop_engine::ffi::evidence::ffi_create_checkpoint(doc, "cp".into()).success);
+    assert!(cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(doc, "cp".into()).success);
 
     // Re-init
     let r = cpop_engine::ffi::system::ffi_init();
@@ -247,7 +269,7 @@ fn t10_hmac_recovery() {
     let (dir, _g) = setup();
     assert!(cpop_engine::ffi::system::ffi_init().success);
     let doc = create_doc(&dir, "recover.txt", "Data.");
-    assert!(cpop_engine::ffi::evidence::ffi_create_checkpoint(doc, "cp".into()).success);
+    assert!(cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(doc, "cp".into()).success);
 
     // Simulate keychain state change
     cpop_engine::identity::SecureStorage::reset_hmac_cache();
@@ -265,8 +287,10 @@ fn t10_hmac_recovery() {
 fn t11_bad_path_rejected() {
     let (_dir, _g) = setup();
     assert!(cpop_engine::ffi::system::ffi_init().success);
-    let r =
-        cpop_engine::ffi::evidence::ffi_create_checkpoint("/no/such/file.txt".into(), "x".into());
+    let r = cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(
+        "/no/such/file.txt".into(),
+        "x".into(),
+    );
     assert!(!r.success, "should reject nonexistent file");
 }
 
@@ -279,7 +303,7 @@ fn t12_empty_file() {
     let (dir, _g) = setup();
     assert!(cpop_engine::ffi::system::ffi_init().success);
     let doc = create_doc(&dir, "empty.txt", "");
-    let r = cpop_engine::ffi::evidence::ffi_create_checkpoint(doc, "empty".into());
+    let r = cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(doc, "empty".into());
     assert!(r.success, "empty file failed: {:?}", r.error_message);
 }
 
@@ -305,7 +329,7 @@ fn t14_dashboard() {
     let (dir, _g) = setup();
     assert!(cpop_engine::ffi::system::ffi_init().success);
     let doc = create_doc(&dir, "dash.txt", "Content.");
-    assert!(cpop_engine::ffi::evidence::ffi_create_checkpoint(doc, "cp".into()).success);
+    assert!(cpop_engine::ffi::evidence_checkpoint::ffi_create_checkpoint(doc, "cp".into()).success);
     let m = cpop_engine::ffi::system::ffi_get_dashboard_metrics();
     assert!(m.total_checkpoints >= 1);
     assert!(m.total_files >= 1);

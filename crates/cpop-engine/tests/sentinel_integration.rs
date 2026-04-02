@@ -44,6 +44,8 @@ fn sample_at(base_ns: i64, index: i64, interval_ms: i64) -> SimpleJitterSample {
             (interval_ms * 1_000_000) as u64
         },
         zone: (index % 5) as u8,
+        dwell_time_ns: None,
+        flight_time_ns: None,
     }
 }
 
@@ -267,6 +269,8 @@ mod sentinel_accumulator_tests {
                     2 => 3,
                     _ => 0,
                 },
+                dwell_time_ns: None,
+                flight_time_ns: None,
             });
         }
 
@@ -308,27 +312,31 @@ mod sentinel_accumulator_tests {
 // 5. FFI Status Pipeline Tests
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "ffi")]
 #[test]
 fn ffi_witnessing_status_reports_zero_when_no_sentinel() {
-    let status = cpop_engine::ffi::sentinel::ffi_sentinel_witnessing_status();
+    let status = cpop_engine::ffi::sentinel_witnessing::ffi_sentinel_witnessing_status();
     assert!(!status.is_tracking);
     assert!(status.document_path.is_none());
     assert_eq!(status.keystroke_count, 0);
     assert!(!status.keystroke_capture_active);
 }
 
+#[cfg(feature = "ffi")]
 #[test]
 fn ffi_sentinel_status_defaults() {
-    let status = cpop_engine::ffi::sentinel::ffi_sentinel_status();
+    let status = cpop_engine::ffi::sentinel_witnessing::ffi_sentinel_status();
     assert!(!status.running);
     assert_eq!(status.tracked_file_count, 0);
     assert_eq!(status.keystroke_count, 0);
 }
 
+#[cfg(feature = "ffi")]
 #[test]
 fn ffi_start_witnessing_without_sentinel_fails() {
-    let result =
-        cpop_engine::ffi::sentinel::ffi_sentinel_start_witnessing("/tmp/test.txt".to_string());
+    let result = cpop_engine::ffi::sentinel_witnessing::ffi_sentinel_start_witnessing(
+        "/tmp/test.txt".to_string(),
+    );
     assert!(!result.success);
     assert!(result
         .error_message
@@ -337,10 +345,12 @@ fn ffi_start_witnessing_without_sentinel_fails() {
         .contains("not initialized"));
 }
 
+#[cfg(feature = "ffi")]
 #[test]
 fn ffi_stop_witnessing_without_sentinel_fails() {
-    let result =
-        cpop_engine::ffi::sentinel::ffi_sentinel_stop_witnessing("/tmp/test.txt".to_string());
+    let result = cpop_engine::ffi::sentinel_witnessing::ffi_sentinel_stop_witnessing(
+        "/tmp/test.txt".to_string(),
+    );
     assert!(!result.success);
     assert!(result
         .error_message
@@ -349,6 +359,7 @@ fn ffi_stop_witnessing_without_sentinel_fails() {
         .contains("not initialized"));
 }
 
+#[cfg(feature = "ffi")]
 #[test]
 fn ffi_sentinel_is_not_running_by_default() {
     assert!(!cpop_engine::ffi::sentinel::ffi_sentinel_is_running());
@@ -555,9 +566,10 @@ async fn test_focus_polling_detects_app_change() {
         fallback: vscode_info.clone(),
     });
 
-    let mut config = SentinelConfig::default();
-    config.poll_interval_ms = 10; // fast polling for test
-    let config = Arc::new(config);
+    let config = Arc::new(SentinelConfig {
+        poll_interval_ms: 10, // fast polling for test
+        ..SentinelConfig::default()
+    });
 
     let tracker = PollingSentinelFocusTracker::new(provider, config);
     let mut rx = tracker.focus_events().expect("focus_events receiver");

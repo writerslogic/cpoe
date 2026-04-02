@@ -168,7 +168,7 @@ fn standards_conformance_e2e() {
     assert_eq!(corim.vdf_duration_bounds, (0.5, 3.0));
     assert_eq!(corim.min_checkpoints_standard, 3);
     // Verify CBOR roundtrip.
-    let corim_cbor = corim.to_cbor();
+    let corim_cbor = corim.to_cbor().expect("CoRIM to_cbor");
     let corim_decoded =
         cpop_engine::rats::CpopReferenceValues::from_cbor(&corim_cbor).expect("CoRIM roundtrip");
     assert_eq!(corim_decoded, corim);

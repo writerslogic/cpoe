@@ -339,7 +339,6 @@ pub fn ffi_sentinel_restart_keystroke_capture() -> FfiResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ffi::sentinel_inject::*;
     use crate::ffi::sentinel_witnessing::*;
 
     #[test]

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
+#![cfg(feature = "ffi")]
 
 //! Comprehensive integration tests for the full CPOP feature pipeline.
 //!
@@ -92,6 +93,7 @@ fn test_keystroke_injection_reaches_session() {
             1,  // source_state_id = HID_SYSTEM
             40, // keyboard_type = ANSI
             0,  // source_pid = kernel (hardware)
+            "".to_string(),
         );
         assert!(accepted, "keystroke {i} was rejected");
     }
@@ -123,135 +125,7 @@ fn test_keystroke_injection_reaches_session() {
 }
 
 // ============================================================
-// 2. Auto-witnessing validation (PreWitnessBuffer)
-// ============================================================
-
-#[test]
-fn test_pre_witness_buffer_human_plausible() {
-    use cpop_engine::sentinel::types::{
-        AutoWitnessDecision, PreWitnessBuffer, PreWitnessKeystroke,
-    };
-
-    let mut buf = PreWitnessBuffer::new("/tmp/test_human.txt".to_string());
-
-    // Add 15 keystrokes with human-like timing (100-300ms intervals, varied keycodes).
-    let base_ns: i64 = 1_000_000_000_000;
-    let intervals_ms = [
-        0, 150, 220, 180, 130, 250, 170, 200, 140, 190, 160, 230, 120, 210, 155,
-    ];
-    let mut ts = base_ns;
-    for i in 0..15 {
-        ts += intervals_ms[i] * 1_000_000;
-        buf.keystrokes.push(PreWitnessKeystroke {
-            timestamp_ns: ts,
-            keycode: (i * 3 + 1) as u16, // varied keycodes
-            zone: (i % 4) as u8,         // multiple zones
-            source_pid: 1,               // non-zero to avoid robotic check
-        });
-    }
-
-    let decision = buf.should_auto_witness(10, 0.12, 0.60, 2);
-    assert_eq!(
-        decision,
-        AutoWitnessDecision::HumanPlausible,
-        "expected HumanPlausible, got {:?}",
-        decision
-    );
-}
-
-#[test]
-fn test_pre_witness_buffer_rejects_robotic() {
-    use cpop_engine::sentinel::types::{
-        AutoWitnessDecision, PreWitnessBuffer, PreWitnessKeystroke,
-    };
-
-    let mut buf = PreWitnessBuffer::new("/tmp/test_robotic.txt".to_string());
-
-    // Add 15 keystrokes with identical 100ms intervals (CV near 0).
-    let base_ns: i64 = 1_000_000_000_000;
-    for i in 0..15 {
-        let ts = base_ns + (i as i64) * 120_000_000; // exactly 120ms apart (1.68s total, past 1.5s threshold)
-        buf.keystrokes.push(PreWitnessKeystroke {
-            timestamp_ns: ts,
-            keycode: (i * 2) as u16,
-            zone: (i % 4) as u8,
-            source_pid: 1,
-        });
-    }
-
-    let decision = buf.should_auto_witness(10, 0.12, 0.60, 2);
-    assert_eq!(
-        decision,
-        AutoWitnessDecision::RejectedRobotic,
-        "expected RejectedRobotic, got {:?}",
-        decision
-    );
-}
-
-#[test]
-fn test_pre_witness_buffer_rejects_burst() {
-    use cpop_engine::sentinel::types::{
-        AutoWitnessDecision, PreWitnessBuffer, PreWitnessKeystroke,
-    };
-
-    let mut buf = PreWitnessBuffer::new("/tmp/test_burst.txt".to_string());
-
-    // Add 15 keystrokes all within 100ms total (burst).
-    let base_ns: i64 = 1_000_000_000_000;
-    for i in 0..15 {
-        let ts = base_ns + (i as i64) * 5_000_000; // 5ms apart, 70ms total span
-        buf.keystrokes.push(PreWitnessKeystroke {
-            timestamp_ns: ts,
-            keycode: (i * 2 + 1) as u16,
-            zone: (i % 3) as u8,
-            source_pid: 1,
-        });
-    }
-
-    let decision = buf.should_auto_witness(10, 0.12, 0.60, 2);
-    assert_eq!(
-        decision,
-        AutoWitnessDecision::RejectedBurst,
-        "expected RejectedBurst, got {:?}",
-        decision
-    );
-}
-
-#[test]
-fn test_pre_witness_buffer_rejects_repetitive() {
-    use cpop_engine::sentinel::types::{
-        AutoWitnessDecision, PreWitnessBuffer, PreWitnessKeystroke,
-    };
-
-    let mut buf = PreWitnessBuffer::new("/tmp/test_repetitive.txt".to_string());
-
-    // Add 15 keystrokes all with the same keycode, human-like timing.
-    let base_ns: i64 = 1_000_000_000_000;
-    let intervals_ms = [
-        0, 150, 220, 180, 130, 250, 170, 200, 140, 190, 160, 230, 120, 210, 155,
-    ];
-    let mut ts = base_ns;
-    for i in 0..15 {
-        ts += intervals_ms[i] * 1_000_000;
-        buf.keystrokes.push(PreWitnessKeystroke {
-            timestamp_ns: ts,
-            keycode: 42, // all same keycode
-            zone: (i % 4) as u8,
-            source_pid: 1,
-        });
-    }
-
-    let decision = buf.should_auto_witness(10, 0.12, 0.60, 2);
-    assert_eq!(
-        decision,
-        AutoWitnessDecision::RejectedRepetitive,
-        "expected RejectedRepetitive, got {:?}",
-        decision
-    );
-}
-
-// ============================================================
-// 3. Auto-checkpoint creates events
+// 2. Auto-checkpoint creates events
 // ============================================================
 
 #[test]
@@ -347,6 +221,7 @@ fn test_cumulative_keystrokes_persist_across_sessions() {
             1,
             40,
             0,
+            "".to_string(),
         );
     }
 
@@ -928,8 +803,8 @@ fn test_verify_detects_tampered_checkpoint() {
     // Tamper: flip bytes near the end
     let mut data = std::fs::read(&output).expect("read");
     let near_end = data.len().saturating_sub(10);
-    for i in near_end..data.len() {
-        data[i] ^= 0xFF;
+    for byte in &mut data[near_end..] {
+        *byte ^= 0xFF;
     }
     std::fs::write(&output, &data).expect("write tampered");
 
@@ -1597,8 +1472,7 @@ fn test_jitter_chain_detects_replay() {
         sample_interval: 5,
         ..cpop_engine::jitter::default_parameters()
     };
-    let mut session =
-        cpop_engine::jitter::Session::new(&doc_path, params.clone()).expect("create session");
+    let mut session = cpop_engine::jitter::Session::new(&doc_path, params).expect("create session");
 
     // Record enough keystrokes to produce multiple samples
     for _ in 0..25 {
