@@ -231,6 +231,7 @@ mod tests {
             timestamp_ns: 1_000_000,
             duration_since_last_ns: 50_000,
             zone: 2,
+            ..Default::default()
         };
         let msg = IpcMessage::Pulse(sample);
         assert_eq!(required_role(&msg), IpcRole::User);

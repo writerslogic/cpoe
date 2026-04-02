@@ -122,6 +122,7 @@ fn test_message_serialization_roundtrip() {
             timestamp_ns: 1000,
             duration_since_last_ns: 10,
             zone: 1,
+            ..Default::default()
         }),
         IpcMessage::CheckpointCreated {
             id: 1,
@@ -227,6 +228,7 @@ fn test_encode_all_message_variants() {
             timestamp_ns: 0,
             duration_since_last_ns: 0,
             zone: 0,
+            ..Default::default()
         }),
         IpcMessage::CheckpointCreated {
             id: 0,
@@ -391,6 +393,7 @@ fn test_pulse_message_data_integrity() {
         timestamp_ns: 1234567890123456789,
         duration_since_last_ns: 100000,
         zone: 42,
+        ..Default::default()
     };
     let msg = IpcMessage::Pulse(sample.clone());
     let encoded = encode_message(&msg).expect("encode");

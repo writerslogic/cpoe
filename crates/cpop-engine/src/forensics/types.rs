@@ -133,6 +133,17 @@ pub struct CadenceMetrics {
     /// Count of 500ms windows with near-zero IKI variance (sigma < 5ms).
     /// Any non-zero count is suspicious; >3 strongly indicates transcription.
     pub zero_variance_windows: usize,
+    /// Mean key hold duration (keyDown to keyUp) in nanoseconds.
+    /// Human typing: 80-150ms typical. Synthetic: very consistent or very short.
+    pub mean_dwell_ns: f64,
+    /// CV of dwell times. Human: >0.2 (variable hold durations).
+    /// Robotic: <0.1 (perfectly consistent hold times).
+    pub dwell_cv: f64,
+    /// Mean flight time (keyUp to next keyDown) in nanoseconds.
+    /// Represents the gap between releasing one key and pressing the next.
+    pub mean_flight_ns: f64,
+    /// CV of flight times. Human: >0.3 (variable transition times).
+    pub flight_cv: f64,
 }
 
 /// Focus pattern metrics for cognitive/transcriptive analysis.

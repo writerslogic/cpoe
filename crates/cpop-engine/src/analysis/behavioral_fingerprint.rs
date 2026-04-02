@@ -347,6 +347,7 @@ mod tests {
             timestamp_ns: current_ns as i64,
             duration_since_last_ns: 0,
             zone: 1,
+            ..Default::default()
         });
 
         for &interval in intervals_ms {
@@ -356,6 +357,7 @@ mod tests {
                 timestamp_ns: current_ns as i64,
                 duration_since_last_ns: duration_ns,
                 zone: 1,
+                ..Default::default()
             });
         }
         samples

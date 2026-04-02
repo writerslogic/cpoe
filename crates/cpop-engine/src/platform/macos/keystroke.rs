@@ -101,7 +101,7 @@ impl EventTapRunner {
                     K_CG_HID_EVENT_TAP,
                     K_CG_HEAD_INSERT_EVENT_TAP,
                     K_CG_EVENT_TAP_OPTION_LISTEN_ONLY,
-                    cg_event_mask_bit(K_CG_EVENT_KEY_DOWN),
+                    cg_event_mask_bit(K_CG_EVENT_KEY_DOWN) | cg_event_mask_bit(K_CG_EVENT_KEY_UP),
                     event_tap_trampoline,
                     &mut tap_cb as *mut TapCallback as *mut std::ffi::c_void,
                 );
@@ -205,7 +205,7 @@ where
             return;
         }
 
-        if event_type == K_CG_EVENT_KEY_DOWN {
+        if event_type == K_CG_EVENT_KEY_DOWN || event_type == K_CG_EVENT_KEY_UP {
             let verification = unsafe { verify_event_source(event) };
 
             match verification {
@@ -219,8 +219,10 @@ where
                 EventVerificationResult::Suspicious => {}
             }
 
-            let count = ks_count.fetch_add(1, Ordering::SeqCst) + 1;
-            debug_write_keystroke("tap_cb", count);
+            if event_type == K_CG_EVENT_KEY_DOWN {
+                let count = ks_count.fetch_add(1, Ordering::SeqCst) + 1;
+                debug_write_keystroke("tap_cb", count);
+            }
             on_keystroke(event, verification);
         }
     })
@@ -488,7 +490,7 @@ impl KeystrokeCapture for MacOSKeystrokeCapture {
                 return;
             }
 
-            if event_type == K_CG_EVENT_KEY_DOWN {
+            if event_type == K_CG_EVENT_KEY_DOWN || event_type == K_CG_EVENT_KEY_UP {
                 let verification = unsafe { verify_event_source(event) };
 
                 let is_hardware = match verification {
@@ -516,13 +518,20 @@ impl KeystrokeCapture for MacOSKeystrokeCapture {
                         timestamp_ns: now,
                         keycode,
                         zone: if zone >= 0 { zone as u8 } else { 0xFF },
+                        event_type: if event_type == K_CG_EVENT_KEY_DOWN {
+                            crate::platform::KeyEventType::Down
+                        } else {
+                            crate::platform::KeyEventType::Up
+                        },
                         char_value: None,
                         is_hardware: true,
                         device_id: None,
                         transport_type: None,
                     };
 
-                    debug_write_keystroke("capture_tx", total_events.load(Ordering::Relaxed));
+                    if event_type == K_CG_EVENT_KEY_DOWN {
+                        debug_write_keystroke("capture_tx", total_events.load(Ordering::Relaxed));
+                    }
                     if tx.send(keystroke).is_err() {
                         running.store(false, Ordering::SeqCst);
                     }

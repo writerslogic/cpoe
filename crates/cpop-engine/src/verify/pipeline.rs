@@ -52,7 +52,9 @@ pub(super) fn run_forensics(
             simple.push(SimpleJitterSample {
                 timestamp_ns: ts_ns,
                 duration_since_last_ns: duration,
-                zone: 0, // Zone not available in high-level Sample
+                zone: 0,
+                dwell_time_ns: None,
+                flight_time_ns: None,
             });
             prev_ns = Some(ts_ns);
         }

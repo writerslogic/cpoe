@@ -183,6 +183,7 @@ fn test_cadence_analysis() {
             timestamp_ns: i as i64 * 100_000_000,
             duration_since_last_ns: 100_000_000,
             zone: 0,
+            ..Default::default()
         })
         .collect();
 
@@ -197,6 +198,7 @@ fn test_cadence_analysis() {
                 timestamp_ns: i as i64 * 150_000_000 + variation,
                 duration_since_last_ns: 150_000_000 + variation as u64,
                 zone: 0,
+                ..Default::default()
             }
         })
         .collect();
@@ -369,6 +371,7 @@ fn make_jitter(count: usize, start_ns: i64, interval_ns: i64) -> Vec<SimpleJitte
             timestamp_ns: start_ns + i as i64 * interval_ns,
             duration_since_last_ns: 150_000_000,
             zone: 0,
+            ..Default::default()
         })
         .collect()
 }
@@ -631,6 +634,7 @@ fn test_cadence_burst_detection() {
             timestamp_ns: t,
             duration_since_last_ns: if i == 0 { 0 } else { 50_000_000 },
             zone: 0,
+            ..Default::default()
         });
         t += 50_000_000; // 50ms
     }
@@ -640,6 +644,7 @@ fn test_cadence_burst_detection() {
             timestamp_ns: t,
             duration_since_last_ns: 50_000_000,
             zone: 0,
+            ..Default::default()
         });
         t += 50_000_000;
     }
@@ -664,6 +669,7 @@ fn test_cadence_single_sample() {
         timestamp_ns: 1_000_000_000,
         duration_since_last_ns: 0,
         zone: 0,
+        ..Default::default()
     }];
     let cadence = analyze_cadence(&samples);
     assert_eq!(cadence.mean_iki_ns, 0.0);
@@ -678,6 +684,7 @@ fn test_is_retyped_content_robotic() {
             timestamp_ns: i as i64 * 100_000_000,
             duration_since_last_ns: 100_000_000,
             zone: 0,
+            ..Default::default()
         })
         .collect();
     assert!(is_retyped_content(&samples));
@@ -693,6 +700,7 @@ fn test_is_retyped_content_human() {
                 timestamp_ns: i as i64 * 150_000_000 + jitter,
                 duration_since_last_ns: 150_000_000,
                 zone: 0,
+                ..Default::default()
             }
         })
         .collect();
@@ -708,6 +716,7 @@ fn test_cadence_percentiles_ordered() {
                 timestamp_ns: i as i64 * 120_000_000 + variation,
                 duration_since_last_ns: 120_000_000,
                 zone: 0,
+                ..Default::default()
             }
         })
         .collect();

@@ -7,15 +7,23 @@ use serde::{Deserialize, Serialize};
 
 use super::timestamp_nanos_u64;
 
-/// Lightweight jitter sample used by legacy platform hooks.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Lightweight jitter sample used by platform hooks.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SimpleJitterSample {
-    /// Absolute timestamp in nanoseconds since epoch.
+    /// Absolute timestamp in nanoseconds since epoch (keyDown time).
     pub timestamp_ns: i64,
-    /// Nanoseconds elapsed since the previous sample.
+    /// Nanoseconds elapsed since the previous keyDown.
     pub duration_since_last_ns: u64,
     /// QWERTY keyboard zone index for this keystroke.
     pub zone: u8,
+    /// How long the key was held down (keyDown to keyUp), in nanoseconds.
+    /// None if keyUp was not captured for this key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dwell_time_ns: Option<u64>,
+    /// Time from the previous key's release to this key's press, in nanoseconds.
+    /// None if the previous keyUp was not captured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flight_time_ns: Option<u64>,
 }
 
 /// Legacy jitter session that collects simple timestamped samples.
@@ -58,6 +66,8 @@ impl SimpleJitterSession {
             timestamp_ns,
             duration_since_last_ns: duration,
             zone,
+            dwell_time_ns: None,
+            flight_time_ns: None,
         });
     }
 }

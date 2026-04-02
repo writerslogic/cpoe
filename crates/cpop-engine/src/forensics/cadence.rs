@@ -104,6 +104,36 @@ pub fn analyze_cadence(samples: &[SimpleJitterSample]) -> CadenceMetrics {
     metrics.burst_speed_cv = compute_burst_speed_cv(&bursts, &ikis);
     metrics.zero_variance_windows = count_zero_variance_windows(&ikis);
 
+    // Dwell time (key hold duration) analysis
+    let dwell_times: Vec<f64> = samples
+        .iter()
+        .filter_map(|s| s.dwell_time_ns.map(|d| d as f64))
+        .collect();
+    if dwell_times.len() >= 5 {
+        let mean = dwell_times.iter().sum::<f64>() / dwell_times.len() as f64;
+        metrics.mean_dwell_ns = mean;
+        if mean > 0.0 {
+            let var = dwell_times.iter().map(|d| (d - mean).powi(2)).sum::<f64>()
+                / dwell_times.len() as f64;
+            metrics.dwell_cv = var.sqrt() / mean;
+        }
+    }
+
+    // Flight time (release-to-press gap) analysis
+    let flight_times: Vec<f64> = samples
+        .iter()
+        .filter_map(|s| s.flight_time_ns.map(|f| f as f64))
+        .collect();
+    if flight_times.len() >= 5 {
+        let mean = flight_times.iter().sum::<f64>() / flight_times.len() as f64;
+        metrics.mean_flight_ns = mean;
+        if mean > 0.0 {
+            let var = flight_times.iter().map(|f| (f - mean).powi(2)).sum::<f64>()
+                / flight_times.len() as f64;
+            metrics.flight_cv = var.sqrt() / mean;
+        }
+    }
+
     metrics
 }
 

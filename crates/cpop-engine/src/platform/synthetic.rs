@@ -443,12 +443,14 @@ impl Default for TypingRhythmAnalyzer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::platform::KeyEventType;
 
     fn make_event(timestamp_ns: i64, keycode: u16, is_hardware: bool) -> KeystrokeEvent {
         KeystrokeEvent {
             timestamp_ns,
             keycode,
             zone: 0,
+            event_type: KeyEventType::Down,
             char_value: None,
             is_hardware,
             device_id: None,

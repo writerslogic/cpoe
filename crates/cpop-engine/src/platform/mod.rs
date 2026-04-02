@@ -25,7 +25,7 @@ pub use broadcaster::{EventBroadcaster, SubscriptionId, SyncEventBroadcaster};
 pub use mouse_stego::{compute_mouse_jitter, MouseStegoEngine};
 
 pub use device::{HidDeviceInfo, TransportType};
-pub use events::{KeystrokeEvent, MouseEvent};
+pub use events::{KeyEventType, KeystrokeEvent, MouseEvent};
 pub use mouse::{MouseIdleStats, MouseStegoMode, MouseStegoParams};
 pub use stats::{DualLayerValidation, EventVerificationResult, RejectionReasons, SyntheticStats};
 pub use status::{FocusInfo, PermissionStatus};

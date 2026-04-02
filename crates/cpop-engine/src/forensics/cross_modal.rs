@@ -414,6 +414,7 @@ mod tests {
                 timestamp_ns: start_ns + i as i64 * interval_ns,
                 duration_since_last_ns: 150_000_000, // 150ms
                 zone: 0,
+                ..Default::default()
             })
             .collect()
     }

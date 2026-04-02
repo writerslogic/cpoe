@@ -17,6 +17,7 @@ fn biological_cadence_single_sample() {
         timestamp_ns: 1000,
         duration_since_last_ns: 100_000,
         zone: 1,
+        ..Default::default()
     }];
     let score = BiologicalCadence::analyze(&samples);
     assert_eq!(score, 0.0, "Single sample should yield 0.0 (need >= 2)");
@@ -30,6 +31,7 @@ fn biological_cadence_steady_typing() {
             timestamp_ns: i * 100_000,
             duration_since_last_ns: 100_000,
             zone: 1,
+            ..Default::default()
         })
         .collect();
     let score = BiologicalCadence::analyze(&samples);
@@ -50,6 +52,7 @@ fn biological_cadence_erratic_typing() {
             timestamp_ns: i as i64 * 1_000_000,
             duration_since_last_ns: dur,
             zone: 2,
+            ..Default::default()
         })
         .collect();
     let score = BiologicalCadence::analyze(&samples);
@@ -67,11 +70,13 @@ fn biological_cadence_zero_durations_ignored() {
             timestamp_ns: 0,
             duration_since_last_ns: 0,
             zone: 0,
+            ..Default::default()
         },
         SimpleJitterSample {
             timestamp_ns: 100,
             duration_since_last_ns: 0,
             zone: 0,
+            ..Default::default()
         },
     ];
     let score = BiologicalCadence::analyze(&samples);
@@ -134,6 +139,7 @@ fn physical_context_capture_populates_fields() {
             timestamp_ns: i * 50_000,
             duration_since_last_ns: 50_000,
             zone: 1,
+            ..Default::default()
         })
         .collect();
     let ctx = PhysicalContext::capture(&samples);
@@ -159,6 +165,7 @@ fn physical_context_different_samples_yield_different_hash() {
             timestamp_ns: i * 50_000,
             duration_since_last_ns: 50_000,
             zone: 1,
+            ..Default::default()
         })
         .collect();
     let samples_b: Vec<SimpleJitterSample> = (0..5)
@@ -166,6 +173,7 @@ fn physical_context_different_samples_yield_different_hash() {
             timestamp_ns: i * 50_000,
             duration_since_last_ns: 999_999,
             zone: 3,
+            ..Default::default()
         })
         .collect();
 

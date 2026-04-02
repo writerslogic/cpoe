@@ -199,6 +199,7 @@ mod tests {
                     interval as u64 * 1_000_000
                 },
                 zone: (i % 8) as u8,
+                ..Default::default()
             });
             ts += interval * 1_000_000;
         }
@@ -249,6 +250,7 @@ mod tests {
                 timestamp_ns: i * 200_000_000,
                 duration_since_last_ns: 200_000_000,
                 zone: (i % 8) as u8,
+                ..Default::default()
             });
         }
 

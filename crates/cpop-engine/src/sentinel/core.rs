@@ -544,8 +544,12 @@ impl Sentinel {
             let mut idle_check_interval = interval(Duration::from_secs(60));
             let mut checkpoint_interval = interval(Duration::from_secs(checkpoint_interval_secs));
             let mut last_keystroke_time = std::time::Instant::now();
-            let mut last_keystroke_ts_ns: i64 = 0;
+            let mut last_keydown_ts_ns: i64 = 0;
             let mut last_mouse_ts_ns: i64 = 0;
+            // Track pending keyDown timestamps per keycode for dwell time computation
+            let mut pending_downs: HashMap<u16, i64> = HashMap::new();
+            // Last keyUp timestamp for flight time computation
+            let mut last_keyup_ts_ns: i64 = 0;
 
             super::trace!("[EVENT_LOOP] started");
 
@@ -556,22 +560,52 @@ impl Sentinel {
                     }
 
                     Some(event) = keystroke_rx.recv() => {
-                        // Dedup guard: skip duplicate events with identical timestamps
-                        if event.timestamp_ns == last_keystroke_ts_ns {
+                        // Handle keyUp: compute dwell time and update last_keyup_ts
+                        if event.event_type == crate::platform::KeyEventType::Up {
+                            if let Some(down_ts) = pending_downs.remove(&event.keycode) {
+                                let _dwell = event.timestamp_ns.saturating_sub(down_ts).max(0) as u64;
+                                // Dwell time is stored when the corresponding keyDown
+                                // sample was created; keyUp events are not stored as
+                                // separate jitter samples.
+                            }
+                            last_keyup_ts_ns = event.timestamp_ns;
                             continue;
                         }
 
-                        // Compute inter-keystroke duration
-                        let duration_since_last_ns: u64 = if last_keystroke_ts_ns > 0 {
-                            event.timestamp_ns.saturating_sub(last_keystroke_ts_ns).max(0) as u64
+                        // keyDown processing
+                        if event.timestamp_ns == last_keydown_ts_ns {
+                            continue; // dedup
+                        }
+
+                        // Track this keyDown for dwell time (computed when keyUp arrives)
+                        pending_downs.insert(event.keycode, event.timestamp_ns);
+                        // Evict stale entries (keys held > 10s are likely stuck)
+                        pending_downs.retain(|_, ts| {
+                            event.timestamp_ns.saturating_sub(*ts) < 10_000_000_000
+                        });
+
+                        // Inter-keyDown duration
+                        let duration_since_last_ns: u64 = if last_keydown_ts_ns > 0 {
+                            event.timestamp_ns.saturating_sub(last_keydown_ts_ns).max(0) as u64
                         } else {
                             0
                         };
-                        last_keystroke_ts_ns = event.timestamp_ns;
+
+                        // Flight time: gap between last keyUp and this keyDown
+                        let flight_time_ns: Option<u64> = if last_keyup_ts_ns > 0 {
+                            let ft = event.timestamp_ns.saturating_sub(last_keyup_ts_ns).max(0) as u64;
+                            Some(ft)
+                        } else {
+                            None
+                        };
+
+                        last_keydown_ts_ns = event.timestamp_ns;
                         let sample = crate::jitter::SimpleJitterSample {
                             timestamp_ns: event.timestamp_ns,
                             duration_since_last_ns,
                             zone: event.zone,
+                            dwell_time_ns: None, // filled when keyUp arrives (next iteration)
+                            flight_time_ns,
                         };
                         activity_accumulator.write_recover().add_sample(&sample);
 

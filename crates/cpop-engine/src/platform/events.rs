@@ -4,12 +4,20 @@ use crate::platform::device::TransportType;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+/// Whether a keystroke event is a press or release.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum KeyEventType {
+    Down,
+    Up,
+}
+
 /// Captured keystroke with timing, source device, and hardware verification.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeystrokeEvent {
     pub timestamp_ns: i64,
     pub keycode: u16,
     pub zone: u8,
+    pub event_type: KeyEventType,
     pub char_value: Option<char>,
     pub is_hardware: bool,
     pub device_id: Option<Arc<str>>,
@@ -24,6 +32,7 @@ impl KeystrokeEvent {
             timestamp_ns,
             keycode,
             zone,
+            event_type: KeyEventType::Down,
             char_value: None,
             is_hardware: true,
             device_id: None,
@@ -37,6 +46,7 @@ impl KeystrokeEvent {
             timestamp_ns,
             keycode,
             zone,
+            event_type: KeyEventType::Down,
             char_value: None,
             is_hardware,
             device_id: None,
@@ -57,6 +67,7 @@ impl KeystrokeEvent {
             timestamp_ns,
             keycode,
             zone,
+            event_type: KeyEventType::Down,
             char_value: None,
             is_hardware,
             device_id,
