@@ -212,8 +212,8 @@ pub fn ffi_export_evidence(path: String, tier: String, output: String) -> FfiRes
                 hat_proof: None,
                 beacon_anchor: None,
                 verifier_nonce: None,
-                lamport_signature: None,
-                lamport_pubkey_fingerprint: None,
+                lamport_signature: ev.lamport_signature.clone(),
+                lamport_pubkey_fingerprint: ev.lamport_pubkey_fingerprint.clone(),
             })
         })
         .collect::<Result<Vec<_>, String>>()

@@ -39,7 +39,9 @@ impl SecureStore {
                 forensic_score  REAL DEFAULT 1.0,
                 is_paste        INTEGER DEFAULT 0,
                 hardware_counter INTEGER,
-                input_method    TEXT
+                input_method    TEXT,
+                lamport_signature BLOB,
+                lamport_pubkey_fingerprint BLOB
             );
 
             CREATE TABLE IF NOT EXISTS physical_baselines (
@@ -114,6 +116,21 @@ impl SecureStore {
         if !has_input_method {
             self.conn
                 .execute_batch("ALTER TABLE secure_events ADD COLUMN input_method TEXT;")?;
+        }
+
+        // Migration: add Lamport signature columns to pre-existing schemas
+        let has_lamport: bool = {
+            let mut stmt = self.conn.prepare("PRAGMA table_info(secure_events)")?;
+            let found = stmt
+                .query_map([], |row| row.get::<_, String>(1))?
+                .any(|name| matches!(name.as_deref(), Ok("lamport_signature")));
+            found
+        };
+        if !has_lamport {
+            self.conn.execute_batch(
+                "ALTER TABLE secure_events ADD COLUMN lamport_signature BLOB;
+                 ALTER TABLE secure_events ADD COLUMN lamport_pubkey_fingerprint BLOB;",
+            )?;
         }
 
         Ok(())

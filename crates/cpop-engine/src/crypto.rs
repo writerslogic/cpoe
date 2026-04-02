@@ -185,6 +185,26 @@ pub fn compute_entangled_mac(
     mac.finalize().into_bytes().to_vec()
 }
 
+/// Sign a SecureEvent with a Lamport one-shot signature derived from the
+/// device signing key. The Lamport seed is deterministic:
+///   seed = HKDF(signing_key, "cpop-lamport-event-v1", event_hash)
+/// so each unique event hash produces a unique one-shot key pair.
+pub fn sign_event_lamport(
+    signing_key: &ed25519_dalek::SigningKey,
+    event: &mut crate::store::SecureEvent,
+) {
+    let hk = Hkdf::<Sha256>::new(Some(b"cpop-lamport-event-v1"), &signing_key.to_bytes());
+    let mut seed = Zeroizing::new([0u8; 32]);
+    if hk.expand(&event.event_hash, seed.as_mut()).is_err() {
+        log::warn!("HKDF expand failed for Lamport signing");
+        return;
+    }
+    let (privkey, pubkey) = lamport::LamportPrivateKey::from_seed(&seed);
+    let sig = privkey.sign(&event.event_hash);
+    event.lamport_signature = Some(sig.to_bytes().to_vec());
+    event.lamport_pubkey_fingerprint = Some(pubkey.fingerprint().to_vec());
+}
+
 /// Owner-only permissions: Unix chmod `mode`, Windows icacls current-user-only.
 pub fn restrict_permissions(path: &Path, mode: u32) -> std::io::Result<()> {
     #[cfg(unix)]

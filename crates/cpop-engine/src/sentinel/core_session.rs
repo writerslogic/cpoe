@@ -158,9 +158,11 @@ impl Sentinel {
         }
 
         sessions.insert(path_str.clone(), session);
-        // Lock ordering: sessions (2) before current_focus (3) — safe to hold both,
-        // but we no longer need sessions so drop it first.
         drop(sessions);
+        super::trace!(
+            "[START_WITNESSING] session created, setting current_focus={:?}",
+            path_str
+        );
         *self.current_focus.write_recover() = Some(path_str);
         Ok(())
     }
@@ -216,7 +218,9 @@ impl Sentinel {
             Some("Auto-checkpoint".to_string()),
         );
 
-        match store.add_secure_event(&mut event) {
+        let sk_guard = self.signing_key.read_recover();
+        let sk_ref = sk_guard.as_ref();
+        match store.add_secure_event_with_signer(&mut event, sk_ref) {
             Ok(_) => {
                 log::info!("Auto-checkpoint committed for {path}");
                 // Update last_checkpoint_keystrokes so the timer doesn't re-commit

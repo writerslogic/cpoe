@@ -24,6 +24,10 @@ pub struct SecureEvent {
     pub hardware_counter: Option<u64>,
     /// Input method hint from the platform layer (e.g. "dictation", "ime")
     pub input_method: Option<String>,
+    /// Lamport one-shot signature (8192 bytes) for double-sign detection.
+    pub lamport_signature: Option<Vec<u8>>,
+    /// Lamport public key fingerprint (8 bytes) for compact identification.
+    pub lamport_pubkey_fingerprint: Option<Vec<u8>>,
 }
 
 fn now_ns() -> i64 {
@@ -64,6 +68,8 @@ impl SecureEvent {
             is_paste: false,
             hardware_counter: None,
             input_method: None,
+            lamport_signature: None,
+            lamport_pubkey_fingerprint: None,
         }
     }
 }

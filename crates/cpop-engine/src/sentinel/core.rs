@@ -65,7 +65,9 @@ fn commit_checkpoint_for_path(
         file_size,
         Some(note.to_string()),
     );
-    match store.add_secure_event(&mut event) {
+    let sk_guard = signing_key.read_recover();
+    let sk_ref = sk_guard.as_ref();
+    match store.add_secure_event_with_signer(&mut event, sk_ref) {
         Ok(_) => {
             log::info!("Auto-checkpoint committed for {path} ({note})");
             true

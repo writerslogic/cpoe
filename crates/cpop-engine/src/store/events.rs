@@ -8,6 +8,17 @@ use rusqlite::params;
 impl SecureStore {
     /// Add an event, computing its hash chain link and HMAC, then update integrity.
     pub fn add_secure_event(&mut self, e: &mut SecureEvent) -> anyhow::Result<()> {
+        self.add_secure_event_with_signer(e, None)
+    }
+
+    /// Add an event with optional Lamport signing. When a signing key is provided,
+    /// a Lamport one-shot signature is computed over the event hash and stored
+    /// alongside the event for post-quantum double-sign detection.
+    pub fn add_secure_event_with_signer(
+        &mut self,
+        e: &mut SecureEvent,
+        signing_key: Option<&ed25519_dalek::SigningKey>,
+    ) -> anyhow::Result<()> {
         let previous_hash = self.last_hash;
         e.previous_hash = previous_hash;
 
@@ -20,6 +31,10 @@ impl SecureStore {
             e.size_delta,
             &e.previous_hash,
         );
+
+        if let Some(sk) = signing_key {
+            crypto::sign_event_lamport(sk, e);
+        }
 
         let hmac = crypto::compute_event_hmac(
             &self.hmac_key,
@@ -41,8 +56,9 @@ impl SecureStore {
             "INSERT INTO secure_events (
                 device_id, machine_id, timestamp_ns, file_path, content_hash, file_size, size_delta,
                 previous_hash, event_hash, hmac, context_type, context_note, vdf_input, vdf_output,
-                vdf_iterations, forensic_score, is_paste, hardware_counter, input_method
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                vdf_iterations, forensic_score, is_paste, hardware_counter, input_method,
+                lamport_signature, lamport_pubkey_fingerprint
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params![
                 &e.device_id[..],
                 &e.machine_id,
@@ -63,7 +79,9 @@ impl SecureStore {
                 e.is_paste as i32,
                 e.hardware_counter
                     .map(|c| i64::try_from(c).unwrap_or(i64::MAX)),
-                e.input_method
+                e.input_method,
+                e.lamport_signature.as_deref(),
+                e.lamport_pubkey_fingerprint.as_deref()
             ],
         )?;
 
@@ -108,7 +126,8 @@ impl SecureStore {
         let base_query = "SELECT id, device_id, machine_id, timestamp_ns, file_path, \
                 content_hash, file_size, size_delta, previous_hash, event_hash, \
                 context_type, context_note, vdf_input, vdf_output, vdf_iterations, \
-                forensic_score, is_paste, hardware_counter, input_method \
+                forensic_score, is_paste, hardware_counter, input_method, \
+                lamport_signature, lamport_pubkey_fingerprint \
                 FROM secure_events WHERE file_path = ?1 ORDER BY id ASC";
         let query = match limit {
             Some(_) => format!("{base_query} LIMIT ?2"),
@@ -208,6 +227,8 @@ impl SecureStore {
                 .get::<_, Option<i64>>(17)?
                 .map(|v| u64::try_from(v).unwrap_or(0)),
             input_method: row.get(18)?,
+            lamport_signature: row.get(19)?,
+            lamport_pubkey_fingerprint: row.get(20)?,
         })
     }
 
@@ -297,7 +318,8 @@ impl SecureStore {
         let mut stmt = self.conn.prepare(
             "SELECT id, device_id, machine_id, timestamp_ns, file_path, content_hash, file_size, size_delta,
                     previous_hash, event_hash, context_type, context_note, vdf_input, vdf_output,
-                    vdf_iterations, forensic_score, is_paste, hardware_counter, input_method
+                    vdf_iterations, forensic_score, is_paste, hardware_counter, input_method,
+                    lamport_signature, lamport_pubkey_fingerprint
              FROM secure_events WHERE device_id = ? ORDER BY id ASC",
         )?;
 

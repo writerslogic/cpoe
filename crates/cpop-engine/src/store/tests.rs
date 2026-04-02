@@ -29,6 +29,8 @@ fn create_test_event(file_path: &str, content_hash: [u8; 32]) -> SecureEvent {
         is_paste: false,
         hardware_counter: None,
         input_method: None,
+        lamport_signature: None,
+        lamport_pubkey_fingerprint: None,
     }
 }
 
@@ -218,10 +220,71 @@ fn test_event_with_optional_fields() {
         is_paste: false,
         hardware_counter: None,
         input_method: None,
+        lamport_signature: None,
+        lamport_pubkey_fingerprint: None,
     };
 
     store.add_secure_event(&mut event).expect("insert event");
     assert!(event.id.is_some());
+}
+
+#[test]
+fn test_lamport_signature_roundtrip() {
+    let dir = TempDir::new().expect("create temp dir");
+    let db_path = dir.path().join("test.db");
+
+    let mut store = SecureStore::open(&db_path, test_hmac_key()).expect("open store");
+
+    let signing_key = ed25519_dalek::SigningKey::from_bytes(&[0x42u8; 32]);
+    let mut event = create_test_event("/test/lamport.txt", [0xAA; 32]);
+
+    store
+        .add_secure_event_with_signer(&mut event, Some(&signing_key))
+        .expect("insert signed event");
+
+    assert!(event.lamport_signature.is_some());
+    assert_eq!(event.lamport_signature.as_ref().unwrap().len(), 8192);
+    assert!(event.lamport_pubkey_fingerprint.is_some());
+    assert_eq!(event.lamport_pubkey_fingerprint.as_ref().unwrap().len(), 8);
+
+    let events = store
+        .get_events_for_file("/test/lamport.txt")
+        .expect("get events");
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].lamport_signature, event.lamport_signature);
+    assert_eq!(
+        events[0].lamport_pubkey_fingerprint,
+        event.lamport_pubkey_fingerprint
+    );
+}
+
+#[test]
+fn test_lamport_signature_verifies() {
+    let dir = TempDir::new().expect("create temp dir");
+    let db_path = dir.path().join("test.db");
+
+    let mut store = SecureStore::open(&db_path, test_hmac_key()).expect("open store");
+
+    let signing_key = ed25519_dalek::SigningKey::from_bytes(&[0x99u8; 32]);
+    let mut event = create_test_event("/test/verify.txt", [0xBB; 32]);
+
+    store
+        .add_secure_event_with_signer(&mut event, Some(&signing_key))
+        .expect("insert signed event");
+
+    // Verify the Lamport signature by re-deriving the key
+    let lamport_sig_bytes = event.lamport_signature.as_ref().unwrap();
+    let lamport_sig =
+        crate::crypto::lamport::LamportSignature::from_bytes(lamport_sig_bytes).unwrap();
+
+    // Re-derive the public key from the same seed
+    let hk =
+        hkdf::Hkdf::<sha2::Sha256>::new(Some(b"cpop-lamport-event-v1"), &signing_key.to_bytes());
+    let mut seed = [0u8; 32];
+    hk.expand(&event.event_hash, &mut seed).unwrap();
+    let (_privkey, pubkey) = crate::crypto::lamport::LamportPrivateKey::from_seed(&seed);
+
+    assert!(pubkey.verify(&event.event_hash, &lamport_sig));
 }
 
 #[test]

@@ -305,6 +305,8 @@ fn auto_checkpoint_file(
         is_paste: false,
         hardware_counter: None,
         input_method: None,
+        lamport_signature: None,
+        lamport_pubkey_fingerprint: None,
     };
 
     db.add_secure_event(&mut event)?;
