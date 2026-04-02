@@ -57,22 +57,34 @@ pub fn ffi_sentinel_inject_keystroke(
     }
 
     // Rate limiting: reject if injection rate exceeds MAX_INJECT_RATE_PER_SEC.
-    // Uses a sliding window counter that resets every second.
+    // H-017: Mutex-guarded window prevents races at window boundaries.
     {
-        use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
-        static WINDOW_START_NS: AtomicI64 = AtomicI64::new(0);
-        static WINDOW_COUNT: AtomicU64 = AtomicU64::new(0);
+        use std::sync::Mutex;
+        struct RateWindow {
+            start_ns: i64,
+            count: u64,
+        }
+        static RATE_LIMITER: Mutex<RateWindow> = Mutex::new(RateWindow {
+            start_ns: 0,
+            count: 0,
+        });
 
-        let window_start = WINDOW_START_NS.load(Ordering::Relaxed);
-        let elapsed_ns = timestamp_ns.saturating_sub(window_start);
+        let mut window = match RATE_LIMITER.lock() {
+            Ok(w) => w,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let elapsed_ns = timestamp_ns.saturating_sub(window.start_ns);
         if elapsed_ns > 1_000_000_000 {
             // New 1-second window
-            WINDOW_START_NS.store(timestamp_ns, Ordering::Relaxed);
-            WINDOW_COUNT.store(1, Ordering::Relaxed);
+            window.start_ns = timestamp_ns;
+            window.count = 1;
         } else {
-            let count = WINDOW_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
-            if count > MAX_INJECT_RATE_PER_SEC {
-                log::warn!("FFI keystroke injection rate exceeded ({count}/s); rejecting");
+            window.count += 1;
+            if window.count > MAX_INJECT_RATE_PER_SEC {
+                log::warn!(
+                    "FFI keystroke injection rate exceeded ({}/s); rejecting",
+                    window.count
+                );
                 return false;
             }
         }

@@ -72,6 +72,17 @@ pub fn ffi_init() -> FfiResult {
                 error_message: Some(format!("Failed to finalize signing key: {}", e)),
             };
         }
+        // H-016: Verify permissions on final path after atomic rename;
+        // some filesystems may not preserve permissions across rename.
+        if let Err(e) = crate::crypto::restrict_permissions(&key_path, 0o600) {
+            return FfiResult {
+                success: false,
+                message: None,
+                error_message: Some(format!(
+                    "Failed to set key file permissions after rename: {e}"
+                )),
+            };
+        }
     }
 
     let db_path = data_dir.join("events.db");
