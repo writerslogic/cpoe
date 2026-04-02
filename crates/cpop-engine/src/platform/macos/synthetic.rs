@@ -10,10 +10,7 @@ use std::sync::RwLock;
 
 use crate::RwLockRecover;
 
-#[cfg(test)]
 use super::DualLayerValidation;
-#[cfg(test)]
-use std::sync::atomic::AtomicU64;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SyntheticEventStats {
@@ -128,40 +125,20 @@ pub unsafe fn verify_event_source(event: *mut std::ffi::c_void) -> EventVerifica
     }
 }
 
-// HID keystroke count, accessors, and dual-layer validation are test-only.
-// The IOKit HID callback was never registered with IOHIDManager, so
-// HID_KEYSTROKE_COUNT stayed at 0 and validate_dual_layer falsely flagged
-// sessions as synthetic. Until a proper IOHIDManager lifecycle is implemented,
-// gate all of this behind #[cfg(test)].
-
-#[cfg(test)]
-static HID_KEYSTROKE_COUNT: AtomicU64 = AtomicU64::new(0);
-#[cfg(test)]
-static HID_MONITOR_RUNNING: AtomicBool = AtomicBool::new(false);
-
-#[cfg(test)]
-pub fn get_hid_keystroke_count() -> u64 {
-    HID_KEYSTROKE_COUNT.load(Ordering::SeqCst)
-}
-
-#[cfg(test)]
-pub fn reset_hid_keystroke_count() {
-    HID_KEYSTROKE_COUNT.store(0, Ordering::SeqCst)
-}
-
-#[cfg(test)]
-pub fn is_hid_monitoring_running() -> bool {
-    HID_MONITOR_RUNNING.load(Ordering::SeqCst)
-}
-
 /// Compares CGEventTap count against IOKit HID count to detect injected events.
 ///
-/// Test-only: the IOKit HID callback is not yet registered in production,
-/// so HID count is always 0. Use KeystrokeMonitor's per-event source
-/// verification for real synthetic detection.
-#[cfg(test)]
-pub fn validate_dual_layer(cg_count: u64) -> DualLayerValidation {
-    let hid_count = get_hid_keystroke_count();
+/// When `hid_count` is 0 (HID capture not running), returns `synthetic_detected: false`
+/// since there is no ground truth to compare against.
+pub fn validate_dual_layer(cg_count: u64, hid_count: u64) -> DualLayerValidation {
+    if hid_count == 0 {
+        return DualLayerValidation {
+            high_level_count: cg_count,
+            low_level_count: 0,
+            synthetic_detected: false,
+            discrepancy: 0,
+        };
+    }
+
     let cg_i64 = i64::try_from(cg_count).unwrap_or(i64::MAX);
     let hid_i64 = i64::try_from(hid_count).unwrap_or(i64::MAX);
     let discrepancy = cg_i64.saturating_sub(hid_i64);

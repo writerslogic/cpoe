@@ -49,8 +49,21 @@ extern "C" {
 
     pub fn IOHIDValueGetElement(value: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
     pub fn IOHIDValueGetIntegerValue(value: *mut std::ffi::c_void) -> CFIndex;
+    pub fn IOHIDValueGetTimeStamp(value: *mut std::ffi::c_void) -> u64;
     pub fn IOHIDElementGetUsagePage(element: *mut std::ffi::c_void) -> u32;
     pub fn IOHIDElementGetUsage(element: *mut std::ffi::c_void) -> u32;
+}
+
+#[repr(C)]
+pub struct MachTimebaseInfo {
+    pub numer: u32,
+    pub denom: u32,
+}
+
+#[allow(dead_code)]
+extern "C" {
+    pub fn mach_timebase_info(info: *mut MachTimebaseInfo) -> i32;
+    pub fn mach_absolute_time() -> u64;
 }
 
 pub const K_HID_PAGE_GENERIC_DESKTOP: i32 = 0x01;

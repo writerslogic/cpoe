@@ -197,16 +197,11 @@ pub use macos::{
     check_accessibility_permissions, check_input_monitoring_permissions, enumerate_hid_keyboards,
     get_active_focus as macos_get_active_focus, get_strict_mode, get_synthetic_stats,
     request_accessibility_permissions, request_input_monitoring_permissions, reset_synthetic_stats,
-    set_strict_mode, verify_event_source, DualLayerValidation as MacOSDualLayerValidation,
+    set_strict_mode, validate_dual_layer, verify_event_source,
+    DualLayerValidation as MacOSDualLayerValidation,
     EventVerificationResult as MacOSEventVerificationResult, FocusInfo as MacOSFocusInfo,
-    HidDeviceInfo as MacOSHidDeviceInfo, KeystrokeInfo, KeystrokeMonitor,
+    HidDeviceInfo as MacOSHidDeviceInfo, HidInputCapture, KeystrokeInfo, KeystrokeMonitor,
     PermissionStatus as MacOSPermissionStatus, SyntheticEventStats,
-};
-// HID count accessors and validate_dual_layer are test-only
-#[cfg(all(target_os = "macos", test))]
-pub use macos::{
-    get_hid_keystroke_count, is_hid_monitoring_running, reset_hid_keystroke_count,
-    validate_dual_layer,
 };
 
 #[cfg(target_os = "windows")]

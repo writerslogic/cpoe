@@ -9,6 +9,7 @@
 mod ffi;
 mod focus;
 mod hid;
+mod hid_capture;
 mod keystroke;
 mod mouse_capture;
 mod permissions;
@@ -24,6 +25,7 @@ pub use super::{
 
 pub use focus::{get_active_focus, MacOSFocusMonitor};
 pub use hid::enumerate_hid_keyboards;
+pub use hid_capture::HidInputCapture;
 pub use keystroke::{
     KeystrokeCallback, KeystrokeInfo, KeystrokeMonitor, MacOSKeystrokeCapture, RunLoopHandle,
 };
@@ -35,12 +37,5 @@ pub use permissions::{
 };
 pub use synthetic::{
     get_strict_mode, get_synthetic_stats, reset_synthetic_stats, set_strict_mode,
-    verify_event_source, SyntheticEventStats,
-};
-// HID count accessors and validate_dual_layer are test-only (IOKit HID callback
-// was never registered, so these always returned 0 / false positives).
-#[cfg(test)]
-pub use synthetic::{
-    get_hid_keystroke_count, is_hid_monitoring_running, reset_hid_keystroke_count,
-    validate_dual_layer,
+    validate_dual_layer, verify_event_source, SyntheticEventStats,
 };

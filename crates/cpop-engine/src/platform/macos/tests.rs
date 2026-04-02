@@ -19,11 +19,33 @@ fn test_strict_mode_toggle() {
 }
 
 #[test]
-fn test_dual_layer_validation() {
-    reset_hid_keystroke_count();
-    let validation = validate_dual_layer(0);
+fn test_dual_layer_no_hid() {
+    // When HID count is 0, no synthetic detection possible.
+    let validation = validate_dual_layer(100, 0);
     assert!(!validation.synthetic_detected);
     assert_eq!(validation.discrepancy, 0);
+}
+
+#[test]
+fn test_dual_layer_matching_counts() {
+    let validation = validate_dual_layer(100, 100);
+    assert!(!validation.synthetic_detected);
+    assert_eq!(validation.discrepancy, 0);
+}
+
+#[test]
+fn test_dual_layer_synthetic_detected() {
+    // CG has 150 events but HID only saw 100: >10% excess.
+    let validation = validate_dual_layer(150, 100);
+    assert!(validation.synthetic_detected);
+    assert_eq!(validation.discrepancy, 50);
+}
+
+#[test]
+fn test_dual_layer_small_discrepancy_ok() {
+    // 5 extra events out of 100 is 5%, below threshold.
+    let validation = validate_dual_layer(105, 100);
+    assert!(!validation.synthetic_detected);
 }
 
 #[test]
