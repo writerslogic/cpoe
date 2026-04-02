@@ -32,6 +32,8 @@ use super::serde_helpers::{fixed_bytes_16, fixed_bytes_32_opt, serde_bytes_opt};
 ///     ? 15 => hat-proof,
 ///     ? 16 => beacon-anchor,
 ///     ? 17 => bstr .size 32, ; verifier-nonce
+///     ? 18 => bstr .size 8192, ; lamport-signature
+///     ? 19 => bstr .size 8, ; lamport-pubkey-fingerprint
 /// }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,6 +101,26 @@ pub struct CheckpointWire {
         with = "fixed_bytes_32_opt"
     )]
     pub verifier_nonce: Option<[u8; 32]>,
+
+    /// Lamport one-shot signature (8192 bytes). Proves the checkpoint was signed
+    /// exactly once; signing a different message at the same ordinal exposes the
+    /// private key, enabling provable double-sign detection.
+    #[serde(
+        rename = "18",
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_bytes_opt"
+    )]
+    pub lamport_signature: Option<Vec<u8>>,
+
+    /// Lamport public key fingerprint (8 bytes) for compact identification.
+    #[serde(
+        rename = "19",
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_bytes_opt"
+    )]
+    pub lamport_pubkey_fingerprint: Option<Vec<u8>>,
 }
 
 const MAX_SELF_RECEIPTS: usize = 100;
@@ -199,6 +221,23 @@ impl CheckpointWire {
 
         if let Some(ref ps) = self.physical_state {
             ps.validate()?;
+        }
+
+        if let Some(ref sig) = self.lamport_signature {
+            if sig.len() != 8192 {
+                return Err(format!(
+                    "lamport_signature length {} invalid (must be 8192 bytes)",
+                    sig.len()
+                ));
+            }
+        }
+        if let Some(ref fp) = self.lamport_pubkey_fingerprint {
+            if fp.len() != 8 {
+                return Err(format!(
+                    "lamport_pubkey_fingerprint length {} invalid (must be 8 bytes)",
+                    fp.len()
+                ));
+            }
         }
 
         Ok(())

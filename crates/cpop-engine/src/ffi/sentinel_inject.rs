@@ -41,7 +41,7 @@ pub fn ffi_sentinel_inject_keystroke(
     // KeyUp events are forwarded to the event loop for dwell time computation.
     // They bypass rate limiting, verification, and voice collection.
     if is_key_up {
-        let event = crate::platform::KeystrokeEvent {
+        let _event = crate::platform::KeystrokeEvent {
             timestamp_ns,
             keycode,
             zone,
@@ -170,6 +170,8 @@ pub fn ffi_sentinel_inject_keystroke(
         timestamp_ns,
         duration_since_last_ns,
         zone,
+        dwell_time_ns: None,
+        flight_time_ns: None,
     };
     sentinel
         .activity_accumulator

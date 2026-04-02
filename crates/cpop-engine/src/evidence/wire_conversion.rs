@@ -8,6 +8,7 @@
 use sha2::{Digest, Sha256};
 
 use crate::checkpoint::{Chain, Checkpoint};
+use crate::keyhierarchy::types::CheckpointSignature;
 use cpop_protocol::rfc::wire_types::checkpoint::CheckpointWire;
 use cpop_protocol::rfc::wire_types::components::{
     DocumentRef, EditDelta, JitterBindingWire, MerkleProof, PhysicalState, ProcessProof,
@@ -28,6 +29,15 @@ const JITTER_QUANTIZATION_MS: u64 = 5;
 /// ID hashes so that re-exporting the same chain produces unique IDs and
 /// prevents accidental cross-export collisions.
 pub fn chain_to_wire(chain: &Chain) -> EvidencePacketWire {
+    chain_to_wire_with_signatures(chain, &[])
+}
+
+/// Convert a checkpoint chain to a spec-conformant `EvidencePacketWire`,
+/// including Lamport one-shot signatures from the key hierarchy when available.
+pub fn chain_to_wire_with_signatures(
+    chain: &Chain,
+    checkpoint_sigs: &[CheckpointSignature],
+) -> EvidencePacketWire {
     // Random salt so each export produces unique packet/checkpoint IDs even
     // when re-exporting an identical chain.
     let export_nonce = rand::random::<[u8; 8]>();
@@ -51,7 +61,10 @@ pub fn chain_to_wire(chain: &Chain) -> EvidencePacketWire {
     let checkpoints: Vec<CheckpointWire> = chain
         .checkpoints
         .iter()
-        .map(|cp| checkpoint_to_wire(cp, use_entangled, &export_nonce))
+        .map(|cp| {
+            let lamport = checkpoint_sigs.iter().find(|s| s.ordinal == cp.ordinal);
+            checkpoint_to_wire(cp, use_entangled, &export_nonce, lamport)
+        })
         .collect();
 
     let last_cp = chain.checkpoints.last();
@@ -123,6 +136,7 @@ fn checkpoint_to_wire(
     cp: &Checkpoint,
     use_entangled: bool,
     export_nonce: &[u8; 8],
+    lamport: Option<&CheckpointSignature>,
 ) -> CheckpointWire {
     let process_proof = if let Some(swf) = &cp.argon2_swf {
         // §entangled-mode-requirement: ENHANCED/MAXIMUM → algorithm 21
@@ -332,8 +346,106 @@ fn checkpoint_to_wire(
         hat_proof: None,
         beacon_anchor: None,
         verifier_nonce: None,
+        lamport_signature: lamport.and_then(|s| s.lamport_signature.clone()),
+        lamport_pubkey_fingerprint: lamport.and_then(|s| s.lamport_pubkey_fingerprint.clone()),
     };
     // SHA-256(CBOR(checkpoint \ {8})) per spec
     wire.checkpoint_hash = wire.compute_hash().expect("checkpoint hash computation");
     wire
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::keyhierarchy::types::CheckpointSignature;
+
+    fn test_params() -> crate::vdf::Parameters {
+        crate::vdf::Parameters {
+            iterations_per_second: 1000,
+            min_iterations: 10,
+            max_iterations: 100_000,
+        }
+    }
+
+    fn test_chain_with_checkpoints(path: &std::path::Path) -> Chain {
+        let mut chain = Chain::new(path, test_params())
+            .expect("create chain")
+            .with_signature_policy(crate::checkpoint::SignaturePolicy::Optional);
+        chain.commit(Some("first".to_string())).expect("commit 1");
+        chain.commit(Some("second".to_string())).expect("commit 2");
+        chain.commit(Some("third".to_string())).expect("commit 3");
+        chain
+    }
+
+    #[test]
+    fn test_chain_to_wire_with_lamport_signatures() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("test.txt");
+        std::fs::write(&path, "hello").expect("write");
+        let chain = test_chain_with_checkpoints(&path);
+
+        let lamport_sig = vec![0xAB; 8192];
+        let lamport_fp = vec![0xCD; 8];
+
+        let sigs = vec![
+            CheckpointSignature {
+                ordinal: 0,
+                public_key: vec![0u8; 32],
+                signature: [0u8; 64],
+                checkpoint_hash: [0u8; 32],
+                counter_value: None,
+                counter_delta: None,
+                lamport_signature: Some(lamport_sig.clone()),
+                lamport_pubkey_fingerprint: Some(lamport_fp.clone()),
+            },
+            CheckpointSignature {
+                ordinal: 2,
+                public_key: vec![0u8; 32],
+                signature: [0u8; 64],
+                checkpoint_hash: [0u8; 32],
+                counter_value: None,
+                counter_delta: None,
+                lamport_signature: Some(lamport_sig.clone()),
+                lamport_pubkey_fingerprint: Some(lamport_fp.clone()),
+            },
+        ];
+
+        let packet = chain_to_wire_with_signatures(&chain, &sigs);
+        assert_eq!(packet.checkpoints.len(), 3);
+
+        // Ordinal 0 has a matching signature
+        assert_eq!(
+            packet.checkpoints[0].lamport_signature.as_ref().unwrap(),
+            &lamport_sig
+        );
+        assert_eq!(
+            packet.checkpoints[0]
+                .lamport_pubkey_fingerprint
+                .as_ref()
+                .unwrap(),
+            &lamport_fp
+        );
+
+        // Ordinal 1 has no matching signature
+        assert!(packet.checkpoints[1].lamport_signature.is_none());
+        assert!(packet.checkpoints[1].lamport_pubkey_fingerprint.is_none());
+
+        // Ordinal 2 has a matching signature
+        assert!(packet.checkpoints[2].lamport_signature.is_some());
+    }
+
+    #[test]
+    fn test_chain_to_wire_without_signatures() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("test.txt");
+        std::fs::write(&path, "hello").expect("write");
+        let chain = test_chain_with_checkpoints(&path);
+
+        let packet = chain_to_wire(&chain);
+        assert_eq!(packet.checkpoints.len(), 3);
+        for cp in &packet.checkpoints {
+            assert!(cp.lamport_signature.is_none());
+            assert!(cp.lamport_pubkey_fingerprint.is_none());
+        }
+    }
 }

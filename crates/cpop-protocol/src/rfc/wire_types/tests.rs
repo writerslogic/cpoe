@@ -58,6 +58,8 @@ fn test_checkpoint_wire_cbor_roundtrip() {
         hat_proof: None,
         beacon_anchor: None,
         verifier_nonce: None,
+        lamport_signature: None,
+        lamport_pubkey_fingerprint: None,
     };
 
     let encoded = codec::cbor::encode(&checkpoint).expect("encode checkpoint");
@@ -118,6 +120,8 @@ fn create_test_evidence_packet() -> EvidencePacketWire {
         hat_proof: None,
         beacon_anchor: None,
         verifier_nonce: None,
+        lamport_signature: None,
+        lamport_pubkey_fingerprint: None,
     };
 
     let mut checkpoints = vec![checkpoint.clone()];
@@ -592,6 +596,54 @@ fn test_reject_zero_packet_id() {
 fn test_reject_zero_created_timestamp() {
     let result = encode_mutate_decode(|p| p.created = 0);
     assert!(result.is_err(), "zero created timestamp should be rejected");
+}
+
+#[test]
+fn test_checkpoint_with_lamport_signature_roundtrip() {
+    let mut packet = create_test_evidence_packet();
+
+    // 8192-byte Lamport signature and 8-byte fingerprint
+    let lamport_sig = vec![0xAB; 8192];
+    let lamport_fp = vec![0xCD; 8];
+
+    packet.checkpoints[0].lamport_signature = Some(lamport_sig.clone());
+    packet.checkpoints[0].lamport_pubkey_fingerprint = Some(lamport_fp.clone());
+
+    let encoded = packet.encode_cbor().expect("encode");
+    let decoded = EvidencePacketWire::decode_cbor(&encoded).expect("decode");
+
+    let cp0 = &decoded.checkpoints[0];
+    assert_eq!(cp0.lamport_signature.as_ref().unwrap(), &lamport_sig);
+    assert_eq!(
+        cp0.lamport_pubkey_fingerprint.as_ref().unwrap(),
+        &lamport_fp
+    );
+
+    // Other checkpoints should have None
+    assert!(decoded.checkpoints[1].lamport_signature.is_none());
+    assert!(decoded.checkpoints[1].lamport_pubkey_fingerprint.is_none());
+}
+
+#[test]
+fn test_checkpoint_rejects_invalid_lamport_signature_length() {
+    let result = encode_mutate_decode(|p| {
+        p.checkpoints[0].lamport_signature = Some(vec![0x00; 100]);
+    });
+    assert!(
+        result.is_err(),
+        "wrong-length lamport_signature should be rejected"
+    );
+}
+
+#[test]
+fn test_checkpoint_rejects_invalid_lamport_fingerprint_length() {
+    let result = encode_mutate_decode(|p| {
+        p.checkpoints[0].lamport_pubkey_fingerprint = Some(vec![0x00; 4]);
+    });
+    assert!(
+        result.is_err(),
+        "wrong-length lamport_pubkey_fingerprint should be rejected"
+    );
 }
 
 #[test]

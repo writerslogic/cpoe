@@ -790,6 +790,8 @@ fn build_wire_packet_from_events(
                 hat_proof: None,
                 beacon_anchor: None,
                 verifier_nonce: None,
+                lamport_signature: None,
+                lamport_pubkey_fingerprint: None,
             };
             wire.checkpoint_hash = wire.compute_hash().expect("checkpoint hash computation");
             wire
