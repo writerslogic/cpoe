@@ -377,6 +377,33 @@ impl SecureStorage {
                 return;
             }
 
+            // After create_dir_all, verify data_dir is a real directory
+            // (not a symlink someone raced in during creation)
+            match data_dir.symlink_metadata() {
+                Ok(m) if m.file_type().is_symlink() => {
+                    log::warn!(
+                        "Data directory is a symlink after creation, skipping: {}",
+                        data_dir.display()
+                    );
+                    return;
+                }
+                Ok(m) if !m.is_dir() => {
+                    log::warn!(
+                        "Data path is not a directory after creation, skipping: {}",
+                        data_dir.display()
+                    );
+                    return;
+                }
+                Err(e) => {
+                    log::warn!(
+                        "Cannot verify data directory after creation: {}: {e}",
+                        data_dir.display()
+                    );
+                    return;
+                }
+                _ => {}
+            }
+
             // Verify flag_path is not a symlink before writing (race window
             // is narrow but check anyway as a defense-in-depth measure)
             if flag_path

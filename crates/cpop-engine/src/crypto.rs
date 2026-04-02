@@ -31,6 +31,12 @@ pub fn hash_file(path: &Path) -> std::io::Result<[u8; 32]> {
 /// Eliminates TOCTOU races vs separate `fs::metadata` call.
 pub fn hash_file_with_size(path: &Path) -> std::io::Result<([u8; 32], u64)> {
     let file = File::open(path)?;
+    hash_file_handle(file)
+}
+
+/// Compute SHA-256 hash from an already-opened file handle, returning (hash, bytes_read).
+/// Use this when you need metadata from the same handle to avoid TOCTOU races.
+pub fn hash_file_handle(file: File) -> std::io::Result<([u8; 32], u64)> {
     let mut reader = BufReader::new(file);
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 8192];
@@ -133,7 +139,7 @@ pub fn derive_hmac_key(priv_key_seed: &[u8]) -> Zeroizing<Vec<u8>> {
 /// Derive PRK per draft-condrey-rats-pop §5.3:
 ///   PRK = HKDF-Extract(salt="PoP-key-derivation-v1", IKM=merkle-root || input)
 fn derive_pop_prk(merkle_root: &[u8], swf_input: &[u8]) -> Hkdf<Sha256> {
-    let mut ikm = Vec::with_capacity(merkle_root.len() + swf_input.len());
+    let mut ikm = Zeroizing::new(Vec::with_capacity(merkle_root.len() + swf_input.len()));
     ikm.extend_from_slice(merkle_root);
     ikm.extend_from_slice(swf_input);
     Hkdf::<Sha256>::new(Some(b"PoP-key-derivation-v1"), &ikm)
@@ -193,7 +199,8 @@ pub fn sign_event_lamport(
     signing_key: &ed25519_dalek::SigningKey,
     event: &mut crate::store::SecureEvent,
 ) {
-    let hk = Hkdf::<Sha256>::new(Some(b"cpop-lamport-event-v1"), &signing_key.to_bytes());
+    let key_bytes = Zeroizing::new(signing_key.to_bytes());
+    let hk = Hkdf::<Sha256>::new(Some(b"cpop-lamport-event-v1"), key_bytes.as_ref());
     let mut seed = Zeroizing::new([0u8; 32]);
     if hk.expand(&event.event_hash, seed.as_mut()).is_err() {
         log::warn!("HKDF expand failed for Lamport signing");

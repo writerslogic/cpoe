@@ -208,11 +208,19 @@ pub fn focus_document_sync(
         }
     }
 
-    // Compute file hash BEFORE acquiring write lock to avoid blocking FFI
+    // Compute file hash BEFORE acquiring write lock to avoid blocking FFI.
+    // Open once, check size from the handle to avoid TOCTOU race.
     let pre_hash = {
-        match std::fs::metadata(path) {
-            Ok(meta) if meta.len() <= MAX_HASH_FILE_SIZE => compute_file_hash(path).ok(),
-            _ => None,
+        match std::fs::File::open(path) {
+            Ok(file) => match file.metadata() {
+                Ok(meta) if meta.len() <= MAX_HASH_FILE_SIZE => {
+                    crate::crypto::hash_file_handle(file)
+                        .ok()
+                        .map(|(hash, _)| hex::encode(hash))
+                }
+                _ => None,
+            },
+            Err(_) => None,
         }
     };
     let key = signing_key.read_recover().clone();
