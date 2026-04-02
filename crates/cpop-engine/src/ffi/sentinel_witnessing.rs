@@ -218,29 +218,12 @@ pub fn ffi_sentinel_witnessing_status() -> FfiWitnessingStatus {
     };
 
     let keystroke_count = session.total_keystrokes();
-    #[cfg(debug_assertions)]
-    let global_keystrokes = sentinel.keystroke_count();
-    #[cfg(debug_assertions)]
-    {
-        use std::io::Write;
-        let debug_path = std::env::var("CPOP_DATA_DIR")
-            .map(|d| format!("{}/status_debug.txt", d))
-            .unwrap_or_else(|_| "/tmp/cpop_status_debug.txt".to_string());
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&debug_path)
-        {
-            let _ = writeln!(
-                f,
-                "WITNESSING: doc={} doc_keystrokes={} global_keystrokes={} focus={:?}",
-                session.path,
-                keystroke_count,
-                global_keystrokes,
-                sentinel.current_focus()
-            );
-        }
-    }
+    log::debug!(
+        "witnessing: doc={} doc_keystrokes={} focus={:?}",
+        session.path,
+        keystroke_count,
+        sentinel.current_focus()
+    );
 
     let elapsed_secs = session
         .start_time
@@ -265,13 +248,7 @@ pub fn ffi_sentinel_witnessing_status() -> FfiWitnessingStatus {
         &session.focus_switches,
         session.total_focus_ms,
     );
-    let focus_penalty = if focus.reading_pattern_detected {
-        0.15
-    } else if focus.ai_app_switch_count > 3 {
-        0.10
-    } else {
-        0.0
-    };
+    let focus_penalty = crate::ffi::helpers::compute_focus_penalty(&focus);
 
     let (event_count, forensic_score, store_paste_chars) = match crate::ffi::helpers::open_store() {
         Ok(store) => {

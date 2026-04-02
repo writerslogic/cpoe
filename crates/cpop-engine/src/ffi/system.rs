@@ -9,7 +9,7 @@ use crate::DateTimeNanosExt;
 /// Initialize the engine: create data directory, signing key, and event database.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn ffi_init() -> FfiResult {
-    eprintln!("CPOP_TRACE: ffi_init called");
+    log::trace!("ffi_init called");
     let data_dir = match get_data_dir() {
         Some(d) => d,
         None => {
@@ -286,13 +286,7 @@ pub fn ffi_list_tracked_files() -> Vec<FfiTrackedFile> {
                 &session.focus_switches,
                 session.total_focus_ms,
             );
-            let focus_penalty = if focus.reading_pattern_detected {
-                0.15
-            } else if focus.ai_app_switch_count > 3 {
-                0.10
-            } else {
-                0.0
-            };
+            let focus_penalty = crate::ffi::helpers::compute_focus_penalty(&focus);
             let forensic_score = (cadence_score - focus_penalty).clamp(0.0, 1.0);
 
             result.push(FfiTrackedFile {
