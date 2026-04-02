@@ -18,6 +18,9 @@ const DEVICE_ID_ACCOUNT: &str = "device_id";
 const MACHINE_ID_ACCOUNT: &str = "machine_id";
 const FINGERPRINT_KEY_ACCOUNT: &str = "fingerprint_key";
 
+// Lock ordering: SEED_CACHE, HMAC_CACHE, FINGERPRINT_KEY_CACHE, MNEMONIC_CACHE,
+// and IDENTITY_CACHE are independent write-once caches (OnceLock). No function
+// accesses more than one of these caches.
 static SEED_CACHE: OnceLock<ProtectedBuf> = OnceLock::new();
 static HMAC_CACHE: OnceLock<ProtectedBuf> = OnceLock::new();
 static FINGERPRINT_KEY_CACHE: OnceLock<ProtectedBuf> = OnceLock::new();
