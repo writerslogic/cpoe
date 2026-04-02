@@ -149,7 +149,7 @@ impl SentinelIpcHandler {
         }
         let data =
             std::fs::read(&path).map_err(|e| format!("Failed to read evidence file: {e}"))?;
-        let packet = crate::evidence::Packet::decode(&data)
+        let mut packet = crate::evidence::Packet::decode(&data)
             .map_err(|e| format!("Failed to decode evidence: {e}"))?;
 
         let vdf_params = packet.vdf_params;
@@ -266,7 +266,7 @@ impl SentinelIpcHandler {
         let validated_path = super::helpers::validate_path(&path)?;
         let data =
             std::fs::read(&validated_path).map_err(|e| format!("Failed to read file: {e}"))?;
-        let packet = crate::evidence::Packet::decode(&data)
+        let mut packet = crate::evidence::Packet::decode(&data)
             .map_err(|e| format!("Failed to decode evidence: {e}"))?;
 
         let vdf_params = packet.vdf_params;

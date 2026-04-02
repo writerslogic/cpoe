@@ -349,20 +349,24 @@ impl Packet {
     /// (`verifier_nonce`, `packet_signature`, `signing_public_key`) to avoid
     /// circular dependencies during signing.
     ///
-    /// Uses deterministic CBOR serialization of a clone with signature fields cleared,
-    /// ensuring every evidence field (behavioral, keystroke, jitter, hardware, forensics,
-    /// etc.) is covered. Stripping any field invalidates the signature.
-    pub fn content_hash(&self) -> crate::error::Result<[u8; 32]> {
-        // Clone and clear signature-related fields to break circular dependency
-        let mut signable = self.clone();
-        signable.verifier_nonce = None;
-        signable.packet_signature = None;
-        signable.signing_public_key = None;
+    /// Temporarily clears the three fields, serializes via deterministic CBOR, then
+    /// restores them. This avoids cloning the entire 30+ field packet.
+    pub fn content_hash(&mut self) -> crate::error::Result<[u8; 32]> {
+        // Save and clear signature-related fields to break circular dependency
+        let saved_nonce = self.verifier_nonce.take();
+        let saved_sig = self.packet_signature.take();
+        let saved_pk = self.signing_public_key.take();
 
         // Deterministic CBOR serialization covers ALL remaining fields
-        let data = codec::cbor::encode(&signable)
-            .map_err(|e| Error::crypto(format!("content_hash: CBOR encoding failed: {e}")))?;
+        let data = codec::cbor::encode(&*self)
+            .map_err(|e| Error::crypto(format!("content_hash: CBOR encoding failed: {e}")));
 
+        // Restore fields before returning (even on error)
+        self.verifier_nonce = saved_nonce;
+        self.packet_signature = saved_sig;
+        self.signing_public_key = saved_pk;
+
+        let data = data?;
         let mut hasher = Sha256::new();
         hasher.update(b"witnessd-packet-content-v3");
         hasher.update(data);
@@ -371,7 +375,7 @@ impl Packet {
 
     /// Signing payload: `SHA-256(content_hash || nonce)` if nonce present,
     /// otherwise just `content_hash`.
-    pub fn signing_payload(&self) -> crate::error::Result<[u8; 32]> {
+    pub fn signing_payload(&mut self) -> crate::error::Result<[u8; 32]> {
         let content = self.content_hash()?;
         match &self.verifier_nonce {
             Some(nonce) => {
@@ -413,7 +417,10 @@ impl Packet {
 
     /// Verify the packet signature, optionally checking `expected_nonce`
     /// to prevent replay attacks.
-    pub fn verify_signature(&self, expected_nonce: Option<&[u8; 32]>) -> crate::error::Result<()> {
+    pub fn verify_signature(
+        &mut self,
+        expected_nonce: Option<&[u8; 32]>,
+    ) -> crate::error::Result<()> {
         match (expected_nonce, &self.verifier_nonce) {
             (Some(expected), Some(actual)) => {
                 if expected.ct_eq(actual).unwrap_u8() != 1 {

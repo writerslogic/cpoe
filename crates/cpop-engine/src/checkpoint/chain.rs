@@ -22,6 +22,11 @@ use super::types::*;
 /// Hard upper bound on checkpoint count to reject malformed chain files.
 const MAX_CHECKPOINTS: usize = 1_000_000;
 
+/// Maximum tolerable backward clock drift (e.g., NTP step adjustments).
+/// Regressions within this window are silently clamped to zero VDF duration;
+/// regressions beyond it are logged as warnings.
+const MAX_CLOCK_DRIFT_SECS: i64 = 2;
+
 /// Append-only checkpoint chain with VDF time proofs for a single document.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Chain {
@@ -149,12 +154,21 @@ impl Chain {
             let duration = vdf_duration.unwrap_or_else(|| {
                 let now = checkpoint.timestamp;
                 let last_ts = last_cp.map(|cp| cp.timestamp).unwrap_or(now);
-                now.signed_duration_since(last_ts)
-                    .to_std()
-                    .unwrap_or_else(|_| {
-                        log::warn!("System clock regression detected; using zero VDF duration");
+                let delta = now.signed_duration_since(last_ts);
+                match delta.to_std() {
+                    Ok(d) => d,
+                    Err(_) => {
+                        // Clock went backward. Only warn if beyond NTP tolerance.
+                        let regression_secs = delta.num_seconds().abs();
+                        if regression_secs > MAX_CLOCK_DRIFT_SECS {
+                            log::warn!(
+                                "System clock regression of {regression_secs}s exceeds \
+                                 {MAX_CLOCK_DRIFT_SECS}s tolerance; using zero VDF duration"
+                            );
+                        }
                         Duration::from_secs(0)
-                    })
+                    }
+                }
             });
             let vdf_input = vdf::chain_input(content_hash, previous_hash, ordinal);
             let proof = vdf::compute(vdf_input, duration, self.vdf_params)?;
