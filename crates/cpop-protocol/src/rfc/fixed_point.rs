@@ -46,6 +46,10 @@ macro_rules! fixed_point {
 
             pub fn from_float(value: f64) -> Self {
                 if !value.is_finite() {
+                    log::warn!(
+                        concat!("non-finite float {} passed to ", stringify!($name), "::from_float, returning 0"),
+                        value
+                    );
                     return $name(0 as $inner);
                 }
                 let scaled = (value * ($scale as f64)).round().clamp(i32::MIN as f64, i32::MAX as f64) as i32;
