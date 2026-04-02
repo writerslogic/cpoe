@@ -176,7 +176,7 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
             seed.zeroize();
             result
         })
-        .unwrap_or_default();
+        .unwrap_or_default(); // None -> empty string is intentional (no key loaded)
 
     let device_id = last.machine_id.clone();
     let device_attestation = if hardware_backed {

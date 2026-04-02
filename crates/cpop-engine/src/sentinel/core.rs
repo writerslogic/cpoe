@@ -289,6 +289,11 @@ impl Sentinel {
     /// Set the signing key from raw HMAC key bytes (must be exactly 32 bytes).
     pub fn set_hmac_key(&self, mut key: Vec<u8>) {
         if key.len() == 32 {
+            if key.iter().all(|&b| b == 0) {
+                log::warn!("Rejected all-zero HMAC key — likely uninitialized");
+                key.zeroize();
+                return;
+            }
             let mut bytes: [u8; 32] = match key.as_slice().try_into() {
                 Ok(b) => b,
                 Err(_) => {

@@ -30,8 +30,8 @@ impl OpenTimestampsProvider {
         })
     }
 
-    #[allow(dead_code)]
     /// Create a provider using custom calendar server URLs.
+    #[allow(dead_code)]
     pub fn with_calendars(urls: Vec<String>) -> Result<Self, AnchorError> {
         Ok(Self {
             calendar_urls: urls,
@@ -45,7 +45,7 @@ impl OpenTimestampsProvider {
         let response = self
             .client
             .post(&endpoint)
-            .header("Content-Type", "application/x-www-form-urlencoded")
+            .header("Content-Type", "application/octet-stream")
             .body(hash.to_vec())
             .send()
             .await
@@ -80,13 +80,19 @@ impl OpenTimestampsProvider {
                 .send()
                 .await;
 
-            if let Ok(resp) = response {
-                if resp.status().is_success() {
-                    let upgraded = resp
-                        .bytes()
-                        .await
-                        .map_err(|e| AnchorError::Network(e.to_string()))?;
-                    return Ok(Some(self.merge_proofs(proof_data, &upgraded)?));
+            match response {
+                Ok(resp) => {
+                    if resp.status().is_success() {
+                        let upgraded = resp
+                            .bytes()
+                            .await
+                            .map_err(|e| AnchorError::Network(e.to_string()))?;
+                        return Ok(Some(self.merge_proofs(proof_data, &upgraded)?));
+                    }
+                    log::debug!("Calendar {} returned {} during upgrade", url, resp.status());
+                }
+                Err(e) => {
+                    log::debug!("Calendar {} upgrade request failed: {e}", url);
                 }
             }
         }
@@ -118,6 +124,82 @@ impl OpenTimestampsProvider {
         ))
     }
 
+    /// Read a Bitcoin-style varint (compact size) from `data` at `pos`,
+    /// advancing `pos` past the encoded integer.
+    fn read_varint(data: &[u8], pos: &mut usize) -> Result<usize, AnchorError> {
+        if *pos >= data.len() {
+            return Err(AnchorError::InvalidFormat(
+                "Truncated proof: expected varint".into(),
+            ));
+        }
+        let first = data[*pos];
+        *pos += 1;
+        match first {
+            0x00..=0xfc => Ok(first as usize),
+            0xfd => {
+                if *pos + 2 > data.len() {
+                    return Err(AnchorError::InvalidFormat(
+                        "Truncated proof: expected 2-byte varint".into(),
+                    ));
+                }
+                let v = u16::from_le_bytes([data[*pos], data[*pos + 1]]) as usize;
+                *pos += 2;
+                Ok(v)
+            }
+            0xfe => {
+                if *pos + 4 > data.len() {
+                    return Err(AnchorError::InvalidFormat(
+                        "Truncated proof: expected 4-byte varint".into(),
+                    ));
+                }
+                let v = u32::from_le_bytes([
+                    data[*pos],
+                    data[*pos + 1],
+                    data[*pos + 2],
+                    data[*pos + 3],
+                ]) as usize;
+                *pos += 4;
+                Ok(v)
+            }
+            0xff => {
+                if *pos + 8 > data.len() {
+                    return Err(AnchorError::InvalidFormat(
+                        "Truncated proof: expected 8-byte varint".into(),
+                    ));
+                }
+                let v = u64::from_le_bytes([
+                    data[*pos],
+                    data[*pos + 1],
+                    data[*pos + 2],
+                    data[*pos + 3],
+                    data[*pos + 4],
+                    data[*pos + 5],
+                    data[*pos + 6],
+                    data[*pos + 7],
+                ]) as usize;
+                *pos += 8;
+                Ok(v)
+            }
+        }
+    }
+
+    /// Read a varint-prefixed byte slice from `data` at `pos`,
+    /// advancing `pos` past both the length and the payload.
+    fn read_data(data: &[u8], pos: &mut usize) -> Result<Vec<u8>, AnchorError> {
+        let len = Self::read_varint(data, pos)?;
+        if *pos + len > data.len() {
+            return Err(AnchorError::InvalidFormat(format!(
+                "Truncated proof: need {} bytes at offset {}, have {}",
+                len,
+                *pos,
+                data.len() - *pos
+            )));
+        }
+        let result = data[*pos..*pos + len].to_vec();
+        *pos += len;
+        Ok(result)
+    }
+
     fn parse_attestation_path(
         &self,
         proof_data: &[u8],
@@ -147,20 +229,14 @@ impl OpenTimestampsProvider {
                     data: Vec::new(),
                 },
                 0xf0 => {
-                    let len = proof_data.get(pos).copied().unwrap_or(0) as usize;
-                    pos += 1;
-                    let data = proof_data.get(pos..pos + len).unwrap_or(&[]).to_vec();
-                    pos += len;
+                    let data = Self::read_data(proof_data, &mut pos)?;
                     AttestationStep {
                         operation: AttestationOp::Append,
                         data,
                     }
                 }
                 0xf1 => {
-                    let len = proof_data.get(pos).copied().unwrap_or(0) as usize;
-                    pos += 1;
-                    let data = proof_data.get(pos..pos + len).unwrap_or(&[]).to_vec();
-                    pos += len;
+                    let data = Self::read_data(proof_data, &mut pos)?;
                     AttestationStep {
                         operation: AttestationOp::Prepend,
                         data,
@@ -170,7 +246,12 @@ impl OpenTimestampsProvider {
                     operation: AttestationOp::Verify,
                     data: Vec::new(),
                 },
-                _ => continue,
+                unknown => {
+                    return Err(AnchorError::InvalidFormat(format!(
+                        "Unknown OTS opcode: 0x{:02x}",
+                        unknown
+                    )));
+                }
             };
 
             steps.push(step);
@@ -203,6 +284,9 @@ impl OpenTimestampsProvider {
                     new.extend_from_slice(&current);
                     new
                 }
+                // Verify is a terminal attestation marker; it does not transform
+                // the hash. Actual block header validation is deferred to the
+                // `verify()` trait method.
                 AttestationOp::Verify => current.clone(),
             };
         }
@@ -295,12 +379,12 @@ impl AnchorProvider for OpenTimestampsProvider {
         // NOTE: Full OTS verification requires fetching the Bitcoin block header
         // from a trusted source and checking that the final hash in the
         // attestation path matches it. That network check is not yet implemented.
-        // As a partial safeguard, we confirm that the path contains a Verify
-        // step (indicating a Bitcoin attestation record is present) and that the
-        // result of walking the path is exactly 32 bytes (a candidate block hash).
+        // We parse the path and confirm structural sanity (Verify step present,
+        // 32-byte result) but return an error so callers know actual verification
+        // cannot be performed yet.
         log::warn!(
             "ots verify: Bitcoin block header cross-check not implemented; \
-             result is a structural check only"
+             performing structural check only"
         );
         let path = if let Some(ref path) = proof.attestation_path {
             path.clone()
@@ -314,7 +398,13 @@ impl AnchorProvider for OpenTimestampsProvider {
         }
 
         let result = self.verify_attestation_path(&proof.anchored_hash, &path)?;
-        Ok(result.len() == 32)
+        if result.len() != 32 {
+            return Ok(false);
+        }
+
+        Err(AnchorError::Unavailable(
+            "Bitcoin block header cross-check not yet implemented; structural check passed".into(),
+        ))
     }
 
     async fn upgrade(&self, proof: &Proof) -> Result<Option<Proof>, AnchorError> {
@@ -338,11 +428,5 @@ impl AnchorProvider for OpenTimestampsProvider {
         }
 
         Ok(None)
-    }
-}
-
-impl Default for OpenTimestampsProvider {
-    fn default() -> Self {
-        Self::new().expect("OTS HTTP client init failed")
     }
 }

@@ -149,7 +149,10 @@ pub fn ffi_get_status() -> FfiStatus {
         }
     };
 
-    let files = store.list_files().unwrap_or_default();
+    let files = store.list_files().unwrap_or_else(|e| {
+        log::warn!("store list_files failed: {e}");
+        Default::default()
+    });
     let total_checkpoints: u64 = files.iter().map(|(_, _, count)| *count as u64).sum();
 
     FfiStatus {
@@ -170,7 +173,10 @@ pub fn ffi_list_tracked_files() -> Vec<FfiTrackedFile> {
         Err(_) => return vec![],
     };
 
-    let files = store.list_files().unwrap_or_default();
+    let files = store.list_files().unwrap_or_else(|e| {
+        log::warn!("store list_files failed: {e}");
+        Default::default()
+    });
     let mut seen_paths = std::collections::HashSet::new();
     let mut result = Vec::with_capacity(files.len());
 
@@ -183,7 +189,10 @@ pub fn ffi_list_tracked_files() -> Vec<FfiTrackedFile> {
 
     for (path, last_ts, count) in files {
         seen_paths.insert(path.clone());
-        let events = store.get_events_for_file(&path).unwrap_or_default();
+        let events = store.get_events_for_file(&path).unwrap_or_else(|e| {
+            log::warn!("store get_events_for_file failed for {path}: {e}");
+            Default::default()
+        });
 
         let event_data = crate::ffi::helpers::events_to_forensic_data(&events);
         let regions = std::collections::HashMap::new();
@@ -329,7 +338,10 @@ pub fn ffi_get_log(path: String) -> Vec<FfiLogEntry> {
 
     store
         .get_events_for_file(&path)
-        .unwrap_or_default()
+        .unwrap_or_else(|e| {
+            log::warn!("store get_events_for_file failed for {path}: {e}");
+            Default::default()
+        })
         .into_iter()
         .enumerate()
         .map(|(i, ev)| FfiLogEntry {
@@ -362,10 +374,16 @@ pub fn ffi_get_dashboard_metrics() -> FfiDashboardMetrics {
         }
     };
 
-    let files = store.list_files().unwrap_or_default();
+    let files = store.list_files().unwrap_or_else(|e| {
+        log::warn!("store list_files failed: {e}");
+        Default::default()
+    });
     let total_checkpoints: u64 = files.iter().map(|(_, _, c)| *c as u64).sum();
 
-    let summary = store.get_all_events_summary().unwrap_or_default();
+    let summary = store.get_all_events_summary().unwrap_or_else(|e| {
+        log::warn!("store get_all_events_summary failed: {e}");
+        Default::default()
+    });
     let total_chars_added: u64 = summary
         .iter()
         .map(|(_, delta)| (*delta).max(0) as u64)
@@ -376,7 +394,10 @@ pub fn ffi_get_dashboard_metrics() -> FfiDashboardMetrics {
         (chrono::Utc::now() - chrono::Duration::days(90)).timestamp_nanos_safe();
     let timestamps = store
         .get_all_event_timestamps(ninety_days_ago_ns)
-        .unwrap_or_default();
+        .unwrap_or_else(|e| {
+            log::warn!("store get_all_event_timestamps failed: {e}");
+            Default::default()
+        });
 
     let today_day = chrono::Utc::now().timestamp() / 86400;
     let streaks = compute_streak_stats(&timestamps, today_day, 30);
@@ -404,7 +425,12 @@ pub fn ffi_get_activity_data(days: u32) -> Vec<FfiActivityPoint> {
     let start_ns =
         (chrono::Utc::now() - chrono::Duration::days(days as i64)).timestamp_nanos_safe();
 
-    let timestamps = store.get_all_event_timestamps(start_ns).unwrap_or_default();
+    let timestamps = store
+        .get_all_event_timestamps(start_ns)
+        .unwrap_or_else(|e| {
+            log::warn!("store get_all_event_timestamps failed: {e}");
+            Default::default()
+        });
 
     let mut day_counts: std::collections::BTreeMap<i64, u32> = std::collections::BTreeMap::new();
     for ts in timestamps {
