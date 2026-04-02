@@ -62,7 +62,13 @@ pub(crate) fn load_hmac_key() -> Option<Zeroizing<Vec<u8>>> {
     // Open the file first, then stat the handle to avoid a TOCTOU race between
     // the metadata check and the subsequent read (the file could be swapped for
     // a symlink pointing to a large file between the two syscalls).
-    let key_file = std::fs::File::open(&key_path).ok()?;
+    let key_file = match std::fs::File::open(&key_path) {
+        Ok(f) => f,
+        Err(e) => {
+            log::warn!("failed to open signing key file: {e}");
+            return None;
+        }
+    };
     if let Ok(meta) = key_file.metadata() {
         if meta.len() > 1024 {
             log::error!("Signing key file too large: {} bytes", meta.len());
@@ -73,7 +79,10 @@ pub(crate) fn load_hmac_key() -> Option<Zeroizing<Vec<u8>>> {
     let mut raw = Zeroizing::new(Vec::new());
     {
         let mut f = key_file;
-        f.read_to_end(&mut raw).ok()?;
+        if let Err(e) = f.read_to_end(&mut raw) {
+            log::warn!("failed to read signing key file: {e}");
+            return None;
+        }
     }
     let key_data = raw;
     let seed = if key_data.len() >= 32 {
@@ -205,13 +214,28 @@ pub(crate) fn derive_hmac_from_signing_key() -> Option<Zeroizing<Vec<u8>>> {
     use std::io::Read;
     let data_dir = get_data_dir()?;
     let key_path = data_dir.join("signing_key");
-    let mut key_file = std::fs::File::open(&key_path).ok()?;
-    let meta = key_file.metadata().ok()?;
+    let mut key_file = match std::fs::File::open(&key_path) {
+        Ok(f) => f,
+        Err(e) => {
+            log::warn!("failed to open signing key for HMAC derivation: {e}");
+            return None;
+        }
+    };
+    let meta = match key_file.metadata() {
+        Ok(m) => m,
+        Err(e) => {
+            log::warn!("failed to read signing key metadata: {e}");
+            return None;
+        }
+    };
     if meta.len() > 1024 {
         return None;
     }
     let mut buf = Zeroizing::new(Vec::with_capacity(meta.len() as usize));
-    key_file.read_to_end(&mut buf).ok()?;
+    if let Err(e) = key_file.read_to_end(&mut buf) {
+        log::warn!("failed to read signing key for HMAC derivation: {e}");
+        return None;
+    }
     if buf.len() >= 32 {
         Some(crate::crypto::derive_hmac_key(&buf[..32]))
     } else {

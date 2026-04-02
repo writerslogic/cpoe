@@ -113,12 +113,16 @@ impl Chain {
         self.commit_internal_locked(message, vdf_duration)
     }
 
+    /// Validate, hash, and append a fully-built checkpoint to the chain.
+    fn commit_finish(&mut self, mut checkpoint: Checkpoint) -> Result<Checkpoint> {
+        checkpoint.validate_timestamp()?;
+        checkpoint.hash = checkpoint.compute_hash();
+        let result = checkpoint.clone();
+        self.checkpoints.push(checkpoint);
+        Ok(result)
+    }
+
     /// Inner commit logic, called while holding the file lock.
-    // TODO(M-119): commit_internal_locked, commit_entangled_locked, and
-    // commit_rfc_locked share significant duplication (content hashing,
-    // ordinal computation, genesis prev-hash, timestamp validation, hash
-    // computation, push). Extract a shared commit_finish() helper once the
-    // interface stabilises.
     fn commit_internal_locked(
         &mut self,
         message: Option<String>,
@@ -157,11 +161,7 @@ impl Chain {
             checkpoint.vdf = Some(proof);
         }
 
-        checkpoint.validate_timestamp()?;
-        checkpoint.hash = checkpoint.compute_hash();
-        let result = checkpoint.clone();
-        self.checkpoints.push(checkpoint);
-        Ok(result)
+        self.commit_finish(checkpoint)
     }
 
     /// Acquire an exclusive advisory lock on the document file (non-blocking).
@@ -303,11 +303,7 @@ impl Chain {
         let proof = vdf::compute(vdf_input, vdf_duration, self.vdf_params)?;
         checkpoint.vdf = Some(proof);
 
-        checkpoint.validate_timestamp()?;
-        checkpoint.hash = checkpoint.compute_hash();
-        let result = checkpoint.clone();
-        self.checkpoints.push(checkpoint);
-        Ok(result)
+        self.commit_finish(checkpoint)
     }
 
     /// Commit with full RFC-compliant structures (draft-condrey-rats-pop-01).
@@ -477,11 +473,7 @@ impl Chain {
         checkpoint.time_evidence = time_evidence;
         checkpoint.argon2_swf = argon2_swf;
 
-        checkpoint.validate_timestamp()?;
-        checkpoint.hash = checkpoint.compute_hash();
-        let result = checkpoint.clone();
-        self.checkpoints.push(checkpoint);
-        Ok(result)
+        self.commit_finish(checkpoint)
     }
 
     /// Sum the minimum elapsed time across all VDF proofs in the chain.

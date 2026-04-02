@@ -234,6 +234,8 @@ unsafe extern "system" fn low_level_keyboard_proc(
         }
         let kbd = *ptr;
         let now = chrono::Utc::now().timestamp_nanos_safe();
+        // Lock ordering: GLOBAL_SESSION is released (via clone + drop) before
+        // session_arc.lock() to prevent deadlock.
         let session = match GLOBAL_SESSION.lock() {
             Ok(g) => g.clone(),
             Err(poisoned) => {
@@ -261,6 +263,8 @@ pub struct WindowsKeystrokeCapture {
     pump_thread_id: Arc<std::sync::atomic::AtomicU32>,
 }
 
+// Lock ordering: GLOBAL_SENDER and GLOBAL_STATS are locked sequentially (never
+// nested). In the hook callback, each is clone+dropped before the next is acquired.
 static GLOBAL_SENDER: Mutex<Option<mpsc::Sender<KeystrokeEvent>>> = Mutex::new(None);
 static GLOBAL_STATS: Mutex<Option<Arc<RwLock<SyntheticStats>>>> = Mutex::new(None);
 static GLOBAL_STRICT_MODE: AtomicBool = AtomicBool::new(true);
@@ -527,6 +531,9 @@ impl FocusMonitor for WindowsFocusMonitor {
     }
 }
 
+// Lock ordering: MOUSE_GLOBAL_SENDER, MOUSE_GLOBAL_IDLE_STATS, and
+// MOUSE_LAST_POSITION are locked sequentially (never nested). In the hook
+// callback, MOUSE_LAST_POSITION is scoped and dropped before the others.
 static MOUSE_GLOBAL_SENDER: Mutex<Option<mpsc::Sender<MouseEvent>>> = Mutex::new(None);
 static MOUSE_GLOBAL_IDLE_STATS: Mutex<Option<Arc<RwLock<MouseIdleStats>>>> = Mutex::new(None);
 static MOUSE_LAST_POSITION: Mutex<(f64, f64)> = Mutex::new((0.0, 0.0));

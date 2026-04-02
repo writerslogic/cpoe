@@ -38,6 +38,7 @@ pub(super) fn verify_windows_pipe_peer(pipe: &named_pipe::NamedPipeServer) -> Re
         fn drop(&mut self) {
             if !self.0.is_invalid() {
                 unsafe {
+                    // Intentionally ignored: CloseHandle in Drop; nothing to do on failure
                     let _ = CloseHandle(self.0);
                 }
             }
@@ -86,6 +87,7 @@ unsafe fn get_token_user_sid(token: windows::Win32::Foundation::HANDLE) -> Resul
     use windows::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_USER};
 
     let mut size: u32 = 0;
+    // Intentionally ignored: first call with null buffer retrieves required size
     let _ = GetTokenInformation(token, TokenUser, None, 0, &mut size);
 
     let mut buffer = vec![0u8; size as usize];

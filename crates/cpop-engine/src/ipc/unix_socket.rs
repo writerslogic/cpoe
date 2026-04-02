@@ -75,6 +75,7 @@ impl SecureUnixSocket {
         let listener = match UnixListener::bind(path) {
             Ok(l) => l,
             Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                // Intentionally ignored: stale socket removal; bind() will fail if removal fails
                 let _ = std::fs::remove_file(path);
                 UnixListener::bind(path)?
             }
@@ -182,7 +183,7 @@ impl VerifiedConnection {
 
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
-            let _ = allowed_names;
+            let _ = allowed_names; // suppress unused on other platforms
         }
 
         Ok(())

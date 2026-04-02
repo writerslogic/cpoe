@@ -8,7 +8,11 @@ use super::messages::MAX_MESSAGE_SIZE;
 use super::messages::{IpcErrorCode, IpcMessage};
 use p256::{ecdh::EphemeralSecret, elliptic_curve::sec1::ToEncodedPoint, PublicKey};
 use std::path::PathBuf;
-use subtle::ConstantTimeEq;
+use std::time::Duration;
+
+/// Timeout for individual IPC I/O operations. Generous to allow for
+/// VDF-heavy responses that take significant compute time on the daemon side.
+const IO_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[cfg(unix)]
 type PlatformStream = tokio::net::UnixStream;
@@ -45,6 +49,9 @@ pub enum AsyncIpcClientError {
     /// Handshake or protocol-level error.
     #[error("protocol error: {0}")]
     ProtocolError(String),
+    /// I/O operation exceeded the deadline.
+    #[error("operation timed out after {0:?}")]
+    Timeout(Duration),
 }
 
 /// Async IPC Client for connecting to the Sentinel daemon using tokio.
@@ -79,10 +86,6 @@ pub enum AsyncIpcClientError {
 pub struct AsyncIpcClient {
     stream: Option<PlatformStream>,
     secure_session: Option<SecureSession>,
-    /// Path used for the connection, retained for auto-reconnect.
-    socket_path: Option<PathBuf>,
-    /// Set on I/O errors; triggers reconnect on next request.
-    poisoned: bool,
 }
 
 impl AsyncIpcClient {
@@ -91,8 +94,6 @@ impl AsyncIpcClient {
         Self {
             stream: None,
             secure_session: None,
-            socket_path: None,
-            poisoned: false,
         }
     }
 
@@ -101,16 +102,13 @@ impl AsyncIpcClient {
     pub async fn connect<P: AsRef<std::path::Path>>(
         path: P,
     ) -> std::result::Result<Self, AsyncIpcClientError> {
-        let p = path.as_ref().to_path_buf();
-        let stream = tokio::net::UnixStream::connect(&p)
+        let stream = tokio::net::UnixStream::connect(path.as_ref())
             .await
             .map_err(AsyncIpcClientError::ConnectionFailed)?;
 
         let mut client = Self {
             stream: Some(stream),
             secure_session: None,
-            socket_path: Some(p),
-            poisoned: false,
         };
 
         client.establish_secure_session().await?;
@@ -123,16 +121,13 @@ impl AsyncIpcClient {
     pub async fn connect<P: AsRef<std::path::Path>>(
         path: P,
     ) -> std::result::Result<Self, AsyncIpcClientError> {
-        let p = path.as_ref().to_path_buf();
         let stream = tokio::net::windows::named_pipe::ClientOptions::new()
-            .open(&p)
+            .open(path.as_ref())
             .map_err(AsyncIpcClientError::ConnectionFailed)?;
 
         let mut client = Self {
             stream: Some(stream),
             secure_session: None,
-            socket_path: Some(p),
-            poisoned: false,
         };
 
         client.establish_secure_session().await?;
@@ -141,19 +136,6 @@ impl AsyncIpcClient {
     }
 
     async fn establish_secure_session(&mut self) -> std::result::Result<(), AsyncIpcClientError> {
-        // H-053: Timeout the entire ECDH handshake to prevent indefinite blocking
-        const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-        match tokio::time::timeout(HANDSHAKE_TIMEOUT, self.establish_secure_session_inner()).await {
-            Ok(result) => result,
-            Err(_) => Err(AsyncIpcClientError::ProtocolError(
-                "ECDH handshake timed out after 5s".into(),
-            )),
-        }
-    }
-
-    async fn establish_secure_session_inner(
-        &mut self,
-    ) -> std::result::Result<(), AsyncIpcClientError> {
         use p256::elliptic_curve::rand_core::OsRng;
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -162,104 +144,115 @@ impl AsyncIpcClient {
             .as_mut()
             .ok_or(AsyncIpcClientError::NotConnected)?;
 
-        let mut magic_packet = Vec::with_capacity(3);
-        magic_packet.extend_from_slice(&SECURE_JSON_PROTOCOL_MAGIC);
-        magic_packet.push(1u8);
-        stream
-            .write_all(&magic_packet)
-            .await
-            .map_err(AsyncIpcClientError::SendFailed)?;
-        stream
-            .flush()
-            .await
-            .map_err(AsyncIpcClientError::SendFailed)?;
+        let session = tokio::time::timeout(IO_TIMEOUT, async {
+            let mut magic_packet = Vec::with_capacity(3);
+            magic_packet.extend_from_slice(&SECURE_JSON_PROTOCOL_MAGIC);
+            magic_packet.push(1u8);
+            stream
+                .write_all(&magic_packet)
+                .await
+                .map_err(AsyncIpcClientError::SendFailed)?;
+            stream
+                .flush()
+                .await
+                .map_err(AsyncIpcClientError::SendFailed)?;
 
-        let client_secret = EphemeralSecret::random(&mut OsRng);
-        let client_pubkey_point = client_secret.public_key().to_encoded_point(false);
-        let client_pubkey_bytes = client_pubkey_point.as_bytes();
+            let client_secret = EphemeralSecret::random(&mut OsRng);
+            let client_pubkey_point = client_secret.public_key().to_encoded_point(false);
+            let client_pubkey_bytes = client_pubkey_point.as_bytes();
 
-        stream
-            .write_all(client_pubkey_bytes)
-            .await
-            .map_err(AsyncIpcClientError::SendFailed)?;
-        stream
-            .flush()
-            .await
-            .map_err(AsyncIpcClientError::SendFailed)?;
+            stream
+                .write_all(client_pubkey_bytes)
+                .await
+                .map_err(AsyncIpcClientError::SendFailed)?;
+            stream
+                .flush()
+                .await
+                .map_err(AsyncIpcClientError::SendFailed)?;
 
-        let mut server_pubkey_bytes = [0u8; 65];
-        stream
-            .read_exact(&mut server_pubkey_bytes)
-            .await
-            .map_err(AsyncIpcClientError::ReceiveFailed)?;
+            let mut server_pubkey_bytes = [0u8; 65];
+            stream
+                .read_exact(&mut server_pubkey_bytes)
+                .await
+                .map_err(AsyncIpcClientError::ReceiveFailed)?;
 
-        let server_pubkey = PublicKey::from_sec1_bytes(&server_pubkey_bytes).map_err(|e| {
-            AsyncIpcClientError::ProtocolError(format!("Invalid server public key: {}", e))
-        })?;
+            let server_pubkey = PublicKey::from_sec1_bytes(&server_pubkey_bytes).map_err(|e| {
+                AsyncIpcClientError::ProtocolError(format!("Invalid server public key: {}", e))
+            })?;
 
-        let shared_secret = client_secret.diffie_hellman(&server_pubkey);
+            let shared_secret = client_secret.diffie_hellman(&server_pubkey);
 
-        let session = SecureSession::from_shared_secret(
-            shared_secret.raw_secret_bytes().as_slice(),
-            client_pubkey_bytes,
-            &server_pubkey_bytes,
-            false, // is_server = false
-        )
-        .map_err(|e| AsyncIpcClientError::ProtocolError(format!("Key derivation failed: {}", e)))?;
+            let session = SecureSession::from_shared_secret(
+                shared_secret.raw_secret_bytes().as_slice(),
+                client_pubkey_bytes,
+                &server_pubkey_bytes,
+                false, // is_server = false
+            )
+            .map_err(|e| {
+                AsyncIpcClientError::ProtocolError(format!("Key derivation failed: {}", e))
+            })?;
 
-        // Zeroize ECDH ephemeral secrets now that session key is derived.
-        // Both types implement ZeroizeOnDrop, so explicit drop triggers cleanup.
-        drop(shared_secret);
-        drop(client_secret);
-        std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+            // Zeroize ECDH ephemeral secrets now that session key is derived.
+            // Both types implement ZeroizeOnDrop, so explicit drop triggers
+            // cleanup.
+            drop(shared_secret);
+            drop(client_secret);
+            std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
 
-        let mut len_buf = [0u8; 4];
-        stream
-            .read_exact(&mut len_buf)
-            .await
-            .map_err(AsyncIpcClientError::ReceiveFailed)?;
-        let len = u32::from_le_bytes(len_buf) as usize;
-        if len > 1024 {
-            return Err(AsyncIpcClientError::ProtocolError(
-                "Server confirmation too large".into(),
-            ));
-        }
-        let mut server_confirm_buf = vec![0u8; len];
-        stream
-            .read_exact(&mut server_confirm_buf)
-            .await
-            .map_err(AsyncIpcClientError::ReceiveFailed)?;
+            let mut len_buf = [0u8; 4];
+            stream
+                .read_exact(&mut len_buf)
+                .await
+                .map_err(AsyncIpcClientError::ReceiveFailed)?;
+            let len = u32::from_le_bytes(len_buf) as usize;
+            if len > 1024 {
+                return Err(AsyncIpcClientError::ProtocolError(
+                    "Server confirmation too large".into(),
+                ));
+            }
+            let mut server_confirm_buf = vec![0u8; len];
+            stream
+                .read_exact(&mut server_confirm_buf)
+                .await
+                .map_err(AsyncIpcClientError::ReceiveFailed)?;
 
-        let server_confirm_plaintext = session.decrypt(&server_confirm_buf).map_err(|e| {
-            AsyncIpcClientError::ProtocolError(format!("Server confirmation decrypt failed: {}", e))
-        })?;
+            let server_confirm_plaintext = session.decrypt(&server_confirm_buf).map_err(|e| {
+                AsyncIpcClientError::ProtocolError(format!(
+                    "Server confirmation decrypt failed: {}",
+                    e
+                ))
+            })?;
 
-        if server_confirm_plaintext
-            .ct_eq(KEY_CONFIRM_PLAINTEXT)
-            .unwrap_u8()
-            != 1
-        {
-            return Err(AsyncIpcClientError::ProtocolError(
-                "Server confirmation mismatch".into(),
-            ));
-        }
+            if server_confirm_plaintext != KEY_CONFIRM_PLAINTEXT {
+                return Err(AsyncIpcClientError::ProtocolError(
+                    "Server confirmation mismatch".into(),
+                ));
+            }
 
-        let client_confirm_encrypted = session.encrypt(KEY_CONFIRM_PLAINTEXT).map_err(|e| {
-            AsyncIpcClientError::ProtocolError(format!("Client confirmation encrypt failed: {}", e))
-        })?;
-        let client_confirm_len = client_confirm_encrypted.len() as u32;
-        stream
-            .write_all(&client_confirm_len.to_le_bytes())
-            .await
-            .map_err(AsyncIpcClientError::SendFailed)?;
-        stream
-            .write_all(&client_confirm_encrypted)
-            .await
-            .map_err(AsyncIpcClientError::SendFailed)?;
-        stream
-            .flush()
-            .await
-            .map_err(AsyncIpcClientError::SendFailed)?;
+            let client_confirm_encrypted = session.encrypt(KEY_CONFIRM_PLAINTEXT).map_err(|e| {
+                AsyncIpcClientError::ProtocolError(format!(
+                    "Client confirmation encrypt failed: {}",
+                    e
+                ))
+            })?;
+            let client_confirm_len = client_confirm_encrypted.len() as u32;
+            stream
+                .write_all(&client_confirm_len.to_le_bytes())
+                .await
+                .map_err(AsyncIpcClientError::SendFailed)?;
+            stream
+                .write_all(&client_confirm_encrypted)
+                .await
+                .map_err(AsyncIpcClientError::SendFailed)?;
+            stream
+                .flush()
+                .await
+                .map_err(AsyncIpcClientError::SendFailed)?;
+
+            Ok(session)
+        })
+        .await
+        .map_err(|_| AsyncIpcClientError::Timeout(IO_TIMEOUT))??;
 
         self.secure_session = Some(session);
         Ok(())
@@ -303,20 +296,23 @@ impl AsyncIpcClient {
         }
 
         let len = payload.len() as u32;
-        stream
-            .write_all(&len.to_le_bytes())
-            .await
-            .map_err(AsyncIpcClientError::SendFailed)?;
-        stream
-            .write_all(&payload)
-            .await
-            .map_err(AsyncIpcClientError::SendFailed)?;
-        stream
-            .flush()
-            .await
-            .map_err(AsyncIpcClientError::SendFailed)?;
-
-        Ok(())
+        tokio::time::timeout(IO_TIMEOUT, async {
+            stream
+                .write_all(&len.to_le_bytes())
+                .await
+                .map_err(AsyncIpcClientError::SendFailed)?;
+            stream
+                .write_all(&payload)
+                .await
+                .map_err(AsyncIpcClientError::SendFailed)?;
+            stream
+                .flush()
+                .await
+                .map_err(AsyncIpcClientError::SendFailed)?;
+            Ok(())
+        })
+        .await
+        .map_err(|_| AsyncIpcClientError::Timeout(IO_TIMEOUT))?
     }
 
     /// Receive an IPC message from the daemon
@@ -330,26 +326,32 @@ impl AsyncIpcClient {
             .as_mut()
             .ok_or(AsyncIpcClientError::NotConnected)?;
 
-        let mut len_buf = [0u8; 4];
-        match stream.read_exact(&mut len_buf).await {
-            Ok(_) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                return Err(AsyncIpcClientError::ConnectionClosed);
+        let buffer = tokio::time::timeout(IO_TIMEOUT, async {
+            let mut len_buf = [0u8; 4];
+            match stream.read_exact(&mut len_buf).await {
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    return Err(AsyncIpcClientError::ConnectionClosed);
+                }
+                Err(e) => return Err(AsyncIpcClientError::ReceiveFailed(e)),
             }
-            Err(e) => return Err(AsyncIpcClientError::ReceiveFailed(e)),
-        }
 
-        let len = u32::from_le_bytes(len_buf) as usize;
+            let len = u32::from_le_bytes(len_buf) as usize;
 
-        if len > MAX_MESSAGE_SIZE {
-            return Err(AsyncIpcClientError::MessageTooLarge(len, MAX_MESSAGE_SIZE));
-        }
+            if len > MAX_MESSAGE_SIZE {
+                return Err(AsyncIpcClientError::MessageTooLarge(len, MAX_MESSAGE_SIZE));
+            }
 
-        let mut buffer = vec![0u8; len];
-        stream
-            .read_exact(&mut buffer)
-            .await
-            .map_err(AsyncIpcClientError::ReceiveFailed)?;
+            let mut buffer = vec![0u8; len];
+            stream
+                .read_exact(&mut buffer)
+                .await
+                .map_err(AsyncIpcClientError::ReceiveFailed)?;
+
+            Ok(buffer)
+        })
+        .await
+        .map_err(|_| AsyncIpcClientError::Timeout(IO_TIMEOUT))??;
 
         let plaintext = if let Some(session) = &self.secure_session {
             session.decrypt(&buffer).map_err(|e| {
@@ -370,73 +372,24 @@ impl AsyncIpcClient {
         Ok(msg)
     }
 
-    /// Send a message and wait for a response (request-response pattern).
-    ///
-    /// If the connection was previously poisoned by an I/O error, attempts a
-    /// single reconnect before sending.
+    /// Send a message and wait for a response (request-response pattern)
     pub async fn request(
         &mut self,
         msg: &IpcMessage,
     ) -> std::result::Result<IpcMessage, AsyncIpcClientError> {
-        if self.poisoned {
-            self.try_reconnect().await?;
-        }
-        match self.send_message(msg).await {
-            Ok(()) => {}
-            Err(e @ AsyncIpcClientError::SendFailed(_)) => {
-                self.poisoned = true;
-                return Err(e);
-            }
-            Err(e) => return Err(e),
-        }
-        match self.recv_message().await {
-            Ok(resp) => Ok(resp),
-            Err(e @ AsyncIpcClientError::ReceiveFailed(_))
-            | Err(e @ AsyncIpcClientError::ConnectionClosed) => {
-                self.poisoned = true;
-                Err(e)
-            }
-            Err(e) => Err(e),
-        }
-    }
-
-    /// Attempt to re-establish the connection using the original socket path.
-    async fn try_reconnect(&mut self) -> std::result::Result<(), AsyncIpcClientError> {
-        let path = self
-            .socket_path
-            .clone()
-            .ok_or(AsyncIpcClientError::NotConnected)?;
-        self.stream = None;
-        self.secure_session = None;
-        self.poisoned = false;
-
-        #[cfg(unix)]
-        {
-            let stream = tokio::net::UnixStream::connect(&path)
-                .await
-                .map_err(AsyncIpcClientError::ConnectionFailed)?;
-            self.stream = Some(stream);
-        }
-        #[cfg(target_os = "windows")]
-        {
-            let stream = tokio::net::windows::named_pipe::ClientOptions::new()
-                .open(&path)
-                .map_err(AsyncIpcClientError::ConnectionFailed)?;
-            self.stream = Some(stream);
-        }
-
-        self.establish_secure_session().await?;
-        Ok(())
+        self.send_message(msg).await?;
+        self.recv_message().await
     }
 
     pub fn is_connected(&self) -> bool {
-        self.stream.is_some() && !self.poisoned
+        self.stream.is_some()
     }
 
     /// Disconnect from the daemon
     #[cfg(unix)]
     pub async fn disconnect(&mut self) {
         if let Some(stream) = self.stream.take() {
+            // Intentionally ignored: into_std() for graceful drop; failure is benign on disconnect
             let _ = stream.into_std();
         }
     }

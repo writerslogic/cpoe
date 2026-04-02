@@ -18,6 +18,8 @@ const DEVICE_ID_ACCOUNT: &str = "device_id";
 const MACHINE_ID_ACCOUNT: &str = "machine_id";
 const FINGERPRINT_KEY_ACCOUNT: &str = "fingerprint_key";
 
+// Lock ordering: SEED_CACHE, HMAC_CACHE, FINGERPRINT_KEY_CACHE, and MNEMONIC_CACHE
+// are independent caches. No function acquires more than one of these locks.
 /// Mutex instead of OnceLock so the cache can be invalidated after delete_seed().
 static SEED_CACHE: Mutex<Option<ProtectedBuf>> = Mutex::new(None);
 /// Mutex instead of OnceLock so the cache can be reset after HMAC key recovery.

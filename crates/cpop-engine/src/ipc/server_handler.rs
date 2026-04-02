@@ -210,6 +210,7 @@ pub(super) async fn handle_connection_inner<
                         code: IpcErrorCode::PermissionDenied,
                         message: e,
                     };
+                    // Best-effort error response; client may have disconnected
                     if let Ok(response_bytes) = encode_message_json(&error_response) {
                         if let Some(ref session) = secure_session {
                             let _ = send_encrypted(stream, session, &response_bytes).await;
@@ -262,6 +263,7 @@ pub(super) async fn handle_connection_inner<
                         code: IpcErrorCode::RateLimited,
                         message: format!("Rate limit exceeded for operation: {}", key),
                     };
+                    // Best-effort error response; client may have disconnected
                     if let Ok(response_bytes) = encode_message_json(&error_response) {
                         if let Some(ref session) = secure_session {
                             let _ = send_encrypted(stream, session, &response_bytes).await;
@@ -367,7 +369,7 @@ pub(super) async fn handle_connection_inner<
                             transport_label,
                             e
                         );
-                        // Try to send a plaintext error so client isn't left hanging
+                        // Best-effort fallback error so client isn't left hanging
                         let fallback = br#"{"type":"Error","code":"InternalError","message":"Internal serialization error"}"#;
                         if let Some(ref session) = secure_session {
                             let _ = send_encrypted(stream, session, fallback).await;
@@ -389,6 +391,7 @@ pub(super) async fn handle_connection_inner<
                     code: IpcErrorCode::InvalidMessage,
                     message: "Invalid message format".to_string(),
                 };
+                // Best-effort error response; client may have disconnected
                 if let Ok(response_bytes) = encode_for_protocol(&error_response, decode_protocol) {
                     if let Some(ref session) = secure_session {
                         let _ = send_encrypted(stream, session, &response_bytes).await;

@@ -228,6 +228,7 @@ impl IpcServer {
                         }
                     }
                     _ = shutdown_rx.recv() => {
+                        // Intentionally ignored: socket may already be removed
                         let _ = std::fs::remove_file(&self.socket_path);
                         break;
                     }

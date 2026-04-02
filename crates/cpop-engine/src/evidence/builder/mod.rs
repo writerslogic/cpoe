@@ -157,14 +157,25 @@ impl Builder {
         Ok(self.packet)
     }
 
-    // TODO: Refactor: extract per-claim-type helpers to reduce generate_claims to dispatch table
     fn generate_claims(&mut self) {
+        self.add_chain_integrity_claims();
+        self.add_temporal_claims();
+        self.add_declaration_claims();
+        self.add_behavioral_claims();
+        self.add_hardware_claims();
+        self.add_context_claims();
+        self.add_identity_claims();
+    }
+
+    fn add_chain_integrity_claims(&mut self) {
         self.add_claim(
             ClaimType::ChainIntegrity,
             "Content states form an unbroken cryptographic chain",
             "cryptographic",
         );
+    }
 
+    fn add_temporal_claims(&mut self) {
         let mut total_time = Duration::from_secs(0);
         for cp in &self.packet.checkpoints {
             if let Some(elapsed) = cp.elapsed_time {
@@ -181,7 +192,9 @@ impl Builder {
                 "cryptographic",
             );
         }
+    }
 
+    fn add_declaration_claims(&mut self) {
         if let Some(decl) = &self.packet.declaration {
             let ai_desc = if decl.has_ai_usage() {
                 format!(
@@ -197,7 +210,9 @@ impl Builder {
                 "attestation",
             );
         }
+    }
 
+    fn add_behavioral_claims(&mut self) {
         if let Some(presence) = &self.packet.presence {
             self.add_claim(
                 ClaimType::PresenceVerified,
@@ -220,63 +235,11 @@ impl Builder {
             self.add_claim(ClaimType::KeystrokesVerified, desc, "cryptographic");
         }
 
-        if self.packet.hardware.is_some() {
-            self.add_claim(
-                ClaimType::HardwareAttested,
-                "TPM attests chain was not rolled back or modified",
-                "cryptographic",
-            );
-        }
-
-        // Both physical_context and hardware use HardwareAttested; future: add
-        // PhysicalContextCaptured variant to distinguish the two claim sources.
-        if self.packet.physical_context.is_some() {
-            self.add_claim(
-                ClaimType::HardwareAttested,
-                "Physical context captured: clock skew, thermal proxy, silicon PUF, I/O latency",
-                "high",
-            );
-        }
-
         if self.packet.behavioral.is_some() {
             self.add_claim(
                 ClaimType::BehaviorAnalyzed,
                 "Edit patterns captured for forensic analysis",
                 "statistical",
-            );
-        }
-
-        if !self.packet.contexts.is_empty() {
-            // TODO(M-005): Replace period_type String with a PeriodType enum
-            // (e.g. Focused, Assisted, External, ...) in evidence/types.rs.
-            // Blocked on deciding serde wire-compat strategy for existing packets.
-            let mut assisted = 0;
-            let mut external = 0;
-            for ctx in &self.packet.contexts {
-                if ctx.period_type == "assisted" {
-                    assisted += 1;
-                }
-                if ctx.period_type == "external" {
-                    external += 1;
-                }
-            }
-            let mut desc = format!("{} context periods recorded", self.packet.contexts.len());
-            if assisted > 0 {
-                desc.push_str(&format!(" ({assisted} AI-assisted)"));
-            }
-            if external > 0 {
-                desc.push_str(&format!(" ({external} external)"));
-            }
-            self.add_claim(ClaimType::ContextsRecorded, desc, "attestation");
-        }
-
-        if let Some(external) = &self.packet.external {
-            let count =
-                external.opentimestamps.len() + external.rfc3161.len() + external.proofs.len();
-            self.add_claim(
-                ClaimType::ExternalAnchored,
-                format!("Chain anchored to {count} external timestamp authorities"),
-                "cryptographic",
             );
         }
 
@@ -314,7 +277,65 @@ impl Builder {
                 },
             );
         }
+    }
 
+    fn add_hardware_claims(&mut self) {
+        if self.packet.hardware.is_some() {
+            self.add_claim(
+                ClaimType::HardwareAttested,
+                "TPM attests chain was not rolled back or modified",
+                "cryptographic",
+            );
+        }
+
+        // Both physical_context and hardware use HardwareAttested; future: add
+        // PhysicalContextCaptured variant to distinguish the two claim sources.
+        if self.packet.physical_context.is_some() {
+            self.add_claim(
+                ClaimType::HardwareAttested,
+                "Physical context captured: clock skew, thermal proxy, silicon PUF, I/O latency",
+                "high",
+            );
+        }
+    }
+
+    fn add_context_claims(&mut self) {
+        if !self.packet.contexts.is_empty() {
+            // TODO(M-005): Replace period_type String with a PeriodType enum
+            // (e.g. Focused, Assisted, External, ...) in evidence/types.rs.
+            // Blocked on deciding serde wire-compat strategy for existing packets.
+            let mut assisted = 0;
+            let mut external = 0;
+            for ctx in &self.packet.contexts {
+                if ctx.period_type == "assisted" {
+                    assisted += 1;
+                }
+                if ctx.period_type == "external" {
+                    external += 1;
+                }
+            }
+            let mut desc = format!("{} context periods recorded", self.packet.contexts.len());
+            if assisted > 0 {
+                desc.push_str(&format!(" ({assisted} AI-assisted)"));
+            }
+            if external > 0 {
+                desc.push_str(&format!(" ({external} external)"));
+            }
+            self.add_claim(ClaimType::ContextsRecorded, desc, "attestation");
+        }
+
+        if let Some(external) = &self.packet.external {
+            let count =
+                external.opentimestamps.len() + external.rfc3161.len() + external.proofs.len();
+            self.add_claim(
+                ClaimType::ExternalAnchored,
+                format!("Chain anchored to {count} external timestamp authorities"),
+                "cryptographic",
+            );
+        }
+    }
+
+    fn add_identity_claims(&mut self) {
         if let Some(kh) = &self.packet.key_hierarchy {
             let mut desc = format!(
                 "Identity {} with {} ratchet generations",
