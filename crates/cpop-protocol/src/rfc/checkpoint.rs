@@ -29,7 +29,14 @@ use super::vdf::VdfProofRfc;
 /// Domain separation tag for checkpoint hash computation.
 /// Note: the spelling "witnessd" (missing 'e') is the canonical DST
 /// used since protocol v3; changing it would break hash compatibility.
+/// See `CHECKPOINT_HASH_DST_V4` for the corrected spelling to use in
+/// future protocol versions.
 const CHECKPOINT_HASH_DST: &[u8] = b"witnessd-checkpoint-v3";
+
+/// Corrected DST for future protocol versions (v4+). NOT used in any
+/// hash computation today; kept here so the migration path is explicit.
+#[allow(dead_code)]
+const CHECKPOINT_HASH_DST_V4: &[u8] = b"witnessed-checkpoint-v4";
 
 /// RFC-compliant checkpoint for CBOR wire format.
 ///

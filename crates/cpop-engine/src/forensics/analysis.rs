@@ -53,8 +53,10 @@ pub fn build_profile(
         };
     }
 
+    // Clone + sort is required because the function takes &[EventData] (shared
+    // reference) and callers rely on the original order being preserved.
     let mut sorted = events.to_vec();
-    sorted.sort_by_key(|e| e.timestamp_ns);
+    sorted.sort_unstable_by_key(|e| e.timestamp_ns);
 
     // Clamp implausible timestamps to prevent corrupt time_span calculations
     for event in &mut sorted {

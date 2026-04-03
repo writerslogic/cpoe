@@ -314,6 +314,9 @@ fn construct_embedding(data: &[f64], dim: usize, delay: usize) -> Vec<Vec<f64>> 
     embedding
 }
 
+/// Compute recurrence rate and determinism from the recurrence plot.
+/// This is O(k^2) where k = min(n, 200) due to pairwise distance
+/// computation over a subsample of the embedding vectors.
 fn compute_recurrence_quantification(
     embedding: &[Vec<f64>],
     threshold: f64,
@@ -407,6 +410,10 @@ fn compute_recurrence_quantification(
     (recurrence_rate, determinism)
 }
 
+/// Estimate the correlation dimension of the embedding via the
+/// Grassberger-Procaccia algorithm. This is O(k^2) where k = min(n, 100)
+/// because it computes pairwise distances over a subsample. For n <= 100
+/// the full set is used; for n > 100 we take evenly-spaced samples.
 fn estimate_correlation_dimension(embedding: &[Vec<f64>]) -> f64 {
     let n = embedding.len();
     if n < 20 {

@@ -354,20 +354,32 @@ impl SecureStorage {
                 FINGERPRINT_KEY_ACCOUNT,
             ];
 
+            let mut any_failed = false;
             for account in accounts {
                 if let Ok(entry) = Entry::new(SERVICE_NAME, account) {
                     if let Ok(mut encoded) = entry.get_password() {
                         if let Ok(data) = general_purpose::STANDARD.decode(&encoded) {
                             encoded.zeroize();
                             let data = Zeroizing::new(data);
-                            if Self::save_macos(account, &data).is_ok() {
-                                let _ = entry.delete_password();
+                            match Self::save_macos(account, &data) {
+                                Ok(()) => {
+                                    let _ = entry.delete_password();
+                                }
+                                Err(e) => {
+                                    log::warn!("Keychain migration failed for {account}: {e}");
+                                    any_failed = true;
+                                }
                             }
                         } else {
                             encoded.zeroize();
                         }
                     }
                 }
+            }
+
+            if any_failed {
+                log::warn!("Keychain migration incomplete; will retry on next launch");
+                return;
             }
 
             if let Err(e) = std::fs::create_dir_all(&data_dir) {

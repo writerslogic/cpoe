@@ -220,6 +220,8 @@ impl SealedIdentityStore {
 
         // Verify the unsealed seed produces the expected public key (catches
         // v1 XOR-only wrapping corruption and tampering).
+        // Safety: HMAC integrity was already verified in load_blob() above,
+        // so blob.public_key is authentic before this comparison.
         if signing_key.verifying_key().to_bytes().as_slice() != blob.public_key.as_slice() {
             return Err(SealedIdentityError::BlobCorrupted);
         }

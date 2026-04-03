@@ -88,13 +88,31 @@ pub fn analyze_cadence(samples: &[SimpleJitterSample]) -> CadenceMetrics {
         // errors in index calculation can select the wrong element.
         [0.0; 5]
     } else {
-        let mut sorted = ikis.clone();
-        sorted.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let pct = |p: usize| -> f64 {
-            let idx = (p as f64 / 100.0 * (sorted.len() - 1) as f64).round() as usize;
-            sorted[idx.min(sorted.len() - 1)]
+        // Use select_nth_unstable for O(n) percentile extraction instead of
+        // cloning and sorting the full Vec.
+        let mut buf = ikis.clone();
+        let len = buf.len();
+        let cmp = |a: &f64, b: &f64| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal);
+        let pct_idx = |p: usize| -> usize {
+            ((p as f64 / 100.0 * (len - 1) as f64).round() as usize).min(len - 1)
         };
-        [pct(10), pct(25), pct(50), pct(75), pct(90)]
+        let indices = [
+            pct_idx(10),
+            pct_idx(25),
+            pct_idx(50),
+            pct_idx(75),
+            pct_idx(90),
+        ];
+        // Extract percentiles from largest to smallest index so each
+        // select_nth_unstable operates on the remaining unsorted tail.
+        let mut result = [0.0f64; 5];
+        let mut sorted_indices: Vec<(usize, usize)> = indices.iter().copied().enumerate().collect();
+        sorted_indices.sort_by(|a, b| b.1.cmp(&a.1));
+        for (orig_pos, idx) in sorted_indices {
+            buf.select_nth_unstable_by(idx, cmp);
+            result[orig_pos] = buf[idx];
+        }
+        result
     };
 
     metrics.cross_hand_timing_ratio = compute_cross_hand_timing_ratio(samples, &ikis);

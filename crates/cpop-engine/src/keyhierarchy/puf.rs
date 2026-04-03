@@ -119,6 +119,11 @@ impl SoftwarePUF {
         hasher.update(*random_bytes);
         hasher.update(b"witnessd-software-puf-v1");
 
+        // NOTE: hostname and home_dir are user-controlled and provide weak
+        // device binding. The hardware UUID (IOPlatformUUID on macOS,
+        // /etc/machine-id on Linux) is a stronger signal but still not
+        // tamper-proof without TPM attestation. The 32 random bytes above
+        // are the primary entropy source; these inputs add device affinity.
         if let Ok(hostname) = hostname::get() {
             hasher.update(hostname.to_string_lossy().as_bytes());
         }
@@ -131,11 +136,57 @@ impl SoftwarePUF {
             hasher.update(exe.to_string_lossy().as_bytes());
         }
 
+        // Mix in platform-level machine identifier when available.
+        if let Some(machine_id) = Self::read_machine_id() {
+            hasher.update(machine_id.as_bytes());
+        }
+
         hasher.update(std::env::consts::OS.as_bytes());
         hasher.update(std::env::consts::ARCH.as_bytes());
         hasher.update(Utc::now().to_rfc3339().as_bytes());
 
         Ok(hasher.finalize().to_vec())
+    }
+
+    fn read_machine_id() -> Option<String> {
+        #[cfg(target_os = "macos")]
+        {
+            let output = std::process::Command::new("/usr/sbin/sysctl")
+                .args(["-n", "kern.uuid"])
+                .output()
+                .ok()?;
+            if output.status.success() {
+                let id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !id.is_empty() {
+                    return Some(id);
+                }
+            }
+        }
+        #[cfg(target_os = "linux")]
+        {
+            if let Ok(id) = fs::read_to_string("/etc/machine-id") {
+                let id = id.trim().to_string();
+                if !id.is_empty() {
+                    return Some(id);
+                }
+            }
+        }
+        #[cfg(target_os = "windows")]
+        {
+            let output = std::process::Command::new("wmic")
+                .args(["csproduct", "get", "UUID"])
+                .output()
+                .ok()?;
+            if output.status.success() {
+                for line in String::from_utf8_lossy(&output.stdout).lines().skip(1) {
+                    let id = line.trim().to_string();
+                    if !id.is_empty() {
+                        return Some(id);
+                    }
+                }
+            }
+        }
+        None
     }
 
     fn compute_device_id(&self) -> String {

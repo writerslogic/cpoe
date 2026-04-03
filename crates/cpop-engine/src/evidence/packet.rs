@@ -76,14 +76,26 @@ impl Packet {
         let mut prev_hash = String::new();
         for (i, cp) in self.checkpoints.iter().enumerate() {
             if i == 0 {
-                // Accept legacy all-zeros OR spec-correct H(CBOR(document-ref))
+                // Accept legacy all-zeros OR spec-correct H(document-ref)
                 let is_legacy_zeros = cp.previous_hash == hex::encode([0u8; 32]);
+                let expected_genesis = {
+                    use sha2::{Digest, Sha256};
+                    let mut h = Sha256::new();
+                    h.update(self.document.path.as_bytes());
+                    hex::encode(h.finalize())
+                };
+                let is_doc_ref = cp.previous_hash == expected_genesis;
                 let is_valid_hex = cp.previous_hash.len() == 64
                     && cp.previous_hash.chars().all(|c| c.is_ascii_hexdigit());
-                if !is_legacy_zeros && !is_valid_hex {
+                if !is_legacy_zeros && !is_doc_ref && !is_valid_hex {
                     return Err(Error::evidence(
                         "checkpoint 0: invalid genesis previous hash",
                     ));
+                }
+                if !is_legacy_zeros && !is_doc_ref && is_valid_hex {
+                    log::warn!(
+                        "checkpoint 0: genesis hash is valid hex but does not match document ref"
+                    );
                 }
             } else if cp.previous_hash != prev_hash {
                 return Err(Error::evidence(format!(
@@ -131,7 +143,16 @@ impl Packet {
         }
 
         if let Some(hardware) = &self.hardware {
-            if let Err(err) = tpm::verify_binding_chain(&hardware.bindings, &[]) {
+            let trusted_keys: Vec<Vec<u8>> = trusted_public_key
+                .map(|k| vec![k.to_vec()])
+                .unwrap_or_default();
+            if trusted_keys.is_empty() {
+                log::warn!(
+                    "Hardware attestation verified without trusted keys; \
+                     only internal chain consistency is checked"
+                );
+            }
+            if let Err(err) = tpm::verify_binding_chain(&hardware.bindings, &trusted_keys) {
                 return Err(Error::evidence(format!(
                     "hardware attestation invalid: {:?}",
                     err
