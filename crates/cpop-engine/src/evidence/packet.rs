@@ -17,6 +17,9 @@ use cpop_protocol::rfc;
 
 use super::types::Packet;
 
+/// Minimum behavioral similarity for baseline verification to pass without warning.
+const BASELINE_SIMILARITY_THRESHOLD: f64 = 0.7;
+
 impl Packet {
     /// Verify packet integrity: chain hashes, VDF proofs, declaration, hardware, and key hierarchy.
     ///
@@ -249,7 +252,7 @@ impl Packet {
 
                 let similarity =
                     crate::baseline::verify_against_baseline(digest, &bv.session_summary);
-                if similarity < 0.7 {
+                if similarity < BASELINE_SIMILARITY_THRESHOLD {
                     // Not a hard failure: low behavioral similarity can occur
                     // legitimately (e.g., different device, fatigue, new writing
                     // style). Forensic analysis can weigh this signal later.

@@ -409,19 +409,35 @@ impl SentinelIpcHandler {
     }
 
     fn handle_process_score(&self, path: PathBuf) -> Result<IpcMessage, String> {
+        /// Minimum events for full residency credit.
+        const MIN_EVENTS_FOR_RESIDENCY: usize = 5;
+        /// Maximum edit entropy used for sequence score normalization.
+        const SEQUENCE_ENTROPY_CAP: f64 = 3.0;
+        /// Weight of entropy component in sequence sub-score.
+        const SEQUENCE_ENTROPY_WEIGHT: f64 = 0.5;
+        /// Weight of append-ratio component in sequence sub-score.
+        const SEQUENCE_APPEND_WEIGHT: f64 = 0.5;
+        /// Residency weight in composite process score.
+        const PROCESS_SCORE_WEIGHT_RESIDENCY: f64 = 0.3;
+        /// Sequence weight in composite process score.
+        const PROCESS_SCORE_WEIGHT_SEQUENCE: f64 = 0.3;
+        /// Behavioral weight in composite process score.
+        const PROCESS_SCORE_WEIGHT_BEHAVIORAL: f64 = 0.4;
+        /// Composite score at or above which the process meets threshold.
+        const PROCESS_SCORE_PASS_THRESHOLD: f64 = 0.9;
+
         let (events, metrics) = self.analyze_file(&path)?;
 
-        let residency = if events.len() >= 5 {
+        let residency = if events.len() >= MIN_EVENTS_FOR_RESIDENCY {
             1.0
         } else {
-            events.len() as f64 / 5.0
+            events.len() as f64 / MIN_EVENTS_FOR_RESIDENCY as f64
         };
-        let sequence = (metrics.primary.edit_entropy.min(3.0) / 3.0 * 0.5)
-            + (metrics.primary.monotonic_append_ratio * 0.5);
+        let sequence = (metrics.primary.edit_entropy.min(SEQUENCE_ENTROPY_CAP)
+            / SEQUENCE_ENTROPY_CAP
+            * SEQUENCE_ENTROPY_WEIGHT)
+            + (metrics.primary.monotonic_append_ratio * SEQUENCE_APPEND_WEIGHT);
         let behavioral = metrics.assessment_score;
-        const PROCESS_SCORE_WEIGHT_RESIDENCY: f64 = 0.3;
-        const PROCESS_SCORE_WEIGHT_SEQUENCE: f64 = 0.3;
-        const PROCESS_SCORE_WEIGHT_BEHAVIORAL: f64 = 0.4;
         let composite = PROCESS_SCORE_WEIGHT_RESIDENCY * residency
             + PROCESS_SCORE_WEIGHT_SEQUENCE * sequence
             + PROCESS_SCORE_WEIGHT_BEHAVIORAL * behavioral;
@@ -431,7 +447,7 @@ impl SentinelIpcHandler {
             sequence,
             behavioral,
             composite,
-            meets_threshold: composite >= 0.9,
+            meets_threshold: composite >= PROCESS_SCORE_PASS_THRESHOLD,
             error: None,
         })
     }
