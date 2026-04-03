@@ -1164,6 +1164,8 @@ fn build_war_report(
         likelihood_ratio: lr,
         enfsi_tier,
         document_hash: doc_hash,
+        evidence_hash: None,
+        evidence_cbor_b64: None,
         signing_key_fingerprint: signing_key_fingerprint.to_string(),
         document_words: None,
         document_chars: Some(doc_size.max(0) as u64),
