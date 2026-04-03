@@ -6,7 +6,7 @@
 //! match tracked documents or known AI tools.
 
 use super::sentinel::get_sentinel;
-use crate::sentinel::types::{AiToolCategory, DetectedAiTool, ObservationBasis};
+use crate::sentinel::types::{AiToolCategory, DetectedAiTool};
 use crate::RwLockRecover;
 use std::time::SystemTime;
 
