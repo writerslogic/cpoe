@@ -25,6 +25,12 @@ const MAX_SHORT_STRING: usize = 64;
 const MAX_ALERT_MESSAGE: usize = 4096;
 
 /// Maximum wall-clock skew for Pulse timestamps (5 minutes in nanoseconds).
+///
+/// Wall-clock (`SystemTime`) is used rather than monotonic time because Pulse
+/// events arrive from external IPC clients that may run on different monotonic
+/// bases. The 5-minute tolerance accommodates NTP drift, VM clock skew, and
+/// moderate sleep/wake lag while still rejecting stale replays and far-future
+/// injection attempts.
 const MAX_PULSE_CLOCK_SKEW_NS: i64 = 5 * 60 * 1_000_000_000;
 
 /// Reject paths with `..` components, relative paths, or paths that resolve

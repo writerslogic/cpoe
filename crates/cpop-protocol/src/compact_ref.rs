@@ -87,7 +87,13 @@ impl CompactEvidenceRef {
     /// `preserve_order` feature is not enabled), which serializes keys in
     /// sorted order. This produces a canonical byte representation suitable
     /// for signing. Do not enable `serde_json/preserve_order` in this crate.
-    pub fn signable_payload(&self) -> Vec<u8> {
+    /// Returns `Err` if `evidence_uri` is empty, since omitting the retrieval
+    /// location would let a forged reference claim validity without a
+    /// verifiable evidence source.
+    pub fn signable_payload(&self) -> Result<Vec<u8>, CompactRefError> {
+        if self.evidence_uri.is_empty() {
+            return Err(CompactRefError::MissingEvidenceUri);
+        }
         let payload = serde_json::json!({
             "packet_id": self.packet_id.to_string(),
             "chain_hash": self.chain_hash,
@@ -103,7 +109,7 @@ impl CompactEvidenceRef {
             "evidence_uri": self.evidence_uri,
         });
 
-        payload.to_string().into_bytes()
+        Ok(payload.to_string().into_bytes())
     }
 
     /// Encode as `pop-ref:<base64url>` URI.
@@ -172,6 +178,8 @@ pub enum CompactRefError {
     InvalidSignature,
     /// Document hash does not match the referenced evidence.
     HashMismatch,
+    /// `evidence_uri` is empty; a retrieval location is required for signing.
+    MissingEvidenceUri,
 }
 
 impl std::fmt::Display for CompactRefError {
@@ -182,6 +190,7 @@ impl std::fmt::Display for CompactRefError {
             Self::InvalidJson => write!(f, "Invalid JSON structure"),
             Self::InvalidSignature => write!(f, "Signature verification failed"),
             Self::HashMismatch => write!(f, "Hash does not match Evidence"),
+            Self::MissingEvidenceUri => write!(f, "evidence_uri is required for signing"),
         }
     }
 }

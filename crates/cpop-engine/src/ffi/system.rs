@@ -196,6 +196,12 @@ pub fn ffi_list_tracked_files() -> Vec<FfiTrackedFile> {
         Default::default()
     });
 
+    // Batch-fetch all document stats in one query to avoid O(n) DB round-trips.
+    let all_doc_stats = store.load_all_document_stats().unwrap_or_else(|e| {
+        log::warn!("store load_all_document_stats failed: {e}");
+        Default::default()
+    });
+
     for (path, last_ts, count) in files {
         seen_paths.insert(path.clone());
         let events = all_events.remove(&path).unwrap_or_default();
@@ -205,16 +211,14 @@ pub fn ffi_list_tracked_files() -> Vec<FfiTrackedFile> {
         let metrics = crate::forensics::analyze_forensics(&event_data, &regions, None, None, None);
 
         // Enrich with keystroke count: prefer live session total, fall back
-        // to persisted cumulative stats from the store.
+        // to persisted cumulative stats from the batch-loaded map.
         let session_keystrokes = sentinel_sessions
             .iter()
             .find(|s| s.path == path)
             .map(|s| s.total_keystrokes())
             .unwrap_or_else(|| {
-                store
-                    .load_document_stats(&path)
-                    .ok()
-                    .flatten()
+                all_doc_stats
+                    .get(&path)
                     .map(|stats| u64::try_from(stats.total_keystrokes).unwrap_or(0))
                     .unwrap_or(0)
             });

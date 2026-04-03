@@ -42,22 +42,28 @@ fn device_identity() -> &'static ([u8; 16], String) {
     })
 }
 
-/// Max context label length (chars).
+// FFI boundary constants: these values MUST match the corresponding constants
+// in the Swift side (EphemeralSessionManager.swift / EphemeralConstants.swift).
+// Changing any value here requires updating the Swift counterpart.
+
+/// Max context label length (chars). Swift: `kMaxContextLabelLen`.
 const MAX_CONTEXT_LABEL_LEN: usize = 256;
-/// Max content size for checkpoint/finalize (bytes).
+/// Max content size for checkpoint/finalize (bytes). Swift: `kMaxContentSize`.
 const MAX_CONTENT_SIZE: usize = 10 * 1024 * 1024; // 10 MB
-/// Max declaration statement length (chars).
+/// Max declaration statement length (chars). Swift: `kMaxStatementLen`.
 const MAX_STATEMENT_LEN: usize = 1000;
-/// Max content snapshots per session (30s interval × ~8.3 hours).
+/// Max content snapshots per session (30s interval x ~8.3 hours). Swift: `kMaxSnapshots`.
 const MAX_SNAPSHOTS: usize = 1000;
-/// Max jitter intervals per session (protocol limit).
+/// Max jitter intervals per session (protocol limit). Swift: `kMaxJitterIntervals`.
 const MAX_JITTER_INTERVALS: usize = 1000;
 /// Maximum number of concurrent ephemeral sessions. Prevents unbounded memory growth
 /// from callers that start sessions without finalizing them.
+/// Swift: `kMaxConcurrentSessions`.
 const MAX_CONCURRENT_SESSIONS: usize = 100;
-/// Sessions expire after 30 minutes of inactivity.
+/// Sessions expire after 30 minutes of inactivity. Swift: `kSessionTimeoutSecs`.
 const SESSION_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 /// Minimum interval between checkpoints per session (rate limiting).
+/// Swift: `kMinCheckpointIntervalSecs`.
 const MIN_CHECKPOINT_INTERVAL: Duration = Duration::from_secs(1);
 
 /// In-memory ephemeral session state.

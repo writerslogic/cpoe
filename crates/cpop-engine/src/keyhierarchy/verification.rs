@@ -114,12 +114,21 @@ pub fn verify_checkpoint_signatures(
                         sig.ordinal
                     )));
                 }
-            } else if lamport_sig.to_bytes().len() != 256 * 32 {
-                // No public key available; fall back to structural validation.
-                return Err(KeyHierarchyError::Crypto(format!(
-                    "Lamport signature wrong size at ordinal {}",
+            } else {
+                // No public key available; fall back to structural validation only.
+                // This means we can check the signature size but cannot verify the
+                // actual cryptographic binding. This weakens the chain guarantee.
+                log::warn!(
+                    "Lamport verification at ordinal {}: no public key available, \
+                     falling back to structural-only validation",
                     sig.ordinal
-                )));
+                );
+                if lamport_sig.to_bytes().len() != 256 * 32 {
+                    return Err(KeyHierarchyError::Crypto(format!(
+                        "Lamport signature wrong size at ordinal {}",
+                        sig.ordinal
+                    )));
+                }
             }
         }
 

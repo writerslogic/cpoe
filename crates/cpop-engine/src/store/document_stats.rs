@@ -44,6 +44,36 @@ impl SecureStore {
         }
     }
 
+    /// Load cumulative stats for all documents, keyed by file path.
+    pub fn load_all_document_stats(
+        &self,
+    ) -> anyhow::Result<std::collections::HashMap<String, DocumentStats>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT file_path, total_keystrokes, total_focus_ms, session_count,
+                    total_duration_secs, first_tracked_at, last_tracked_at
+             FROM document_stats",
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            Ok(DocumentStats {
+                file_path: row.get(0)?,
+                total_keystrokes: row.get(1)?,
+                total_focus_ms: row.get(2)?,
+                session_count: row.get(3)?,
+                total_duration_secs: row.get(4)?,
+                first_tracked_at: row.get(5)?,
+                last_tracked_at: row.get(6)?,
+            })
+        })?;
+
+        let mut map = std::collections::HashMap::new();
+        for row in rows {
+            let stats = row?;
+            map.insert(stats.file_path.clone(), stats);
+        }
+        Ok(map)
+    }
+
     /// Insert or update cumulative stats for a document.
     pub fn save_document_stats(&self, stats: &DocumentStats) -> anyhow::Result<()> {
         self.conn.execute(

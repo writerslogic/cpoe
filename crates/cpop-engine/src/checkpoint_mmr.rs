@@ -13,6 +13,37 @@ use crate::checkpoint::{Chain, ChainMetadata};
 use crate::error::{Error, Result};
 use crate::mmr::{FileStore, InclusionProof, MemoryStore, Mmr, RangeProof};
 
+/// Type-safe wrapper for a SHA-256 checkpoint hash used as an MMR leaf.
+///
+/// Prevents accidental use of arbitrary `[u8; 32]` values (e.g. keys, nonces)
+/// as MMR leaves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MmrLeaf(pub [u8; 32]);
+
+impl MmrLeaf {
+    /// Wrap a raw 32-byte hash as an MMR leaf.
+    pub fn new(hash: [u8; 32]) -> Self {
+        Self(hash)
+    }
+
+    /// Access the inner hash bytes.
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+impl From<[u8; 32]> for MmrLeaf {
+    fn from(hash: [u8; 32]) -> Self {
+        Self(hash)
+    }
+}
+
+impl From<&[u8; 32]> for MmrLeaf {
+    fn from(hash: &[u8; 32]) -> Self {
+        Self(*hash)
+    }
+}
+
 /// Result of appending a checkpoint to the MMR, distinguishing fresh appends
 /// from idempotent duplicates.
 #[derive(Debug)]
@@ -64,18 +95,22 @@ impl CheckpointMmr {
     /// EH-043: Idempotent -- if the last leaf already matches `checkpoint_hash`,
     /// we skip the append and return `AppendResult::Existing`. Otherwise, a fresh
     /// append returns `AppendResult::New`.
-    pub fn append_checkpoint(&self, checkpoint_hash: &[u8; 32]) -> Result<AppendResult> {
+    pub fn append_checkpoint(&self, leaf: impl Into<MmrLeaf>) -> Result<AppendResult> {
+        let checkpoint_hash = leaf.into();
         let count = self.mmr.leaf_count();
         if count > 0 {
             let last_leaf_index = self.mmr.get_leaf_index(count - 1).map_err(Error::from)?;
             if let Ok(existing_proof) = self.mmr.generate_proof(last_leaf_index) {
-                if existing_proof.verify(checkpoint_hash).is_ok() {
+                if existing_proof.verify(checkpoint_hash.as_bytes()).is_ok() {
                     return Ok(AppendResult::Existing(existing_proof));
                 }
             }
         }
 
-        let leaf_index = self.mmr.append(checkpoint_hash).map_err(Error::from)?;
+        let leaf_index = self
+            .mmr
+            .append(checkpoint_hash.as_bytes())
+            .map_err(Error::from)?;
         // FileStore requires sync before proof generation
         self.mmr.sync().map_err(Error::from)?;
         let proof = self.mmr.generate_proof(leaf_index).map_err(Error::from)?;
@@ -83,10 +118,11 @@ impl CheckpointMmr {
     }
 
     /// Verify a checkpoint hash exists at the given leaf ordinal.
-    pub fn verify_checkpoint(&self, checkpoint_hash: &[u8; 32], leaf_ordinal: u64) -> Result<bool> {
+    pub fn verify_checkpoint(&self, leaf: impl Into<MmrLeaf>, leaf_ordinal: u64) -> Result<bool> {
+        let checkpoint_hash = leaf.into();
         let leaf_index = self.mmr.get_leaf_index(leaf_ordinal).map_err(Error::from)?;
         let proof = self.mmr.generate_proof(leaf_index).map_err(Error::from)?;
-        Ok(proof.verify(checkpoint_hash).is_ok())
+        Ok(proof.verify(checkpoint_hash.as_bytes()).is_ok())
     }
 
     /// Return the current MMR root hash.

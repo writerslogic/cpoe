@@ -197,16 +197,26 @@ pub fn ffi_get_device_public_key() -> FfiDeviceKey {
 
 /// Run a shell command in a background thread with a 2-second timeout.
 /// Returns `None` if the command fails or times out.
+///
+/// Results are cached by callers via `OnceLock`, so this only blocks once per
+/// process lifetime. Safe to call from FFI init paths; the spawned thread
+/// prevents the shell command from blocking the calling thread beyond the
+/// timeout.
 fn run_command_with_timeout(cmd: &'static str, args: &'static [&'static str]) -> Option<String> {
-    let handle = std::thread::spawn(move || {
-        std::process::Command::new(cmd)
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = std::process::Command::new(cmd)
             .args(args)
             .output()
             .ok()
             .and_then(|o| String::from_utf8(o.stdout).ok())
-            .map(|s| s.trim().to_string())
+            .map(|s| s.trim().to_string());
+        let _ = tx.send(result);
     });
-    handle.join().ok().flatten().filter(|s| !s.is_empty())
+    rx.recv_timeout(std::time::Duration::from_secs(2))
+        .ok()
+        .flatten()
+        .filter(|s| !s.is_empty())
 }
 
 fn get_model() -> String {

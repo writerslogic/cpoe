@@ -324,8 +324,8 @@ fn test_compact_ref_generation() {
     assert!(size < 2000);
 
     // Signable payload is deterministic
-    let payload1 = compact.signable_payload();
-    let payload2 = compact.signable_payload();
+    let payload1 = compact.signable_payload().unwrap();
+    let payload2 = compact.signable_payload().unwrap();
     assert_eq!(payload1, payload2);
 }
 
