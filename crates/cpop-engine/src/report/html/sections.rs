@@ -46,6 +46,15 @@ fn sanitize_css_color(color: &str) -> &str {
     }
 }
 
+/// Return `fallback` when `v` is NaN or infinite.
+fn finite_or(v: f64, fallback: f64) -> f64 {
+    if v.is_finite() {
+        v
+    } else {
+        fallback
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Document Header
 // ---------------------------------------------------------------------------
@@ -1354,11 +1363,11 @@ pub(super) fn write_forensic_breakdown(html: &mut String, r: &WarReport) -> fmt:
         r#"<p><strong>Writing Mode:</strong> <span style="display:inline-block;background:{color};color:#fff;font-family:var(--sans);font-size:10px;font-weight:700;padding:2px 8px;border-radius:2px;letter-spacing:0.5px;text-transform:uppercase">{mode}</span> <span style="color:var(--text-muted);font-size:12px">(confidence: {conf:.0}%)</span></p>"#,
         color = badge_color,
         mode = html_escape(&fm.writing_mode),
-        conf = fm.writing_mode_confidence * 100.0,
+        conf = finite_or(fm.writing_mode_confidence * 100.0, 0.0),
     )?;
 
     // Cognitive score gauge
-    let cog_pct = (fm.cognitive_score * 100.0).clamp(0.0, 100.0);
+    let cog_pct = finite_or(fm.cognitive_score * 100.0, 0.0).clamp(0.0, 100.0);
     let cog_color = if cog_pct >= 60.0 {
         "#3d7a4a"
     } else if cog_pct >= 30.0 {
@@ -1379,12 +1388,12 @@ pub(super) fn write_forensic_breakdown(html: &mut String, r: &WarReport) -> fmt:
     write!(
         html,
         r#"<div class="metric-card"><div class="metric-label">Mean IKI</div><div class="metric-value">{:.0} ms</div></div>"#,
-        fm.mean_iki_ms,
+        finite_or(fm.mean_iki_ms, 0.0),
     )?;
     write!(
         html,
         r#"<div class="metric-card"><div class="metric-label">Coefficient of Variation</div><div class="metric-value">{:.3}</div></div>"#,
-        fm.coefficient_of_variation,
+        finite_or(fm.coefficient_of_variation, 0.0),
     )?;
     write!(
         html,
@@ -1399,17 +1408,17 @@ pub(super) fn write_forensic_breakdown(html: &mut String, r: &WarReport) -> fmt:
     write!(
         html,
         r#"<div class="metric-card"><div class="metric-label">Correction Ratio</div><div class="metric-value">{:.3}</div></div>"#,
-        fm.correction_ratio,
+        finite_or(fm.correction_ratio, 0.0),
     )?;
     write!(
         html,
         r#"<div class="metric-card"><div class="metric-label">Burst Speed CV</div><div class="metric-value">{:.3}</div></div>"#,
-        fm.burst_speed_cv,
+        finite_or(fm.burst_speed_cv, 0.0),
     )?;
     write!(html, r#"</div>"#)?;
 
     // Hurst exponent
-    if let Some(h) = fm.hurst_exponent {
+    if let Some(h) = fm.hurst_exponent.filter(|v| v.is_finite()) {
         let interp = if h < 0.5 {
             "anti-persistent (mean-reverting)"
         } else if h < 0.6 {
@@ -1458,12 +1467,12 @@ pub(super) fn write_forensic_breakdown(html: &mut String, r: &WarReport) -> fmt:
         html,
         r#"<p style="font-size:12.5px;margin:8px 0"><strong>Assessment:</strong> {score:.0}/100 | <strong>Risk:</strong> <span style="color:{color};font-weight:600">{risk}</span> | <strong>Revision Cycles:</strong> {rev}</p>
 <p style="font-size:12.5px;margin:4px 0"><strong>Throughput:</strong> {mean:.1} mean BPS, {max:.1} max BPS</p>"#,
-        score = fm.assessment_score * 100.0,
+        score = finite_or(fm.assessment_score * 100.0, 0.0),
         color = risk_color,
         risk = html_escape(&fm.risk_level),
         rev = fm.revision_cycle_count,
-        mean = fm.mean_bps,
-        max = fm.max_bps,
+        mean = finite_or(fm.mean_bps, 0.0),
+        max = finite_or(fm.max_bps, 0.0),
     )
 }
 

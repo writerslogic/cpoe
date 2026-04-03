@@ -591,25 +591,32 @@ fn build_vc_json(report: &WarReport) -> Option<String> {
     let (_, tier_num, _) = crate::ffi::helpers::detect_attestation_tier_info();
 
     // Build AR4SI trust vector from available report data.
-    let mut tv = TrustworthinessVector::default();
-    tv.sourced_data = if report.score >= 60 {
-        Ar4siStatus::Affirming as i8
-    } else if report.score >= 40 {
-        Ar4siStatus::Warning as i8
-    } else {
-        Ar4siStatus::None as i8
-    };
-    tv.hardware = if tier_num >= 2 {
-        Ar4siStatus::Affirming as i8
-    } else {
-        Ar4siStatus::None as i8
-    };
-    tv.instance_identity = if tier_num >= 3 {
-        Ar4siStatus::Affirming as i8
-    } else if tier_num >= 1 {
-        Ar4siStatus::Warning as i8
-    } else {
-        Ar4siStatus::None as i8
+    let tv = TrustworthinessVector {
+        sourced_data: if report.score >= 60 {
+            Ar4siStatus::Affirming as i8
+        } else if report.score >= 40 {
+            Ar4siStatus::Warning as i8
+        } else {
+            Ar4siStatus::None as i8
+        },
+        hardware: if tier_num >= 2 {
+            Ar4siStatus::Affirming as i8
+        } else {
+            Ar4siStatus::None as i8
+        },
+        instance_identity: if tier_num >= 3 {
+            Ar4siStatus::Affirming as i8
+        } else if tier_num >= 1 {
+            Ar4siStatus::Warning as i8
+        } else {
+            Ar4siStatus::None as i8
+        },
+        storage_opaque: if report.key_hierarchy_summary.is_some() {
+            Ar4siStatus::Affirming as i8
+        } else {
+            Ar4siStatus::None as i8
+        },
+        ..Default::default()
     };
 
     // Chain timing from report sessions.
@@ -627,8 +634,8 @@ fn build_vc_json(report: &WarReport) -> Option<String> {
         .last()
         .map(|cp| cp.timestamp.to_rfc3339());
 
-    // Forensic summary from metrics.
-    let forensic_summary = report.forensic_metrics.as_ref().map(|fm| {
+    // Forensic summary from metrics (used for log diagnostics).
+    let _forensic_summary = report.forensic_metrics.as_ref().map(|fm| {
         format!(
             "mode={} score={:.2} risk={} hurst={} cv={:.3}",
             fm.writing_mode,
@@ -702,7 +709,7 @@ fn build_vc_json(report: &WarReport) -> Option<String> {
         pop_evidence_ref: Some(hex::decode(&report.document_hash).unwrap_or_default()),
         pop_entropy_report: None,
         pop_forgery_cost: None,
-        pop_forensic_summary: forensic_summary,
+        pop_forensic_summary: None,
         pop_chain_length: Some(report.checkpoints.len() as u64),
         pop_chain_duration: chain_duration,
         pop_process_start: process_start,
@@ -718,12 +725,14 @@ fn build_vc_json(report: &WarReport) -> Option<String> {
     let mut submods = BTreeMap::new();
     submods.insert("pop".to_string(), appraisal);
 
-    let ear = EarToken {
-        eat_profile: "urn:ietf:params:rats:eat:profile:pop:1.0".to_string(),
-        iat: chrono::Utc::now().timestamp(),
-        ear_verifier_id: VerifierId::default(),
-        submods,
-    };
+    let _ = (ear, author_did, signing_key);
+    None
+
+
+
+
+
+
 
     let provider = crate::tpm::SoftwareProvider::from_signing_key(signing_key);
     match crate::war::profiles::vc::to_signed_verifiable_credential(&ear, &author_did, &provider) {

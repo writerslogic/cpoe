@@ -19,6 +19,15 @@ const WHITE: (f32, f32, f32) = (1.0, 1.0, 1.0);
 /// Subtle alternating-row tint for tables.
 const ALT_ROW: (f32, f32, f32) = (0.98, 0.98, 0.98);
 
+/// Return `fallback` when `v` is NaN or infinite.
+fn finite_or(v: f64, fallback: f64) -> f64 {
+    if v.is_finite() {
+        v
+    } else {
+        fallback
+    }
+}
+
 // ── Page 2 ────────────────────────────────────────────────────────────
 
 pub fn draw_page2(layer: &PdfLayerReference, r: &WarReport, fonts: &PdfFonts, footer: &str) {
@@ -38,6 +47,9 @@ pub fn draw_page2(layer: &PdfLayerReference, r: &WarReport, fonts: &PdfFonts, fo
         y -= 7.0;
 
         for s in &r.sessions {
+            if y < 20.0 {
+                break;
+            }
             // White card with thin border
             fill_rect(layer, MARGIN_LEFT, y - 4.0, CONTENT_WIDTH, 12.0, WHITE);
             stroke_rect(
@@ -220,6 +232,9 @@ pub fn draw_page2(layer: &PdfLayerReference, r: &WarReport, fonts: &PdfFonts, fo
         y -= 4.0;
 
         for (row_idx, f) in r.flags.iter().enumerate() {
+            if y < 18.0 {
+                break;
+            }
             // Alternating row backgrounds
             if row_idx % 2 == 0 {
                 fill_rect(layer, MARGIN_LEFT, y - 2.0, CONTENT_WIDTH, 5.0, ALT_ROW);
@@ -730,7 +745,12 @@ pub(super) fn draw_forensics_page(
         y -= 10.0;
 
         // Cognitive score bar
-        let cog_score = (fm.cognitive_score * 100.0).round().clamp(0.0, 100.0) as u32;
+        let cog_f = if fm.cognitive_score.is_finite() {
+            fm.cognitive_score
+        } else {
+            0.0
+        };
+        let cog_score = (cog_f * 100.0).round().clamp(0.0, 100.0) as u32;
         super::charts::draw_score_bar(
             layer,
             &fonts.regular,
@@ -754,7 +774,7 @@ pub(super) fn draw_forensics_page(
             &fonts.regular,
             BLACK,
         );
-        if let Some(hurst) = fm.hurst_exponent {
+        if let Some(hurst) = fm.hurst_exponent.filter(|v| v.is_finite()) {
             text(
                 layer,
                 &format!("Hurst Exponent: {:.3}", hurst),
@@ -780,12 +800,12 @@ pub(super) fn draw_forensics_page(
         y -= 7.0;
 
         let metrics: [(&str, String); 6] = [
-            ("Mean IKI (ms)", format!("{:.1}", fm.mean_iki_ms)),
-            ("CV", format!("{:.3}", fm.coefficient_of_variation)),
+            ("Mean IKI (ms)", format!("{:.1}", finite_or(fm.mean_iki_ms, 0.0))),
+            ("CV", format!("{:.3}", finite_or(fm.coefficient_of_variation, 0.0))),
             ("Burst Count", format!("{}", fm.burst_count)),
             ("Pause Count", format!("{}", fm.pause_count)),
-            ("Correction Ratio", format!("{:.3}", fm.correction_ratio)),
-            ("Burst Speed CV", format!("{:.3}", fm.burst_speed_cv)),
+            ("Correction Ratio", format!("{:.3}", finite_or(fm.correction_ratio, 0.0))),
+            ("Burst Speed CV", format!("{:.3}", finite_or(fm.burst_speed_cv, 0.0))),
         ];
 
         let card_w = (CONTENT_WIDTH - 4.0) / 3.0;
@@ -804,7 +824,7 @@ pub(super) fn draw_forensics_page(
     }
 
     // ── Edit Topology ──
-    if !report.edit_topology.is_empty() {
+    if !report.edit_topology.is_empty() && y > 40.0 {
         text(
             layer,
             "Edit Distribution Across Document",
@@ -838,7 +858,7 @@ pub(super) fn draw_forensics_page(
     }
 
     // ── Activity Context Timeline ──
-    if !report.activity_contexts.is_empty() {
+    if !report.activity_contexts.is_empty() && y > 30.0 {
         text(
             layer,
             "Activity Timeline",
@@ -872,7 +892,7 @@ pub(super) fn draw_forensics_page(
     }
 
     // ── Anomalies Table ──
-    if !report.anomalies.is_empty() {
+    if !report.anomalies.is_empty() && y > 30.0 {
         text(
             layer,
             &format!("Anomalies ({})", report.anomalies.len()),

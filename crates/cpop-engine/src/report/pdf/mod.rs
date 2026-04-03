@@ -138,8 +138,145 @@ pub fn render_pdf(report: &WarReport, security_seed: Option<&[u8; 64]>) -> Resul
     let mut buf = BufWriter::new(Vec::new());
     doc.save(&mut buf)
         .map_err(|e| format!("PDF serialization failed: {e}"))?;
-    buf.into_inner()
-        .map_err(|e| format!("PDF buffer flush failed: {e}"))
+    let pdf_bytes = buf
+        .into_inner()
+        .map_err(|e| format!("PDF buffer flush failed: {e}"))?;
+
+    // Embed the VC JSON as a PDF file attachment so tools can extract it
+    // without OCR. We round-trip through lopdf since printpdf's save
+    // consumes the document and builds the catalog internally.
+    if let Some(ref vc_json) = report.verifiable_credential_json {
+        return embed_vc_attachment(pdf_bytes, vc_json.as_bytes());
+    }
+
+    Ok(pdf_bytes)
+}
+
+/// Embed a VC JSON-LD as a PDF /EmbeddedFiles attachment.
+///
+/// Re-parses the serialized PDF, adds the embedded file entry to the
+/// catalog's /Names dictionary, and re-serializes.
+fn embed_vc_attachment(pdf_bytes: Vec<u8>, vc_json: &[u8]) -> Result<Vec<u8>, String> {
+    use printpdf::lopdf::{self, Dictionary as LoDict, Object, Stream, StringFormat};
+
+    let mut doc = lopdf::Document::load_mem(&pdf_bytes)
+        .map_err(|e| format!("failed to re-parse PDF for VC embedding: {e}"))?;
+
+    // 1. Stream object holding the raw JSON bytes (lopdf will deflate-compress
+    //    on Document::compress(), which printpdf calls in release builds).
+    let mut stream_dict = LoDict::new();
+    stream_dict.set("Type", Object::Name(b"EmbeddedFile".to_vec()));
+    stream_dict.set(
+        "Subtype",
+        Object::Name(b"application/ld+json".to_vec()),
+    );
+    stream_dict.set(
+        "Params",
+        Object::Dictionary({
+            let mut params = LoDict::new();
+            params.set("Size", Object::Integer(vc_json.len() as i64));
+            params
+        }),
+    );
+    let stream = Stream::new(stream_dict, vc_json.to_vec());
+    let stream_id = doc.add_object(stream);
+
+    // 2. File specification dictionary (PDF 1.7, section 7.11.3).
+    let mut filespec = LoDict::new();
+    filespec.set("Type", Object::Name(b"Filespec".to_vec()));
+    filespec.set(
+        "F",
+        Object::String(b"credential.jsonld".to_vec(), StringFormat::Literal),
+    );
+    filespec.set(
+        "UF",
+        Object::String(b"credential.jsonld".to_vec(), StringFormat::Literal),
+    );
+    filespec.set(
+        "Desc",
+        Object::String(
+            b"W3C Verifiable Credential 2.0 (JSON-LD)".to_vec(),
+            StringFormat::Literal,
+        ),
+    );
+    filespec.set("AFRelationship", Object::Name(b"Data".to_vec()));
+    let mut ef = LoDict::new();
+    ef.set("F", Object::Reference(stream_id));
+    ef.set("UF", Object::Reference(stream_id));
+    filespec.set("EF", Object::Dictionary(ef));
+    let filespec_id = doc.add_object(filespec);
+
+    // 3. /Names -> /EmbeddedFiles name tree in the catalog.
+    //    We use a single-entry leaf node (Names array, not Kids).
+    let names_array = vec![
+        Object::String(b"credential.jsonld".to_vec(), StringFormat::Literal),
+        Object::Reference(filespec_id),
+    ];
+    let mut embedded_files = LoDict::new();
+    embedded_files.set("Names", Object::Array(names_array));
+    let embedded_files_id = doc.add_object(embedded_files);
+
+    // Determine how /Names is stored in the catalog so we can handle
+    // both inline dictionaries and indirect references without borrow conflicts.
+    enum NamesLocation {
+        Reference(lopdf::ObjectId),
+        Inline,
+        Missing,
+    }
+
+    let location = {
+        let catalog = doc
+            .catalog()
+            .map_err(|e| format!("failed to access PDF catalog: {e}"))?;
+        if catalog.has(b"Names") {
+            match catalog.get(b"Names") {
+                Ok(Object::Reference(id)) => NamesLocation::Reference(*id),
+                _ => NamesLocation::Inline,
+            }
+        } else {
+            NamesLocation::Missing
+        }
+    };
+
+    match location {
+        NamesLocation::Reference(names_ref) => {
+            let names_dict = doc
+                .get_dictionary_mut(names_ref)
+                .map_err(|e| format!("failed to access /Names dict: {e}"))?;
+            names_dict.set("EmbeddedFiles", Object::Reference(embedded_files_id));
+        }
+        NamesLocation::Inline => {
+            let catalog = doc
+                .catalog_mut()
+                .map_err(|e| format!("failed to access PDF catalog: {e}"))?;
+            if let Ok(Object::Dictionary(ref mut names_dict)) =
+                catalog.get_mut(b"Names")
+            {
+                names_dict.set("EmbeddedFiles", Object::Reference(embedded_files_id));
+            }
+        }
+        NamesLocation::Missing => {
+            let mut names_dict = LoDict::new();
+            names_dict.set("EmbeddedFiles", Object::Reference(embedded_files_id));
+            let names_id = doc.add_object(names_dict);
+            let catalog = doc
+                .catalog_mut()
+                .map_err(|e| format!("failed to access PDF catalog: {e}"))?;
+            catalog.set("Names", Object::Reference(names_id));
+        }
+    }
+
+    // Also add /AF array on the catalog for PDF 2.0 associated files.
+    let catalog = doc
+        .catalog_mut()
+        .map_err(|e| format!("failed to access PDF catalog for AF: {e}"))?;
+    catalog.set("AF", Object::Array(vec![Object::Reference(filespec_id)]));
+
+    let mut out = Vec::new();
+    doc.save_to(&mut out)
+        .map_err(|e| format!("failed to re-serialize PDF with VC attachment: {e}"))?;
+
+    Ok(out)
 }
 
 /// Font handles for the PDF document.
