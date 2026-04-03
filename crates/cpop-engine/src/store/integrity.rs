@@ -41,7 +41,8 @@ impl SecureStore {
                 hardware_counter INTEGER,
                 input_method    TEXT,
                 lamport_signature BLOB,
-                lamport_pubkey_fingerprint BLOB
+                lamport_pubkey_fingerprint BLOB,
+                challenge_nonce TEXT
             );
 
             CREATE TABLE IF NOT EXISTS physical_baselines (
@@ -131,6 +132,18 @@ impl SecureStore {
                 "ALTER TABLE secure_events ADD COLUMN lamport_signature BLOB;
                  ALTER TABLE secure_events ADD COLUMN lamport_pubkey_fingerprint BLOB;",
             )?;
+        }
+
+        let has_challenge: bool = {
+            let mut stmt = self.conn.prepare("PRAGMA table_info(secure_events)")?;
+            let found = stmt
+                .query_map([], |row| row.get::<_, String>(1))?
+                .any(|name| matches!(name.as_deref(), Ok("challenge_nonce")));
+            found
+        };
+        if !has_challenge {
+            self.conn
+                .execute_batch("ALTER TABLE secure_events ADD COLUMN challenge_nonce TEXT;")?;
         }
 
         Ok(())

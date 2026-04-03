@@ -181,6 +181,24 @@ pub fn ffi_sentinel_es_capture_gap(missed_count: u32) -> bool {
     true
 }
 
+/// Set a pre-fetched challenge nonce to be bound into the next checkpoint.
+///
+/// Called by the host app after requesting a challenge from the WritersProof CA.
+/// The nonce is consumed by the next checkpoint timer tick; if no checkpoint
+/// fires within 30 seconds, the nonce expires and is discarded.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn ffi_sentinel_set_challenge_nonce(nonce: String) -> bool {
+    let sentinel_opt = get_sentinel();
+    let sentinel = match sentinel_opt.as_ref() {
+        Some(s) if s.is_running() => s,
+        _ => return false,
+    };
+
+    log::info!("Challenge nonce set for next checkpoint");
+    *sentinel.pending_challenge.write_recover() = Some(nonce);
+    true
+}
+
 /// Return the list of AI tools detected across all active sessions (deduplicated).
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn ffi_sentinel_es_ai_tools_active() -> Vec<String> {

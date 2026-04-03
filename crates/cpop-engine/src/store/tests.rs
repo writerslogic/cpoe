@@ -31,6 +31,7 @@ fn create_test_event(file_path: &str, content_hash: [u8; 32]) -> SecureEvent {
         input_method: None,
         lamport_signature: None,
         lamport_pubkey_fingerprint: None,
+        challenge_nonce: None,
     }
 }
 
@@ -222,6 +223,7 @@ fn test_event_with_optional_fields() {
         input_method: None,
         lamport_signature: None,
         lamport_pubkey_fingerprint: None,
+        challenge_nonce: None,
     };
 
     store.add_secure_event(&mut event).expect("insert event");

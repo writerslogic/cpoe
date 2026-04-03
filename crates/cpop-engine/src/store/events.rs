@@ -57,8 +57,8 @@ impl SecureStore {
                 device_id, machine_id, timestamp_ns, file_path, content_hash, file_size, size_delta,
                 previous_hash, event_hash, hmac, context_type, context_note, vdf_input, vdf_output,
                 vdf_iterations, forensic_score, is_paste, hardware_counter, input_method,
-                lamport_signature, lamport_pubkey_fingerprint
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                lamport_signature, lamport_pubkey_fingerprint, challenge_nonce
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params![
                 &e.device_id[..],
                 &e.machine_id,
@@ -91,7 +91,8 @@ impl SecureStore {
                 }),
                 e.input_method,
                 e.lamport_signature.as_deref(),
-                e.lamport_pubkey_fingerprint.as_deref()
+                e.lamport_pubkey_fingerprint.as_deref(),
+                e.challenge_nonce
             ],
         )?;
 
@@ -137,7 +138,7 @@ impl SecureStore {
                 content_hash, file_size, size_delta, previous_hash, event_hash, \
                 context_type, context_note, vdf_input, vdf_output, vdf_iterations, \
                 forensic_score, is_paste, hardware_counter, input_method, \
-                lamport_signature, lamport_pubkey_fingerprint \
+                lamport_signature, lamport_pubkey_fingerprint, challenge_nonce \
                 FROM secure_events WHERE file_path = ?1 ORDER BY id ASC";
         let query = match limit {
             Some(_) => format!("{base_query} LIMIT ?2"),
@@ -239,6 +240,7 @@ impl SecureStore {
             input_method: row.get(18)?,
             lamport_signature: row.get(19)?,
             lamport_pubkey_fingerprint: row.get(20)?,
+            challenge_nonce: row.get(21)?,
         })
     }
 
@@ -351,7 +353,7 @@ impl SecureStore {
             "SELECT id, device_id, machine_id, timestamp_ns, file_path, content_hash, file_size, size_delta,
                     previous_hash, event_hash, context_type, context_note, vdf_input, vdf_output,
                     vdf_iterations, forensic_score, is_paste, hardware_counter, input_method,
-                    lamport_signature, lamport_pubkey_fingerprint
+                    lamport_signature, lamport_pubkey_fingerprint, challenge_nonce
              FROM secure_events WHERE device_id = ? ORDER BY id ASC",
         )?;
 

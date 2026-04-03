@@ -27,6 +27,7 @@ fn commit_checkpoint_for_path(
     note: &str,
     signing_key: &Arc<RwLock<Option<SigningKey>>>,
     writersproof_dir: &std::path::Path,
+    challenge_nonce: Option<String>,
 ) -> bool {
     let file_path = std::path::Path::new(path);
     let (content_hash, raw_size) = match crate::crypto::hash_file_with_size(file_path) {
@@ -60,6 +61,7 @@ fn commit_checkpoint_for_path(
         file_size,
         Some(note.to_string()),
     );
+    event.challenge_nonce = challenge_nonce;
     let sk_guard = signing_key.read_recover();
     let sk_ref = sk_guard.as_ref();
     match store.add_secure_event_with_signer(&mut event, sk_ref) {
@@ -120,6 +122,8 @@ pub struct Sentinel {
     pub(crate) keystroke_capture_active: Arc<AtomicBool>,
     /// Last paste character count reported by the host app.
     last_paste_chars: Arc<std::sync::atomic::AtomicI64>,
+    /// Pre-fetched challenge nonce from the host app, consumed by the next checkpoint.
+    pub(crate) pending_challenge: Arc<RwLock<Option<String>>>,
     /// Timestamp when the sentinel was started via start().
     pub(crate) start_time: Arc<Mutex<Option<SystemTime>>>,
     /// False when any bridge thread has died; checked before processing events.
@@ -165,6 +169,7 @@ impl Sentinel {
             mouse_capture: Arc::new(Mutex::new(None)),
             keystroke_capture_active: Arc::new(AtomicBool::new(false)),
             last_paste_chars: Arc::new(std::sync::atomic::AtomicI64::new(0)),
+            pending_challenge: Arc::new(RwLock::new(None)),
             start_time: Arc::new(Mutex::new(None)),
             bridge_healthy: Arc::new(AtomicBool::new(true)),
         };
@@ -567,6 +572,7 @@ impl Sentinel {
         let idle_check_interval_secs = config.idle_check_interval_secs;
         let writersproof_dir = config.writersproof_dir.clone();
         let signing_key_for_cp = Arc::clone(&self.signing_key);
+        let pending_challenge = Arc::clone(&self.pending_challenge);
 
         // Re-focus preserved sessions from a prior run so that keystrokes
         // are attributed immediately, without waiting for the focus probe.
@@ -798,6 +804,7 @@ impl Sentinel {
                                         "Auto-checkpoint on idle end",
                                         &cp_key,
                                         &cp_dir,
+                                        None,
                                     )
                                 })
                                 .await;
@@ -847,16 +854,23 @@ impl Sentinel {
                                 .map(|(p, _)| p.clone())
                                 .collect()
                         };
+
+                        // Consume a pre-fetched challenge nonce if one was set
+                        // by the host app via ffi_sentinel_set_challenge_nonce.
+                        let challenge_nonce = pending_challenge.write_recover().take();
+
                         for path in &candidates {
                             let cp_path = path.clone();
                             let cp_key = Arc::clone(&signing_key_for_cp);
                             let cp_dir = writersproof_dir.clone();
+                            let cp_nonce = challenge_nonce.clone();
                             let committed = tokio::task::spawn_blocking(move || {
                                 commit_checkpoint_for_path(
                                     &cp_path,
                                     "Auto-checkpoint",
                                     &cp_key,
                                     &cp_dir,
+                                    cp_nonce,
                                 )
                             })
                             .await

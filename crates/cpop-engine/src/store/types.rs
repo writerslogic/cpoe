@@ -28,6 +28,8 @@ pub struct SecureEvent {
     pub lamport_signature: Option<Vec<u8>>,
     /// Lamport public key fingerprint (8 bytes) for compact identification.
     pub lamport_pubkey_fingerprint: Option<Vec<u8>>,
+    /// Timeline challenge nonce from WritersProof CA (30s TTL).
+    pub challenge_nonce: Option<String>,
 }
 
 fn now_ns() -> i64 {
@@ -70,6 +72,7 @@ impl SecureEvent {
             input_method: None,
             lamport_signature: None,
             lamport_pubkey_fingerprint: None,
+            challenge_nonce: None,
         }
     }
 }
