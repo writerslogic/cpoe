@@ -150,10 +150,14 @@ impl EvidencePacketWire {
             )));
         }
 
-        if self.packet_id == [0u8; 16] {
-            return Err(CodecError::Validation(
-                "packet_id must not be all zeros".into(),
-            ));
+        // Require at least 4 non-zero bytes to guard against low-entropy IDs.
+        const MIN_NONZERO_BYTES: usize = 4;
+        let nonzero_count = self.packet_id.iter().filter(|&&b| b != 0).count();
+        if nonzero_count < MIN_NONZERO_BYTES {
+            return Err(CodecError::Validation(format!(
+                "packet_id has only {} non-zero bytes (minimum {})",
+                nonzero_count, MIN_NONZERO_BYTES
+            )));
         }
 
         if self.created == 0 {

@@ -379,7 +379,7 @@ fn convert_dimension(d: &DimensionScore) -> FfiDimensionScore {
     }
 }
 
-/// Detect writing sessions from events using 30-minute gap heuristic.
+/// Detect writing sessions from events using the default session gap heuristic.
 pub(crate) fn detect_sessions_from_events(
     events: &[crate::store::SecureEvent],
 ) -> Vec<ReportSession> {
@@ -387,7 +387,8 @@ pub(crate) fn detect_sessions_from_events(
         return vec![];
     }
 
-    let gap_ns: i64 = 30 * 60 * 1_000_000_000;
+    use crate::forensics::types::DEFAULT_SESSION_GAP_SEC;
+    let gap_ns: i64 = (DEFAULT_SESSION_GAP_SEC * 1_000_000_000.0) as i64;
     let mut sessions = Vec::new();
     let mut session_start = 0usize;
 

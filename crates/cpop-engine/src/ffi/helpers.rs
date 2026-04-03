@@ -52,16 +52,14 @@ pub(crate) fn get_db_path() -> Option<PathBuf> {
     get_data_dir().map(|d| d.join("events.db"))
 }
 
-pub(crate) fn load_hmac_key() -> Option<Zeroizing<Vec<u8>>> {
-    if let Ok(Some(key)) = crate::identity::SecureStorage::load_hmac_key() {
-        return Some(key);
-    }
-
+/// Read the signing key seed from disk with TOCTOU-safe file handling.
+///
+/// Opens the file, stats the handle (not the path), bounds the size, and
+/// derives an HMAC key from the first 32 bytes.
+fn derive_hmac_from_signing_key_file() -> Option<Zeroizing<Vec<u8>>> {
+    use std::io::Read;
     let data_dir = get_data_dir()?;
     let key_path = data_dir.join("signing_key");
-    // Open the file first, then stat the handle to avoid a TOCTOU race between
-    // the metadata check and the subsequent read (the file could be swapped for
-    // a symlink pointing to a large file between the two syscalls).
     let key_file = match std::fs::File::open(&key_path) {
         Ok(f) => f,
         Err(e) => {
@@ -75,7 +73,6 @@ pub(crate) fn load_hmac_key() -> Option<Zeroizing<Vec<u8>>> {
             return None;
         }
     }
-    use std::io::Read;
     let mut raw = Zeroizing::new(Vec::new());
     {
         let mut f = key_file;
@@ -84,13 +81,19 @@ pub(crate) fn load_hmac_key() -> Option<Zeroizing<Vec<u8>>> {
             return None;
         }
     }
-    let key_data = raw;
-    let seed = if key_data.len() >= 32 {
-        &key_data[..32]
+    if raw.len() >= 32 {
+        Some(crate::crypto::derive_hmac_key(&raw[..32]))
     } else {
-        return None;
-    };
-    let key = crate::crypto::derive_hmac_key(seed);
+        None
+    }
+}
+
+pub(crate) fn load_hmac_key() -> Option<Zeroizing<Vec<u8>>> {
+    if let Ok(Some(key)) = crate::identity::SecureStorage::load_hmac_key() {
+        return Some(key);
+    }
+
+    let key = derive_hmac_from_signing_key_file()?;
 
     if let Err(e) = crate::identity::SecureStorage::save_hmac_key(&key) {
         log::warn!("Failed to migrate signing key to secure storage: {}", e);
@@ -200,7 +203,28 @@ pub(crate) fn open_store_at(db_path: &std::path::Path) -> Result<SecureStore, St
                         return Err(format!("HMAC mismatch; database backup failed: {e}"));
                     }
                     match SecureStore::open(db_path, std::mem::take(&mut *k)) {
-                        Ok(store) => return Ok(store),
+                        Ok(store) => {
+                            // Persist the migrated HMAC key so future opens succeed
+                            if let Some(migrated) = load_hmac_key() {
+                                if let Err(e) =
+                                    crate::identity::SecureStorage::save_hmac_key(&migrated)
+                                {
+                                    // Recreated DB is valid but key not persisted;
+                                    // roll back to avoid an inconsistent state where
+                                    // the new DB exists but the old key is gone.
+                                    log::error!(
+                                        "Failed to persist HMAC key after recreate: {e}; \
+                                         restoring backup"
+                                    );
+                                    let _ = std::fs::remove_file(db_path);
+                                    let _ = std::fs::rename(&backup_path, db_path);
+                                    return Err(format!(
+                                        "DB recreated but HMAC key persist failed: {e}"
+                                    ));
+                                }
+                            }
+                            return Ok(store);
+                        }
                         Err(e) => {
                             log::error!("Recreate failed; restoring backup: {e}");
                             let _ = std::fs::rename(&backup_path, db_path);
@@ -219,36 +243,7 @@ pub(crate) fn open_store_at(db_path: &std::path::Path) -> Result<SecureStore, St
 
 /// Derive HMAC key directly from the signing_key file, bypassing keychain.
 pub(crate) fn derive_hmac_from_signing_key() -> Option<Zeroizing<Vec<u8>>> {
-    use std::io::Read;
-    let data_dir = get_data_dir()?;
-    let key_path = data_dir.join("signing_key");
-    let mut key_file = match std::fs::File::open(&key_path) {
-        Ok(f) => f,
-        Err(e) => {
-            log::warn!("failed to open signing key for HMAC derivation: {e}");
-            return None;
-        }
-    };
-    let meta = match key_file.metadata() {
-        Ok(m) => m,
-        Err(e) => {
-            log::warn!("failed to read signing key metadata: {e}");
-            return None;
-        }
-    };
-    if meta.len() > 1024 {
-        return None;
-    }
-    let mut buf = Zeroizing::new(Vec::with_capacity(meta.len() as usize));
-    if let Err(e) = key_file.read_to_end(&mut buf) {
-        log::warn!("failed to read signing key for HMAC derivation: {e}");
-        return None;
-    }
-    if buf.len() >= 32 {
-        Some(crate::crypto::derive_hmac_key(&buf[..32]))
-    } else {
-        None
-    }
+    derive_hmac_from_signing_key_file()
 }
 
 pub(crate) fn detect_attestation_tier() -> AttestationTier {

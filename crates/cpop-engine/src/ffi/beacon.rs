@@ -18,6 +18,13 @@ fn beacon_runtime() -> Result<&'static tokio::runtime::Runtime, String> {
     Ok(BEACON_RUNTIME.get_or_init(|| rt))
 }
 
+// BEACON_RUNTIME is intentionally leaked (process-lifetime static).
+// `OnceLock` does not support `take`, and both `shutdown_background()`
+// and `shutdown_timeout()` consume `self` by value, so there is no way
+// to shut down a `&Runtime` obtained from `OnceLock::get()`.
+// Tokio runtimes clean up their worker threads when dropped, which
+// happens at process exit when the static is reclaimed.
+
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct FfiBeaconResult {

@@ -40,12 +40,10 @@ pub use time_evidence::{
     BlockchainAnchor, RoughtimeSample, TimeBindingTier, TimeEvidence, TsaResponse,
 };
 pub use vdf::{CalibrationAttestation, VdfProofRfc};
-pub use wire_types::{AttestationResultWire, CheckpointWire, EvidencePacketWire};
-
-/// CBOR tag for CPoP evidence packets (0x43504F50 = "CPOP").
-pub const CBOR_TAG_EVIDENCE_PACKET: u64 = crate::codec::CBOR_TAG_CPOP;
-/// CBOR tag for attestation results (0x43574152 = "CWAR").
-pub const CBOR_TAG_ATTESTATION_RESULT: u64 = crate::codec::CBOR_TAG_CWAR;
+pub use wire_types::{
+    AttestationResultWire, CheckpointWire, EvidencePacketWire, CBOR_TAG_ATTESTATION_RESULT,
+    CBOR_TAG_EVIDENCE_PACKET,
+};
 
 /// IANA Private Enterprise Number for WritersLogic Inc.
 /// Registered under SMI Network Management Private Enterprise Codes.

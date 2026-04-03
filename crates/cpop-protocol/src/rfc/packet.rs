@@ -31,10 +31,6 @@ use std::collections::HashMap;
 use super::fixed_point::{Centibits, Decibits, Millibits, RhoMillibits, SlopeDecibits};
 use super::serde_helpers::{hex_bytes_vec, hex_bytes_vec_opt};
 
-/// CBOR semantic tag for evidence packets.
-/// Per draft-condrey-rats-pop CDDL and IANA CBOR tag registry.
-pub const CBOR_TAG_EVIDENCE_PACKET: u64 = crate::codec::CBOR_TAG_CPOP;
-
 /// RFC-compliant evidence packet structure.
 ///
 /// Uses integer keys (1-19) for compact CBOR encoding per the CDDL schema.

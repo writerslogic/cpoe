@@ -60,8 +60,12 @@ impl Format {
     }
 
     /// Detect format from the first byte of encoded data.
+    ///
+    /// Returns `None` (with a log warning) if the data is empty or the
+    /// leading byte does not match any known CBOR or JSON prefix.
     pub fn detect(data: &[u8]) -> Option<Self> {
         if data.is_empty() {
+            log::warn!("Format::detect called with empty data");
             return None;
         }
         // CBOR map starts with 0xA (major type 5) or tagged value 0xD9/0xDA/0xDB
@@ -71,7 +75,14 @@ impl Format {
             // Ranges document CBOR major types: 4 (array), 5 (map), 6 (tag).
             #[allow(clippy::manual_range_patterns)]
             0x80..=0x9F | 0xA0..=0xBF | 0xC0..=0xD8 | 0xD9 | 0xDA | 0xDB => Some(Format::Cbor),
-            _ => None,
+            _ => {
+                log::warn!(
+                    "Format::detect: unrecognized leading byte 0x{:02X} (len={})",
+                    data[0],
+                    data.len()
+                );
+                None
+            }
         }
     }
 }

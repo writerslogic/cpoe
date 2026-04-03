@@ -57,6 +57,8 @@ const MAX_JITTER_INTERVALS: usize = 1000;
 const MAX_CONCURRENT_SESSIONS: usize = 100;
 /// Sessions expire after 30 minutes of inactivity.
 const SESSION_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+/// Minimum interval between checkpoints per session (rate limiting).
+const MIN_CHECKPOINT_INTERVAL: Duration = Duration::from_secs(1);
 
 /// In-memory ephemeral session state.
 struct EphemeralSession {
@@ -72,6 +74,8 @@ struct EphemeralSession {
     content_snapshots: Vec<ContentSnapshot>,
     /// Canary seed from NMH handshake (hex-encoded).
     canary_seed: Option<String>,
+    /// When the last checkpoint was accepted (for rate limiting).
+    last_checkpoint_at: Option<Instant>,
 }
 
 /// A checkpoint snapshot of the content at a point in time.
@@ -87,6 +91,17 @@ static EPHEMERAL_SESSIONS: OnceLock<DashMap<String, EphemeralSession>> = OnceLoc
 
 fn sessions() -> &'static DashMap<String, EphemeralSession> {
     EPHEMERAL_SESSIONS.get_or_init(DashMap::new)
+}
+
+/// Clear all ephemeral sessions. Call on app exit to release memory.
+pub fn shutdown_ephemeral_sessions() {
+    if let Some(map) = EPHEMERAL_SESSIONS.get() {
+        let count = map.len();
+        map.clear();
+        if count > 0 {
+            log::info!("Cleared {count} ephemeral sessions on shutdown");
+        }
+    }
 }
 
 fn now_ns() -> i64 {
@@ -182,6 +197,7 @@ pub fn ffi_start_ephemeral_session(context_label: String) -> FfiEphemeralSession
             _last_timestamp_ns: 0,
             content_snapshots: Vec::new(),
             canary_seed: None,
+            last_checkpoint_at: None,
         },
     );
 
@@ -228,6 +244,17 @@ pub fn ffi_ephemeral_checkpoint(session_id: String, content: String, message: St
         };
     }
 
+    let now = Instant::now();
+    if let Some(last) = entry.last_checkpoint_at {
+        if now.duration_since(last) < MIN_CHECKPOINT_INTERVAL {
+            return FfiResult {
+                success: false,
+                message: None,
+                error_message: Some("Checkpoint rate limited (min 1s interval)".to_string()),
+            };
+        }
+    }
+
     let content_hash: [u8; 32] = Sha256::digest(content.as_bytes()).into();
     let char_count = content.len() as u64;
     let prev_chars = entry
@@ -252,6 +279,7 @@ pub fn ffi_ephemeral_checkpoint(session_id: String, content: String, message: St
         message: context_note,
     });
     entry.checkpoint_count += 1;
+    entry.last_checkpoint_at = Some(Instant::now());
 
     let ephemeral_path = format!("ephemeral://{session_id}");
     if let Ok(mut store) = open_store() {
@@ -500,6 +528,17 @@ pub fn ffi_ephemeral_checkpoint_hash(
         };
     }
 
+    let now = Instant::now();
+    if let Some(last) = entry.last_checkpoint_at {
+        if now.duration_since(last) < MIN_CHECKPOINT_INTERVAL {
+            return FfiResult {
+                success: false,
+                message: None,
+                error_message: Some("Checkpoint rate limited (min 1s interval)".to_string()),
+            };
+        }
+    }
+
     let context_note = if message.is_empty() {
         commitment
     } else if let Some(c) = commitment {
@@ -516,6 +555,7 @@ pub fn ffi_ephemeral_checkpoint_hash(
         message: context_note,
     });
     entry.checkpoint_count += 1;
+    entry.last_checkpoint_at = Some(Instant::now());
 
     let ephemeral_path = format!("ephemeral://{session_id}");
     if let Ok(mut store) = open_store() {
