@@ -6,7 +6,7 @@
 //! match tracked documents or known AI tools.
 
 use super::sentinel::get_sentinel;
-use crate::sentinel::types::{AiToolCategory, DetectedAiTool, ObservationBasis};
+use crate::sentinel::types::{AiToolCategory, DetectedAiTool};
 use crate::RwLockRecover;
 use std::time::SystemTime;
 
@@ -224,7 +224,7 @@ pub fn ffi_sentinel_es_ai_tools_active() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sentinel::types::DocumentSession;
+    use crate::sentinel::types::{DocumentSession, ObservationBasis};
 
     fn make_session() -> DocumentSession {
         DocumentSession::new(
