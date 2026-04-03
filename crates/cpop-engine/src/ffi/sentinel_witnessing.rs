@@ -239,18 +239,14 @@ pub fn ffi_sentinel_witnessing_status() -> FfiWitnessingStatus {
 
     // Per-document jitter cadence score (available before checkpoints exist).
     let doc_samples = sentinel.document_jitter_samples(&session.path);
-    let cadence_score = if doc_samples.len() >= 20 {
-        crate::forensics::compute_cadence_score(&crate::forensics::analyze_cadence(&doc_samples))
-    } else {
-        0.0
-    };
+    let cadence_score = crate::forensics::cadence_score_from_samples(&doc_samples);
 
     // Focus-switching penalties from per-document focus records.
     let focus = crate::forensics::analysis::analyze_focus_patterns(
         &session.focus_switches,
         session.total_focus_ms,
     );
-    let focus_penalty = crate::ffi::helpers::compute_focus_penalty(&focus);
+    let focus_penalty = crate::forensics::compute_focus_penalty(&focus);
 
     let (event_count, forensic_score, store_paste_chars) = match crate::ffi::helpers::open_store() {
         Ok(store) => {

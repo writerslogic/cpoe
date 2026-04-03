@@ -24,6 +24,7 @@ pub mod error;
 pub mod event_validation;
 pub mod forgery_cost;
 mod report;
+pub(crate) mod scoring;
 mod topology;
 pub mod types;
 mod velocity;
@@ -46,6 +47,7 @@ pub use forgery_cost::{
     ForgeryResistanceTier,
 };
 pub use report::*;
+pub use scoring::{cadence_score_from_samples, compute_focus_penalty, session_forensic_score};
 pub use topology::*;
 pub use types::*;
 pub use velocity::*;

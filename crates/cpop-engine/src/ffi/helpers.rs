@@ -348,22 +348,6 @@ pub(crate) fn compute_streak_stats(
     }
 }
 
-/// Compute focus-switching penalty from focus pattern metrics.
-///
-/// Returns a penalty in `[0.0, 0.15]` to subtract from a forensic score:
-/// - 0.15 if a reading-from-source pattern was detected,
-/// - 0.10 if more than 3 AI-app switches occurred,
-/// - 0.0 otherwise.
-pub(crate) fn compute_focus_penalty(focus: &crate::forensics::types::FocusMetrics) -> f64 {
-    if focus.reading_pattern_detected {
-        0.15
-    } else if focus.ai_app_switch_count > 3 {
-        0.10
-    } else {
-        0.0
-    }
-}
-
 pub(crate) fn events_to_forensic_data(events: &[crate::store::SecureEvent]) -> Vec<EventData> {
     events
         .iter()

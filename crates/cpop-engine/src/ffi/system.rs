@@ -302,23 +302,13 @@ pub fn ffi_list_tracked_files() -> Vec<FfiTrackedFile> {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos() as i64)
                 .unwrap_or(0);
-            // Compute forensic score from per-document jitter samples.
+            // Compute forensic score from per-document jitter + focus data.
             let doc_samples = sentinel.document_jitter_samples(&session.path);
-            let cadence_score = if doc_samples.len() >= 20 {
-                crate::forensics::compute_cadence_score(&crate::forensics::analyze_cadence(
-                    &doc_samples,
-                ))
-            } else {
-                0.0
-            };
-
-            // Apply focus-switching penalties.
-            let focus = crate::forensics::analysis::analyze_focus_patterns(
+            let forensic_score = crate::forensics::session_forensic_score(
+                &doc_samples,
                 &session.focus_switches,
                 session.total_focus_ms,
             );
-            let focus_penalty = crate::ffi::helpers::compute_focus_penalty(&focus);
-            let forensic_score = (cadence_score - focus_penalty).clamp(0.0, 1.0);
 
             result.push(FfiTrackedFile {
                 path: session.path.clone(),
