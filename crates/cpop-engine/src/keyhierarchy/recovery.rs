@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 use chacha20poly1305::{
-    aead::{Aead, KeyInit},
+    aead::{Aead, KeyInit, Payload},
     ChaCha20Poly1305, Nonce as AeadNonce,
 };
 use sha2::{Digest, Sha256};
@@ -114,6 +114,7 @@ fn recover_ratchet_v1_legacy(
             wiped: false,
         },
         signatures: recovery.signatures.clone(),
+        export_count: 0,
     })
 }
 
@@ -140,14 +141,21 @@ fn recover_ratchet_v2_aead(
         .map_err(|_| KeyHierarchyError::SessionRecoveryFailed)?;
     let aead_nonce = AeadNonce::from_slice(nonce_bytes);
 
+    let aad = (recovery.signatures.len() as u64).to_be_bytes();
     let plaintext = Zeroizing::new(
         cipher
-            .decrypt(aead_nonce, ciphertext)
+            .decrypt(
+                aead_nonce,
+                Payload {
+                    msg: ciphertext,
+                    aad: &aad,
+                },
+            )
             .map_err(|_| KeyHierarchyError::SessionRecoveryFailed)?,
     );
     drop(key);
 
-    if plaintext.len() < 40 {
+    if plaintext.len() < 48 {
         return Err(KeyHierarchyError::SessionRecoveryFailed);
     }
 
@@ -158,6 +166,24 @@ fn recover_ratchet_v2_aead(
             .try_into()
             .map_err(|_| KeyHierarchyError::SessionRecoveryFailed)?,
     );
+    let export_count = u64::from_be_bytes(
+        plaintext[40..48]
+            .try_into()
+            .map_err(|_| KeyHierarchyError::SessionRecoveryFailed)?,
+    );
+
+    let expected_ordinal = recovery
+        .signatures
+        .last()
+        .map_or(0u64, |s| s.ordinal.saturating_add(1));
+    if ordinal != expected_ordinal {
+        log::warn!(
+            "v2 recovery ordinal mismatch: decrypted {}, expected {} from signature chain",
+            ordinal,
+            expected_ordinal,
+        );
+        return Err(KeyHierarchyError::SessionRecoveryFailed);
+    }
 
     let protected = crate::crypto::ProtectedKey::new(ratchet_state);
     ratchet_state.zeroize();
@@ -169,6 +195,7 @@ fn recover_ratchet_v2_aead(
             wiped: false,
         },
         signatures: recovery.signatures.clone(),
+        export_count,
     })
 }
 
@@ -209,5 +236,6 @@ fn recover_session_with_new_ratchet(
             wiped: false,
         },
         signatures: recovery.signatures.clone(),
+        export_count: 0,
     })
 }

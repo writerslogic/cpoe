@@ -30,11 +30,7 @@ pub fn handle_focus_event_sync(
         use std::io::Write;
         if let Ok(d) = std::env::var("CPOP_DATA_DIR") {
             let debug_path = format!("{}/event_debug.txt", d);
-            if let Ok(mut f) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&debug_path)
-            {
+            if let Ok(mut f) = open_nofollow_append(&debug_path) {
                 let _ = writeln!(
                     f,
                     "HANDLE_FOCUS: type={:?} bundle={} path={:?} shadow={}",
@@ -311,11 +307,7 @@ pub fn focus_document_sync(
         use std::io::Write;
         if let Ok(d) = std::env::var("CPOP_DATA_DIR") {
             let debug_path = format!("{}/event_debug.txt", d);
-            if let Ok(mut f) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&debug_path)
-            {
+            if let Ok(mut f) = open_nofollow_append(&debug_path) {
                 let _ = writeln!(
                     f,
                     "SESSION_FOCUSED: path={} focus_count={}",
@@ -626,6 +618,24 @@ fn open_nofollow(path: &str) -> std::io::Result<std::fs::File> {
 #[cfg(not(unix))]
 fn open_nofollow(path: &str) -> std::io::Result<std::fs::File> {
     std::fs::File::open(path)
+}
+
+#[cfg(unix)]
+fn open_nofollow_append(path: &str) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn open_nofollow_append(path: &str) -> std::io::Result<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
 }
 
 pub fn create_session_start_payload(session: &DocumentSession) -> Vec<u8> {

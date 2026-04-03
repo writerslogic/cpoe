@@ -392,6 +392,7 @@ fn test_session_recovery_no_data() {
         },
         signatures: vec![],
         last_ratchet_state: vec![],
+        export_count: 0,
     };
 
     let err = recover_session(&puf, &recovery, [1u8; 32]).unwrap_err();
@@ -599,4 +600,57 @@ fn test_session_end_with_provider() {
     let report = verify_session_binding(&session.certificate).expect("verify");
     assert!(!report.reboot_detected);
     assert!(!report.restart_detected);
+}
+
+#[test]
+fn test_recovery_signature_tamper_rejected() {
+    let puf = test_puf();
+    let doc_hash = [1u8; 32];
+    let mut session = start_session(&puf, doc_hash).expect("start");
+
+    session.sign_checkpoint([10u8; 32]).expect("sign");
+    session.sign_checkpoint([20u8; 32]).expect("sign");
+    let mut recovery = session.export_recovery_state(&puf).expect("export");
+
+    // Remove a signature to fake a different chain state; AAD mismatch
+    // causes AEAD decryption to fail.
+    recovery.signatures.pop();
+    let tampered = recover_session(&puf, &recovery, doc_hash);
+    assert!(
+        tampered.is_err(),
+        "tampered signature list should fail AEAD decryption"
+    );
+}
+
+#[test]
+fn test_recovery_export_count_detects_replay() {
+    let puf = test_puf();
+    let doc_hash = [1u8; 32];
+    let mut session = start_session(&puf, doc_hash).expect("start");
+
+    session.sign_checkpoint([10u8; 32]).expect("sign");
+    let early_recovery = session.export_recovery_state(&puf).expect("export early");
+
+    session.sign_checkpoint([20u8; 32]).expect("sign");
+    let late_recovery = session.export_recovery_state(&puf).expect("export late");
+
+    // External system can detect replay via monotonic export_count
+    assert!(early_recovery.export_count < late_recovery.export_count);
+    assert_eq!(early_recovery.export_count, 1);
+    assert_eq!(late_recovery.export_count, 2);
+}
+
+#[test]
+fn test_recovery_export_count_preserved() {
+    let puf = test_puf();
+    let doc_hash = [1u8; 32];
+    let mut session = start_session(&puf, doc_hash).expect("start");
+
+    session.sign_checkpoint([10u8; 32]).expect("sign");
+    let recovery = session.export_recovery_state(&puf).expect("export");
+    assert_eq!(recovery.export_count, 1);
+
+    let mut recovered = recover_session(&puf, &recovery, doc_hash).expect("recover");
+    let re_export = recovered.export_recovery_state(&puf).expect("re-export");
+    assert_eq!(re_export.export_count, 2);
 }

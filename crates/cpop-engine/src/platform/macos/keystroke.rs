@@ -36,11 +36,14 @@ fn debug_write_keystroke(tag: &str, count: u64) {
         return;
     }
     let path = dir_path.join("keystroke_debug.txt");
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-    {
+    if let Ok(mut f) = {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&path)
+    } {
         use std::io::Write;
         let now = chrono::Utc::now();
         let _ = writeln!(f, "[{now}] {tag}: event #{n}, total_count={count}");

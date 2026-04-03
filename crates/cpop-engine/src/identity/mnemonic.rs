@@ -32,11 +32,9 @@ impl MnemonicHandler {
 
     /// Derive a 64-byte seed by combining mnemonic entropy with silicon PUF.
     pub fn derive_silicon_seed(phrase: &str) -> Result<SensitiveSeed> {
-        let mut phrase_owned = phrase.to_string();
-        let mnemonic = Mnemonic::parse_in(Language::English, &phrase_owned).map_err(|_| {
-            phrase_owned.zeroize();
-            anyhow!("Invalid mnemonic phrase")
-        })?;
+        let phrase_owned = Zeroizing::new(phrase.to_string());
+        let mnemonic = Mnemonic::parse_in(Language::English, &*phrase_owned)
+            .map_err(|_| anyhow!("Invalid mnemonic phrase"))?;
 
         let seed = mnemonic.to_seed("");
         let seed_bytes = seed.as_ref();
@@ -56,7 +54,6 @@ impl MnemonicHandler {
         hasher2.update(b"expansion");
         out[32..].copy_from_slice(&hasher2.finalize());
 
-        phrase_owned.zeroize();
         Ok(SensitiveSeed(out))
     }
 

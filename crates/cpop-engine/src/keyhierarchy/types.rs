@@ -90,6 +90,7 @@ pub struct Session {
     pub certificate: SessionCertificate,
     pub(crate) ratchet: RatchetState,
     pub(crate) signatures: Vec<CheckpointSignature>,
+    pub(crate) export_count: u64,
 }
 
 pub trait PufProvider: Send + Sync {
@@ -148,6 +149,8 @@ pub struct SessionRecoveryState {
     pub certificate: SessionCertificate,
     pub signatures: Vec<CheckpointSignature>,
     pub last_ratchet_state: Vec<u8>,
+    #[serde(default)]
+    pub export_count: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

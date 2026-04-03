@@ -417,7 +417,21 @@ impl SecureStorage {
                 );
                 return;
             }
-            let _ = std::fs::write(&flag_path, "done");
+            let _ = {
+                #[cfg(unix)]
+                {
+                    use std::io::Write;
+                    use std::os::unix::fs::OpenOptionsExt;
+                    std::fs::OpenOptions::new()
+                        .create_new(true)
+                        .write(true)
+                        .custom_flags(libc::O_NOFOLLOW)
+                        .open(&flag_path)
+                        .and_then(|mut f| f.write_all(b"done"))
+                }
+                #[cfg(not(unix))]
+                std::fs::write(&flag_path, "done")
+            };
             log::info!("macOS keychain migration complete.");
         });
     }

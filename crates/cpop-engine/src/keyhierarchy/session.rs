@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 use chacha20poly1305::{
-    aead::{Aead, KeyInit},
+    aead::{Aead, KeyInit, Payload},
     ChaCha20Poly1305, Nonce as AeadNonce,
 };
 use chrono::Utc;
@@ -89,6 +89,7 @@ pub(crate) fn start_session_inner(
             wiped: false,
         },
         signatures: Vec::new(),
+        export_count: 0,
     })
 }
 
@@ -140,7 +141,6 @@ impl Session {
         )?;
 
         let current_ordinal = self.ratchet.ordinal;
-        drop(signing_seed);
         self.ratchet.current = crate::crypto::ProtectedKey::from_zeroizing(next_ratchet);
         self.ratchet.ordinal += 1;
 
@@ -198,8 +198,6 @@ impl Session {
         let (lamport_privkey, lamport_pubkey) =
             crate::crypto::lamport::LamportPrivateKey::from_seed(&lamport_seed);
         let lamport_sig = lamport_privkey.sign(&checkpoint_hash);
-
-        drop(signing_seed);
 
         // Hash counter_delta into the ratchet advance
         let mut ratchet_input = checkpoint_hash.to_vec();
@@ -324,7 +322,6 @@ impl Session {
         )?;
         let signing_key = SigningKey::from_bytes(&signing_seed);
         let signature = signing_key.sign(&payload).to_bytes();
-        drop(signing_seed);
 
         metadata.metadata_signature = Some(signature.to_vec());
         Ok(())
@@ -364,7 +361,7 @@ impl Session {
     }
 
     pub fn export_recovery_state(
-        &self,
+        &mut self,
         puf: &dyn PufProvider,
     ) -> Result<SessionRecoveryState, KeyHierarchyError> {
         if self.ratchet.wiped {
@@ -375,9 +372,11 @@ impl Session {
         let response = puf.get_response(&challenge)?;
         let key = hkdf_expand(&response, b"ratchet-recovery-key-v2", &[])?;
 
-        let mut plaintext = Zeroizing::new(vec![0u8; 40]);
+        self.export_count += 1;
+        let mut plaintext = Zeroizing::new(vec![0u8; 48]);
         plaintext[..32].copy_from_slice(self.ratchet.current.as_bytes());
         plaintext[32..40].copy_from_slice(&self.ratchet.ordinal.to_be_bytes());
+        plaintext[40..48].copy_from_slice(&self.export_count.to_be_bytes());
 
         let cipher = ChaCha20Poly1305::new_from_slice(&*key)
             .map_err(|e| KeyHierarchyError::Crypto(format!("AEAD init: {e}")))?;
@@ -387,8 +386,15 @@ impl Session {
             .map_err(|e| KeyHierarchyError::Crypto(format!("rng: {e}")))?;
         let aead_nonce = AeadNonce::from_slice(&nonce_bytes);
 
+        let aad = (self.signatures.len() as u64).to_be_bytes();
         let ciphertext = cipher
-            .encrypt(aead_nonce, plaintext.as_ref())
+            .encrypt(
+                aead_nonce,
+                Payload {
+                    msg: plaintext.as_ref(),
+                    aad: &aad,
+                },
+            )
             .map_err(|e| KeyHierarchyError::Crypto(format!("AEAD encrypt: {e}")))?;
 
         let mut encrypted = Vec::with_capacity(1 + 12 + ciphertext.len());
@@ -400,6 +406,7 @@ impl Session {
             certificate: self.certificate.clone(),
             signatures: self.signatures.clone(),
             last_ratchet_state: encrypted,
+            export_count: self.export_count,
         })
     }
 }
