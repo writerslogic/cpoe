@@ -284,7 +284,7 @@ impl SecureStore {
                 content_hash, file_size, size_delta, previous_hash, event_hash, \
                 context_type, context_note, vdf_input, vdf_output, vdf_iterations, \
                 forensic_score, is_paste, hardware_counter, input_method, \
-                lamport_signature, lamport_pubkey_fingerprint \
+                lamport_signature, lamport_pubkey_fingerprint, challenge_nonce \
                 FROM secure_events ORDER BY id ASC",
         )?;
         let rows = stmt.query_map([], Self::row_to_event)?;
