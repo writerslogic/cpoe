@@ -165,9 +165,7 @@ impl MouseCapture for MacOSMouseCapture {
 
                 let rl_ref = CFRunLoopGetCurrent();
                 CFRetain(rl_ref);
-                if let Ok(mut rl) = run_loop.lock() {
-                    *rl = Some(RunLoopHandle(rl_ref));
-                }
+                *run_loop.lock_recover() = Some(RunLoopHandle(rl_ref));
                 {
                     let mut res = tap_resources.lock_recover();
                     *res = Some(MouseTapResources {
@@ -207,11 +205,7 @@ impl MouseCapture for MacOSMouseCapture {
         self.running.store(false, Ordering::SeqCst);
         self.sender = None;
         // Take the run_loop handle to stop it, but defer CFRelease until after thread exits
-        let ptr = self
-            .run_loop
-            .lock()
-            .ok()
-            .and_then(|mut rl| rl.take().map(|h| h.0));
+        let ptr = self.run_loop.lock_recover().take().map(|h| h.0);
         if let Some(p) = ptr {
             unsafe {
                 CFRunLoopStop(p);
@@ -232,7 +226,7 @@ impl MouseCapture for MacOSMouseCapture {
             }
         }
         // Release all CF objects after the thread has exited
-        if let Some(res) = self.tap_resources.lock().ok().and_then(|mut r| r.take()) {
+        if let Some(res) = self.tap_resources.lock_recover().take() {
             unsafe {
                 CFRelease(res.source);
                 CFRelease(res.tap);
