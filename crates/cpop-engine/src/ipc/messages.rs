@@ -12,6 +12,21 @@ pub(crate) const MAX_MESSAGE_SIZE: usize = 256 * 1024;
 /// Maximum concurrent IPC connections. Prevents local DoS via connection flooding.
 pub(crate) const MAX_CONCURRENT_CONNECTIONS: usize = 16;
 
+/// Maximum plausible jitter interval: 1 minute in nanoseconds.
+const MAX_JITTER_INTERVAL_NS: u64 = 60_000_000_000;
+
+/// Maximum plausible absolute timestamp: year ~2100 in nanoseconds.
+const MAX_TIMESTAMP_NS: i64 = 4_102_444_800_000_000_000;
+
+/// Maximum length for short string fields (version, tier).
+const MAX_SHORT_STRING: usize = 64;
+
+/// Maximum length for message body fields (SystemAlert message).
+const MAX_ALERT_MESSAGE: usize = 4096;
+
+/// Maximum wall-clock skew for Pulse timestamps (5 minutes in nanoseconds).
+const MAX_PULSE_CLOCK_SKEW_NS: i64 = 5 * 60 * 1_000_000_000;
+
 /// Reject paths with `..` components, relative paths, or paths that resolve
 /// into system directories. Called on every PathBuf deserialized from an IPC
 /// message before any handler touches the filesystem.
@@ -287,15 +302,6 @@ impl IpcMessage {
     /// and bounds-check attacker-controlled numeric fields (e.g. Pulse jitter).
     /// Must be called immediately after deserialization, before dispatching to any handler.
     pub(crate) fn validate_paths(&self) -> Result<(), String> {
-        /// Maximum plausible jitter interval: 1 minute in nanoseconds.
-        const MAX_JITTER_INTERVAL_NS: u64 = 60_000_000_000;
-        /// Maximum plausible absolute timestamp: year ~2100 in nanoseconds.
-        const MAX_TIMESTAMP_NS: i64 = 4_102_444_800_000_000_000;
-        /// Maximum length for short string fields (version, tier).
-        const MAX_SHORT_STRING: usize = 64;
-        /// Maximum length for message body fields (SystemAlert message).
-        const MAX_ALERT_MESSAGE: usize = 4096;
-
         match self {
             IpcMessage::Handshake { version } => {
                 if version.len() > MAX_SHORT_STRING {
@@ -362,12 +368,11 @@ impl IpcMessage {
                 // Reject timestamps more than 5 minutes from wall clock to
                 // prevent replay or far-future injection.
                 {
-                    const FIVE_MINUTES_NS: i64 = 5 * 60 * 1_000_000_000;
                     let now_ns = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_nanos() as i64)
                         .unwrap_or(0);
-                    if (sample.timestamp_ns - now_ns).abs() > FIVE_MINUTES_NS {
+                    if (sample.timestamp_ns - now_ns).abs() > MAX_PULSE_CLOCK_SKEW_NS {
                         return Err(format!(
                             "Pulse timestamp_ns too far from wall clock: {}",
                             sample.timestamp_ns

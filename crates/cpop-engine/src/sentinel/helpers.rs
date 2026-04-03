@@ -214,32 +214,40 @@ pub fn focus_document_sync(
         }
     }
 
-    // Compute file hash and load cumulative stats BEFORE acquiring the
-    // sessions write lock to avoid blocking keystroke counting and focus
-    // changes during I/O (file hashing, SQLite open/migration).
-    let pre_hash = if !path.starts_with("shadow://") {
-        match open_nofollow(path) {
-            Ok(file) => match file.metadata() {
-                Ok(meta) if meta.len() <= MAX_HASH_FILE_SIZE => {
-                    crate::crypto::hash_file_handle(file)
-                        .ok()
-                        .map(|(hash, _)| hex::encode(hash))
-                }
-                _ => None,
-            },
-            Err(_) => None,
-        }
+    // Fast path: if the session already exists, skip expensive I/O (file
+    // hashing, SQLite open) and just update focus state under the write lock.
+    let already_tracked = sessions.read_recover().contains_key(path);
+
+    let (pre_hash, pre_stats, key) = if already_tracked {
+        (None, None, signing_key.read_recover().clone())
     } else {
-        None
-    };
-    let key = signing_key.read_recover().clone();
-    let pre_stats = {
-        let db_path = wal_dir.parent().unwrap_or(wal_dir).join("events.db");
-        key.as_ref().and_then(|sk| {
-            crate::store::open_store_with_signing_key(sk, &db_path)
-                .ok()
-                .and_then(|store| store.load_document_stats(path).ok().flatten())
-        })
+        // Compute file hash and load cumulative stats before acquiring the
+        // sessions write lock to avoid blocking keystroke counting during I/O.
+        let hash = if !path.starts_with("shadow://") {
+            match open_nofollow(path) {
+                Ok(file) => match file.metadata() {
+                    Ok(meta) if meta.len() <= MAX_HASH_FILE_SIZE => {
+                        crate::crypto::hash_file_handle(file)
+                            .ok()
+                            .map(|(h, _)| hex::encode(h))
+                    }
+                    _ => None,
+                },
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
+        let k = signing_key.read_recover().clone();
+        let stats = {
+            let db_path = wal_dir.parent().unwrap_or(wal_dir).join("events.db");
+            k.as_ref().and_then(|sk| {
+                crate::store::open_store_with_signing_key(sk, &db_path)
+                    .ok()
+                    .and_then(|store| store.load_document_stats(path).ok().flatten())
+            })
+        };
+        (hash, stats, k)
     };
 
     let new_session_info = {
