@@ -92,10 +92,21 @@ impl Builder {
             chain_valid: evidence.statistics.chain_valid,
             plausible_human_rate: evidence.is_plausible_human_typing(),
             samples: evidence.samples.clone(),
+            typing_samples: Vec::new(),
             phys_ratio: None,
         };
 
         self.packet.keystroke = Some(keystroke);
+        self
+    }
+
+    /// Attach per-keystroke behavioral timing data (zone, dwell, flight) to
+    /// the keystroke evidence. Must be called after `with_keystroke` or
+    /// `with_hybrid_keystroke`.
+    pub fn with_typing_samples(mut self, samples: Vec<jitter::SimpleJitterSample>) -> Self {
+        if let Some(ref mut ks) = self.packet.keystroke {
+            ks.typing_samples = samples;
+        }
         self
     }
 
@@ -142,6 +153,7 @@ impl Builder {
             chain_valid: evidence.statistics.chain_valid,
             plausible_human_rate: evidence.is_plausible_human_typing(),
             samples,
+            typing_samples: Vec::new(),
             phys_ratio: Some(evidence.entropy_quality.phys_ratio),
         };
 

@@ -363,6 +363,10 @@ pub struct KeystrokeEvidence {
     pub chain_valid: bool,
     pub plausible_human_rate: bool,
     pub samples: Vec<jitter::Sample>,
+    /// Per-keystroke behavioral timing data (zone, dwell, flight) for forensic analysis.
+    /// Empty in older packets that predate this field.
+    #[serde(default)]
+    pub typing_samples: Vec<jitter::SimpleJitterSample>,
     /// Ratio of samples using hardware entropy (0.0..1.0, cpop_jitter only).
     #[serde(default)]
     pub phys_ratio: Option<f64>,

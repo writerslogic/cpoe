@@ -34,31 +34,35 @@ pub(super) fn run_forensics(
         Vec::new()
     };
 
-    // Extract jitter samples from keystroke evidence
-    // The keystroke evidence uses jitter::Sample (high-level), convert to SimpleJitterSample
+    // Prefer per-keystroke typing_samples (zone, dwell, flight) when available;
+    // fall back to converting cryptographic jitter::Sample (timing only, no zone data).
     let jitter_samples: Vec<SimpleJitterSample> = if let Some(ref ks) = packet.keystroke {
-        let mut simple = Vec::with_capacity(ks.samples.len());
-        let mut prev_ns: Option<i64> = None;
-        for s in &ks.samples {
-            let ts_ns = s.timestamp.timestamp_nanos_opt().unwrap_or_else(|| {
-                log::warn!("timestamp_nanos_opt overflow for sample; falling back to 0");
-                0
-            });
-            let duration = if let Some(prev) = prev_ns {
-                (ts_ns - prev).max(0) as u64
-            } else {
-                0
-            };
-            simple.push(SimpleJitterSample {
-                timestamp_ns: ts_ns,
-                duration_since_last_ns: duration,
-                zone: 0,
-                dwell_time_ns: None,
-                flight_time_ns: None,
-            });
-            prev_ns = Some(ts_ns);
+        if !ks.typing_samples.is_empty() {
+            ks.typing_samples.clone()
+        } else {
+            let mut simple = Vec::with_capacity(ks.samples.len());
+            let mut prev_ns: Option<i64> = None;
+            for s in &ks.samples {
+                let ts_ns = s.timestamp.timestamp_nanos_opt().unwrap_or_else(|| {
+                    log::warn!("timestamp_nanos_opt overflow for sample; falling back to 0");
+                    0
+                });
+                let duration = if let Some(prev) = prev_ns {
+                    (ts_ns - prev).max(0) as u64
+                } else {
+                    0
+                };
+                simple.push(SimpleJitterSample {
+                    timestamp_ns: ts_ns,
+                    duration_since_last_ns: duration,
+                    zone: 0,
+                    dwell_time_ns: None,
+                    flight_time_ns: None,
+                });
+                prev_ns = Some(ts_ns);
+            }
+            simple
         }
-        simple
     } else {
         Vec::new()
     };

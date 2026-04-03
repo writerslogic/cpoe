@@ -158,6 +158,7 @@ pub fn build_ephemeral_packet(
             chain_valid: !checkpoints.is_empty(),
             plausible_human_rate: plausible,
             samples: vec![],
+            typing_samples: Vec::new(),
             phys_ratio: None,
         })
     } else {
