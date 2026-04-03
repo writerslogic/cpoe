@@ -205,6 +205,7 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
         likelihood_ratio: lr,
         enfsi_tier,
         document_hash: doc_hash,
+        evidence_hash: None,
         signing_key_fingerprint: key_fp,
         document_words: None,
         document_chars: Some(doc_size.max(0) as u64),

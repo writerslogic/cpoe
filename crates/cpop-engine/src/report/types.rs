@@ -267,6 +267,7 @@ pub struct WarReport {
     pub enfsi_tier: EnfsiTier,
 
     pub document_hash: String,
+    pub evidence_hash: Option<String>,
     pub signing_key_fingerprint: String,
     pub document_words: Option<u64>,
     pub document_chars: Option<u64>,
