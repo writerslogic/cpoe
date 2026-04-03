@@ -277,7 +277,7 @@ pub fn analyze_revision_patterns(events: &[EventData]) -> RevisionPattern {
         // Look for a burst of positive deltas.
         let burst_start = i;
         let mut burst_bytes: i64 = 0;
-        while i < deltas.len() && deltas[i] > 0 {
+        while i < deltas.len() && deltas[i] >= 0 {
             burst_bytes += deltas[i] as i64;
             i += 1;
         }
@@ -292,8 +292,8 @@ pub fn analyze_revision_patterns(events: &[EventData]) -> RevisionPattern {
         }
 
         if burst_len < MIN_BURST_FOR_REVISION || burst_bytes == 0 {
-            // Not enough burst to be a revision source; skip any deletions.
-            if i < deltas.len() && deltas[i] <= 0 {
+            // Not enough burst to be a revision source; skip all trailing deletions.
+            while i < deltas.len() && deltas[i] < 0 {
                 i += 1;
             }
             continue;
@@ -556,5 +556,18 @@ mod tests {
         let pattern = analyze_revision_patterns(&[]);
         assert_eq!(pattern.revision_cycle_count, 0);
         assert_eq!(pattern.revision_fraction, 0.0);
+    }
+
+    #[test]
+    fn test_zero_delta_does_not_split_burst() {
+        // Auto-save (delta=0) in the middle of a burst should not break it.
+        // Without fix: [10, 10, 0, 10, -8] would be two short bursts (2 + 1),
+        // both below MIN_BURST_FOR_REVISION, missing the revision cycle.
+        let deltas = [10, 10, 0, 10, -8, 15, 10, 0, 10, -5];
+        let events = make_events(&deltas);
+        let pattern = analyze_revision_patterns(&events);
+
+        assert_eq!(pattern.revision_cycle_count, 2);
+        assert!(pattern.avg_revision_depth > MIN_REVISION_DEPTH_FRACTION);
     }
 }
