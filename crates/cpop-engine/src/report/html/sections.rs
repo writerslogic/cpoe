@@ -1144,6 +1144,22 @@ pub(super) fn write_glossary(html: &mut String) -> fmt::Result {
 }
 
 // ---------------------------------------------------------------------------
+// Embedded Evidence (self-verifying artifact)
+// ---------------------------------------------------------------------------
+
+pub(super) fn write_embedded_evidence(html: &mut String, r: &WarReport) -> fmt::Result {
+    if let Some(ref b64) = r.evidence_cbor_b64 {
+        write!(
+            html,
+            r#"<script type="application/vnd.writerslogic.cpop+cbor">{}</script>
+"#,
+            html_escape(b64),
+        )?;
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Certification (footer)
 // ---------------------------------------------------------------------------
 

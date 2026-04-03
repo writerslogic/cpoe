@@ -268,6 +268,7 @@ pub struct WarReport {
 
     pub document_hash: String,
     pub evidence_hash: Option<String>,
+    pub evidence_cbor_b64: Option<String>,
     pub signing_key_fingerprint: String,
     pub document_words: Option<u64>,
     pub document_chars: Option<u64>,

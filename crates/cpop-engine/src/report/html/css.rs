@@ -156,6 +156,7 @@ pub(super) fn write_head(html: &mut String, r: &WarReport) -> fmt::Result {
 <meta name="cpop-checkpoints" content="{cp_count}">
 <meta name="cpop-report-version" content="1.0">
 <meta name="cpop-protocol-version" content="cpop-v1">
+<meta name="cpop-media-type" content="application/vnd.writerslogic.cpop+cbor">
 
 <!-- W3C PROV-O + CPOP domain ontology (canonical machine-readable provenance) -->
 <script type="application/ld+json">

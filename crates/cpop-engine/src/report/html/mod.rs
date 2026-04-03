@@ -75,6 +75,9 @@ fn render_html_inner(html: &mut String, r: &WarReport) -> std::fmt::Result {
     // Glossary
     sections::write_glossary(html)?;
 
+    // Embedded evidence (self-verifying artifact)
+    sections::write_embedded_evidence(html, r)?;
+
     // Certification
     sections::write_footer(html, r)?;
 
