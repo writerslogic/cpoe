@@ -788,12 +788,18 @@ impl Sentinel {
                                 })
                             };
                             if needs_checkpoint {
-                                commit_checkpoint_for_path(
-                                    path,
-                                    "Auto-checkpoint on idle end",
-                                    &signing_key_for_cp,
-                                    &writersproof_dir,
-                                );
+                                let cp_path = path.clone();
+                                let cp_key = Arc::clone(&signing_key_for_cp);
+                                let cp_dir = writersproof_dir.clone();
+                                let _ = tokio::task::spawn_blocking(move || {
+                                    commit_checkpoint_for_path(
+                                        &cp_path,
+                                        "Auto-checkpoint on idle end",
+                                        &cp_key,
+                                        &cp_dir,
+                                    )
+                                })
+                                .await;
                             }
                             end_session_sync(path, &sessions, &session_events_tx);
                         }
@@ -818,8 +824,9 @@ impl Sentinel {
                             for (i, handle) in threads.iter().enumerate() {
                                 if handle.is_finished() {
                                     log::error!(
-                                        "Bridge thread {i} exited unexpectedly; \
-                                         marking bridge unhealthy"
+                                        "Bridge thread {i} died; keystroke capture \
+                                         is stopped. Restart sentinel to resume \
+                                         keystroke capture."
                                     );
                                     bridge_healthy_flag
                                         .store(false, Ordering::SeqCst);
@@ -840,12 +847,20 @@ impl Sentinel {
                                 .collect()
                         };
                         for path in &candidates {
-                            if commit_checkpoint_for_path(
-                                path,
-                                "Auto-checkpoint",
-                                &signing_key_for_cp,
-                                &writersproof_dir,
-                            ) {
+                            let cp_path = path.clone();
+                            let cp_key = Arc::clone(&signing_key_for_cp);
+                            let cp_dir = writersproof_dir.clone();
+                            let committed = tokio::task::spawn_blocking(move || {
+                                commit_checkpoint_for_path(
+                                    &cp_path,
+                                    "Auto-checkpoint",
+                                    &cp_key,
+                                    &cp_dir,
+                                )
+                            })
+                            .await
+                            .unwrap_or(false);
+                            if committed {
                                 let mut map = sessions.write_recover();
                                 if let Some(session) = map.get_mut(path.as_str()) {
                                     session.last_checkpoint_keystrokes =
