@@ -1,0 +1,123 @@
+/* === Base: reset, typography, page === */
+
+@page {
+  size: letter;
+  margin: 1in 0.75in;
+  @top-left { content: "FORENSIC AUTHORSHIP EXAMINATION REPORT"; font-size: 7pt; font-family: sans-serif; color: #999; letter-spacing: 0.05em; }
+  @top-right { content: "CONFIDENTIAL"; font-size: 7pt; font-family: sans-serif; color: #999; letter-spacing: 0.1em; }
+  @bottom-center { content: "Page " counter(page) " of " counter(pages); font-size: 8pt; font-family: sans-serif; color: #999; }
+}
+
+:root {
+  --navy: #1a2744;
+  --navy-light: #2c3e6b;
+  --navy-muted: #e8ecf4;
+  --accent: #1a4d2e;
+  --accent-light: #eaf5ee;
+  --caution: #8b6914;
+  --caution-light: #fef9e7;
+  --alert: #8b1a1a;
+  --alert-light: #fdf0f0;
+  --rule: #1a2744;
+  --rule-light: #c5cad6;
+  --text: #1a1a1a;
+  --text-secondary: #4a4a4a;
+  --text-muted: #6b6b6b;
+  --bg: #ffffff;
+  --bg-warm: #fafaf8;
+  --border: #d0d0d0;
+  --border-light: #e8e8e5;
+}
+
+.pop-report * { margin: 0; padding: 0; box-sizing: border-box; }
+
+body.pop-report {
+  font-family: Georgia, "Times New Roman", "Noto Serif", serif;
+  color: var(--text);
+  background: var(--bg);
+  line-height: 1.7;
+  font-size: 13.5px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.report {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 40px 32px;
+}
+
+.pop-report h1 {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--navy);
+  letter-spacing: -0.01em;
+  text-transform: uppercase;
+  border-bottom: 3px double var(--rule);
+  padding-bottom: 12px;
+  margin-bottom: 6px;
+}
+
+.pop-report h2 {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--navy);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: 36px 0 14px;
+  padding: 6px 0;
+  border-top: 2px solid var(--rule);
+  border-bottom: 1px solid var(--rule-light);
+}
+
+.pop-report h3 {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 14px 0 6px;
+}
+
+.section-number {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-weight: 700;
+  color: var(--navy);
+  margin-right: 8px;
+}
+
+.subtitle {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 24px;
+  font-style: italic;
+}
+
+.sample-badge {
+  display: inline-block;
+  background: var(--caution);
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 2px;
+  vertical-align: middle;
+  margin-left: 8px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.pop-report hr {
+  border: none;
+  border-top: 1px solid var(--border-light);
+  margin: 24px 0;
+}
+
+.pop-report code {
+  font-family: "SF Mono", "Fira Code", "Cascadia Code", "Consolas", monospace;
+  font-size: 11.5px;
+  background: var(--bg-warm);
+  padding: 1px 4px;
+  border-radius: 2px;
+}

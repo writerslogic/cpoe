@@ -9,7 +9,8 @@ use std::fmt::Write;
 
 /// Render a self-contained HTML report from a `WarReport`.
 pub fn render_html(r: &WarReport) -> String {
-    let mut html = String::with_capacity(48_000);
+    let mut html = String::new();
+    html.reserve(48_000);
     let _ = render_html_inner(&mut html, r);
     html
 }
