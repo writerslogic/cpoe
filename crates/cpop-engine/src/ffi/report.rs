@@ -580,14 +580,14 @@ fn build_vc_json(score: u32, doc_hash: &str, _key_fingerprint: &str) -> Option<S
     let pub_key = signing_key.verifying_key();
     let author_did = crate::identity::did_key_from_public(pub_key.as_bytes());
 
-    let status = if score >= 80 {
-        Ar4siStatus::AffirmingEngineMismatch
-    } else if score >= 60 {
-        Ar4siStatus::AffirmingEngineMismatch
+    let status = if score >= 60 {
+        Ar4siStatus::Affirming
     } else if score >= 40 {
         Ar4siStatus::None
+    } else if score >= 20 {
+        Ar4siStatus::Warning
     } else {
-        Ar4siStatus::ContraindicatedEngineMismatch
+        Ar4siStatus::Contraindicated
     };
 
     let appraisal = EarAppraisal {

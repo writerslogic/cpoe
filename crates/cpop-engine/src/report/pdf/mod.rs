@@ -124,6 +124,16 @@ pub fn render_pdf(report: &WarReport, security_seed: Option<&[u8; 64]>) -> Resul
         embed::draw_evidence_page(&current_layer, report, &fonts, &footer);
     }
 
+    // Page 6 (optional): W3C Verifiable Credential
+    if report.verifiable_credential_json.is_some() {
+        let (vc_page, vc_layer) = doc.add_page(Mm(210.0), Mm(297.0), "Layer 1");
+        let current_layer = doc.get_page(vc_page).get_layer(vc_layer);
+        if let Some(seed) = security_seed {
+            security::draw_guilloche_border(&current_layer, seed);
+        }
+        embed::draw_vc_page(&current_layer, report, &fonts, &footer);
+    }
+
     // Serialize to bytes
     let mut buf = BufWriter::new(Vec::new());
     doc.save(&mut buf)
