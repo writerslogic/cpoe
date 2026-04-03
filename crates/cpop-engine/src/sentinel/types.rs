@@ -101,6 +101,10 @@ impl Default for WindowInfo {
 /// sentinel. For typical writing sessions (< 10,000 keystrokes) the limit is never hit.
 pub const MAX_DOCUMENT_JITTER_SAMPLES: usize = 50_000;
 
+/// Maximum focus switch records per document session. Sessions that
+/// exceed this limit drop the oldest records.
+pub const MAX_FOCUS_SWITCHES: usize = 10_000;
+
 /// Record of a focus switch away from the tracked document.
 #[derive(Debug, Clone)]
 pub struct FocusSwitchRecord {
@@ -340,8 +344,9 @@ impl DocumentSession {
     pub fn focus_lost(&mut self) {
         if self.has_focus {
             if let Some(started) = self.focus_started.take() {
-                self.total_focus_ms +=
-                    i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
+                self.total_focus_ms = self.total_focus_ms.saturating_add(
+                    i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX),
+                );
             }
             self.has_focus = false;
         }

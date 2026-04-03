@@ -69,14 +69,21 @@ impl ShadowManager {
     /// Full encryption at rest is deferred; it would require key management for
     /// temporary files that may outlive the process.
     pub fn update(&self, id: &str, content: &[u8]) -> Result<()> {
-        let mut shadows = self.shadows.write_recover();
-        let shadow = shadows
-            .get_mut(id)
-            .ok_or_else(|| SentinelError::ShadowNotFound(id.to_string()))?;
+        let path = {
+            let shadows = self.shadows.read_recover();
+            shadows
+                .get(id)
+                .map(|s| s.path.clone())
+                .ok_or_else(|| SentinelError::ShadowNotFound(id.to_string()))?
+        };
 
-        fs::write(&shadow.path, content)?;
-        shadow.updated_at = SystemTime::now();
-        shadow._size = i64::try_from(content.len()).unwrap_or(i64::MAX);
+        fs::write(&path, content)?;
+
+        let mut shadows = self.shadows.write_recover();
+        if let Some(shadow) = shadows.get_mut(id) {
+            shadow.updated_at = SystemTime::now();
+            shadow._size = i64::try_from(content.len()).unwrap_or(i64::MAX);
+        }
 
         Ok(())
     }
@@ -116,22 +123,27 @@ impl ShadowManager {
 
     pub fn cleanup_old(&self, max_age: Duration) -> u32 {
         let cutoff = SystemTime::now() - max_age;
-        let mut shadows = self.shadows.write_recover();
-        let mut removed = 0u32;
+        let to_remove: Vec<(String, PathBuf)> = {
+            let shadows = self.shadows.read_recover();
+            shadows
+                .iter()
+                .filter(|(_, s)| s.updated_at < cutoff)
+                .map(|(id, s)| (id.clone(), s.path.clone()))
+                .collect()
+        };
 
-        shadows.retain(|_, shadow| {
-            if shadow.updated_at < cutoff {
-                if let Err(e) = fs::remove_file(&shadow.path) {
-                    log::debug!("shadow cleanup: {e}");
-                }
-                removed += 1;
-                false
-            } else {
-                true
+        for (_, path) in &to_remove {
+            if let Err(e) = fs::remove_file(path) {
+                log::debug!("shadow cleanup: {e}");
             }
-        });
+        }
 
-        removed
+        let mut shadows = self.shadows.write_recover();
+        for (id, _) in &to_remove {
+            shadows.remove(id);
+        }
+
+        to_remove.len() as u32
     }
 
     /// List active shadow buffers. Window titles are returned in their

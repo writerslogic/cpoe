@@ -250,6 +250,16 @@ impl SentinelIpcHandler {
 
     fn handle_verify_file(&self, path: PathBuf) -> Result<IpcMessage, String> {
         let validated_path = super::helpers::validate_path(&path)?;
+        const MAX_EVIDENCE_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10 MB
+        let meta =
+            std::fs::metadata(&validated_path).map_err(|e| format!("Failed to stat file: {e}"))?;
+        if meta.len() > MAX_EVIDENCE_FILE_SIZE {
+            return Err(format!(
+                "File too large: {} bytes (limit {})",
+                meta.len(),
+                MAX_EVIDENCE_FILE_SIZE
+            ));
+        }
         let data =
             std::fs::read(&validated_path).map_err(|e| format!("Failed to read file: {e}"))?;
         let packet = crate::evidence::Packet::decode(&data)
@@ -419,11 +429,24 @@ impl SentinelIpcHandler {
         } else {
             events.len() as f64 / MIN_EVENTS_FOR_RESIDENCY as f64
         };
-        let sequence = (metrics.primary.edit_entropy.min(SEQUENCE_ENTROPY_CAP)
-            / SEQUENCE_ENTROPY_CAP
+        let edit_entropy = if metrics.primary.edit_entropy.is_finite() {
+            metrics.primary.edit_entropy
+        } else {
+            0.0
+        };
+        let append_ratio = if metrics.primary.monotonic_append_ratio.is_finite() {
+            metrics.primary.monotonic_append_ratio
+        } else {
+            0.0
+        };
+        let sequence = (edit_entropy.min(SEQUENCE_ENTROPY_CAP) / SEQUENCE_ENTROPY_CAP
             * SEQUENCE_ENTROPY_WEIGHT)
-            + (metrics.primary.monotonic_append_ratio * SEQUENCE_APPEND_WEIGHT);
-        let behavioral = metrics.assessment_score;
+            + (append_ratio * SEQUENCE_APPEND_WEIGHT);
+        let behavioral = if metrics.assessment_score.is_finite() {
+            metrics.assessment_score
+        } else {
+            0.0
+        };
         let composite = PROCESS_SCORE_WEIGHT_RESIDENCY * residency
             + PROCESS_SCORE_WEIGHT_SEQUENCE * sequence
             + PROCESS_SCORE_WEIGHT_BEHAVIORAL * behavioral;

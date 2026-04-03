@@ -111,6 +111,9 @@ pub fn handle_focus_event_sync(
                 // Record focus switch and unfocus the previous document.
                 if let Some(ref path) = path_to_unfocus {
                     if let Some(session) = sessions_map.get_mut(path.as_str()) {
+                        if session.focus_switches.len() >= super::types::MAX_FOCUS_SWITCHES {
+                            session.focus_switches.remove(0);
+                        }
                         session.focus_switches.push(FocusSwitchRecord {
                             lost_at: SystemTime::now(),
                             regained_at: None,

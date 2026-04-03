@@ -49,6 +49,8 @@ impl Sentinel {
         super::core::lock_order::assert_order(super::core::lock_order::SIGNING_KEY);
         let key = self.signing_key.read_recover().clone();
         #[cfg(debug_assertions)]
+        super::core::lock_order::release(super::core::lock_order::SIGNING_KEY);
+        #[cfg(debug_assertions)]
         super::core::lock_order::assert_order(super::core::lock_order::SESSIONS);
 
         // Single write lock for check+insert to avoid TOCTOU race
@@ -179,6 +181,9 @@ impl Sentinel {
     /// Commit a checkpoint for the given file path if the session has new keystrokes.
     /// Returns true if a checkpoint was committed, false otherwise.
     pub fn commit_checkpoint_for_path(&self, path: &str) -> bool {
+        if !self.running.load(std::sync::atomic::Ordering::SeqCst) {
+            return false;
+        }
         let needs_checkpoint = {
             let sessions = self.sessions.read_recover();
             sessions
@@ -224,9 +229,8 @@ impl Sentinel {
             Some("Auto-checkpoint".to_string()),
         );
 
-        let sk_guard = self.signing_key.read_recover();
-        let sk_ref = sk_guard.as_ref();
-        match store.add_secure_event_with_signer(&mut event, sk_ref) {
+        let sk = self.signing_key.read_recover().clone();
+        match store.add_secure_event_with_signer(&mut event, sk.as_ref()) {
             Ok(_) => {
                 log::info!("Auto-checkpoint committed for {path}");
                 // Update last_checkpoint_keystrokes so the timer doesn't re-commit
@@ -283,7 +287,7 @@ impl Sentinel {
                         total_focus_ms: session.total_focus_ms_cumulative(),
                         session_count: i64::from(session.session_number + 1),
                         total_duration_secs: prev_dur
-                            + i64::try_from(elapsed_secs).unwrap_or(i64::MAX),
+                            .saturating_add(i64::try_from(elapsed_secs).unwrap_or(i64::MAX)),
                         first_tracked_at: first_tracked,
                         last_tracked_at: now_ts,
                     };

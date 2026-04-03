@@ -85,7 +85,7 @@ impl<P: WindowProvider + ?Sized> SentinelFocusTracker for PollingSentinelFocusTr
                 };
                 let app_name = info.application.clone();
                 if config.is_app_allowed(&info.application, &app_name) {
-                    let _ = focus_tx
+                    if focus_tx
                         .send(FocusEvent {
                             event_type: FocusEventType::FocusGained,
                             path: info.path.clone().unwrap_or_default(),
@@ -95,7 +95,12 @@ impl<P: WindowProvider + ?Sized> SentinelFocusTracker for PollingSentinelFocusTr
                             window_title: info.title.clone(),
                             timestamp: SystemTime::now(),
                         })
-                        .await;
+                        .await
+                        .is_err()
+                    {
+                        log::warn!("Focus event channel closed, stopping poll");
+                        return;
+                    }
                     last_path = info.path.clone();
                 }
                 last_app = app;
@@ -116,8 +121,8 @@ impl<P: WindowProvider + ?Sized> SentinelFocusTracker for PollingSentinelFocusTr
                     };
 
                     if current_app != last_app {
-                        if !last_app.is_empty() {
-                            let _ = focus_tx
+                        if !last_app.is_empty()
+                            && focus_tx
                                 .send(FocusEvent {
                                     event_type: FocusEventType::FocusLost,
                                     path: String::new(),
@@ -127,12 +132,16 @@ impl<P: WindowProvider + ?Sized> SentinelFocusTracker for PollingSentinelFocusTr
                                     window_title: ObfuscatedString::default(),
                                     timestamp: SystemTime::now(),
                                 })
-                                .await;
+                                .await
+                                .is_err()
+                        {
+                            log::warn!("Focus event channel closed, stopping poll");
+                            break;
                         }
 
                         let app_name = info.application.clone();
                         if config.is_app_allowed(&info.application, &app_name) {
-                            let _ = focus_tx
+                            if focus_tx
                                 .send(FocusEvent {
                                     event_type: FocusEventType::FocusGained,
                                     path: info.path.clone().unwrap_or_default(),
@@ -142,7 +151,12 @@ impl<P: WindowProvider + ?Sized> SentinelFocusTracker for PollingSentinelFocusTr
                                     window_title: info.title.clone(),
                                     timestamp: SystemTime::now(),
                                 })
-                                .await;
+                                .await
+                                .is_err()
+                            {
+                                log::warn!("Focus event channel closed, stopping poll");
+                                break;
+                            }
                             last_path = info.path.clone();
                         } else {
                             last_path = None;
@@ -157,7 +171,7 @@ impl<P: WindowProvider + ?Sized> SentinelFocusTracker for PollingSentinelFocusTr
                         let app_name = info.application.clone();
                         if config.is_app_allowed(&info.application, &app_name) {
                             if let Some(ref old_path) = last_path {
-                                let _ = focus_tx
+                                if focus_tx
                                     .send(FocusEvent {
                                         event_type: FocusEventType::FocusLost,
                                         path: old_path.clone(),
@@ -167,9 +181,14 @@ impl<P: WindowProvider + ?Sized> SentinelFocusTracker for PollingSentinelFocusTr
                                         window_title: ObfuscatedString::default(),
                                         timestamp: SystemTime::now(),
                                     })
-                                    .await;
+                                    .await
+                                    .is_err()
+                                {
+                                    log::warn!("Focus event channel closed, stopping poll");
+                                    break;
+                                }
                             }
-                            let _ = focus_tx
+                            if focus_tx
                                 .send(FocusEvent {
                                     event_type: FocusEventType::FocusGained,
                                     path: info.path.clone().unwrap_or_default(),
@@ -179,7 +198,12 @@ impl<P: WindowProvider + ?Sized> SentinelFocusTracker for PollingSentinelFocusTr
                                     window_title: info.title.clone(),
                                     timestamp: SystemTime::now(),
                                 })
-                                .await;
+                                .await
+                                .is_err()
+                            {
+                                log::warn!("Focus event channel closed, stopping poll");
+                                break;
+                            }
                             last_path = info.path.clone();
                         }
                     }

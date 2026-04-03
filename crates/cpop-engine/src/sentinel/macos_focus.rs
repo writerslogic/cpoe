@@ -100,8 +100,7 @@ impl MacOSFocusMonitor {
     /// Query the focused window's `AXDocument` attribute for its `file://` URL.
     fn get_document_path_via_ax(&self, pid: i32) -> Option<String> {
         let raw = self.query_focused_window_attribute(pid, "AXDocument")?;
-        if raw.starts_with("file://") {
-            let path = raw.trim_start_matches("file://");
+        if let Some(path) = raw.strip_prefix("file://") {
             if let Ok(decoded) = urlencoding::decode(path) {
                 let owned = decoded.into_owned();
                 if !owned.is_empty() {
