@@ -225,3 +225,12 @@ impl<P: WindowProvider + ?Sized> SentinelFocusTracker for PollingSentinelFocusTr
             .ok_or_else(|| SentinelError::Channel("change receiver already consumed".to_string()))
     }
 }
+
+impl<P: WindowProvider + ?Sized> Drop for PollingSentinelFocusTracker<P> {
+    fn drop(&mut self) {
+        self.running.store(false, Ordering::SeqCst);
+        if let Some(handle) = self.poll_handle.lock_recover().take() {
+            handle.abort();
+        }
+    }
+}

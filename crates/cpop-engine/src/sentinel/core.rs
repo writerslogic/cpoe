@@ -1185,6 +1185,9 @@ impl Drop for Sentinel {
             let _ = handle.join();
         }
 
+        // Stop HID capture so the global callback doesn't leak.
+        super::stop_hid_capture();
+
         // Abort the event loop task as a final safety net.
         if let Some(handle) = self.event_loop_handle.lock_recover().take() {
             handle.abort();
