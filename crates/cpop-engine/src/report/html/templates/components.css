@@ -504,6 +504,27 @@ table.data td:first-child { font-weight: 500; color: var(--text); }
   line-height: 1.55;
 }
 
+/* --- Forensic breakdown --- */
+.topology-bar{display:flex;height:18px;border:1px solid var(--border);margin:8px 0;overflow:hidden}
+.topology-segment{min-width:1px}
+.context-timeline{display:flex;height:14px;border:1px solid var(--border);margin:8px 0;overflow:hidden}
+.context-segment{min-width:1px}
+.context-legend{display:flex;flex-wrap:wrap;gap:10px;font-size:11px;margin-top:6px}
+.context-legend-item{display:flex;align-items:center;gap:3px}
+.context-legend-swatch{width:10px;height:10px;display:inline-block}
+.writing-gauge{height:8px;background:var(--border-light);position:relative;margin:6px 0}
+.writing-gauge-fill{height:100%;position:absolute;left:0;top:0}
+.pause-depth-bar{display:flex;height:14px;margin:4px 0;overflow:hidden}
+.pause-depth-seg{min-width:1px}
+.severity-alert{color:#b71c1c;font-weight:700}
+.severity-warning{color:#e65100;font-weight:600}
+.severity-info{color:#1565c0;font-weight:500}
+.declaration-quote{border-left:3px solid var(--navy);padding:12px 18px;margin:10px 0;background:var(--bg-warm);font-style:italic}
+.metric-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin:10px 0}
+.metric-card{background:var(--bg-warm);border:1px solid var(--border);padding:10px;border-radius:4px}
+.metric-label{font-size:11px;color:var(--text-muted);font-family:var(--sans)}
+.metric-value{font-size:14px;font-weight:600;margin-top:2px;font-family:var(--sans)}
+
 /* --- Footer --- */
 .report-footer {
   border-top: 3px double var(--rule);

@@ -39,14 +39,32 @@ fn render_html_inner(html: &mut String, r: &WarReport) -> std::fmt::Result {
     // Chain of evidence
     sections::write_chain_of_custody(html, r)?;
 
+    // Author declaration
+    sections::write_declaration_summary(html, r)?;
+
+    // Key hierarchy
+    sections::write_key_hierarchy(html, r)?;
+
     // Category scores + writing flow
     sections::write_category_scores(html, r)?;
 
     // Process evidence (exhibits A-F, dynamic notes)
     sections::write_process_evidence(html, r)?;
 
+    // Forensic breakdown
+    sections::write_forensic_breakdown(html, r)?;
+
+    // Edit topology
+    sections::write_edit_topology(html, r)?;
+
     // Session timeline
     sections::write_session_timeline(html, r)?;
+
+    // Activity contexts
+    sections::write_activity_contexts(html, r)?;
+
+    // Hardware attestation
+    sections::write_hardware_attestation(html, r)?;
 
     // Detailed dimension analysis
     sections::write_dimension_analysis(html, r)?;
@@ -62,6 +80,9 @@ fn render_html_inner(html: &mut String, r: &WarReport) -> std::fmt::Result {
 
     // Analysis flags
     sections::write_flags(html, r)?;
+
+    // Anomaly details
+    sections::write_anomalies_detail(html, r)?;
 
     // Scope, limitations, admissibility
     sections::write_scope(html, r)?;
