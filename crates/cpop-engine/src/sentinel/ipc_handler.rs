@@ -340,7 +340,9 @@ impl SentinelIpcHandler {
         };
 
         let db_path = self.sentinel.config.writersproof_dir.join("events.db");
-        if let Ok(store) = crate::store::SecureStore::open(&db_path, hmac_key.to_vec()) {
+        let store_opt = crate::store::SecureStore::open(&db_path, hmac_key.to_vec()).ok();
+
+        if let Some(ref store) = store_opt {
             if let Ok(Some((cbor, sig))) = store.get_baseline_digest(&identity_fingerprint) {
                 if let Ok(digest) =
                     serde_json::from_slice::<cpop_protocol::baseline::BaselineDigest>(&cbor)
@@ -356,20 +358,103 @@ impl SentinelIpcHandler {
         let physics = crate::physics::PhysicalContext::capture(&jitter_samples);
         builder = builder.with_physical_context(&physics);
 
-        // Attach per-document typing samples for forensic verification.
-        // Prefer session-specific samples; fall back to global accumulator.
+        // Attach per-document behavioral and keystroke evidence.
         let path_str = path.to_string_lossy().to_string();
+
+        // Per-document typing samples from the active session (if any).
         let typing_samples = {
             let sessions = self.sentinel.sessions.read_recover();
             sessions
                 .get(&path_str)
                 .filter(|s| !s.jitter_samples.is_empty())
                 .map(|s| s.jitter_samples.clone())
-                .unwrap_or(jitter_samples)
+                .unwrap_or_default()
         };
-        if !typing_samples.is_empty() {
-            builder = builder.with_behavioral_full(Vec::new(), None, &typing_samples);
-            builder = builder.with_typing_samples(typing_samples);
+
+        // Load stored events for edit topology and keystroke statistics.
+        let store_events = store_opt
+            .as_ref()
+            .and_then(|s| s.get_events_for_file(&path_str).ok())
+            .unwrap_or_default();
+
+        if !store_events.is_empty() {
+            // Edit topology from size_delta sequences.
+            let max_size = store_events
+                .iter()
+                .map(|e| e.file_size.max(1))
+                .max()
+                .unwrap_or(1) as f64;
+            let edit_regions: Vec<crate::evidence::EditRegion> = store_events
+                .iter()
+                .map(|e| {
+                    let delta = e.size_delta;
+                    let cursor =
+                        ((e.file_size as f64 - delta.abs() as f64) / max_size).clamp(0.0, 1.0);
+                    let extent = (delta.abs() as f64 / max_size).clamp(0.0, 1.0);
+                    crate::evidence::EditRegion {
+                        start_pct: cursor,
+                        end_pct: (cursor + extent).min(1.0),
+                        delta_sign: if delta > 0 {
+                            1i32
+                        } else if delta < 0 {
+                            -1i32
+                        } else {
+                            0i32
+                        },
+                        byte_count: delta.abs(),
+                    }
+                })
+                .collect();
+
+            builder = builder.with_behavioral_full(edit_regions, None, &typing_samples);
+
+            // Build KeystrokeEvidence from session or store events.
+            let first_ts = store_events.first().map(|e| e.timestamp_ns).unwrap_or(0);
+            let last_ts = store_events.last().map(|e| e.timestamp_ns).unwrap_or(0);
+            let started_at = chrono::DateTime::from_timestamp_nanos(first_ts);
+            let ended_at = chrono::DateTime::from_timestamp_nanos(last_ts);
+            let elapsed_ns = last_ts.saturating_sub(first_ts).max(0) as u64;
+            let duration_secs = elapsed_ns as f64 / 1_000_000_000.0;
+
+            let (session_id, total_keystrokes, unique_states) = {
+                let sessions = self.sentinel.sessions.read_recover();
+                if let Some(session) = sessions.get(&path_str) {
+                    (
+                        session.session_id.clone(),
+                        session.keystroke_count,
+                        session.save_count,
+                    )
+                } else {
+                    (
+                        hex::encode(&latest.hash[..8]),
+                        store_events.len() as u64,
+                        store_events.iter().filter(|e| e.size_delta != 0).count() as u32,
+                    )
+                }
+            };
+
+            let kpm = if duration_secs > 0.0 {
+                (total_keystrokes as f64 / duration_secs) * 60.0
+            } else {
+                0.0
+            };
+
+            let ks = crate::evidence::KeystrokeEvidence {
+                session_id,
+                started_at,
+                ended_at,
+                duration: std::time::Duration::from_nanos(elapsed_ns),
+                total_keystrokes,
+                total_samples: i32::try_from(typing_samples.len()).unwrap_or(i32::MAX),
+                keystrokes_per_minute: kpm,
+                unique_doc_states: i32::try_from(unique_states).unwrap_or(i32::MAX),
+                chain_valid: !chain.checkpoints.is_empty(),
+                plausible_human_rate: (1.0..=600.0).contains(&kpm) || total_keystrokes < 10,
+                samples: Vec::new(),
+                typing_samples,
+                phys_ratio: None,
+            };
+            builder = builder.with_keystroke_evidence(ks);
         }
 
         let packet = builder

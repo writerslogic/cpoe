@@ -100,6 +100,12 @@ impl Builder {
         self
     }
 
+    /// Attach pre-built keystroke evidence directly.
+    pub fn with_keystroke_evidence(mut self, evidence: KeystrokeEvidence) -> Self {
+        self.packet.keystroke = Some(evidence);
+        self
+    }
+
     /// Attach per-keystroke behavioral timing data (zone, dwell, flight) to
     /// the keystroke evidence. Must be called after `with_keystroke` or
     /// `with_hybrid_keystroke`.
