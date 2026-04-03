@@ -214,7 +214,7 @@ All 265 findings from prior audit (2026-03-30) and 255 from 2026-03-25 are resol
   Impact: Collisions bypass causality verification | Fix: Validate packet_id entropy | Effort: small
 
 ### Key Hierarchy/Identity/WAR
-- [ ] **H-027** `[security]` `keyhierarchy/session.rs:374`: Recovery state encryption has no monotonic counter; replayable
+- [x] **H-027** `[security]` `keyhierarchy/session.rs:374`: Recovery state encryption has no monotonic counter; replayable
   <!-- pid:missing_validation | batch:9 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
   Impact: Old recovery states can be replayed | Fix: Add external counter (TPM or sealed blob) | Effort: large
 
