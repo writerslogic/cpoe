@@ -153,3 +153,33 @@ fn test_verdict_unsigned_packet() {
     );
     assert_eq!(v, ForensicVerdict::V2LikelyHuman);
 }
+
+#[test]
+fn test_verdict_no_vdf_data_is_suspicious_not_synthetic() {
+    // Checkpoints exist but carry zero VDF iterations: ratio=0.0, plausible=false.
+    // Should be V3Suspicious (missing proof), not V4LikelySynthetic.
+    let v = verdict::compute_verdict(
+        true,
+        Some(true),
+        true,
+        &SealVerification {
+            jitter_tag_present: Some(true),
+            entangled_binding_valid: None,
+            checkpoints_checked: 2,
+        },
+        &DurationCheck {
+            computed_min_seconds: 0.0,
+            claimed_seconds: 60.0,
+            ratio: 0.0,
+            plausible: false,
+        },
+        &KeyProvenanceCheck {
+            hierarchy_consistent: None,
+            signing_key_consistent: true,
+            ratchet_monotonic: true,
+        },
+        None,
+        None,
+    );
+    assert_eq!(v, ForensicVerdict::V3Suspicious);
+}

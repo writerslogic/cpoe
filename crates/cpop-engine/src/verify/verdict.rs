@@ -37,8 +37,12 @@ pub(super) fn compute_verdict(
         return ForensicVerdict::V5ConfirmedForgery;
     }
 
-    // Implausible duration (< 0.5x minimum) → likely synthetic
-    if !duration.plausible && duration.ratio < SWF_DURATION_RATIO_MIN {
+    // Implausible duration (< 0.5x minimum) → likely synthetic.
+    // Only when VDF data exists; ratio=0.0 from missing VDF falls through to V3Suspicious.
+    if !duration.plausible
+        && duration.computed_min_seconds > 0.0
+        && duration.ratio < SWF_DURATION_RATIO_MIN
+    {
         return ForensicVerdict::V4LikelySynthetic;
     }
 
