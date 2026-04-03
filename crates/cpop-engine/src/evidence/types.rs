@@ -41,9 +41,14 @@ pub enum TrustTier {
     Attested = 4,
 }
 
+fn default_version() -> i32 {
+    1
+}
+
 /// Complete evidence packet containing all attestation data for a document session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Packet {
+    #[serde(default = "default_version")]
     pub version: i32,
     pub exported_at: DateTime<Utc>,
     pub provenance: Option<RecordProvenance>,
@@ -133,6 +138,7 @@ pub struct Packet {
 /// Key hierarchy snapshot proving session certificate chain and ratchet state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeyHierarchyEvidencePacket {
+    #[serde(default = "default_version")]
     pub version: i32,
     pub master_fingerprint: String,
     pub master_public_key: String,

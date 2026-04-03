@@ -78,6 +78,9 @@ pub struct TriggerEvent {
     pub elapsed_since_last: Duration,
 }
 
+/// Number of recent jitter samples used for windowed entropy estimation.
+const JITTER_WINDOW_SIZE: usize = 16;
+
 /// Tracks typing behavior and determines when to create checkpoints.
 pub struct CheckpointTrigger {
     config: Config,
@@ -88,6 +91,9 @@ pub struct CheckpointTrigger {
     last_checkpoint: Instant,
     last_checkpoint_size: i64,
     entropy_hash: [u8; 32],
+    jitter_window: [u32; JITTER_WINDOW_SIZE],
+    jitter_window_pos: usize,
+    jitter_window_len: usize,
 }
 
 impl CheckpointTrigger {
@@ -107,6 +113,9 @@ impl CheckpointTrigger {
             last_checkpoint: Instant::now(),
             last_checkpoint_size: 0,
             entropy_hash: [0u8; 32],
+            jitter_window: [0u32; JITTER_WINDOW_SIZE],
+            jitter_window_pos: 0,
+            jitter_window_len: 0,
         }
     }
 
@@ -226,29 +235,50 @@ impl CheckpointTrigger {
     }
 
     fn accumulate_entropy(&mut self, jitter_micros: u32) {
+        // Rolling hash for chain-of-custody (independent of entropy estimation).
         let mut hasher = Sha256::new();
         hasher.update(self.entropy_hash);
         hasher.update(jitter_micros.to_be_bytes());
         hasher.update(self.total_keystrokes.to_be_bytes());
         self.entropy_hash = hasher.finalize().into();
 
-        self.accumulated_entropy += estimate_jitter_entropy(jitter_micros);
+        // Add to ring buffer.
+        self.jitter_window[self.jitter_window_pos] = jitter_micros;
+        self.jitter_window_pos = (self.jitter_window_pos + 1) % JITTER_WINDOW_SIZE;
+        if self.jitter_window_len < JITTER_WINDOW_SIZE {
+            self.jitter_window_len += 1;
+        }
+
+        self.accumulated_entropy += self.windowed_entropy_estimate();
+    }
+
+    /// Estimate per-keystroke entropy from the coefficient of variation (CV)
+    /// of recent jitter values. CV measures timing variability: 0 for perfectly
+    /// uniform input (automated), >0 for natural human typing. Returns
+    /// `log2(1 + CV)`, clamped to [0.0, 1.0].
+    fn windowed_entropy_estimate(&self) -> f64 {
+        if self.jitter_window_len < 4 {
+            return 0.0;
+        }
+        let samples = &self.jitter_window[..self.jitter_window_len];
+        let n = samples.len() as f64;
+        let mean = samples.iter().map(|&v| v as f64).sum::<f64>() / n;
+        if mean < 1.0 {
+            return 0.0;
+        }
+        let variance = samples
+            .iter()
+            .map(|&v| (v as f64 - mean).powi(2))
+            .sum::<f64>()
+            / n;
+        let cv = variance.sqrt() / mean;
+        (1.0 + cv).log2().clamp(0.0, 1.0)
     }
 }
 
 impl Default for CheckpointTrigger {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-/// Estimate entropy bits from jitter timing via log2 of the microsecond value, clamped to [0.5, 8.0].
-fn estimate_jitter_entropy(jitter_micros: u32) -> f64 {
-    if jitter_micros == 0 {
-        0.0
-    } else {
-        let entropy = (jitter_micros as f64).log2();
-        entropy.clamp(0.5, 8.0)
     }
 }
 
@@ -296,22 +326,28 @@ mod tests {
         let config = Config {
             min_keystroke_interval: 5,
             max_keystroke_interval: 1000,
-            entropy_threshold_bits: 20.0,
+            entropy_threshold_bits: 3.0,
+            size_delta_threshold: 100_000,
             ..Default::default()
         };
         let mut trigger = CheckpointTrigger::with_config(config);
 
-        for _ in 0..10 {
-            let result = trigger.record_keystroke(50000, 100); // High jitter = more entropy
+        // Alternating jitter values produce high CV, accumulating entropy.
+        let jitters = [
+            500, 5000, 800, 4000, 600, 5500, 700, 4200, 550, 5100, 900, 3800, 650, 4500, 750, 4800,
+            500, 5200, 850, 3900,
+        ];
+        for (i, &j) in jitters.iter().enumerate() {
+            let result = trigger.record_keystroke(j, 100);
             if let Some(event) = result {
                 assert_eq!(event.reason, TriggerReason::EntropyThreshold);
+                assert!(i >= 5, "Should need at least a few keystrokes");
                 return;
             }
         }
 
-        assert!(
-            trigger.accumulated_entropy() >= 20.0,
-            "Expected entropy >= 20, got {}",
+        panic!(
+            "Expected EntropyThreshold trigger within 20 keystrokes, got entropy={}",
             trigger.accumulated_entropy()
         );
     }
@@ -366,11 +402,18 @@ mod tests {
 
         assert_eq!(trigger.accumulated_entropy(), 0.0);
 
+        // First 3 samples return 0 (window needs >= 4 entries).
         trigger.record_keystroke(1000, 100);
+        trigger.record_keystroke(2000, 100);
+        trigger.record_keystroke(500, 100);
+        assert_eq!(trigger.accumulated_entropy(), 0.0);
+
+        // 4th sample with variable jitter starts producing entropy.
+        trigger.record_keystroke(3000, 100);
         assert!(trigger.accumulated_entropy() > 0.0);
 
         let e1 = trigger.accumulated_entropy();
-        trigger.record_keystroke(2000, 100);
+        trigger.record_keystroke(800, 100);
         assert!(trigger.accumulated_entropy() > e1);
     }
 
@@ -378,8 +421,10 @@ mod tests {
     fn test_reset_for_checkpoint() {
         let mut trigger = CheckpointTrigger::new();
 
-        for _ in 0..10 {
-            trigger.record_keystroke(1000, 100);
+        // Variable jitter to produce non-zero entropy.
+        for i in 0..10 {
+            let j = if i % 2 == 0 { 500 } else { 5000 };
+            trigger.record_keystroke(j, 100);
         }
 
         assert!(trigger.keystrokes_since_checkpoint() > 0);
@@ -407,22 +452,46 @@ mod tests {
     }
 
     #[test]
-    fn test_estimate_jitter_entropy() {
-        assert_eq!(estimate_jitter_entropy(0), 0.0);
-        assert!(estimate_jitter_entropy(100) > 0.0);
-        assert!(estimate_jitter_entropy(1000) > estimate_jitter_entropy(100));
-        assert!(estimate_jitter_entropy(1_000_000) <= 8.0);
+    fn test_uniform_jitter_yields_zero_entropy() {
+        let mut trigger = CheckpointTrigger::new();
+        // Perfectly uniform jitter (CV=0) should produce no entropy.
+        for _ in 0..20 {
+            trigger.record_keystroke(1000, 100);
+        }
+        assert_eq!(trigger.accumulated_entropy(), 0.0);
+    }
+
+    #[test]
+    fn test_variable_jitter_yields_more_entropy() {
+        let mut uniform = CheckpointTrigger::new();
+        let mut variable = CheckpointTrigger::new();
+        // Same number of keystrokes, different variability.
+        for i in 0..20 {
+            uniform.record_keystroke(1000, 100);
+            // Alternate between 500 and 5000 for high CV.
+            let j = if i % 2 == 0 { 500 } else { 5000 };
+            variable.record_keystroke(j, 100);
+        }
+        assert!(
+            variable.accumulated_entropy() > uniform.accumulated_entropy(),
+            "Variable jitter ({}) should yield more entropy than uniform ({})",
+            variable.accumulated_entropy(),
+            uniform.accumulated_entropy()
+        );
     }
 
     #[test]
     fn test_trigger_event_fields() {
         let mut trigger = CheckpointTrigger::new();
-        trigger.record_keystroke(1000, 100);
+        // Variable jitter over enough samples to produce entropy.
+        for j in [500, 3000, 800, 4000, 600] {
+            trigger.record_keystroke(j, 100);
+        }
 
         let event = trigger.manual_trigger(150);
 
         assert!(event.timestamp <= Utc::now());
-        assert_eq!(event.keystroke_count, 1);
+        assert_eq!(event.keystroke_count, 5);
         assert!(event.entropy_bits > 0.0);
         assert_eq!(event.document_size, 150);
     }

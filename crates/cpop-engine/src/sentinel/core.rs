@@ -28,7 +28,12 @@ fn commit_checkpoint_for_path(
     signing_key: &Arc<RwLock<Option<SigningKey>>>,
     writersproof_dir: &std::path::Path,
     challenge_nonce: Option<String>,
+    stopping: &AtomicBool,
 ) -> bool {
+    if stopping.load(Ordering::SeqCst) {
+        log::debug!("Skipping checkpoint for {path}: sentinel stopping");
+        return false;
+    }
     let file_path = std::path::Path::new(path);
     let (content_hash, raw_size) = match crate::crypto::hash_file_with_size(file_path) {
         Ok(pair) => pair,
@@ -173,6 +178,9 @@ pub struct Sentinel {
     pub(crate) start_time: Arc<Mutex<Option<SystemTime>>>,
     /// False when any bridge thread has died; checked before processing events.
     bridge_healthy: Arc<AtomicBool>,
+    /// Set to `true` when `stop()` begins; checked by checkpoint tasks to bail
+    /// before opening SQLite, preventing a `findReusableFd` mutex deadlock.
+    stopping: Arc<AtomicBool>,
 }
 
 impl Sentinel {
@@ -217,6 +225,7 @@ impl Sentinel {
             pending_challenge: Arc::new(RwLock::new(None)),
             start_time: Arc::new(Mutex::new(None)),
             bridge_healthy: Arc::new(AtomicBool::new(true)),
+            stopping: Arc::new(AtomicBool::new(false)),
         };
         mouse_stego_seed.zeroize();
         Ok(sentinel)
@@ -576,8 +585,9 @@ impl Sentinel {
 
         let (focus_monitor, mut focus_rx, mut change_rx) = self.setup_focus()?;
 
-        // Reset bridge health on (re-)start.
+        // Reset bridge health and stopping flag on (re-)start.
         self.bridge_healthy.store(true, Ordering::SeqCst);
+        self.stopping.store(false, Ordering::SeqCst);
 
         // Set running=true before spawning bridge threads so they see the flag immediately.
         self.running.store(true, Ordering::SeqCst);
@@ -604,6 +614,7 @@ impl Sentinel {
         let idle_check_interval_secs = config.idle_check_interval_secs;
         let writersproof_dir = config.writersproof_dir.clone();
         let signing_key_for_cp = Arc::clone(&self.signing_key);
+        let stopping_flag = Arc::clone(&self.stopping);
         let pending_challenge = Arc::clone(&self.pending_challenge);
 
         // Re-focus preserved sessions from a prior run so that keystrokes
@@ -830,6 +841,7 @@ impl Sentinel {
                                 let cp_path = path.clone();
                                 let cp_key = Arc::clone(&signing_key_for_cp);
                                 let cp_dir = writersproof_dir.clone();
+                                let cp_stop = Arc::clone(&stopping_flag);
                                 let _ = tokio::task::spawn_blocking(move || {
                                     commit_checkpoint_for_path(
                                         &cp_path,
@@ -837,6 +849,7 @@ impl Sentinel {
                                         &cp_key,
                                         &cp_dir,
                                         None,
+                                        &cp_stop,
                                     )
                                 })
                                 .await;
@@ -896,6 +909,7 @@ impl Sentinel {
                             let cp_key = Arc::clone(&signing_key_for_cp);
                             let cp_dir = writersproof_dir.clone();
                             let cp_nonce = challenge_nonce.clone();
+                            let cp_stop = Arc::clone(&stopping_flag);
                             let committed = tokio::task::spawn_blocking(move || {
                                 commit_checkpoint_for_path(
                                     &cp_path,
@@ -903,6 +917,7 @@ impl Sentinel {
                                     &cp_key,
                                     &cp_dir,
                                     cp_nonce,
+                                    &cp_stop,
                                 )
                             })
                             .await
@@ -1020,6 +1035,16 @@ impl Sentinel {
             return Ok(());
         }
 
+        // Set stopping flag FIRST so in-flight spawn_blocking checkpoint
+        // tasks bail before opening SQLite (prevents findReusableFd deadlock).
+        self.stopping.store(true, Ordering::SeqCst);
+
+        // Abort the event loop task early. This cancels any pending .await on
+        // spawn_blocking and prevents new checkpoint tasks from being spawned.
+        if let Some(handle) = self.event_loop_handle.lock_recover().take() {
+            handle.abort();
+        }
+
         // take() under lock, then await outside to avoid holding lock across .await
         let tx = self.shutdown_tx.lock_recover().take();
         if let Some(tx) = tx {
@@ -1027,7 +1052,7 @@ impl Sentinel {
             let _ = tx.send(()).await;
         }
 
-        // Stop CGEventTap threads (keystroke + mouse captures) FIRST so
+        // Stop CGEventTap threads (keystroke + mouse captures) so
         // the std::sync::mpsc senders are dropped, causing bridge threads
         // to receive Disconnected and exit their recv_timeout loops.
         if let Some(mut cap) = self.keystroke_capture.lock_recover().take() {
@@ -1046,57 +1071,81 @@ impl Sentinel {
             let _ = handle.join();
         }
 
-        // Persist cumulative stats and unfocus all sessions so keystroke
-        // counts survive across stop/start cycles.
+        // Persist cumulative stats so keystroke counts survive across
+        // stop/start cycles. Run in spawn_blocking with a timeout because
+        // in-flight checkpoint tasks may still hold the SQLite fd mutex.
         {
             // AUD-041: signing_key before sessions.
             #[cfg(debug_assertions)]
             lock_order::assert_order(lock_order::SIGNING_KEY);
-            let guard = self.signing_key.read_recover();
+            let sk_clone = self.signing_key.read_recover().clone();
             #[cfg(debug_assertions)]
             lock_order::assert_order(lock_order::SESSIONS);
-            let sessions_map = self.sessions.read_recover();
-            if let Some(ref sk) = *guard {
-                let db = self.config.writersproof_dir.join("events.db");
-                if let Ok(store) = crate::store::open_store_with_signing_key(sk, &db) {
-                    for (path, session) in sessions_map.iter() {
-                        if path.starts_with("shadow://") {
-                            continue;
-                        }
-                        let now_secs = SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
+            let stats_list: Vec<_> = self
+                .sessions
+                .read_recover()
+                .iter()
+                .filter(|(p, _)| !p.starts_with("shadow://"))
+                .map(|(path, session)| {
+                    let now_secs = SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs() as i64)
+                        .unwrap_or(0);
+                    crate::store::DocumentStats {
+                        file_path: path.clone(),
+                        total_keystrokes: i64::try_from(session.total_keystrokes())
+                            .unwrap_or(i64::MAX),
+                        total_focus_ms: session.total_focus_ms_cumulative(),
+                        session_count: i64::from(session.session_number + 1),
+                        total_duration_secs: session
+                            .start_time
+                            .elapsed()
                             .map(|d| d.as_secs() as i64)
-                            .unwrap_or(0);
-                        let stats = crate::store::DocumentStats {
-                            file_path: path.clone(),
-                            total_keystrokes: i64::try_from(session.total_keystrokes())
-                                .unwrap_or(i64::MAX),
-                            total_focus_ms: session.total_focus_ms_cumulative(),
-                            session_count: i64::from(session.session_number + 1),
-                            total_duration_secs: session
-                                .start_time
-                                .elapsed()
-                                .map(|d| d.as_secs() as i64)
-                                .unwrap_or(0),
-                            first_tracked_at: session
-                                .first_tracked_at
-                                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                                .map(|d| d.as_secs() as i64)
-                                .unwrap_or(now_secs),
-                            last_tracked_at: now_secs,
-                        };
-                        let _ = store.save_document_stats(&stats);
+                            .unwrap_or(0),
+                        first_tracked_at: session
+                            .first_tracked_at
+                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                            .map(|d| d.as_secs() as i64)
+                            .unwrap_or(now_secs),
+                        last_tracked_at: now_secs,
                     }
-                }
-            }
-            drop(guard);
-            drop(sessions_map);
+                })
+                .collect();
             #[cfg(debug_assertions)]
             {
                 lock_order::release(lock_order::SESSIONS);
                 lock_order::release(lock_order::SIGNING_KEY);
             }
 
+            if let Some(sk) = sk_clone {
+                // Derive HMAC key now and drop the SigningKey immediately
+                // so it is not held alive inside the spawn_blocking closure.
+                let mut key_bytes = sk.to_bytes();
+                let hmac_key = crate::crypto::derive_hmac_key(&key_bytes);
+                key_bytes.zeroize();
+                drop(sk);
+                let hmac_vec = hmac_key.to_vec();
+                let db = self.config.writersproof_dir.join("events.db");
+                let save_result = tokio::time::timeout(
+                    Duration::from_secs(2),
+                    tokio::task::spawn_blocking(move || {
+                        if let Ok(store) = crate::store::SecureStore::open(&db, hmac_vec) {
+                            for stats in &stats_list {
+                                let _ = store.save_document_stats(stats);
+                            }
+                        }
+                    }),
+                )
+                .await;
+                if save_result.is_err() {
+                    log::warn!(
+                        "Stats persistence timed out during stop; \
+                         stats will be recovered on next session start"
+                    );
+                }
+            }
+
+            // Unfocus all sessions so they are preserved for restart.
             let mut paths: Vec<String> = self.sessions.read_recover().keys().cloned().collect();
             paths.sort();
             for path in paths {
@@ -1106,11 +1155,6 @@ impl Sentinel {
         // current_focus is NOT cleared so run_event_loop() can re-focus
         // the same document on restart. The sessions above are unfocused
         // (has_focus = false) but still present in the map.
-
-        // Abort the event loop task
-        if let Some(handle) = self.event_loop_handle.lock_recover().take() {
-            handle.abort();
-        }
 
         self.shadow.cleanup_all();
 
@@ -1125,6 +1169,9 @@ impl Sentinel {
             }
             *guard = None;
         }
+
+        // Reset stopping flag so the sentinel can be restarted.
+        self.stopping.store(false, Ordering::SeqCst);
 
         Ok(())
     }
@@ -1259,6 +1306,7 @@ impl Drop for Sentinel {
     fn drop(&mut self) {
         // Signal all bridge threads and the event loop to exit.
         self.running.store(false, Ordering::SeqCst);
+        self.stopping.store(true, Ordering::SeqCst);
 
         // Stop CGEventTap threads so they don't leak.
         if let Some(mut cap) = self.keystroke_capture.lock_recover().take() {

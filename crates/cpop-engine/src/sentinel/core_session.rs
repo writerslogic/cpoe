@@ -214,6 +214,9 @@ impl Sentinel {
         };
         let file_size = i64::try_from(raw_size).unwrap_or(i64::MAX);
 
+        if !self.running.load(std::sync::atomic::Ordering::SeqCst) {
+            return false;
+        }
         let mut store = match self.open_event_store() {
             Ok(s) => s,
             Err(e) => {
