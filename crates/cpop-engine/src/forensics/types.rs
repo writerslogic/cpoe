@@ -12,6 +12,7 @@ use crate::analysis::{
 };
 use crate::forensics::cross_modal::CrossModalResult;
 use crate::forensics::forgery_cost::ForgeryCostEstimate;
+use crate::forensics::writing_mode::WritingModeAnalysis;
 use cpop_protocol::forensics::{ForensicAnalysis as ProtocolForensicAnalysis, ForensicVerdict};
 
 /// Edits past this position (95%) count as "append".
@@ -210,6 +211,8 @@ pub struct ForensicMetrics {
     pub labyrinth: Option<LabyrinthAnalysis>,
     /// Focus-switching pattern analysis.
     pub focus: FocusMetrics,
+    /// Writing mode classification (cognitive vs. transcriptive).
+    pub writing_mode: Option<WritingModeAnalysis>,
 }
 
 impl ForensicMetrics {

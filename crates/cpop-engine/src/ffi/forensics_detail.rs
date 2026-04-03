@@ -23,6 +23,20 @@ pub struct FfiForensicBreakdown {
     pub protocol_verdict: String,
     pub anomaly_count: u32,
     pub anomalies: Vec<FfiAnomaly>,
+    /// Writing mode: "cognitive", "transcriptive", "mixed", or "insufficient".
+    pub writing_mode: String,
+    /// Composite cognitive score (0.0 = transcriptive, 1.0 = cognitive).
+    pub writing_mode_score: f64,
+    /// Confidence in writing mode classification (0.0-1.0).
+    pub writing_mode_confidence: f64,
+    /// Number of burst->delete->burst revision cycles detected.
+    pub revision_cycle_count: u32,
+    /// Fraction of keystrokes that are backspace/delete.
+    pub correction_ratio: f64,
+    /// CV of typing speed within bursts.
+    pub burst_speed_cv: f64,
+    /// Pause depth distribution: [sentence_fraction, paragraph_fraction, deep_fraction].
+    pub pause_depth_distribution: Vec<f64>,
     pub error_message: Option<String>,
 }
 
@@ -56,6 +70,13 @@ impl FfiForensicBreakdown {
             protocol_verdict: "unknown".to_string(),
             anomaly_count: 0,
             anomalies: Vec::new(),
+            writing_mode: "insufficient".to_string(),
+            writing_mode_score: 0.0,
+            writing_mode_confidence: 0.0,
+            revision_cycle_count: 0,
+            correction_ratio: 0.0,
+            burst_speed_cv: 0.0,
+            pause_depth_distribution: vec![0.0, 0.0, 0.0],
             error_message: Some(msg),
         }
     }
@@ -195,6 +216,29 @@ pub fn ffi_get_forensic_breakdown(path: String) -> FfiForensicBreakdown {
         protocol_verdict: format!("{:?}", protocol_verdict),
         anomaly_count: profile.anomalies.len() as u32,
         anomalies,
+        writing_mode: metrics
+            .writing_mode
+            .as_ref()
+            .map(|wm| wm.mode.to_string())
+            .unwrap_or_else(|| "insufficient".to_string()),
+        writing_mode_score: metrics
+            .writing_mode
+            .as_ref()
+            .map(|wm| wm.cognitive_score)
+            .unwrap_or(0.0),
+        writing_mode_confidence: metrics
+            .writing_mode
+            .as_ref()
+            .map(|wm| wm.confidence)
+            .unwrap_or(0.0),
+        revision_cycle_count: metrics
+            .writing_mode
+            .as_ref()
+            .map(|wm| wm.revision_pattern.revision_cycle_count as u32)
+            .unwrap_or(0),
+        correction_ratio: metrics.cadence.correction_ratio,
+        burst_speed_cv: metrics.cadence.burst_speed_cv,
+        pause_depth_distribution: metrics.cadence.pause_depth_distribution.to_vec(),
         error_message: None,
     }
 }

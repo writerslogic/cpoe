@@ -28,6 +28,7 @@ pub(crate) mod scoring;
 mod topology;
 pub mod types;
 mod velocity;
+pub mod writing_mode;
 
 pub use analysis::*;
 pub use assessment::*;
@@ -51,6 +52,7 @@ pub use scoring::{cadence_score_from_samples, compute_focus_penalty, session_for
 pub use topology::*;
 pub use types::*;
 pub use velocity::*;
+pub use writing_mode::{classify_writing_mode, RevisionPattern, WritingMode, WritingModeAnalysis};
 
 #[cfg(test)]
 mod tests;

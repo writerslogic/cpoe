@@ -169,7 +169,7 @@ fn process_file_event(inner: &Arc<EngineInner>, path: &Path) -> Result<()> {
     };
 
     let (forensic_score, is_paste) = {
-        let mut session = inner.jitter_session.lock_recover();
+        let session = inner.jitter_session.lock_recover();
         if session.samples.is_empty() {
             // No keystrokes but file grew significantly → paste or dictation
             let is_paste = size_delta > 20;
@@ -188,10 +188,9 @@ fn process_file_event(inner: &Arc<EngineInner>, path: &Path) -> Result<()> {
             let is_paste = (avg_bytes_per_key > 3.0 && size_delta > 20)
                 || (i64::from(size_delta) > (keystroke_count * 5) && size_delta > 50);
 
-            // Intentional: each file event gets its own forensic score from the
-            // samples accumulated since the last event. Clearing ensures scores
-            // reflect only the inter-event typing window.
-            session.samples.clear();
+            // Samples accumulate across the full session so every checkpoint
+            // has enough data for meaningful cadence analysis. The session
+            // is cleared on stop/start, not per-checkpoint.
 
             (score, is_paste)
         }

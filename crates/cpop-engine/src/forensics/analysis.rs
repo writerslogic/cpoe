@@ -300,6 +300,13 @@ pub fn analyze_forensics_ext_with_focus(
 
     metrics.risk_level = determine_risk_level(metrics.assessment_score, events.len());
 
+    metrics.writing_mode = Some(super::writing_mode::classify_writing_mode(
+        &metrics.primary,
+        &metrics.cadence,
+        events,
+        events.len(),
+    ));
+
     metrics
 }
 

@@ -16,7 +16,7 @@ use crate::RwLockRecover;
 /// - `source_pid`: CGEvent field 41. Hardware = 0 (kernel); injected = injector PID.
 ///
 /// Synthetic events are rejected, matching the CGEventTap `verify_event_source` behavior.
-
+///
 /// Maximum sustained keystroke injection rate (keystrokes per second).
 ///
 /// Human peak burst typing is ~15 KPS; anything above 50 is clearly synthetic
