@@ -6,7 +6,7 @@
 //! match tracked documents or known AI tools.
 
 use super::sentinel::get_sentinel;
-use crate::sentinel::types::{AiToolCategory, DetectedAiTool};
+use crate::sentinel::types::{AiToolCategory, DetectedAiTool, ObservationBasis};
 use crate::RwLockRecover;
 use std::time::SystemTime;
 
@@ -84,9 +84,13 @@ pub fn ffi_sentinel_es_ai_tool_detected(
     };
 
     // Persist into all active sessions, deduplicated on (signing_id, pid).
+    const MAX_AI_TOOLS_PER_SESSION: usize = 256;
     let mut sessions = sentinel.sessions.write_recover();
     let mut updated = 0u32;
     for session in sessions.values_mut() {
+        if session.ai_tools_detected.len() >= MAX_AI_TOOLS_PER_SESSION {
+            continue;
+        }
         let already = session
             .ai_tools_detected
             .iter()
@@ -122,30 +126,33 @@ pub fn ffi_sentinel_es_file_rename(old_path: String, new_path: String) -> bool {
         _ => return false,
     };
 
-    let tracked = sentinel.tracked_files();
-    if !tracked.iter().any(|t| t == &old_path) {
-        return false;
-    }
+    let validated = match crate::sentinel::helpers::validate_path(&new_path) {
+        Ok(p) => p.to_string_lossy().to_string(),
+        Err(e) => {
+            log::warn!("Rename target path rejected: {e}");
+            return false;
+        }
+    };
 
-    log::info!("ES file rename detected: {old_path} -> {new_path}");
+    log::info!("ES file rename detected: {old_path} -> {validated}");
 
     let mut sessions = sentinel.sessions.write_recover();
-    if sessions.contains_key(&new_path) {
-        log::warn!("Rename target already tracked, ignoring: {old_path} -> {new_path}");
+    if sessions.contains_key(&validated) {
+        log::warn!("Rename target already tracked, ignoring: {old_path} -> {validated}");
         return false;
     }
     let mut session = match sessions.remove(&old_path) {
         Some(s) => s,
         None => return false,
     };
-    session.path = new_path.clone();
-    sessions.insert(new_path.clone(), session);
+    session.path = validated.clone();
+    sessions.insert(validated.clone(), session);
     drop(sessions);
 
     // Update current_focus if it pointed to the old path.
     let mut focus = sentinel.current_focus.write_recover();
     if focus.as_deref() == Some(old_path.as_str()) {
-        *focus = Some(new_path);
+        *focus = Some(validated);
     }
 
     true
@@ -168,7 +175,7 @@ pub fn ffi_sentinel_es_capture_gap(missed_count: u32) -> bool {
 
     let mut sessions = sentinel.sessions.write_recover();
     for session in sessions.values_mut() {
-        session.capture_gaps += missed_count;
+        session.capture_gaps = session.capture_gaps.saturating_add(missed_count);
     }
 
     true
@@ -184,10 +191,11 @@ pub fn ffi_sentinel_es_ai_tools_active() -> Vec<String> {
     };
 
     let sessions = sentinel.sessions.read_recover();
-    let mut tools: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut tools = Vec::new();
     for session in sessions.values() {
         for tool in &session.ai_tools_detected {
-            if !tools.contains(&tool.signing_id) {
+            if seen.insert(&tool.signing_id) {
                 tools.push(tool.signing_id.clone());
             }
         }
@@ -294,14 +302,8 @@ mod tests {
             AiToolCategory::from_signing_id("dev.cursor.app"),
             Some((AiToolCategory::AssistantCopilot, ObservationBasis::Observed))
         );
-        assert_eq!(
-            AiToolCategory::from_signing_id("com.apple.Safari"),
-            Some((AiToolCategory::BrowserHosted, ObservationBasis::Inferred))
-        );
-        assert_eq!(
-            AiToolCategory::from_signing_id("com.google.Chrome"),
-            Some((AiToolCategory::BrowserHosted, ObservationBasis::Inferred))
-        );
+        assert!(AiToolCategory::from_signing_id("com.apple.Safari").is_none());
+        assert!(AiToolCategory::from_signing_id("com.google.Chrome").is_none());
         assert_eq!(
             AiToolCategory::from_signing_id("com.apple.ScriptEditor2"),
             Some((AiToolCategory::Automation, ObservationBasis::Observed))

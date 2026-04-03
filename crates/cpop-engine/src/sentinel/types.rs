@@ -149,18 +149,8 @@ impl AiToolCategory {
             "com.openai.chat" | "com.anthropic.claude" => {
                 Some((Self::DirectGenerative, ObservationBasis::Observed))
             }
-            "com.github.copilot"
-            | "dev.cursor.app"
-            | "com.microsoft.VSCode"
-            | "com.todesktop.230313mzl4w4u92" => {
+            "com.github.copilot" | "dev.cursor.app" | "com.todesktop.230313mzl4w4u92" => {
                 Some((Self::AssistantCopilot, ObservationBasis::Observed))
-            }
-            "com.apple.Safari"
-            | "com.google.Chrome"
-            | "org.mozilla.firefox"
-            | "com.microsoft.edgemac"
-            | "company.thebrowser.Browser" => {
-                Some((Self::BrowserHosted, ObservationBasis::Inferred))
             }
             "com.apple.ScriptEditor2" | "com.apple.Automator" | "com.apple.ShortcutsActions" => {
                 Some((Self::Automation, ObservationBasis::Observed))
