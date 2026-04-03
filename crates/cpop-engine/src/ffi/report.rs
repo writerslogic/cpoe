@@ -158,7 +158,7 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
         .unwrap_or_else(|_| "unknown".to_string());
 
     let guilloche_seed_hex = crate::ffi::helpers::load_signing_key()
-        .map_err(|e| log::warn!("load signing key for guilloche seed failed: {e}"))
+        .map_err(|e| log::error!("load signing key for guilloche seed failed: {e}"))
         .ok()
         .map(|signing_key| {
             // Derive a separate seed via HKDF so the signing key is never used
@@ -168,7 +168,7 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
             let hk = Hkdf::<Sha256>::new(None, signing_key.as_bytes());
             let mut seed = [0u8; 32];
             if hk.expand(b"witnessd-guilloche-seed-v1", &mut seed).is_err() {
-                log::warn!("HKDF expand failed for guilloche seed");
+                log::error!("HKDF expand failed for guilloche seed");
                 seed.zeroize();
                 return String::new();
             }

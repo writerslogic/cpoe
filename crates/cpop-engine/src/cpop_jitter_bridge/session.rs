@@ -290,7 +290,7 @@ impl HybridJitterSession {
                 match self.cpop_jitter_session.export_json() {
                     Ok(v) => Some(v),
                     Err(e) => {
-                        log::warn!("failed to export cpop_jitter evidence JSON: {e}");
+                        log::error!("failed to export cpop_jitter evidence JSON: {e}");
                         None
                     }
                 }

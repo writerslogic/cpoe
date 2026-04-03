@@ -572,19 +572,24 @@ fn wal_append_session_event(
     if hex::decode_to_slice(hex_str, &mut session_id_bytes).is_ok() {
         if let Some(key) = key {
             let wal_path = wal_dir.join(format!("{}.wal", session_id));
-            if let Ok(wal) = Wal::open(&wal_path, session_id_bytes, key) {
-                if let Err(e) = wal.append(entry_type, payload) {
-                    log::error!("WAL append failed for session {}: {}", session_id, e);
+            match Wal::open(&wal_path, session_id_bytes, key) {
+                Ok(wal) => {
+                    if let Err(e) = wal.append(entry_type, payload) {
+                        log::error!("WAL append failed for session {}: {}", session_id, e);
+                    }
+                }
+                Err(e) => {
+                    log::error!("WAL open failed for session {}: {}", session_id, e);
                 }
             }
         } else {
-            log::warn!(
+            log::error!(
                 "Signing key not initialized, skipping WAL for session {}",
                 session_id
             );
         }
     } else {
-        log::warn!("Invalid session ID hex: {}", session_id);
+        log::error!("Invalid session ID hex: {}", session_id);
     }
 }
 

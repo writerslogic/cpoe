@@ -66,8 +66,9 @@ mod tests {
     fn cadence_score_below_threshold_is_zero() {
         let samples: Vec<SimpleJitterSample> = (0..19)
             .map(|i| SimpleJitterSample {
-                iki_ns: (i as u64 + 1) * 100_000_000,
-                timestamp_ns: (i as u64) * 200_000_000,
+                duration_since_last_ns: (i as u64 + 1) * 100_000_000,
+                timestamp_ns: (i as i64) * 200_000_000,
+                ..Default::default()
             })
             .collect();
         assert_eq!(cadence_score_from_samples(&samples), 0.0);
@@ -77,8 +78,9 @@ mod tests {
     fn cadence_score_above_threshold_nonzero() {
         let samples: Vec<SimpleJitterSample> = (0..30)
             .map(|i| SimpleJitterSample {
-                iki_ns: (i as u64 + 1) * 100_000_000,
-                timestamp_ns: (i as u64) * 200_000_000,
+                duration_since_last_ns: (i as u64 + 1) * 100_000_000,
+                timestamp_ns: (i as i64) * 200_000_000,
+                ..Default::default()
             })
             .collect();
         let score = cadence_score_from_samples(&samples);
