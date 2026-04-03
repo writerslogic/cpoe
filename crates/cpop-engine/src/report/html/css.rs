@@ -49,6 +49,8 @@ fn build_jsonld(r: &WarReport) -> String {
                 "cpop:enfsiTier": r.enfsi_tier.label(),
                 "cpop:checkpointCount": cp_count,
                 "cpop:sessionCount": session_count,
+                "cpop:evidenceType": "behavioral-process-evidence",
+                "cpop:assertionMethod": "automated",
                 "prov:generatedAtTime": {
                     "@type": "xsd:dateTime",
                     "@value": ts_iso
