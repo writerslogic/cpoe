@@ -364,6 +364,7 @@ pub fn handle_change_event_sync(
     signing_key: &Arc<RwLock<Option<SigningKey>>>,
     wal_dir: &Path,
     session_events_tx: &broadcast::Sender<SessionEvent>,
+    current_focus_opt: Option<&Arc<RwLock<Option<String>>>>,
 ) {
     // Acquire signing_key before sessions to match lock order in focus_document_sync
     let key = signing_key.read_recover().clone();
@@ -423,6 +424,45 @@ pub fn handle_change_event_sync(
             }
             ChangeEventType::Created => {
                 // Picked up on next focus event
+            }
+            ChangeEventType::Renamed { ref new_path } => {
+                let new_path = new_path.clone();
+                if sessions_map.contains_key(&new_path) {
+                    log::warn!(
+                        "Rename target already tracked, ignoring: {} -> {}",
+                        event.path,
+                        new_path
+                    );
+                    return;
+                }
+                let mut session = match sessions_map.remove(&event.path) {
+                    Some(s) => s,
+                    None => return,
+                };
+                let old_path = session.path.clone();
+                session.path = new_path.clone();
+                sessions_map.insert(new_path.clone(), session);
+
+                let session_id = sessions_map
+                    .get(&new_path)
+                    .map(|s| s.session_id.clone())
+                    .unwrap_or_default();
+                drop(sessions_map);
+
+                // Update current_focus if it pointed to the old path.
+                if let Some(current_focus) = current_focus_opt {
+                    let mut focus = current_focus.write_recover();
+                    if focus.as_deref() == Some(old_path.as_str()) {
+                        *focus = Some(new_path.clone());
+                    }
+                }
+
+                let _ = session_events_tx.send(SessionEvent {
+                    event_type: SessionEventType::Saved,
+                    session_id,
+                    document_path: new_path,
+                    timestamp: SystemTime::now(),
+                });
             }
         }
     }

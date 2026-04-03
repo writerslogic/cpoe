@@ -761,6 +761,7 @@ impl Sentinel {
                             &signing_key,
                             &wal_dir,
                             &session_events_tx,
+                            Some(&current_focus),
                         );
                     }
 

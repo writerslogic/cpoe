@@ -375,17 +375,35 @@ pub fn ffi_export_evidence(path: String, tier: String, output: String) -> FfiRes
 ///
 /// Returns `Some(vec)` when at least one AI tool was detected, `None` otherwise.
 pub(crate) fn collect_ai_tool_limitations(path: &str) -> Option<Vec<String>> {
+    use crate::sentinel::types::ObservationBasis;
+
     let sentinel = get_sentinel()?;
     let sessions = sentinel.sessions.read_recover();
     let session = sessions.get(path)?;
-    if session.ai_tools_detected.is_empty() {
+    if session.ai_tools_detected.is_empty() && session.capture_gaps == 0 {
         return None;
     }
-    let limitations: Vec<String> = session
+    let mut limitations: Vec<String> = session
         .ai_tools_detected
         .iter()
-        .map(|id| format!("AI tool detected during session: {}", id))
+        .map(|tool| {
+            let verb = match tool.basis {
+                ObservationBasis::Observed => "detected",
+                ObservationBasis::Inferred => "possibly active",
+                ObservationBasis::Correlated => "running concurrently",
+            };
+            format!(
+                "AI tool {} during session: {} [{}, {}]",
+                verb, tool.signing_id, tool.category, tool.basis,
+            )
+        })
         .collect();
+    if session.capture_gaps > 0 {
+        limitations.push(format!(
+            "ES capture degraded: {} event(s) dropped by kernel",
+            session.capture_gaps,
+        ));
+    }
     Some(limitations)
 }
 

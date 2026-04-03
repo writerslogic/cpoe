@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 use crate::crypto::ObfuscatedString;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -23,12 +25,16 @@ pub struct FocusEvent {
     pub timestamp: SystemTime,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChangeEventType {
     Modified,
     Saved,
     Created,
     Deleted,
+    /// File was renamed/moved. `new_path` is the destination.
+    Renamed {
+        new_path: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -107,6 +113,104 @@ pub struct FocusSwitchRecord {
     pub target_bundle_id: String,
 }
 
+/// Functional role of a detected AI tool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum AiToolCategory {
+    /// Standalone generative AI (ChatGPT desktop, Claude desktop).
+    DirectGenerative = 0,
+    /// IDE-integrated assistant (GitHub Copilot, Cursor).
+    AssistantCopilot = 1,
+    /// Browser that may host AI frontends.
+    BrowserHosted = 2,
+    /// System automation tools (AppleScript, Automator).
+    Automation = 3,
+    /// Clipboard or text transformation utilities.
+    ClipboardTransform = 4,
+}
+
+impl fmt::Display for AiToolCategory {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DirectGenerative => f.write_str("direct-generative"),
+            Self::AssistantCopilot => f.write_str("assistant-copilot"),
+            Self::BrowserHosted => f.write_str("browser-hosted"),
+            Self::Automation => f.write_str("automation"),
+            Self::ClipboardTransform => f.write_str("clipboard-transform"),
+        }
+    }
+}
+
+impl AiToolCategory {
+    /// Map a code-signing identity to its category and observation basis.
+    /// Returns `None` for unrecognized signing IDs.
+    pub fn from_signing_id(signing_id: &str) -> Option<(Self, ObservationBasis)> {
+        match signing_id {
+            "com.openai.chat" | "com.anthropic.claude" => {
+                Some((Self::DirectGenerative, ObservationBasis::Observed))
+            }
+            "com.github.copilot"
+            | "dev.cursor.app"
+            | "com.microsoft.VSCode"
+            | "com.todesktop.230313mzl4w4u92" => {
+                Some((Self::AssistantCopilot, ObservationBasis::Observed))
+            }
+            "com.apple.Safari"
+            | "com.google.Chrome"
+            | "org.mozilla.firefox"
+            | "com.microsoft.edgemac"
+            | "company.thebrowser.Browser" => {
+                Some((Self::BrowserHosted, ObservationBasis::Inferred))
+            }
+            "com.apple.ScriptEditor2" | "com.apple.Automator" | "com.apple.ShortcutsActions" => {
+                Some((Self::Automation, ObservationBasis::Observed))
+            }
+            _ => None,
+        }
+    }
+}
+
+/// How an AI tool detection was established.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum ObservationBasis {
+    /// ES saw the process exec directly.
+    Observed = 0,
+    /// Inferred from context (e.g., browser may host AI frontends).
+    Inferred = 1,
+    /// Tool was running but no proof it affected this document.
+    Correlated = 2,
+}
+
+impl fmt::Display for ObservationBasis {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Observed => f.write_str("observed"),
+            Self::Inferred => f.write_str("inferred"),
+            Self::Correlated => f.write_str("correlated"),
+        }
+    }
+}
+
+/// A single AI tool detection event with full context.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DetectedAiTool {
+    /// Code-signing identity from ES.
+    pub signing_id: String,
+    /// Process ID at detection time.
+    pub pid: i32,
+    /// Parent process ID (from ES audit token).
+    pub ppid: i32,
+    /// Executable path on disk.
+    pub exec_path: String,
+    /// Functional category of this tool.
+    pub category: AiToolCategory,
+    /// How this detection was established.
+    pub basis: ObservationBasis,
+    /// When the detection occurred.
+    pub detected_at: SystemTime,
+}
+
 #[derive(Debug, Clone)]
 pub struct DocumentSession {
     pub path: String,
@@ -128,8 +232,10 @@ pub struct DocumentSession {
     pub jitter_samples: Vec<crate::jitter::SimpleJitterSample>,
     /// Focus loss events during this session (timestamps when user switched away).
     pub focus_switches: Vec<FocusSwitchRecord>,
-    /// AI tool signing IDs detected by Endpoint Security during this session.
-    pub ai_tools_detected: Vec<String>,
+    /// AI tools detected by Endpoint Security during this session.
+    pub ai_tools_detected: Vec<DetectedAiTool>,
+    /// Number of ES capture gaps (dropped events) during this session.
+    pub capture_gaps: u32,
     pub(crate) has_focus: bool,
     pub(crate) focus_started: Option<Instant>,
     pub event_validation: crate::forensics::event_validation::EventValidationState,
@@ -176,6 +282,7 @@ impl DocumentSession {
             jitter_samples: Vec::new(),
             focus_switches: Vec::new(),
             ai_tools_detected: Vec::new(),
+            capture_gaps: 0,
             has_focus: false,
             focus_started: None,
             event_validation: Default::default(),

@@ -6,7 +6,9 @@
 //! match tracked documents or known AI tools.
 
 use super::sentinel::get_sentinel;
+use crate::sentinel::types::{AiToolCategory, DetectedAiTool, ObservationBasis};
 use crate::RwLockRecover;
+use std::time::SystemTime;
 
 /// Notify the sentinel that a tracked file was written or closed.
 ///
@@ -42,32 +44,132 @@ pub fn ffi_sentinel_es_file_write(path: String, pid: i32, signing_id: String) ->
 /// Called by the Swift ES client when `ES_EVENT_TYPE_NOTIFY_EXEC` fires
 /// for a process whose signing ID matches a known AI tool.
 ///
-/// The sentinel persists the signing ID into all active document sessions.
+/// The sentinel constructs a `DetectedAiTool` with category and observation
+/// basis, then persists it into all active document sessions. The detection
+/// records tool presence, not document impact.
 #[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn ffi_sentinel_es_ai_tool_detected(signing_id: String, pid: i32, exec_path: String) -> bool {
+pub fn ffi_sentinel_es_ai_tool_detected(
+    signing_id: String,
+    pid: i32,
+    ppid: i32,
+    exec_path: String,
+) -> bool {
     let sentinel_opt = get_sentinel();
     let sentinel = match sentinel_opt.as_ref() {
         Some(s) if s.is_running() => s,
         _ => return false,
     };
 
-    log::warn!("AI tool detected via ES: signing_id={signing_id}, pid={pid}, path={exec_path}");
+    let (category, basis) = match AiToolCategory::from_signing_id(&signing_id) {
+        Some(cb) => cb,
+        None => {
+            log::debug!("Unrecognized AI tool signing ID: {signing_id}");
+            return false;
+        }
+    };
 
-    // Persist the AI tool signing ID into all active sessions (deduplicated).
+    log::info!(
+        "AI tool detected via ES: signing_id={signing_id}, pid={pid}, \
+         ppid={ppid}, category={category}, basis={basis}"
+    );
+
+    let tool = DetectedAiTool {
+        signing_id: signing_id.clone(),
+        pid,
+        ppid,
+        exec_path,
+        category,
+        basis,
+        detected_at: SystemTime::now(),
+    };
+
+    // Persist into all active sessions, deduplicated on (signing_id, pid).
     let mut sessions = sentinel.sessions.write_recover();
     let mut updated = 0u32;
     for session in sessions.values_mut() {
-        if !session.ai_tools_detected.contains(&signing_id) {
-            session.ai_tools_detected.push(signing_id.clone());
+        let already = session
+            .ai_tools_detected
+            .iter()
+            .any(|t| t.signing_id == tool.signing_id && t.pid == tool.pid);
+        if !already {
+            session.ai_tools_detected.push(tool.clone());
             updated += 1;
         }
     }
 
     log::info!(
-        "AI tool '{}' persisted to {} active session(s)",
+        "AI tool '{}' ({}) persisted to {} active session(s)",
         signing_id,
+        category,
         updated
     );
+
+    true
+}
+
+/// Notify the sentinel that a tracked file was renamed or moved.
+///
+/// Called by the Swift ES client when `ES_EVENT_TYPE_NOTIFY_RENAME` fires.
+/// Re-keys the active session from `old_path` to `new_path` so keystroke
+/// attribution follows the file to its new location.
+///
+/// Returns `true` if a tracked session was updated.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn ffi_sentinel_es_file_rename(old_path: String, new_path: String) -> bool {
+    let sentinel_opt = get_sentinel();
+    let sentinel = match sentinel_opt.as_ref() {
+        Some(s) if s.is_running() => s,
+        _ => return false,
+    };
+
+    let tracked = sentinel.tracked_files();
+    if !tracked.iter().any(|t| t == &old_path) {
+        return false;
+    }
+
+    log::info!("ES file rename detected: {old_path} -> {new_path}");
+
+    let mut sessions = sentinel.sessions.write_recover();
+    if sessions.contains_key(&new_path) {
+        log::warn!("Rename target already tracked, ignoring: {old_path} -> {new_path}");
+        return false;
+    }
+    let mut session = match sessions.remove(&old_path) {
+        Some(s) => s,
+        None => return false,
+    };
+    session.path = new_path.clone();
+    sessions.insert(new_path.clone(), session);
+    drop(sessions);
+
+    // Update current_focus if it pointed to the old path.
+    let mut focus = sentinel.current_focus.write_recover();
+    if focus.as_deref() == Some(old_path.as_str()) {
+        *focus = Some(new_path);
+    }
+
+    true
+}
+
+/// Record an ES capture gap (dropped events detected via sequence number jump).
+///
+/// Called by the Swift ES client when `seq_num` or `global_seq_num` jumps,
+/// indicating the kernel dropped events because the client couldn't keep up.
+/// Marks all active sessions as degraded.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn ffi_sentinel_es_capture_gap(missed_count: u32) -> bool {
+    let sentinel_opt = get_sentinel();
+    let sentinel = match sentinel_opt.as_ref() {
+        Some(s) if s.is_running() => s,
+        _ => return false,
+    };
+
+    log::warn!("ES capture gap: {missed_count} event(s) dropped by kernel");
+
+    let mut sessions = sentinel.sessions.write_recover();
+    for session in sessions.values_mut() {
+        session.capture_gaps += missed_count;
+    }
 
     true
 }
@@ -85,8 +187,8 @@ pub fn ffi_sentinel_es_ai_tools_active() -> Vec<String> {
     let mut tools: Vec<String> = Vec::new();
     for session in sessions.values() {
         for tool in &session.ai_tools_detected {
-            if !tools.contains(tool) {
-                tools.push(tool.clone());
+            if !tools.contains(&tool.signing_id) {
+                tools.push(tool.signing_id.clone());
             }
         }
     }
@@ -98,6 +200,29 @@ mod tests {
     use super::*;
     use crate::sentinel::types::DocumentSession;
 
+    fn make_session() -> DocumentSession {
+        DocumentSession::new(
+            "/tmp/test.txt".to_string(),
+            "com.test".to_string(),
+            "Test".to_string(),
+            crate::crypto::ObfuscatedString::new("test"),
+        )
+    }
+
+    fn make_tool(signing_id: &str, pid: i32) -> DetectedAiTool {
+        let (category, basis) = AiToolCategory::from_signing_id(signing_id)
+            .unwrap_or((AiToolCategory::DirectGenerative, ObservationBasis::Observed));
+        DetectedAiTool {
+            signing_id: signing_id.to_string(),
+            pid,
+            ppid: 1,
+            exec_path: "/usr/bin/test".to_string(),
+            category,
+            basis,
+            detected_at: SystemTime::now(),
+        }
+    }
+
     #[test]
     fn test_ai_tools_active_no_sentinel() {
         let tools = ffi_sentinel_es_ai_tools_active();
@@ -106,48 +231,90 @@ mod tests {
 
     #[test]
     fn test_document_session_ai_tools_default_empty() {
-        let session = DocumentSession::new(
-            "/tmp/test.txt".to_string(),
-            "com.test".to_string(),
-            "Test".to_string(),
-            crate::crypto::ObfuscatedString::new("test"),
-        );
+        let session = make_session();
         assert!(session.ai_tools_detected.is_empty());
+        assert_eq!(session.capture_gaps, 0);
     }
 
     #[test]
     fn test_document_session_ai_tools_dedup() {
-        let mut session = DocumentSession::new(
-            "/tmp/test.txt".to_string(),
-            "com.test".to_string(),
-            "Test".to_string(),
-            crate::crypto::ObfuscatedString::new("test"),
-        );
-        let tool = "com.openai.chat".to_string();
-        session.ai_tools_detected.push(tool.clone());
-        // Simulate the dedup logic from ffi_sentinel_es_ai_tool_detected
-        if !session.ai_tools_detected.contains(&tool) {
-            session.ai_tools_detected.push(tool);
-        }
+        let mut session = make_session();
+        let tool = make_tool("com.openai.chat", 100);
+        session.ai_tools_detected.push(tool);
+        // Simulate dedup on (signing_id, pid)
+        let dup = make_tool("com.openai.chat", 100);
+        let already = session
+            .ai_tools_detected
+            .iter()
+            .any(|t| t.signing_id == dup.signing_id && t.pid == dup.pid);
+        assert!(already);
         assert_eq!(session.ai_tools_detected.len(), 1);
-        assert_eq!(session.ai_tools_detected[0], "com.openai.chat");
+        assert_eq!(session.ai_tools_detected[0].signing_id, "com.openai.chat");
     }
 
     #[test]
     fn test_document_session_multiple_ai_tools() {
-        let mut session = DocumentSession::new(
-            "/tmp/test.txt".to_string(),
-            "com.test".to_string(),
-            "Test".to_string(),
-            crate::crypto::ObfuscatedString::new("test"),
-        );
+        let mut session = make_session();
         session
             .ai_tools_detected
-            .push("com.openai.chat".to_string());
+            .push(make_tool("com.openai.chat", 100));
         session
             .ai_tools_detected
-            .push("com.anthropic.claude".to_string());
+            .push(make_tool("com.anthropic.claude", 200));
         assert_eq!(session.ai_tools_detected.len(), 2);
+    }
+
+    #[test]
+    fn test_same_tool_different_pid_not_deduped() {
+        let mut session = make_session();
+        session
+            .ai_tools_detected
+            .push(make_tool("com.openai.chat", 100));
+        session
+            .ai_tools_detected
+            .push(make_tool("com.openai.chat", 200));
+        assert_eq!(session.ai_tools_detected.len(), 2);
+    }
+
+    #[test]
+    fn test_ai_tool_category_mapping() {
+        assert_eq!(
+            AiToolCategory::from_signing_id("com.openai.chat"),
+            Some((AiToolCategory::DirectGenerative, ObservationBasis::Observed))
+        );
+        assert_eq!(
+            AiToolCategory::from_signing_id("com.anthropic.claude"),
+            Some((AiToolCategory::DirectGenerative, ObservationBasis::Observed))
+        );
+        assert_eq!(
+            AiToolCategory::from_signing_id("com.github.copilot"),
+            Some((AiToolCategory::AssistantCopilot, ObservationBasis::Observed))
+        );
+        assert_eq!(
+            AiToolCategory::from_signing_id("dev.cursor.app"),
+            Some((AiToolCategory::AssistantCopilot, ObservationBasis::Observed))
+        );
+        assert_eq!(
+            AiToolCategory::from_signing_id("com.apple.Safari"),
+            Some((AiToolCategory::BrowserHosted, ObservationBasis::Inferred))
+        );
+        assert_eq!(
+            AiToolCategory::from_signing_id("com.google.Chrome"),
+            Some((AiToolCategory::BrowserHosted, ObservationBasis::Inferred))
+        );
+        assert_eq!(
+            AiToolCategory::from_signing_id("com.apple.ScriptEditor2"),
+            Some((AiToolCategory::Automation, ObservationBasis::Observed))
+        );
+        assert!(AiToolCategory::from_signing_id("com.unknown.app").is_none());
+    }
+
+    #[test]
+    fn test_capture_gap_tracking() {
+        let mut session = make_session();
+        assert_eq!(session.capture_gaps, 0);
+        session.capture_gaps += 5;
+        assert_eq!(session.capture_gaps, 5);
     }
 
     #[test]
