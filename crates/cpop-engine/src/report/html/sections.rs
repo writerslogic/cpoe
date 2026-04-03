@@ -4,6 +4,35 @@ use super::helpers::*;
 use crate::report::types::*;
 use std::fmt::{self, Write};
 
+const TMPL_METHODOLOGY: &str = include_str!("templates/methodology.html");
+const TMPL_GLOSSARY: &str = include_str!("templates/glossary.html");
+const TMPL_SCOPE: &str = include_str!("templates/scope.html");
+const TMPL_VERIFICATION: &str = include_str!("templates/verification.html");
+
+const REPORT_TITLE: &str = "Forensic Authorship Examination Report";
+const SEC_DECLARATION: &str = "Declaration of Findings";
+const SEC_METHODOLOGY: &str = "Methodology";
+const SEC_CHAIN: &str = "Chain of Evidence";
+const SEC_PROCESS: &str = "Findings: Process Evidence";
+const SEC_TIMELINE: &str = "Session Timeline";
+const SEC_DIMENSIONS: &str = "Detailed Dimension Analysis";
+const SEC_STATISTICS: &str = "Statistical Analysis: Per-Dimension Likelihood Ratios";
+const SEC_CHECKPOINTS: &str = "Checkpoint Chain Integrity";
+const SEC_FORGERY: &str = "Forgery Resistance Assessment";
+const SEC_FLAGS: &str = "Analysis Flags";
+const SEC_SCOPE: &str = "Scope, Limitations, and Admissibility";
+const SEC_TEXT: &str = "Analyzed Text";
+const SEC_VERIFY: &str = "Independent Verification";
+const SEC_GLOSSARY: &str = "Glossary of Terms";
+
+fn section_heading(html: &mut String, number: u32, title: &str) -> fmt::Result {
+    write!(
+        html,
+        r#"<h2><span class="section-number">{}.</span> {}</h2>"#,
+        number, title
+    )
+}
+
 /// Validate a CSS color value to prevent XSS injection via style attributes.
 fn sanitize_css_color(color: &str) -> &str {
     let bytes = color.as_bytes();
@@ -29,12 +58,13 @@ pub(super) fn write_header(html: &mut String, r: &WarReport) -> fmt::Result {
     };
     write!(
         html,
-        r#"<h1>Forensic Authorship Examination Report{sample}</h1>
+        r#"<h1>{title}{sample}</h1>
 <p class="subtitle">
   Report {id} &ensp;|&ensp; Algorithm {alg} &ensp;|&ensp;
   Issued {ts} &ensp;|&ensp; Schema {schema}
 </p>
 "#,
+        title = REPORT_TITLE,
         id = html_escape(&r.report_id),
         alg = html_escape(&r.algorithm_version),
         ts = r.generated_at.format("%B %-d, %Y at %H:%M:%S UTC"),
@@ -169,10 +199,10 @@ pub(super) fn write_executive_summary(html: &mut String, r: &WarReport) -> fmt::
 pub(super) fn write_verdict(html: &mut String, r: &WarReport) -> fmt::Result {
     let color = sanitize_css_color(r.verdict.css_color());
     let lr_display = format_lr(r.likelihood_ratio);
+    section_heading(html, 1, SEC_DECLARATION)?;
     write!(
         html,
-        r#"<h2><span class="section-number">1.</span> Declaration of Findings</h2>
-<div class="declaration" style="border-color:{color}">
+        r#"<div class="declaration" style="border-color:{color}">
   <div class="declaration-header">Examiner's Determination</div>
   <div class="declaration-body">
     <div class="declaration-score" style="color:{color}">{score}<small>of 100</small></div>
@@ -378,28 +408,8 @@ pub(super) fn write_key_findings(html: &mut String, r: &WarReport) -> fmt::Resul
 // ---------------------------------------------------------------------------
 
 pub(super) fn write_methodology(html: &mut String, r: &WarReport) -> fmt::Result {
-    write!(
-        html,
-        r#"<h2><span class="section-number">2.</span> Methodology</h2>
-
-<h3>Competing Hypotheses</h3>
-<div class="hypotheses">
-<div class="hypothesis">
-  <div class="hyp-label">H&#8321; (Prosecution/Proponent Hypothesis)</div>
-  <p>The submitted document was composed through a human writing process, exhibiting behavioral patterns characteristic of natural cognitive composition, including variable keystroke timing, iterative revision, and organic pause structures.</p>
-</div>
-<div class="hypothesis">
-  <div class="hyp-label">H&#8322; (Alternative Hypothesis)</div>
-  <p>The submitted document was generated or substantially produced by automated means (including but not limited to large language models), potentially with superficial human editing to mask its origin.</p>
-</div>
-</div>
-
-<h3>Examination Procedure</h3>
-<p>This examination was conducted using the Cryptographic Proof-of-Process (CPOP) protocol, an automated forensic system that captures behavioral telemetry during document creation. The system records keystroke dynamics, inter-keystroke timing intervals, revision patterns, application focus events, and cursor movements in real time. These observations are cryptographically bound to sequential checkpoints using Verifiable Delay Functions (VDFs), producing a tamper-evident evidentiary chain that can be independently verified by any party.</p>
-
-<p style="margin-top:8px">The assessment score is derived from a multi-dimensional analysis comparing observed writing patterns against established distributions for human-authored and machine-generated text. Each analytical dimension produces an independent likelihood ratio (LR). The per-dimension LRs are combined under the assumption of conditional independence to produce a composite LR, which is then classified on the ENFSI verbal equivalence scale. This approach follows the framework described in the ENFSI Guideline for Evaluative Reporting in Forensic Science (2015) and is consistent with the principles of FRE 702 (Daubert) for the admissibility of expert testimony.</p>
-"#
-    )?;
+    section_heading(html, 2, SEC_METHODOLOGY)?;
+    html.push_str(TMPL_METHODOLOGY);
 
     if let Some(ref m) = r.methodology {
         write!(
@@ -422,10 +432,10 @@ pub(super) fn write_methodology(html: &mut String, r: &WarReport) -> fmt::Result
 // ---------------------------------------------------------------------------
 
 pub(super) fn write_chain_of_custody(html: &mut String, r: &WarReport) -> fmt::Result {
+    section_heading(html, 3, SEC_CHAIN)?;
     write!(
         html,
-        r#"<h2><span class="section-number">3.</span> Chain of Evidence</h2>
-<p>The following identifiers establish the provenance and integrity of the evidence examined in this report. The document hash can be independently computed from the original file to confirm it matches the evidence record.</p>
+        r#"<p>The following identifiers establish the provenance and integrity of the evidence examined in this report. The document hash can be independently computed from the original file to confirm it matches the evidence record.</p>
 <div class="info-box"><table>"#
     )?;
 
@@ -567,10 +577,10 @@ fn write_writing_flow(html: &mut String, r: &WarReport) -> fmt::Result {
 
 pub(super) fn write_process_evidence(html: &mut String, r: &WarReport) -> fmt::Result {
     let p = &r.process;
+    section_heading(html, 4, SEC_PROCESS)?;
     write!(
         html,
-        r#"<h2><span class="section-number">4.</span> Findings: Process Evidence</h2>
-<p>The following metrics were captured by the CPOP proof daemon during the writing process. Each metric is derived from real-time behavioral observation and is cryptographically bound to the checkpoint chain (see Section 8).</p>
+        r#"<p>The following metrics were captured by the CPOP proof daemon during the writing process. Each metric is derived from real-time behavioral observation and is cryptographically bound to the checkpoint chain (see Section 8).</p>
 <div class="evidence-grid">"#
     )?;
 
@@ -802,10 +812,10 @@ pub(super) fn write_session_timeline(html: &mut String, r: &WarReport) -> fmt::R
     if r.sessions.is_empty() {
         return Ok(());
     }
+    section_heading(html, 5, SEC_TIMELINE)?;
     writeln!(
         html,
-        r#"<h2><span class="section-number">5.</span> Session Timeline</h2>
-<p>The document was composed across {} session{}, totaling approximately {:.0} minutes of active writing time.</p>"#,
+        r#"<p>The document was composed across {} session{}, totaling approximately {:.0} minutes of active writing time.</p>"#,
         r.session_count,
         if r.session_count == 1 { "" } else { "s" },
         r.total_duration_min,
@@ -836,10 +846,10 @@ pub(super) fn write_dimension_analysis(html: &mut String, r: &WarReport) -> fmt:
     if r.dimensions.is_empty() {
         return Ok(());
     }
+    section_heading(html, 6, SEC_DIMENSIONS)?;
     writeln!(
         html,
-        r#"<h2><span class="section-number">6.</span> Detailed Dimension Analysis</h2>
-<p>Each analytical dimension is evaluated independently against both H\u{{2081}} and H\u{{2082}}. \
+        r#"<p>Each analytical dimension is evaluated independently against both H\u{{2081}} and H\u{{2082}}. \
 The per-dimension scores and likelihood ratios below contribute to the composite determination in Section 1.</p>"#
     )?;
     for d in &r.dimensions {
@@ -877,10 +887,10 @@ pub(super) fn write_dimension_lr_table(html: &mut String, r: &WarReport) -> fmt:
     if r.dimensions.is_empty() {
         return Ok(());
     }
+    section_heading(html, 7, SEC_STATISTICS)?;
     writeln!(
         html,
-        r#"<h2><span class="section-number">7.</span> Statistical Analysis: Per-Dimension Likelihood Ratios</h2>
-<p>The likelihood ratio (LR) quantifies the evidential weight of each dimension. An LR greater than 1 supports H\u{{2081}} \
+        r#"<p>The likelihood ratio (LR) quantifies the evidential weight of each dimension. An LR greater than 1 supports H\u{{2081}} \
 (human authorship); an LR less than 1 supports H\u{{2082}} (automated generation). The log<sub>10</sub>(LR) is provided \
 for comparison with published forensic scales. See the Glossary (Section 15) for term definitions.</p>"#
     )?;
@@ -926,10 +936,10 @@ pub(super) fn write_checkpoint_chain(html: &mut String, r: &WarReport) -> fmt::R
     if r.checkpoints.is_empty() {
         return Ok(());
     }
+    section_heading(html, 8, SEC_CHECKPOINTS)?;
     writeln!(
         html,
-        r#"<h2><span class="section-number">8.</span> Checkpoint Chain Integrity</h2>
-<p>Each checkpoint records a cryptographic hash of the document state at a point in time. The chain is linked by including \
+        r#"<p>Each checkpoint records a cryptographic hash of the document state at a point in time. The chain is linked by including \
 the previous checkpoint's hash in each successive entry, forming a tamper-evident log. Any modification to a checkpoint \
 invalidates all subsequent entries, making undetected alteration computationally infeasible.</p>"#
     )?;
@@ -977,10 +987,10 @@ pub(super) fn write_forgery_resistance(html: &mut String, r: &WarReport) -> fmt:
     if r.forgery.components.is_empty() {
         return Ok(());
     }
+    section_heading(html, 9, SEC_FORGERY)?;
     writeln!(
         html,
-        r#"<h2><span class="section-number">9.</span> Forgery Resistance Assessment</h2>
-<p>The following analysis estimates the computational cost an adversary would incur to fabricate evidence equivalent to \
+        r#"<p>The following analysis estimates the computational cost an adversary would incur to fabricate evidence equivalent to \
 that presented in this report. Higher costs indicate stronger resistance to forgery.</p>"#
     )?;
     write!(html, r#"<div class="info-box"><table>"#)?;
@@ -1037,12 +1047,15 @@ pub(super) fn write_flags(html: &mut String, r: &WarReport) -> fmt::Result {
         .iter()
         .filter(|f| f.signal == FlagSignal::Synthetic)
         .count();
+    write!(
+        html,
+        r#"<h2><span class="section-number">10.</span> {} ({} human, {} synthetic)</h2>"#,
+        SEC_FLAGS, pos, neg
+    )?;
     writeln!(
         html,
-        r#"<h2><span class="section-number">10.</span> Analysis Flags ({} human, {} synthetic)</h2>
-<p>The following behavioral signals were detected during analysis. Human indicators corroborate H\u{{2081}}; \
-synthetic indicators, if present, corroborate H\u{{2082}} and may warrant further investigation.</p>"#,
-        pos, neg
+        r#"<p>The following behavioral signals were detected during analysis. Human indicators corroborate H\u{{2081}}; \
+synthetic indicators, if present, corroborate H\u{{2082}} and may warrant further investigation.</p>"#
     )?;
     write!(
         html,
@@ -1076,46 +1089,8 @@ synthetic indicators, if present, corroborate H\u{{2082}} and may warrant furthe
 // ---------------------------------------------------------------------------
 
 pub(super) fn write_scope(html: &mut String, r: &WarReport) -> fmt::Result {
-    write!(
-        html,
-        r#"<h2><span class="section-number">11.</span> Scope, Limitations, and Admissibility</h2>
-<div class="scope-grid">
-<div>
-<h3>This Examination Supports:</h3>
-<ul>
-<li>Evidence of human cognitive constraint patterns during composition</li>
-<li>Stylometric and behavioral consistency with natural authorship</li>
-<li>Documented, reproducible methodology suitable for dispute review</li>
-<li>Cryptographic chain-of-custody from creation through examination</li>
-</ul>
-<h3>This Examination Does Not Establish:</h3>
-<ul>
-<li>The identity of the specific author (requires supplementary evidence)</li>
-<li>That AI-assisted tools were never used during any phase of writing</li>
-<li>That the text has not been subsequently edited, paraphrased, or translated</li>
-<li>Definitive attribution beyond all reasonable doubt</li>
-</ul>
-</div>
-<div>
-<h3>Factors That May Affect Results:</h3>
-<ul>
-<li>Substantial post-hoc editing or translation of original text</li>
-<li>Genre transitions (e.g., technical to creative writing mid-document)</li>
-<li>Use of templates, outlines, or highly structured prompts</li>
-<li>Collaborative or multi-author composition</li>
-<li>Documents shorter than 200 words (reduced statistical power)</li>
-</ul>
-<h3>Evidentiary Standards:</h3>
-<ul>
-<li>Methodology consistent with FRE 702 (Daubert) reliability factors</li>
-<li>Evidence generated by automated, verified process per FRE 902(13)/902(14)</li>
-<li>Hash chain provides tamper-evident integrity under FRE 901(b)(9)</li>
-<li>ENFSI-compliant evaluative reporting per European forensic science guidelines</li>
-</ul>
-</div>
-</div>
-"#
-    )?;
+    section_heading(html, 11, SEC_SCOPE)?;
+    html.push_str(TMPL_SCOPE);
 
     if !r.limitations.is_empty() {
         write!(
@@ -1136,10 +1111,10 @@ pub(super) fn write_scope(html: &mut String, r: &WarReport) -> fmt::Result {
 
 pub(super) fn write_analyzed_text(html: &mut String, r: &WarReport) -> fmt::Result {
     if let Some(ref text) = r.analyzed_text {
+        section_heading(html, 12, SEC_TEXT)?;
         write!(
             html,
-            r#"<h2><span class="section-number">12.</span> Analyzed Text</h2>
-<p>The following text was submitted for examination. Its SHA-256 hash has been verified against the chain-of-evidence record in Section 3.</p>
+            r#"<p>The following text was submitted for examination. Its SHA-256 hash has been verified against the chain-of-evidence record in Section 3.</p>
 <div class="analyzed-text">{}</div>
 "#,
             html_escape(text)
@@ -1153,18 +1128,9 @@ pub(super) fn write_analyzed_text(html: &mut String, r: &WarReport) -> fmt::Resu
 // ---------------------------------------------------------------------------
 
 pub(super) fn write_verification_instructions(html: &mut String) -> fmt::Result {
-    write!(
-        html,
-        r#"<h2><span class="section-number">13.</span> Independent Verification</h2>
-<p>The cryptographic evidence underlying this report can be independently verified by any party without reliance on the examiner or issuing organization:</p>
-<ul style="margin:8px 0 8px 18px;font-size:12.5px;color:var(--text-secondary)">
-<li><strong>Web verification:</strong> Upload the evidence file at <a href="https://writerslogic.com/verify" target="_blank" rel="noopener noreferrer">writerslogic.com/verify</a>. Verification executes entirely in the browser; no data is transmitted to the server.</li>
-<li><strong>Command-line verification:</strong> Install the open-source CPOP tool and execute <code>cpop verify &lt;evidence-file&gt;</code>.</li>
-<li><strong>Manual verification:</strong> The checkpoint chain hashes can be recomputed from the raw evidence data using SHA-256. VDF proofs can be verified by re-executing the delay function for the claimed number of iterations.</li>
-</ul>
-<p style="font-size:12px;color:var(--text-muted);font-style:italic">Verification confirms: cryptographic signatures, checkpoint chain integrity, VDF timing proof consistency, and behavioral metric plausibility.</p>
-"#,
-    )
+    section_heading(html, 13, SEC_VERIFY)?;
+    html.push_str(TMPL_VERIFICATION);
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1172,42 +1138,9 @@ pub(super) fn write_verification_instructions(html: &mut String) -> fmt::Result 
 // ---------------------------------------------------------------------------
 
 pub(super) fn write_glossary(html: &mut String) -> fmt::Result {
-    write!(
-        html,
-        r##"<h2><span class="section-number">14.</span> Glossary of Terms</h2>
-<dl class="glossary">
-<div class="glossary-entry"><dt>Assessment Score</dt>
-<dd>A composite metric (0-100) derived from all analytical dimensions. Higher scores indicate stronger evidence of human authorship. The score is converted to a likelihood ratio for statistical interpretation.</dd></div>
-
-<div class="glossary-entry"><dt>Bigram Consistency</dt>
-<dd>A measure of how stable the timing patterns are between specific pairs of consecutive keystrokes (e.g., "th", "er"). Higher values indicate the author has a consistent, practiced typing style.</dd></div>
-
-<div class="glossary-entry"><dt>CPOP (Cryptographic Proof-of-Process)</dt>
-<dd>The protocol used to capture and cryptographically bind behavioral evidence during document creation. Defined in draft-condrey-rats-pop.</dd></div>
-
-<div class="glossary-entry"><dt>ENFSI Verbal Equivalence Scale</dt>
-<dd>A standardized scale for expressing the strength of forensic evidence, published by the European Network of Forensic Science Institutes (2015). Ranges from "Against" (LR &lt; 1) through "Very Strong Support" (LR &ge; 10,000).</dd></div>
-
-<div class="glossary-entry"><dt>H&#8321; / H&#8322;</dt>
-<dd>The two competing hypotheses under evaluation. H&#8321; (proponent): the document was composed through a human writing process. H&#8322; (alternative): the document was generated or substantially produced by automated means.</dd></div>
-
-<div class="glossary-entry"><dt>IKI CV (Inter-Keystroke Interval Coefficient of Variation)</dt>
-<dd>The coefficient of variation of time intervals between consecutive keystrokes. Higher values indicate more variable (human-like) typing rhythm; very low values (&lt;0.10) suggest automated or replayed input.</dd></div>
-
-<div class="glossary-entry"><dt>Likelihood Ratio (LR)</dt>
-<dd>The ratio of the probability of observing the evidence under H&#8321; to the probability under H&#8322;. An LR of 100 means the evidence is 100 times more probable if the document was human-authored than if it was machine-generated.</dd></div>
-
-<div class="glossary-entry"><dt>Log&#8321;&#8320;(LR)</dt>
-<dd>The base-10 logarithm of the likelihood ratio. A log-LR of 2.0 corresponds to LR = 100; a log-LR of 4.0 corresponds to LR = 10,000.</dd></div>
-
-<div class="glossary-entry"><dt>SHA-256</dt>
-<dd>A cryptographic hash function producing a 256-bit (32-byte) digest. Used throughout CPOP for document fingerprinting, checkpoint chaining, and integrity verification. Any change to the input produces a completely different hash.</dd></div>
-
-<div class="glossary-entry"><dt>VDF (Verifiable Delay Function)</dt>
-<dd>A cryptographic function that requires a specified amount of sequential computation to evaluate, but whose output can be quickly verified. Used in CPOP to prove that checkpoints were created at real wall-clock intervals, preventing after-the-fact fabrication of evidence.</dd></div>
-</dl>
-"##,
-    )
+    section_heading(html, 14, SEC_GLOSSARY)?;
+    html.push_str(TMPL_GLOSSARY);
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
