@@ -121,6 +121,7 @@ pub fn ffi_get_forensic_breakdown(path: String) -> FfiForensicBreakdown {
         })
         .collect();
 
+    let max_file_size = events.iter().map(|e| e.file_size.max(1)).max().unwrap_or(1) as f32;
     let mut regions = std::collections::HashMap::new();
     for e in &events {
         if let Some(id) = e.id {
@@ -132,11 +133,15 @@ pub fn ffi_get_forensic_breakdown(path: String) -> FfiForensicBreakdown {
             } else {
                 0
             };
+            let cursor_pct =
+                ((e.file_size as f32 - delta.abs() as f32) / max_file_size).clamp(0.0, 1.0);
+            let extent = (delta.abs() as f32 / max_file_size).clamp(0.0, 1.0);
+            let end_pct = (cursor_pct + extent).min(1.0);
             regions.insert(
                 id,
                 vec![crate::forensics::RegionData {
-                    start_pct: 1.0,
-                    end_pct: 1.0,
+                    start_pct: cursor_pct,
+                    end_pct,
                     delta_sign: sign,
                     byte_count: delta.abs(),
                 }],

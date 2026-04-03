@@ -119,7 +119,7 @@ fn process_file_event(inner: &Arc<EngineInner>, path: &Path) -> Result<()> {
             if !old_path.exists() {
                 let old_str = old_path.to_string_lossy().to_string();
                 let new_str = resolved_path.to_string_lossy().to_string();
-                log::info!("File rename detected: {} \u{2192} {}", old_str, new_str);
+                log::info!("File rename detected: {} -> {}", old_str, new_str);
 
                 // Migrate stored events to the new path
                 match inner
