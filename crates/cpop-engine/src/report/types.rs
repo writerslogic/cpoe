@@ -252,6 +252,96 @@ pub struct ForgeryComponent {
     pub explanation: String,
 }
 
+/// Detailed forensic metrics from the analysis pipeline.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ForensicBreakdown {
+    pub writing_mode: String,
+    pub cognitive_score: f64,
+    pub writing_mode_confidence: f64,
+    pub revision_cycle_count: u32,
+    pub hurst_exponent: Option<f64>,
+    pub assessment_score: f64,
+    pub risk_level: String,
+    pub mean_iki_ms: f64,
+    pub coefficient_of_variation: f64,
+    pub burst_count: u32,
+    pub pause_count: u32,
+    pub correction_ratio: f64,
+    pub burst_speed_cv: f64,
+    pub pause_depth: [f64; 3],
+    pub mean_bps: f64,
+    pub max_bps: f64,
+}
+
+/// Spatial edit region showing where in the document edits occurred.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EditRegion {
+    pub start_pct: f64,
+    pub end_pct: f64,
+    pub delta_sign: i32,
+    pub byte_count: i64,
+}
+
+/// Time-bounded activity context period.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActivityContext {
+    pub period_type: String,
+    pub start: DateTime<Utc>,
+    pub end: DateTime<Utc>,
+    pub duration_min: f64,
+    pub note: Option<String>,
+}
+
+/// Summary of an author's declaration for report display.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeclarationInfo {
+    pub statement: String,
+    pub title: String,
+    pub ai_tools: Vec<String>,
+    pub input_modalities: Vec<String>,
+    pub collaborator_count: usize,
+    pub signature_valid: bool,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Summary of the key hierarchy for report display.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyHierarchyInfo {
+    pub master_fingerprint: String,
+    pub device_id: String,
+    pub session_id: String,
+    pub ratchet_count: i32,
+    pub checkpoint_signatures: usize,
+    pub session_started: DateTime<Utc>,
+}
+
+/// Physical context evidence binding session to hardware.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PhysicalContextInfo {
+    pub clock_skew_ns: u64,
+    pub thermal_proxy: u32,
+    pub silicon_puf_hash: String,
+    pub io_latency_ns: u64,
+    pub combined_hash: String,
+}
+
+/// Temporal beacon attestation from WritersProof.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BeaconInfo {
+    pub drand_round: u64,
+    pub nist_pulse_index: u64,
+    pub fetched_at: String,
+    pub wp_key_id: Option<String>,
+}
+
+/// A severity-graded anomaly detected during forensic analysis.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReportAnomaly {
+    pub anomaly_type: String,
+    pub description: String,
+    pub severity: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WarReport {
     pub report_id: String,
@@ -300,6 +390,17 @@ pub struct WarReport {
     pub limitations: Vec<String>,
 
     pub analyzed_text: Option<String>,
+
+    pub forensic_metrics: Option<ForensicBreakdown>,
+    pub edit_topology: Vec<EditRegion>,
+    pub activity_contexts: Vec<ActivityContext>,
+    pub declaration_summary: Option<DeclarationInfo>,
+    pub key_hierarchy_summary: Option<KeyHierarchyInfo>,
+    pub physical_context: Option<PhysicalContextInfo>,
+    pub beacon_info: Option<BeaconInfo>,
+    pub anomalies: Vec<ReportAnomaly>,
+    pub verifiable_credential_json: Option<String>,
+    pub author_did: Option<String>,
 }
 
 impl WarReport {

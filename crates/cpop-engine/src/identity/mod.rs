@@ -11,5 +11,6 @@ pub mod orcid;
 pub mod presentation_exchange;
 pub mod secure_storage;
 
+pub use did_document::did_key_from_public;
 pub use mnemonic::MnemonicHandler;
 pub use secure_storage::SecureStorage;

@@ -55,6 +55,11 @@ fn encode_multibase_ed25519(public_key: &[u8]) -> String {
     format!("z{}", bs58::encode(&prefixed).into_string())
 }
 
+/// Derive a `did:key` URI from raw Ed25519 public key bytes.
+pub fn did_key_from_public(public_key: &[u8]) -> String {
+    format!("did:key:{}", encode_multibase_ed25519(public_key))
+}
+
 /// Generate a DID Document for a `did:key` or `did:web` identifier.
 ///
 /// For `did:key`, the document is deterministic from the public key (Ed25519,

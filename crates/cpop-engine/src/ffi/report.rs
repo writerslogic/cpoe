@@ -186,6 +186,116 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
         format!("{} | Software-only Ed25519 key", device_id)
     };
 
+    // Run full forensic analysis for enhanced report data.
+    let profile = crate::forensics::ForensicEngine::evaluate_authorship(&file_path_str, &events);
+    let event_data: Vec<crate::forensics::EventData> = events
+        .iter()
+        .map(|e| crate::forensics::EventData {
+            id: e.id.unwrap_or(0),
+            timestamp_ns: e.timestamp_ns,
+            file_size: e.file_size,
+            size_delta: e.size_delta,
+            file_path: e.file_path.clone(),
+        })
+        .collect();
+    let max_file_size = events.iter().map(|e| e.file_size.max(1)).max().unwrap_or(1) as f32;
+    let mut regions = std::collections::HashMap::new();
+    for e in &events {
+        if let Some(id) = e.id {
+            let delta = e.size_delta;
+            let sign = if delta > 0 {
+                1
+            } else if delta < 0 {
+                -1
+            } else {
+                0
+            };
+            let cursor_pct =
+                ((e.file_size as f32 - delta.abs() as f32) / max_file_size).clamp(0.0, 1.0);
+            let extent = (delta.abs() as f32 / max_file_size).clamp(0.0, 1.0);
+            let end_pct = (cursor_pct + extent).min(1.0);
+            regions.insert(
+                id,
+                vec![crate::forensics::RegionData {
+                    start_pct: cursor_pct,
+                    end_pct,
+                    delta_sign: sign,
+                    byte_count: delta.abs(),
+                }],
+            );
+        }
+    }
+    let metrics = crate::forensics::analyze_forensics(&event_data, &regions, None, None, None);
+
+    let forensic_breakdown = {
+        let c = &metrics.cadence;
+        let mean_iki = c.mean_iki_ns / 1_000_000.0;
+        let cv = if mean_iki > 0.0 && c.std_dev_iki_ns.is_finite() {
+            c.std_dev_iki_ns / c.mean_iki_ns
+        } else {
+            0.0
+        };
+        ForensicBreakdown {
+            writing_mode: profile.writing_mode().to_string(),
+            cognitive_score: profile.cognitive_score(),
+            writing_mode_confidence: profile.writing_mode_confidence(),
+            revision_cycle_count: profile.revision_cycle_count(),
+            hurst_exponent: if metrics.primary.hurst_exponent.is_finite() {
+                Some(metrics.primary.hurst_exponent)
+            } else {
+                None
+            },
+            assessment_score: metrics.assessment_score(),
+            risk_level: profile.risk_level().to_string(),
+            mean_iki_ms: if mean_iki.is_finite() { mean_iki } else { 0.0 },
+            coefficient_of_variation: if cv.is_finite() { cv } else { 0.0 },
+            burst_count: c.burst_count as u32,
+            pause_count: c.pause_count as u32,
+            correction_ratio: if c.correction_ratio.is_finite() {
+                c.correction_ratio
+            } else {
+                0.0
+            },
+            burst_speed_cv: if c.burst_speed_cv.is_finite() {
+                c.burst_speed_cv
+            } else {
+                0.0
+            },
+            pause_depth: c.pause_depth_distribution,
+            mean_bps: if metrics.velocity.mean_bps.is_finite() {
+                metrics.velocity.mean_bps
+            } else {
+                0.0
+            },
+            max_bps: if metrics.velocity.max_bps.is_finite() {
+                metrics.velocity.max_bps
+            } else {
+                0.0
+            },
+        }
+    };
+
+    let edit_topology: Vec<EditRegion> = regions
+        .values()
+        .flatten()
+        .map(|r| EditRegion {
+            start_pct: r.start_pct as f64,
+            end_pct: r.end_pct as f64,
+            delta_sign: r.delta_sign,
+            byte_count: r.byte_count,
+        })
+        .collect();
+
+    let report_anomalies: Vec<ReportAnomaly> = profile
+        .anomalies
+        .iter()
+        .map(|a| ReportAnomaly {
+            anomaly_type: a.anomaly_type.to_string(),
+            description: a.description.clone(),
+            severity: a.severity.to_string(),
+        })
+        .collect();
+
     let verdict_desc = match verdict {
         Verdict::VerifiedHuman => "Strong evidence of human authorship with natural editing patterns, timing constraints, and behavioral consistency.".into(),
         Verdict::LikelyHuman => "Moderate evidence of human authorship with generally consistent patterns.".into(),
@@ -231,6 +341,18 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
             "Cannot prove absence of AI involvement in ideation".into(),
         ],
         analyzed_text: None,
+        forensic_metrics: Some(forensic_breakdown),
+        edit_topology,
+        activity_contexts: Vec::new(),
+        declaration_summary: None,
+        key_hierarchy_summary: None,
+        physical_context: None,
+        beacon_info: None,
+        anomalies: report_anomalies,
+        verifiable_credential_json: build_vc_json(score, &doc_hash, &key_fp),
+        author_did: crate::ffi::helpers::load_signing_key()
+            .ok()
+            .map(|sk| crate::identity::did_key_from_public(sk.verifying_key().as_bytes())),
     };
 
     Ok((war_report, guilloche_seed_hex))
@@ -444,5 +566,63 @@ fn make_report_session(
             "{} revision events, {} net characters changed",
             event_count, size_change
         ),
+    }
+}
+
+/// Build a W3C Verifiable Credential 2.0 JSON string from report data.
+/// Returns `None` if the signing key is unavailable or VC construction fails.
+fn build_vc_json(score: u32, doc_hash: &str, _key_fingerprint: &str) -> Option<String> {
+    use crate::war::ear::*;
+    use crate::war::profiles::vc;
+    use std::collections::BTreeMap;
+
+    let signing_key = crate::ffi::helpers::load_signing_key().ok()?;
+    let pub_key = signing_key.verifying_key();
+    let author_did = crate::identity::did_key_from_public(pub_key.as_bytes());
+
+    let status = if score >= 80 {
+        Ar4siStatus::AffirmingEngineMismatch
+    } else if score >= 60 {
+        Ar4siStatus::AffirmingEngineMismatch
+    } else if score >= 40 {
+        Ar4siStatus::None
+    } else {
+        Ar4siStatus::ContraindicatedEngineMismatch
+    };
+
+    let appraisal = EarAppraisal {
+        ear_status: status,
+        ear_trustworthiness_vector: None,
+        ear_appraisal_policy_id: None,
+        pop_seal: None,
+        pop_evidence_ref: Some(hex::decode(doc_hash).unwrap_or_default()),
+        pop_entropy_report: None,
+        pop_forgery_cost: None,
+        pop_forensic_summary: None,
+        pop_chain_length: None,
+        pop_chain_duration: None,
+        pop_process_start: None,
+        pop_process_end: None,
+        pop_absence_claims: None,
+        pop_warnings: None,
+    };
+
+    let mut submods = BTreeMap::new();
+    submods.insert("pop".to_string(), appraisal);
+
+    let ear = EarToken {
+        eat_profile: "urn:ietf:params:rats:eat:profile:pop:1.0".to_string(),
+        iat: chrono::Utc::now().timestamp(),
+        ear_verifier_id: VerifierId::default(),
+        submods,
+    };
+
+    let provider = tpm::SigningProvider::Software(signing_key);
+    match vc::to_signed_verifiable_credential(&ear, &author_did, &provider) {
+        Ok(credential) => serde_json::to_string_pretty(&credential).ok(),
+        Err(e) => {
+            log::debug!("VC generation failed: {e}");
+            None
+        }
     }
 }

@@ -441,6 +441,9 @@ pub(super) fn write_chain_of_custody(html: &mut String, r: &WarReport) -> fmt::R
 
     row(html, "Document Hash (SHA-256)", &r.document_hash)?;
     row(html, "Signing Key Fingerprint", &r.signing_key_fingerprint)?;
+    if let Some(ref did) = r.author_did {
+        row(html, "Author DID", did)?;
+    }
 
     let mut doc_len = String::new();
     if let Some(w) = r.document_words {
@@ -1155,6 +1158,38 @@ pub(super) fn write_embedded_evidence(html: &mut String, r: &WarReport) -> fmt::
             html_escape(b64),
         )?;
     }
+    if let Some(ref vc_json) = r.verifiable_credential_json {
+        writeln!(
+            html,
+            r#"<script type="application/ld+json">{}</script>"#,
+            html_escape(vc_json),
+        )?;
+    }
+    Ok(())
+}
+
+pub(super) fn write_verifiable_credential(html: &mut String, r: &WarReport) -> fmt::Result {
+    let vc_json = match r.verifiable_credential_json {
+        Some(ref j) => j,
+        None => return Ok(()),
+    };
+    html.push_str(r#"<div class="info-box" style="margin-top:16px">"#);
+    html.push_str(r#"<h3 style="margin:0 0 8px">W3C Verifiable Credential 2.0</h3>"#);
+    html.push_str(
+        "<p style=\"font-size:var(--size-detail);margin:0 0 8px\">\
+         This report includes a signed W3C Verifiable Credential that can be \
+         independently verified using any VC 2.0 compliant verifier. The credential \
+         is secured with an Ed25519 Data Integrity proof.</p>",
+    );
+    html.push_str(
+        r#"<details><summary style="cursor:pointer;font-weight:600">Credential JSON-LD</summary>"#,
+    );
+    write!(
+        html,
+        r#"<pre style="font-size:10px;max-height:300px;overflow:auto;background:var(--bg-card);padding:10px;border:1px solid var(--border);margin-top:6px">{}</pre>"#,
+        html_escape(vc_json),
+    )?;
+    html.push_str("</details></div>");
     Ok(())
 }
 

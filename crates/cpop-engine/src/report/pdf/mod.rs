@@ -104,15 +104,23 @@ pub fn render_pdf(report: &WarReport, security_seed: Option<&[u8; 64]>) -> Resul
     }
     layout_sections::draw_page2(&current_layer, report, &fonts, &footer);
 
-    // Page 3: Scope, verification instructions, verification block
+    // Page 3: Forensic analysis details
     let (page3, layer3) = doc.add_page(Mm(210.0), Mm(297.0), "Layer 1");
     let current_layer = doc.get_page(page3).get_layer(layer3);
+    if let Some(seed) = security_seed {
+        security::draw_guilloche_border(&current_layer, seed);
+    }
+    layout_sections::draw_forensics_page(&current_layer, report, &fonts, &footer);
+
+    // Page 4: Scope, verification instructions, verification block
+    let (page4, layer4) = doc.add_page(Mm(210.0), Mm(297.0), "Layer 1");
+    let current_layer = doc.get_page(page4).get_layer(layer4);
     layout_sections::draw_page3(&current_layer, report, &fonts, &footer);
 
-    // Page 4 (optional): Machine-readable evidence payload
+    // Page 5 (optional): Machine-readable evidence payload
     if report.evidence_cbor_b64.is_some() {
-        let (page4, layer4) = doc.add_page(Mm(210.0), Mm(297.0), "Layer 1");
-        let current_layer = doc.get_page(page4).get_layer(layer4);
+        let (page5, layer5) = doc.add_page(Mm(210.0), Mm(297.0), "Layer 1");
+        let current_layer = doc.get_page(page5).get_layer(layer5);
         embed::draw_evidence_page(&current_layer, report, &fonts, &footer);
     }
 
