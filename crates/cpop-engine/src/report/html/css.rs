@@ -529,6 +529,126 @@ table.data td:first-child {{ font-weight: 500; color: var(--text); }}
   background: var(--bg-warm);
 }}
 
+/* --- Examination metadata block --- */
+.exam-meta {{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  border: 1px solid var(--border);
+  margin: 16px 0 24px;
+  font-size: 12px;
+}}
+.exam-meta div {{
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--border-light);
+}}
+.exam-meta div:nth-child(odd) {{ border-right: 1px solid var(--border-light); }}
+.exam-meta .meta-label {{
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  display: block;
+  margin-bottom: 1px;
+}}
+.exam-meta .meta-value {{
+  color: var(--text);
+  font-weight: 500;
+}}
+
+/* --- Executive summary --- */
+.executive-summary {{
+  border-left: 4px solid var(--navy);
+  padding: 16px 20px;
+  margin: 0 0 24px;
+  background: var(--bg-warm);
+}}
+.executive-summary p {{
+  font-size: 13.5px;
+  line-height: 1.7;
+  margin: 0;
+}}
+
+/* --- Key findings --- */
+.key-findings {{
+  margin: 16px 0 8px;
+  padding: 0 0 0 20px;
+}}
+.key-findings li {{
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  margin-bottom: 5px;
+  line-height: 1.6;
+}}
+.key-findings li strong {{
+  color: var(--text);
+}}
+
+/* --- LR interpretation --- */
+.lr-interpretation {{
+  background: var(--bg-warm);
+  border: 1px solid var(--border);
+  padding: 12px 16px;
+  margin: 12px 0 20px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}}
+.lr-interpretation strong {{
+  color: var(--text);
+}}
+
+/* --- Hypotheses box --- */
+.hypotheses {{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 12px 0;
+}}
+.hypothesis {{
+  border: 1px solid var(--border);
+  padding: 10px 14px;
+  background: var(--bg-warm);
+}}
+.hypothesis .hyp-label {{
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--navy);
+  margin-bottom: 3px;
+}}
+.hypothesis p {{
+  font-size: 12px;
+  margin: 0;
+  color: var(--text-secondary);
+}}
+
+/* --- Glossary --- */
+.glossary {{
+  column-count: 2;
+  column-gap: 24px;
+  margin: 14px 0;
+}}
+.glossary-entry {{
+  break-inside: avoid;
+  margin-bottom: 8px;
+  font-size: 12px;
+}}
+.glossary-entry dt {{
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-weight: 700;
+  font-size: 11px;
+  color: var(--navy);
+}}
+.glossary-entry dd {{
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}}
+
 /* --- Footer / Certification --- */
 .report-footer {{
   border-top: 3px double var(--rule);

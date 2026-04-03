@@ -9,7 +9,7 @@ use std::fmt::Write;
 
 /// Render a self-contained HTML report from a `WarReport`.
 pub fn render_html(r: &WarReport) -> String {
-    let mut html = String::with_capacity(40_000);
+    let mut html = String::with_capacity(48_000);
     let _ = render_html_inner(&mut html, r);
     html
 }
@@ -17,53 +17,64 @@ pub fn render_html(r: &WarReport) -> String {
 fn render_html_inner(html: &mut String, r: &WarReport) -> std::fmt::Result {
     css::write_head(html, r)?;
 
-    // 1. Document identification
+    // Document title
     sections::write_header(html, r)?;
 
-    // 2. Declaration of findings (verdict + ENFSI scale)
+    // Formal examination metadata block
+    sections::write_examination_metadata(html, r)?;
+
+    // Executive summary (plain-English for non-technical readers)
+    sections::write_executive_summary(html, r)?;
+
+    // Declaration of findings (score, verdict, LR, ENFSI)
     sections::write_verdict(html, r)?;
     sections::write_enfsi_scale(html, r)?;
+    sections::write_lr_interpretation(html, r)?;
+    sections::write_key_findings(html, r)?;
 
-    // 3. Methodology
+    // Methodology with explicit hypotheses
     sections::write_methodology(html, r)?;
 
-    // 4. Chain of evidence
+    // Chain of evidence
     sections::write_chain_of_custody(html, r)?;
 
-    // 5. Category scores + writing flow visualization
+    // Category scores + writing flow
     sections::write_category_scores(html, r)?;
 
-    // 6. Findings: process evidence (exhibits A-F)
+    // Process evidence (exhibits A-F, dynamic notes)
     sections::write_process_evidence(html, r)?;
 
-    // 7. Session timeline
+    // Session timeline
     sections::write_session_timeline(html, r)?;
 
-    // 8. Detailed dimension analysis
+    // Detailed dimension analysis
     sections::write_dimension_analysis(html, r)?;
 
-    // 9. Statistical analysis: per-dimension LR table
+    // Per-dimension LR table
     sections::write_dimension_lr_table(html, r)?;
 
-    // 10. Checkpoint chain integrity
+    // Checkpoint chain
     sections::write_checkpoint_chain(html, r)?;
 
-    // 11. Forgery resistance assessment
+    // Forgery resistance
     sections::write_forgery_resistance(html, r)?;
 
-    // 12. Analysis flags
+    // Analysis flags
     sections::write_flags(html, r)?;
 
-    // 13. Scope, limitations, and admissibility
+    // Scope, limitations, admissibility
     sections::write_scope(html, r)?;
 
-    // 14. Analyzed text (if included)
+    // Analyzed text
     sections::write_analyzed_text(html, r)?;
 
-    // 15. Independent verification instructions
+    // Verification instructions
     sections::write_verification_instructions(html)?;
 
-    // 16. Certification
+    // Glossary
+    sections::write_glossary(html)?;
+
+    // Certification
     sections::write_footer(html, r)?;
 
     write!(html, "</div></body></html>")

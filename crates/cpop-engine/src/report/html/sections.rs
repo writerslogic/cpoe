@@ -18,7 +18,7 @@ fn sanitize_css_color(color: &str) -> &str {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Document Header
+// Document Header
 // ---------------------------------------------------------------------------
 
 pub(super) fn write_header(html: &mut String, r: &WarReport) -> fmt::Result {
@@ -32,7 +32,7 @@ pub(super) fn write_header(html: &mut String, r: &WarReport) -> fmt::Result {
         r#"<h1>Forensic Authorship Examination Report{sample}</h1>
 <p class="subtitle">
   Report {id} &ensp;|&ensp; Algorithm {alg} &ensp;|&ensp;
-  Issued {ts} &ensp;|&ensp; Schema {schema} &ensp;|&ensp; ENFSI-Compliant Methodology
+  Issued {ts} &ensp;|&ensp; Schema {schema}
 </p>
 "#,
         id = html_escape(&r.report_id),
@@ -43,7 +43,127 @@ pub(super) fn write_header(html: &mut String, r: &WarReport) -> fmt::Result {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Declaration of Findings (verdict)
+// Examination Metadata
+// ---------------------------------------------------------------------------
+
+pub(super) fn write_examination_metadata(html: &mut String, r: &WarReport) -> fmt::Result {
+    let doc_hash_short = if r.document_hash.len() > 16 {
+        format!(
+            "{}...{}",
+            &r.document_hash[..8],
+            &r.document_hash[r.document_hash.len().saturating_sub(8)..],
+        )
+    } else {
+        r.document_hash.clone()
+    };
+    write!(
+        html,
+        r#"<div class="exam-meta">
+<div><span class="meta-label">Report Reference</span><span class="meta-value">{id}</span></div>
+<div><span class="meta-label">Date of Report</span><span class="meta-value">{date}</span></div>
+<div><span class="meta-label">Examination System</span><span class="meta-value">CPOP Forensic Engine {alg}</span></div>
+<div><span class="meta-label">Document Fingerprint</span><span class="meta-value"><code>{hash}</code></span></div>
+<div><span class="meta-label">Evidence Sessions</span><span class="meta-value">{sessions} session{s_plural}, {dur:.0} min total</span></div>
+<div><span class="meta-label">Reporting Standard</span><span class="meta-value">ENFSI Guideline for Evaluative Reporting (2015)</span></div>
+</div>
+"#,
+        id = html_escape(&r.report_id),
+        date = r.generated_at.format("%B %-d, %Y"),
+        alg = html_escape(&r.algorithm_version),
+        hash = html_escape(&doc_hash_short),
+        sessions = r.session_count,
+        s_plural = if r.session_count == 1 { "" } else { "s" },
+        dur = r.total_duration_min,
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Executive Summary
+// ---------------------------------------------------------------------------
+
+pub(super) fn write_executive_summary(html: &mut String, r: &WarReport) -> fmt::Result {
+    let strength = match r.enfsi_tier {
+        EnfsiTier::VeryStrong => "very strongly supports",
+        EnfsiTier::Strong => "strongly supports",
+        EnfsiTier::ModeratelyStrong => "moderately supports",
+        EnfsiTier::Moderate => "provides moderate support for",
+        EnfsiTier::Weak => "provides limited support for",
+        EnfsiTier::Against => "does not support",
+        EnfsiTier::Inconclusive => "is inconclusive regarding",
+    };
+
+    let human_flags = r
+        .flags
+        .iter()
+        .filter(|f| f.signal == FlagSignal::Human)
+        .count();
+    let synthetic_flags = r
+        .flags
+        .iter()
+        .filter(|f| f.signal == FlagSignal::Synthetic)
+        .count();
+
+    let duration_desc = if r.total_duration_min < 1.0 {
+        "less than one minute".to_string()
+    } else if r.total_duration_min < 60.0 {
+        format!("approximately {:.0} minutes", r.total_duration_min)
+    } else {
+        let hours = r.total_duration_min / 60.0;
+        format!("approximately {:.1} hours", hours)
+    };
+
+    let keystrokes_desc = r
+        .process
+        .total_keystrokes
+        .map(|k| format!(", with {} keystrokes captured", format_number(k)))
+        .unwrap_or_default();
+
+    let checkpoint_desc = if r.checkpoints.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " {} cryptographic checkpoints were recorded and verified.",
+            r.checkpoints.len()
+        )
+    };
+
+    let flag_desc = if synthetic_flags > 0 {
+        format!(
+            " The analysis identified {} behavioral indicator{} consistent with human authorship \
+             and {} indicator{} of potential synthetic generation.",
+            human_flags,
+            if human_flags == 1 { "" } else { "s" },
+            synthetic_flags,
+            if synthetic_flags == 1 { "" } else { "s" },
+        )
+    } else if human_flags > 0 {
+        format!(
+            " The analysis identified {} behavioral indicator{} consistent with human authorship \
+             and no indicators of synthetic generation.",
+            human_flags,
+            if human_flags == 1 { "" } else { "s" },
+        )
+    } else {
+        String::new()
+    };
+
+    write!(
+        html,
+        r#"<div class="executive-summary">
+<p>Based on forensic examination of the submitted document, the evidence {strength} the proposition that the text was composed through a human writing process. The document was produced across {sessions} writing session{s_plural} spanning {duration}{keystrokes}.{checkpoints}{flags}</p>
+</div>
+"#,
+        sessions = r.session_count,
+        s_plural = if r.session_count == 1 { "" } else { "s" },
+        duration = duration_desc,
+        keystrokes = keystrokes_desc,
+        checkpoints = checkpoint_desc,
+        flags = flag_desc,
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Declaration of Findings
 // ---------------------------------------------------------------------------
 
 pub(super) fn write_verdict(html: &mut String, r: &WarReport) -> fmt::Result {
@@ -117,16 +237,167 @@ pub(super) fn write_enfsi_scale(html: &mut String, r: &WarReport) -> fmt::Result
     writeln!(html, "</div>")
 }
 
+pub(super) fn write_lr_interpretation(html: &mut String, r: &WarReport) -> fmt::Result {
+    let lr = r.likelihood_ratio;
+    if !lr.is_finite() || lr <= 0.0 {
+        return Ok(());
+    }
+
+    let interpretation = if lr >= 1.0 {
+        format!(
+            "The observed behavioral evidence is approximately <strong>{}</strong> times more \
+             probable under the hypothesis that the document was composed through a human writing \
+             process (H\u{2081}) than under the hypothesis that it was generated or substantially \
+             produced by automated means (H\u{2082}). On the ENFSI verbal equivalence scale, \
+             this constitutes <strong>{}</strong> the proposition of human authorship.",
+            format_lr(lr),
+            r.enfsi_tier.label().to_lowercase(),
+        )
+    } else {
+        format!(
+            "The observed behavioral evidence is approximately <strong>{:.2}</strong> times as \
+             probable under the hypothesis of human authorship (H\u{2081}) as under the \
+             alternative (H\u{2082}). An LR below 1.0 means the evidence favors the alternative \
+             hypothesis. On the ENFSI scale, this constitutes evidence <strong>against</strong> \
+             the proposition of human authorship.",
+            lr,
+        )
+    };
+
+    write!(
+        html,
+        r#"<div class="lr-interpretation"><strong>Interpretation:</strong> {interpretation}</div>"#,
+    )
+}
+
+pub(super) fn write_key_findings(html: &mut String, r: &WarReport) -> fmt::Result {
+    write!(html, r#"<ol class="key-findings">"#)?;
+
+    // Duration and session count
+    write!(
+        html,
+        "<li><strong>Writing duration:</strong> {} session{}, {:.0} minutes of active composition, \
+         {} revision events recorded.</li>",
+        r.session_count,
+        if r.session_count == 1 { "" } else { "s" },
+        r.total_duration_min,
+        format_number(r.revision_events),
+    )?;
+
+    // Keystroke capture
+    if let Some(ks) = r.process.total_keystrokes {
+        write!(
+            html,
+            "<li><strong>Keystroke capture:</strong> {} keystrokes recorded with timing data.",
+            format_number(ks),
+        )?;
+        if let Some(cv) = r.process.iki_cv {
+            write!(
+                html,
+                " Inter-keystroke interval CV of {:.2} {}.",
+                cv,
+                if cv > 0.3 {
+                    "indicates variable, human-like typing rhythm"
+                } else if cv > 0.15 {
+                    "is within normal range for focused typing"
+                } else {
+                    "is unusually uniform and may warrant further review"
+                },
+            )?;
+        }
+        write!(html, "</li>")?;
+    }
+
+    // Checkpoints
+    if !r.checkpoints.is_empty() {
+        let verified = if r.process.swf_chain_verified {
+            "integrity verified"
+        } else {
+            "integrity unverified"
+        };
+        write!(
+            html,
+            "<li><strong>Cryptographic checkpoints:</strong> {} checkpoints in tamper-evident chain, {}.",
+            r.checkpoints.len(),
+            verified,
+        )?;
+        if let Some(hrs) = r.process.swf_backdating_hours {
+            write!(
+                html,
+                " Backdating cost: ~{:.0} hours sequential computation.",
+                hrs,
+            )?;
+        }
+        write!(html, "</li>")?;
+    }
+
+    // Paste ratio
+    if let Some(pr) = r.process.paste_ratio_pct {
+        let assessment = if pr < 5.0 {
+            "minimal paste activity, consistent with original composition"
+        } else if pr < 20.0 {
+            "moderate paste activity, within normal editing range"
+        } else if pr < 50.0 {
+            "elevated paste activity; may include quoted material or self-editing"
+        } else {
+            "high paste ratio; document may contain substantial externally-sourced content"
+        };
+        write!(
+            html,
+            "<li><strong>Paste analysis:</strong> {:.1}% of text entered via paste ({}).</li>",
+            pr, assessment,
+        )?;
+    }
+
+    // Dimension concordance
+    if !r.dimensions.is_empty() {
+        let below = r.dimensions.iter().filter(|d| d.score < 40).count();
+        if below == 0 {
+            write!(
+                html,
+                "<li><strong>Dimension concordance:</strong> All {} analytical dimensions support \
+                 the composite determination. No contradictory signals detected.</li>",
+                r.dimensions.len(),
+            )?;
+        } else {
+            write!(
+                html,
+                "<li><strong>Dimension concordance:</strong> {} of {} dimensions scored below \
+                 threshold, indicating potential anomalies in those areas.</li>",
+                below,
+                r.dimensions.len(),
+            )?;
+        }
+    }
+
+    writeln!(html, "</ol>")
+}
+
 // ---------------------------------------------------------------------------
-// 3. Methodology
+// Methodology (with explicit hypotheses)
 // ---------------------------------------------------------------------------
 
 pub(super) fn write_methodology(html: &mut String, r: &WarReport) -> fmt::Result {
     write!(
         html,
         r#"<h2><span class="section-number">2.</span> Methodology</h2>
-<p>This examination was conducted using the Cryptographic Proof-of-Process (CPOP) protocol, which captures behavioral telemetry during document creation. The system records keystroke dynamics, timing intervals, revision patterns, focus events, and cursor movement in real time. These observations are cryptographically bound to sequential checkpoints using Verifiable Delay Functions (VDFs), producing a tamper-evident chain that can be independently verified.</p>
-<p style="margin-top:8px">The assessment score is derived from a multi-dimensional analysis comparing observed writing patterns against established distributions for human-authored and machine-generated text. Each dimension produces an independent likelihood ratio (LR), which are combined under the assumption of conditional independence. The resulting composite LR is classified on the ENFSI verbal equivalence scale.</p>
+
+<h3>Competing Hypotheses</h3>
+<div class="hypotheses">
+<div class="hypothesis">
+  <div class="hyp-label">H&#8321; (Prosecution/Proponent Hypothesis)</div>
+  <p>The submitted document was composed through a human writing process, exhibiting behavioral patterns characteristic of natural cognitive composition, including variable keystroke timing, iterative revision, and organic pause structures.</p>
+</div>
+<div class="hypothesis">
+  <div class="hyp-label">H&#8322; (Alternative Hypothesis)</div>
+  <p>The submitted document was generated or substantially produced by automated means (including but not limited to large language models), potentially with superficial human editing to mask its origin.</p>
+</div>
+</div>
+
+<h3>Examination Procedure</h3>
+<p>This examination was conducted using the Cryptographic Proof-of-Process (CPOP) protocol, an automated forensic system that captures behavioral telemetry during document creation. The system records keystroke dynamics, inter-keystroke timing intervals, revision patterns, application focus events, and cursor movements in real time. These observations are cryptographically bound to sequential checkpoints using Verifiable Delay Functions (VDFs), producing a tamper-evident evidentiary chain that can be independently verified by any party.</p>
+
+<p style="margin-top:8px">The assessment score is derived from a multi-dimensional analysis comparing observed writing patterns against established distributions for human-authored and machine-generated text. Each analytical dimension produces an independent likelihood ratio (LR). The per-dimension LRs are combined under the assumption of conditional independence to produce a composite LR, which is then classified on the ENFSI verbal equivalence scale. This approach follows the framework described in the ENFSI Guideline for Evaluative Reporting in Forensic Science (2015) and is consistent with the principles of FRE 702 (Daubert) for the admissibility of expert testimony.</p>
 "#
     )?;
 
@@ -147,7 +418,7 @@ pub(super) fn write_methodology(html: &mut String, r: &WarReport) -> fmt::Result
 }
 
 // ---------------------------------------------------------------------------
-// 4. Chain of Evidence
+// Chain of Evidence
 // ---------------------------------------------------------------------------
 
 pub(super) fn write_chain_of_custody(html: &mut String, r: &WarReport) -> fmt::Result {
@@ -196,7 +467,7 @@ pub(super) fn write_chain_of_custody(html: &mut String, r: &WarReport) -> fmt::R
 }
 
 // ---------------------------------------------------------------------------
-// 5. Category Scores + Writing Flow
+// Category Scores + Writing Flow
 // ---------------------------------------------------------------------------
 
 pub(super) fn write_category_scores(html: &mut String, r: &WarReport) -> fmt::Result {
@@ -251,7 +522,7 @@ fn write_category_composite_note(html: &mut String, r: &WarReport) -> fmt::Resul
 fn write_writing_flow(html: &mut String, r: &WarReport) -> fmt::Result {
     write!(
         html,
-        r#"<div><h3>Writing Flow Visualization</h3><div class="flow-chart">"#
+        r#"<div><h3>Writing Flow (Fig. 1)</h3><div class="flow-chart">"#
     )?;
     let max_intensity = r
         .writing_flow
@@ -285,13 +556,13 @@ fn write_writing_flow(html: &mut String, r: &WarReport) -> fmt::Result {
     }
     write!(
         html,
-        r#"<p class="flow-caption">Fig. 1: Keystroke intensity over time. Irregular cadence with natural pauses is characteristic of human cognitive processing. Uniform intensity would indicate automated input.</p>"#
+        r#"<p class="flow-caption">Fig. 1: Keystroke intensity over time. Irregular cadence with natural pauses is characteristic of human cognitive processing; automated input typically produces uniform intensity without semantic-boundary pauses.</p>"#
     )?;
     write!(html, "</div>")
 }
 
 // ---------------------------------------------------------------------------
-// 6. Findings: Process Evidence
+// Process Evidence (dynamic notes based on actual values)
 // ---------------------------------------------------------------------------
 
 pub(super) fn write_process_evidence(html: &mut String, r: &WarReport) -> fmt::Result {
@@ -299,7 +570,7 @@ pub(super) fn write_process_evidence(html: &mut String, r: &WarReport) -> fmt::R
     write!(
         html,
         r#"<h2><span class="section-number">4.</span> Findings: Process Evidence</h2>
-<p>The following metrics were captured by the CPOP proof daemon during the writing process. Each metric is derived from real-time behavioral observation and is cryptographically bound to the checkpoint chain.</p>
+<p>The following metrics were captured by the CPOP proof daemon during the writing process. Each metric is derived from real-time behavioral observation and is cryptographically bound to the checkpoint chain (see Section 8).</p>
 <div class="evidence-grid">"#
     )?;
 
@@ -324,9 +595,23 @@ fn write_evidence_revision_intensity(html: &mut String, p: &ProcessEvidence) -> 
             r#"<div class="metric">{:.2} edits/sentence</div>"#,
             ri
         )?;
+        let note = if ri > 2.0 {
+            "Heavy revision activity; consistent with careful drafting and self-editing."
+        } else if ri > 0.5 {
+            "Moderate revision activity; within the expected range for natural composition."
+        } else if ri > 0.1 {
+            "Light revision activity; may indicate fluent single-pass writing or dictation."
+        } else {
+            "Minimal revision detected; atypical for multi-paragraph human composition."
+        };
+        write!(html, r#"<div class="note">{note}</div>"#)?;
     }
     if let Some(ref bl) = p.revision_baseline {
-        write!(html, r#"<div class="note">{}</div>"#, html_escape(bl))?;
+        write!(
+            html,
+            r#"<div class="note">Baseline: {}</div>"#,
+            html_escape(bl)
+        )?;
     }
     write!(html, "</div>")
 }
@@ -345,11 +630,19 @@ fn write_evidence_pause_distribution(html: &mut String, p: &ProcessEvidence) -> 
             write!(html, " | Max: {:.0}s", max)?;
         }
         write!(html, "</div>")?;
+        let note = if med > 0.5 && med < 5.0 {
+            "Median pause duration falls within the range reported in published studies of human \
+             composition (0.5-5.0s), consistent with cognitive planning between clauses."
+        } else if med <= 0.5 {
+            "Median pause duration is short; may indicate rapid transcription, dictation, \
+             or highly rehearsed content."
+        } else {
+            "Median pause duration is long; may indicate deliberate composition, \
+             research-interleaved writing, or multi-tasking."
+        };
+        write!(html, r#"<div class="note">{note}</div>"#)?;
     }
-    write!(
-        html,
-        r#"<div class="note">Distribution consistent with natural cognitive processing intervals observed in controlled studies of human composition.</div></div>"#
-    )
+    write!(html, "</div>")
 }
 
 fn write_evidence_paste_ratio(html: &mut String, p: &ProcessEvidence) -> fmt::Result {
@@ -363,11 +656,25 @@ fn write_evidence_paste_ratio(html: &mut String, p: &ProcessEvidence) -> fmt::Re
             write!(html, " ({} operations)", ops)?;
         }
         write!(html, "</div>")?;
+        let note = if pr < 5.0 {
+            "Minimal paste activity. Virtually all text was entered keystroke-by-keystroke, \
+             strongly indicative of original composition."
+        } else if pr < 20.0 {
+            "Moderate paste activity, within the normal range for authors who self-edit \
+             by cutting and rearranging their own text."
+        } else if pr < 50.0 {
+            "Elevated paste ratio. May include quoted material, references, or \
+             restructuring of previously-typed content."
+        } else {
+            "High paste ratio. A substantial portion of the document was entered via paste. \
+             This may indicate external sourcing and warrants further investigation."
+        };
+        write!(html, r#"<div class="note">{note}</div>"#)?;
     }
     if let Some(max) = p.paste_max_chars {
         write!(
             html,
-            r#"<div class="note">Largest paste: {} characters. Pattern consistent with inline self-editing rather than bulk text insertion.</div>"#,
+            r#"<div class="note">Largest single paste: {} characters.</div>"#,
             format_number(max)
         )?;
     }
@@ -382,14 +689,28 @@ fn write_evidence_keystroke_dynamics(html: &mut String, p: &ProcessEvidence) -> 
     if let Some(cv) = p.iki_cv {
         write!(html, r#"<div class="metric">IKI CV: {:.2}"#, cv)?;
         if let Some(bg) = p.bigram_consistency {
-            write!(html, " | Bigram: {:.2}", bg)?;
+            write!(html, " | Bigram consistency: {:.2}", bg)?;
         }
         write!(html, "</div>")?;
+        let note = if cv > 0.4 {
+            "High inter-keystroke interval variability indicates natural, human-like typing \
+             rhythm with variable cognitive load throughout the session."
+        } else if cv > 0.2 {
+            "Moderate IKI variability, within the normal range for focused human typing. \
+             Behavioral fingerprint is consistent with single-author composition."
+        } else if cv > 0.1 {
+            "Low IKI variability. Typing rhythm is unusually regular, though still within \
+             the range observed for skilled touch-typists on familiar material."
+        } else {
+            "Very low IKI variability. The typing rhythm is highly uniform, which is atypical \
+             for human composition and more consistent with automated or replayed input."
+        };
+        write!(html, r#"<div class="note">{note}</div>"#)?;
     }
     if let Some(ks) = p.total_keystrokes {
         write!(
             html,
-            r#"<div class="note">{} keystrokes captured. Timing signature stable throughout session; behavioral fingerprint consistent with single-author composition.</div>"#,
+            r#"<div class="note">{} total keystrokes captured.</div>"#,
             format_number(ks)
         )?;
     }
@@ -414,22 +735,34 @@ fn write_evidence_deletion_patterns(html: &mut String, p: &ProcessEvidence) -> f
             write!(html, " | {} select-delete ops", sd)?;
         }
         write!(html, "</div>")?;
+        let note = if let Some(avg) = p.avg_deletion_length {
+            if avg < 3.0 {
+                "Short deletion sequences (1-3 characters) indicate real-time typo correction, \
+                 a hallmark of keystroke-level human composition."
+            } else if avg < 10.0 {
+                "Mixed short and medium deletions suggest both typo correction and \
+                 word/phrase-level revision during composition."
+            } else {
+                "Long average deletion length may indicate structural revision or \
+                 paragraph-level rewriting."
+            }
+        } else {
+            "Deletion sequences detected, indicating iterative refinement during composition."
+        };
+        write!(html, r#"<div class="note">{note}</div>"#)?;
     }
-    write!(
-        html,
-        r#"<div class="note">Character-level corrections indicate real-time composition with iterative refinement.</div></div>"#
-    )
+    write!(html, "</div>")
 }
 
 fn write_evidence_swf(html: &mut String, p: &ProcessEvidence) -> fmt::Result {
     write!(
         html,
-        r#"<div class="evidence-card"><h4>Exhibit F: Sequential Work Functions</h4>"#
+        r#"<div class="evidence-card"><h4>Exhibit F: Verifiable Delay Functions</h4>"#
     )?;
     if let Some(count) = p.swf_checkpoints {
         write!(
             html,
-            r#"<div class="metric">{} VDF checkpoints"#,
+            r#"<div class="metric">{} checkpoints"#,
             format_number(count)
         )?;
         if let Some(avg) = p.swf_avg_compute_ms {
@@ -446,15 +779,23 @@ fn write_evidence_swf(html: &mut String, p: &ProcessEvidence) -> fmt::Result {
     if let Some(hrs) = p.swf_backdating_hours {
         write!(
             html,
-            r#"<div class="note">Cryptographic time proof: fabricating this evidence chain after the fact would require approximately {:.0} hours of sequential computation.</div>"#,
+            r#"<div class="note">Each checkpoint contains a VDF proof that required real wall-clock time to compute. \
+            Fabricating this evidence chain after the fact would require approximately {:.0} hours of sequential computation, \
+            making backdating computationally infeasible for practical purposes.</div>"#,
             hrs
+        )?;
+    } else {
+        write!(
+            html,
+            r#"<div class="note">VDF checkpoints provide cryptographic proof that writing occurred over real elapsed time. \
+            The sequential nature of VDF computation prevents after-the-fact fabrication.</div>"#
         )?;
     }
     write!(html, "</div>")
 }
 
 // ---------------------------------------------------------------------------
-// 7. Session Timeline
+// Session Timeline
 // ---------------------------------------------------------------------------
 
 pub(super) fn write_session_timeline(html: &mut String, r: &WarReport) -> fmt::Result {
@@ -488,7 +829,7 @@ pub(super) fn write_session_timeline(html: &mut String, r: &WarReport) -> fmt::R
 }
 
 // ---------------------------------------------------------------------------
-// 8. Dimension Analysis
+// Dimension Analysis
 // ---------------------------------------------------------------------------
 
 pub(super) fn write_dimension_analysis(html: &mut String, r: &WarReport) -> fmt::Result {
@@ -498,7 +839,8 @@ pub(super) fn write_dimension_analysis(html: &mut String, r: &WarReport) -> fmt:
     writeln!(
         html,
         r#"<h2><span class="section-number">6.</span> Detailed Dimension Analysis</h2>
-<p>Each analytical dimension is evaluated independently. The per-dimension scores and likelihood ratios below contribute to the composite determination in Section 1.</p>"#
+<p>Each analytical dimension is evaluated independently against both H\u{{2081}} and H\u{{2082}}. \
+The per-dimension scores and likelihood ratios below contribute to the composite determination in Section 1.</p>"#
     )?;
     for d in &r.dimensions {
         if d.analysis.is_empty() {
@@ -528,7 +870,7 @@ pub(super) fn write_dimension_analysis(html: &mut String, r: &WarReport) -> fmt:
 }
 
 // ---------------------------------------------------------------------------
-// 9. Statistical Analysis (LR table)
+// Statistical Analysis (LR table)
 // ---------------------------------------------------------------------------
 
 pub(super) fn write_dimension_lr_table(html: &mut String, r: &WarReport) -> fmt::Result {
@@ -538,7 +880,9 @@ pub(super) fn write_dimension_lr_table(html: &mut String, r: &WarReport) -> fmt:
     writeln!(
         html,
         r#"<h2><span class="section-number">7.</span> Statistical Analysis: Per-Dimension Likelihood Ratios</h2>
-<p>The likelihood ratio (LR) quantifies the evidential weight of each dimension. An LR greater than 1 supports the hypothesis of human authorship; an LR less than 1 supports the alternative. The log<sub>10</sub>(LR) is provided for comparison with published forensic scales.</p>"#
+<p>The likelihood ratio (LR) quantifies the evidential weight of each dimension. An LR greater than 1 supports H\u{{2081}} \
+(human authorship); an LR less than 1 supports H\u{{2082}} (automated generation). The log<sub>10</sub>(LR) is provided \
+for comparison with published forensic scales. See the Glossary (Section 15) for term definitions.</p>"#
     )?;
     write!(
         html,
@@ -575,7 +919,7 @@ pub(super) fn write_dimension_lr_table(html: &mut String, r: &WarReport) -> fmt:
 }
 
 // ---------------------------------------------------------------------------
-// 10. Checkpoint Chain Integrity
+// Checkpoint Chain Integrity
 // ---------------------------------------------------------------------------
 
 pub(super) fn write_checkpoint_chain(html: &mut String, r: &WarReport) -> fmt::Result {
@@ -585,7 +929,9 @@ pub(super) fn write_checkpoint_chain(html: &mut String, r: &WarReport) -> fmt::R
     writeln!(
         html,
         r#"<h2><span class="section-number">8.</span> Checkpoint Chain Integrity</h2>
-<p>Each checkpoint records a cryptographic hash of the document state at a point in time. The chain is linked by including the previous checkpoint's hash in each successive entry, forming a tamper-evident log analogous to a blockchain ledger.</p>"#
+<p>Each checkpoint records a cryptographic hash of the document state at a point in time. The chain is linked by including \
+the previous checkpoint's hash in each successive entry, forming a tamper-evident log. Any modification to a checkpoint \
+invalidates all subsequent entries, making undetected alteration computationally infeasible.</p>"#
     )?;
     write!(
         html,
@@ -624,7 +970,7 @@ pub(super) fn write_checkpoint_chain(html: &mut String, r: &WarReport) -> fmt::R
 }
 
 // ---------------------------------------------------------------------------
-// 11. Forgery Resistance
+// Forgery Resistance
 // ---------------------------------------------------------------------------
 
 pub(super) fn write_forgery_resistance(html: &mut String, r: &WarReport) -> fmt::Result {
@@ -634,7 +980,8 @@ pub(super) fn write_forgery_resistance(html: &mut String, r: &WarReport) -> fmt:
     writeln!(
         html,
         r#"<h2><span class="section-number">9.</span> Forgery Resistance Assessment</h2>
-<p>The following analysis estimates the computational cost an adversary would incur to fabricate evidence equivalent to that presented in this report.</p>"#
+<p>The following analysis estimates the computational cost an adversary would incur to fabricate evidence equivalent to \
+that presented in this report. Higher costs indicate stronger resistance to forgery.</p>"#
     )?;
     write!(html, r#"<div class="info-box"><table>"#)?;
     row(html, "Resistance Tier", &r.forgery.tier)?;
@@ -673,7 +1020,7 @@ pub(super) fn write_forgery_resistance(html: &mut String, r: &WarReport) -> fmt:
 }
 
 // ---------------------------------------------------------------------------
-// 12. Analysis Flags
+// Analysis Flags
 // ---------------------------------------------------------------------------
 
 pub(super) fn write_flags(html: &mut String, r: &WarReport) -> fmt::Result {
@@ -692,8 +1039,9 @@ pub(super) fn write_flags(html: &mut String, r: &WarReport) -> fmt::Result {
         .count();
     writeln!(
         html,
-        r#"<h2><span class="section-number">10.</span> Analysis Flags ({} human indicators, {} synthetic indicators)</h2>
-<p>The following behavioral signals were detected during analysis. Human indicators corroborate the determination; synthetic indicators, if present, may warrant further investigation.</p>"#,
+        r#"<h2><span class="section-number">10.</span> Analysis Flags ({} human, {} synthetic)</h2>
+<p>The following behavioral signals were detected during analysis. Human indicators corroborate H\u{{2081}}; \
+synthetic indicators, if present, corroborate H\u{{2082}} and may warrant further investigation.</p>"#,
         pos, neg
     )?;
     write!(
@@ -724,7 +1072,7 @@ pub(super) fn write_flags(html: &mut String, r: &WarReport) -> fmt::Result {
 }
 
 // ---------------------------------------------------------------------------
-// 13. Scope and Limitations
+// Scope, Limitations, Admissibility
 // ---------------------------------------------------------------------------
 
 pub(super) fn write_scope(html: &mut String, r: &WarReport) -> fmt::Result {
@@ -762,7 +1110,7 @@ pub(super) fn write_scope(html: &mut String, r: &WarReport) -> fmt::Result {
 <li>Methodology consistent with FRE 702 (Daubert) reliability factors</li>
 <li>Evidence generated by automated, verified process per FRE 902(13)/902(14)</li>
 <li>Hash chain provides tamper-evident integrity under FRE 901(b)(9)</li>
-<li>ENFSI-compliant reporting per European forensic science guidelines</li>
+<li>ENFSI-compliant evaluative reporting per European forensic science guidelines</li>
 </ul>
 </div>
 </div>
@@ -783,7 +1131,7 @@ pub(super) fn write_scope(html: &mut String, r: &WarReport) -> fmt::Result {
 }
 
 // ---------------------------------------------------------------------------
-// 14. Analyzed Text
+// Analyzed Text
 // ---------------------------------------------------------------------------
 
 pub(super) fn write_analyzed_text(html: &mut String, r: &WarReport) -> fmt::Result {
@@ -801,7 +1149,7 @@ pub(super) fn write_analyzed_text(html: &mut String, r: &WarReport) -> fmt::Resu
 }
 
 // ---------------------------------------------------------------------------
-// 15. Verification Instructions
+// Verification Instructions
 // ---------------------------------------------------------------------------
 
 pub(super) fn write_verification_instructions(html: &mut String) -> fmt::Result {
@@ -820,14 +1168,57 @@ pub(super) fn write_verification_instructions(html: &mut String) -> fmt::Result 
 }
 
 // ---------------------------------------------------------------------------
-// 16. Certification (footer)
+// Glossary
+// ---------------------------------------------------------------------------
+
+pub(super) fn write_glossary(html: &mut String) -> fmt::Result {
+    write!(
+        html,
+        r##"<h2><span class="section-number">14.</span> Glossary of Terms</h2>
+<dl class="glossary">
+<div class="glossary-entry"><dt>Assessment Score</dt>
+<dd>A composite metric (0-100) derived from all analytical dimensions. Higher scores indicate stronger evidence of human authorship. The score is converted to a likelihood ratio for statistical interpretation.</dd></div>
+
+<div class="glossary-entry"><dt>Bigram Consistency</dt>
+<dd>A measure of how stable the timing patterns are between specific pairs of consecutive keystrokes (e.g., "th", "er"). Higher values indicate the author has a consistent, practiced typing style.</dd></div>
+
+<div class="glossary-entry"><dt>CPOP (Cryptographic Proof-of-Process)</dt>
+<dd>The protocol used to capture and cryptographically bind behavioral evidence during document creation. Defined in draft-condrey-rats-pop.</dd></div>
+
+<div class="glossary-entry"><dt>ENFSI Verbal Equivalence Scale</dt>
+<dd>A standardized scale for expressing the strength of forensic evidence, published by the European Network of Forensic Science Institutes (2015). Ranges from "Against" (LR &lt; 1) through "Very Strong Support" (LR &ge; 10,000).</dd></div>
+
+<div class="glossary-entry"><dt>H&#8321; / H&#8322;</dt>
+<dd>The two competing hypotheses under evaluation. H&#8321; (proponent): the document was composed through a human writing process. H&#8322; (alternative): the document was generated or substantially produced by automated means.</dd></div>
+
+<div class="glossary-entry"><dt>IKI CV (Inter-Keystroke Interval Coefficient of Variation)</dt>
+<dd>The coefficient of variation of time intervals between consecutive keystrokes. Higher values indicate more variable (human-like) typing rhythm; very low values (&lt;0.10) suggest automated or replayed input.</dd></div>
+
+<div class="glossary-entry"><dt>Likelihood Ratio (LR)</dt>
+<dd>The ratio of the probability of observing the evidence under H&#8321; to the probability under H&#8322;. An LR of 100 means the evidence is 100 times more probable if the document was human-authored than if it was machine-generated.</dd></div>
+
+<div class="glossary-entry"><dt>Log&#8321;&#8320;(LR)</dt>
+<dd>The base-10 logarithm of the likelihood ratio. A log-LR of 2.0 corresponds to LR = 100; a log-LR of 4.0 corresponds to LR = 10,000.</dd></div>
+
+<div class="glossary-entry"><dt>SHA-256</dt>
+<dd>A cryptographic hash function producing a 256-bit (32-byte) digest. Used throughout CPOP for document fingerprinting, checkpoint chaining, and integrity verification. Any change to the input produces a completely different hash.</dd></div>
+
+<div class="glossary-entry"><dt>VDF (Verifiable Delay Function)</dt>
+<dd>A cryptographic function that requires a specified amount of sequential computation to evaluate, but whose output can be quickly verified. Used in CPOP to prove that checkpoints were created at real wall-clock intervals, preventing after-the-fact fabrication of evidence.</dd></div>
+</dl>
+"##,
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Certification (footer)
 // ---------------------------------------------------------------------------
 
 pub(super) fn write_footer(html: &mut String, r: &WarReport) -> fmt::Result {
     write!(
         html,
         r#"<div class="report-footer">
-<p class="certification">This report was generated by an automated forensic examination system. The methodology, algorithms, and scoring framework have been designed to produce accurate and reproducible results. This report does not constitute legal advice. The determination herein should be considered alongside all other available evidence.</p>
+<p class="certification">This report was generated by an automated forensic examination system using standardized, reproducible methodology. Applying the same algorithm version to the same evidence will produce identical results. This report documents process analysis only; it does not constitute legal advice, and the determination herein should be evaluated alongside all other available evidence by the trier of fact.</p>
 <p>Forensic Authorship Examination Report &ensp;|&ensp; {id} &ensp;|&ensp; Algorithm {alg} &ensp;|&ensp; Schema {schema}<br>
 &copy; {year} WritersLogic, LLC. All rights reserved. CPOP Protocol per draft-condrey-rats-pop.</p>
 </div>
