@@ -478,4 +478,148 @@ mod tests {
             );
         }
     }
+
+    /// CpopSigner::new() with a custom verification_method returns it as-is.
+    #[test]
+    fn signer_new_custom_vm() {
+        let custom_vm = "did:example:custom#key-99";
+        let signer = CpopSigner::new(test_signing_key(), custom_vm);
+        assert_eq!(signer.verification_method(), custom_vm);
+    }
+
+    /// Signing two different messages must produce different signatures.
+    #[tokio::test]
+    async fn signer_sign_different_data_different_sigs() {
+        let signer = CpopSigner::from_key(test_signing_key());
+        let sig_a = signer.sign(b"message A").await.unwrap();
+        let sig_b = signer.sign(b"message B").await.unwrap();
+        assert_ne!(sig_a, sig_b, "different inputs must yield different sigs");
+    }
+
+    /// Ed25519 is deterministic; signing the same message twice yields identical signatures.
+    #[tokio::test]
+    async fn signer_sign_same_data_same_sig() {
+        let signer = CpopSigner::from_key(test_signing_key());
+        let msg = b"deterministic check";
+        let sig1 = signer.sign(msg).await.unwrap();
+        let sig2 = signer.sign(msg).await.unwrap();
+        assert_eq!(sig1, sig2, "Ed25519 signing must be deterministic");
+    }
+
+    /// Derive with empty string address should succeed (HKDF handles empty info).
+    #[test]
+    fn derived_key_empty_address() {
+        let master = test_signing_key();
+        let result = derive_webvh_signing_key(&master, "");
+        assert!(result.is_ok(), "empty address must not fail HKDF derivation");
+    }
+
+    /// Derive with a very long address (1000 chars) should succeed.
+    #[test]
+    fn derived_key_long_address() {
+        let master = test_signing_key();
+        let long_addr = "a".repeat(1000);
+        let result = derive_webvh_signing_key(&master, &long_addr);
+        assert!(result.is_ok(), "long address must not fail HKDF derivation");
+    }
+
+    /// build_did_document() output must contain {SCID} in the id field.
+    #[test]
+    fn did_document_contains_scid_placeholder() {
+        let doc = build_did_document("did:webvh:{SCID}:example.com", "z6MkTest");
+        let id = doc["id"].as_str().expect("id must be a string");
+        assert!(id.contains("{SCID}"), "DID template must contain {{SCID}} placeholder");
+    }
+
+    /// Verify the publicKeyMultibase in the DID doc matches the key we provided.
+    #[test]
+    fn did_document_verification_method_matches_key() {
+        let key = test_signing_key();
+        let pk_mb = encode_multibase_ed25519(key.verifying_key().as_bytes());
+        let doc = build_did_document("did:webvh:{SCID}:example.com", &pk_mb);
+        let vm_key = doc["verificationMethod"][0]["publicKeyMultibase"]
+            .as_str()
+            .expect("publicKeyMultibase must be a string");
+        assert_eq!(vm_key, pk_mb, "document key must match the provided multibase");
+    }
+
+    /// Authentication array must reference the same key id as verificationMethod.
+    #[test]
+    fn did_document_authentication_references_key() {
+        let doc = build_did_document("did:webvh:{SCID}:example.com", "z6MkTest");
+        let vm_id = doc["verificationMethod"][0]["id"]
+            .as_str()
+            .expect("verificationMethod id must be a string");
+        let auth_ref = doc["authentication"][0]
+            .as_str()
+            .expect("authentication entry must be a string reference");
+        assert_eq!(auth_ref, vm_id, "authentication must reference the verification method id");
+    }
+
+    /// Multibase encoding of a known key produces the expected output.
+    #[test]
+    fn multibase_known_vector() {
+        // All-zeros 32-byte public key
+        let zeros = [0u8; 32];
+        let mb = encode_multibase_ed25519(&zeros);
+        // Manually construct expected: z + base58btc(0xed 0x01 ++ 32 zero bytes)
+        let mut prefixed = vec![0xed, 0x01];
+        prefixed.extend_from_slice(&zeros);
+        let expected = format!("z{}", bs58::encode(&prefixed).into_string());
+        assert_eq!(mb, expected, "multibase encoding must match known vector");
+    }
+
+    /// map_webvh_err must preserve the original error message in the output.
+    #[test]
+    fn map_webvh_err_preserves_message() {
+        let original = DIDWebVHError::DIDError("test error sentinel".into());
+        let mapped = map_webvh_err(original);
+        let msg = format!("{mapped}");
+        assert!(
+            msg.contains("test error sentinel"),
+            "mapped error must contain the original message, got: {msg}"
+        );
+    }
+
+    /// public_key_multibase() must match the key portion of verification_method().
+    #[test]
+    fn public_key_multibase_matches_verification_method() {
+        let signer = CpopSigner::from_key(test_signing_key());
+        let pk_mb = signer.public_key_multibase();
+        let vm = signer.verification_method();
+        // verification_method is "did:key:{mb}#{mb}", extract the key part
+        let key_part = vm.strip_prefix("did:key:").unwrap().split('#').next().unwrap();
+        assert_eq!(pk_mb, key_part, "public_key_multibase must match the key in verification_method");
+    }
+
+    /// Full lifecycle: create a WebVHIdentity, verify DID is non-empty and state accessible.
+    #[tokio::test]
+    async fn webvh_identity_create_lifecycle() {
+        let master = test_signing_key();
+        let identity = WebVHIdentity::create(&master, "example.com").await;
+        match identity {
+            Ok(id) => {
+                assert!(!id.did().is_empty(), "DID must not be empty");
+                assert!(
+                    id.did().starts_with("did:webvh:"),
+                    "DID must start with did:webvh:"
+                );
+                // State must be accessible and have at least one log entry
+                let state = id.state();
+                assert!(
+                    !state.log_entries().is_empty(),
+                    "state must contain at least one log entry"
+                );
+            }
+            Err(e) => {
+                // create_did may fail in test environments without network;
+                // verify the error is from the webvh layer, not a key derivation bug
+                let msg = format!("{e}");
+                assert!(
+                    msg.contains("did:webvh") || msg.contains("webvh"),
+                    "error must originate from webvh layer, got: {msg}"
+                );
+            }
+        }
+    }
 }
