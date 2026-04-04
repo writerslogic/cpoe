@@ -673,3 +673,120 @@ fn test_reject_oversized_profile_uri() {
     let result = encode_mutate_decode(|p| p.profile_uri = "x".repeat(super::MAX_STRING_LEN + 1));
     assert!(result.is_err(), "oversized profile_uri should be rejected");
 }
+
+// ---------------------------------------------------------------------------
+// author_did (CBOR key 20) tests
+// ---------------------------------------------------------------------------
+
+/// Verify that a did:webvh author_did survives tagged CBOR encode/decode.
+#[test]
+fn author_did_round_trip_cbor() {
+    let mut packet = create_test_evidence_packet();
+    packet.author_did = Some("did:webvh:example.com:abc123".to_string());
+
+    let encoded = packet.encode_cbor().expect("encode");
+    let decoded = EvidencePacketWire::decode_cbor(&encoded).expect("decode");
+
+    assert_eq!(
+        decoded.author_did.as_deref(),
+        Some("did:webvh:example.com:abc123")
+    );
+}
+
+/// Verify that None author_did is preserved across encode/decode (backward compat).
+#[test]
+fn author_did_none_round_trip() {
+    let packet = create_test_evidence_packet();
+    assert!(packet.author_did.is_none());
+
+    let encoded = packet.encode_cbor().expect("encode");
+    let decoded = EvidencePacketWire::decode_cbor(&encoded).expect("decode");
+
+    assert!(decoded.author_did.is_none());
+}
+
+/// Verify that a did:key URI survives tagged CBOR encode/decode.
+#[test]
+fn author_did_did_key_round_trip() {
+    let mut packet = create_test_evidence_packet();
+    packet.author_did =
+        Some("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK".to_string());
+
+    let encoded = packet.encode_cbor().expect("encode");
+    let decoded = EvidencePacketWire::decode_cbor(&encoded).expect("decode");
+
+    assert_eq!(
+        decoded.author_did.as_deref(),
+        Some("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK")
+    );
+}
+
+/// Verify that an empty author_did string is rejected by validate().
+#[test]
+fn author_did_validation_empty() {
+    let mut packet = create_test_evidence_packet();
+    packet.author_did = Some("".to_string());
+    assert!(packet.validate().is_err());
+}
+
+/// Verify that author_did without the "did:" prefix is rejected.
+#[test]
+fn author_did_validation_no_did_prefix() {
+    let mut packet = create_test_evidence_packet();
+    packet.author_did = Some("not-a-did".to_string());
+
+    let err = packet.validate().unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("must start with 'did:'"),
+        "expected 'must start with did:' in error, got: {}",
+        msg
+    );
+}
+
+/// Verify that an author_did exceeding MAX_STRING_LEN is rejected.
+#[test]
+fn author_did_validation_too_long() {
+    let mut packet = create_test_evidence_packet();
+    // "did:" prefix (4 bytes) + enough padding to exceed MAX_STRING_LEN
+    packet.author_did = Some(format!("did:{}", "x".repeat(super::MAX_STRING_LEN)));
+    assert!(packet.validate().is_err());
+}
+
+/// Verify that when author_did is None, CBOR key "20" is absent from the encoded bytes.
+#[test]
+fn author_did_absent_in_legacy_cbor() {
+    let packet = create_test_evidence_packet();
+    assert!(packet.author_did.is_none());
+
+    let bytes = packet.encode_cbor_untagged().expect("encode untagged");
+    let value: ciborium::Value =
+        ciborium::de::from_reader(bytes.as_slice()).expect("parse as Value");
+
+    // The top-level Value should be a map; key "20" must not appear.
+    if let ciborium::Value::Map(entries) = value {
+        for (k, _) in &entries {
+            if let ciborium::Value::Text(s) = k {
+                assert_ne!(s, "20", "key '20' should be absent when author_did is None");
+            }
+        }
+    } else {
+        panic!("expected CBOR map at top level");
+    }
+}
+
+/// Verify that author_did survives untagged CBOR encode/decode.
+#[test]
+fn author_did_untagged_round_trip() {
+    let mut packet = create_test_evidence_packet();
+    packet.author_did = Some("did:webvh:example.com:abc123".to_string());
+
+    let bytes = packet.encode_cbor_untagged().expect("encode untagged");
+    let decoded =
+        EvidencePacketWire::decode_cbor_untagged(&bytes).expect("decode untagged");
+
+    assert_eq!(
+        decoded.author_did.as_deref(),
+        Some("did:webvh:example.com:abc123")
+    );
+}
