@@ -51,13 +51,14 @@ impl ChainEncryptionKey {
     /// `master_seed` is the 32-byte identity seed (from sealed identity or PUF).
     /// `document_id` is the 32-byte hash of the canonical document path.
     pub fn derive(master_seed: &[u8], document_id: &[u8; 32]) -> Result<Self> {
+        use zeroize::Zeroize;
         let hk = Hkdf::<Sha256>::new(Some(b"witnessd-chain-seal-v1"), master_seed);
         let mut key_bytes = [0u8; 32];
         hk.expand(document_id, &mut key_bytes)
             .map_err(|_| Error::crypto("HKDF expand failed for chain encryption key"))?;
-        Ok(Self {
-            key: ProtectedKey::new(key_bytes),
-        })
+        let p_key = ProtectedKey::new(key_bytes);
+        key_bytes.zeroize();
+        Ok(Self { key: p_key })
     }
 
     /// Create a key from raw bytes (for testing).
@@ -80,7 +81,7 @@ pub fn save_sealed(
     key: &ChainEncryptionKey,
     document_id: &[u8; 32],
 ) -> Result<()> {
-    let plaintext = serde_json::to_vec_pretty(chain)
+    let plaintext = serde_json::to_vec(chain)
         .map_err(|e| Error::checkpoint(format!("failed to serialize chain: {e}")))?;
 
     let cipher = Aes256Gcm::new_from_slice(key.key.as_bytes())
