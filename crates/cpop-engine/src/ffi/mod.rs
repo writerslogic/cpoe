@@ -25,6 +25,9 @@ pub mod types;
 pub mod verify_detail;
 pub mod writersproof_ffi;
 
+#[cfg(feature = "did-webvh")]
+pub mod did_webvh_ffi;
+
 pub use attestation::*;
 pub use beacon::*;
 pub use chain::*;
@@ -44,3 +47,6 @@ pub use system::*;
 pub use types::*;
 pub use verify_detail::*;
 pub use writersproof_ffi::*;
+
+#[cfg(feature = "did-webvh")]
+pub use did_webvh_ffi::*;
