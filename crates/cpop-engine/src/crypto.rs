@@ -12,11 +12,9 @@ pub mod anti_analysis;
 pub mod lamport;
 pub mod mem;
 pub mod obfuscated;
-pub mod obfuscation;
 pub use anti_analysis::{harden_process, is_debugger_present};
 pub use mem::{ProtectedBuf, ProtectedKey};
-pub use obfuscated::Obfuscated;
-pub use obfuscation::ObfuscatedString;
+pub use obfuscated::{Obfuscated, ObfuscatedString};
 
 /// HMAC-SHA256 type alias used for event and integrity MACs.
 pub type HmacSha256 = Hmac<Sha256>;
