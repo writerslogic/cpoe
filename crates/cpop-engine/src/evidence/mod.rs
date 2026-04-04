@@ -3,6 +3,7 @@
 //! Evidence packet module: types, builder, verification, and RFC conversion.
 
 mod builder;
+pub mod hw_cosign;
 mod packet;
 mod rfc_conversion;
 #[cfg(test)]

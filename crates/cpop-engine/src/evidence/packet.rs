@@ -467,6 +467,7 @@ impl Packet {
         tpm_clock_ms: u64,
         monotonic_counter: u64,
         device_id: &str,
+        prev_hw_signature: &[u8],
     ) -> [u8; 32] {
         let mut hasher = Sha256::new();
         hasher.update(super::types::HW_COSIGN_DST);
@@ -475,18 +476,22 @@ impl Packet {
         hasher.update(tpm_clock_ms.to_be_bytes());
         hasher.update(monotonic_counter.to_be_bytes());
         hasher.update(device_id.as_bytes());
+        hasher.update(prev_hw_signature);
         hasher.finalize().into()
     }
 
-    /// Add an entangled hardware co-signature from a TPM/Secure Enclave.
+    /// Add a self-entangled hardware co-signature from a TPM/Secure Enclave.
     ///
     /// Must be called AFTER `sign()`. The hardware signature covers:
-    /// `SHA-256(DST || H(doc) || S_sw || tpm_clock || counter || device_id)`
+    /// `SHA-256(DST || H(doc) || S_sw || clock || counter || device_id || S_hw(N-1))`
     ///
-    /// This creates a 4-way binding: document + evidence + time + device.
+    /// This creates a 5-way binding: document + evidence + time + device + chain.
+    /// Each co-signature depends on the previous one, forming a hardware-signed
+    /// causal chain that cannot be forged without the full history.
     pub fn cosign_hardware(
         &mut self,
         tpm_provider: &dyn tpm::Provider,
+        prev_cosignature: Option<&super::types::HardwareCosignature>,
     ) -> crate::error::Result<()> {
         let sw_sig = self
             .packet_signature
@@ -498,14 +503,15 @@ impl Packet {
             .clock_info()
             .map_err(|e| Error::crypto(format!("TPM clock: {e}")))?;
 
-        let caps = tpm_provider.capabilities();
-        let counter = if caps.monotonic_counter {
-            // The sign() call on the provider implicitly increments the counter
-            // on Secure Enclave; for software providers we use the clock as proxy
-            clock_info.clock
-        } else {
-            clock_info.clock
-        };
+        let _caps = tpm_provider.capabilities();
+        let counter = clock_info.clock;
+
+        let prev_sig = prev_cosignature
+            .map(|c| c.signature.as_slice())
+            .unwrap_or(&[]);
+        let chain_index = prev_cosignature
+            .map(|c| c.chain_index + 1)
+            .unwrap_or(0);
 
         let entangled_hash = Self::compute_hw_cosign_hash(
             doc_hash,
@@ -513,6 +519,7 @@ impl Packet {
             clock_info.clock,
             counter,
             &tpm_provider.device_id(),
+            prev_sig,
         );
 
         let signature = tpm_provider
@@ -532,14 +539,23 @@ impl Packet {
                 "software".to_string()
             },
             algorithm: format!("{:?}", tpm_provider.algorithm()),
+            salt_commitment: None,
+            prev_hw_signature: Some(prev_sig.to_vec()),
+            chain_index,
         });
 
         Ok(())
     }
 
-    /// Verify the hardware co-signature against the packet's software signature
-    /// and document hash.
-    pub fn verify_hardware_cosignature(&self) -> crate::error::Result<()> {
+    /// Verify the hardware co-signature against the packet's software signature,
+    /// document hash, and chain linkage.
+    ///
+    /// `prev_cosignature`: the previous co-signature in the chain for self-entanglement
+    /// verification, or `None` for the genesis co-signature (chain_index must be 0).
+    pub fn verify_hardware_cosignature(
+        &self,
+        prev_cosignature: Option<&super::types::HardwareCosignature>,
+    ) -> crate::error::Result<()> {
         let cosig = self
             .hardware_cosignature
             .as_ref()
@@ -549,6 +565,34 @@ impl Packet {
             .packet_signature
             .ok_or_else(|| Error::signature("no software signature for co-sign verification"))?;
 
+        // Verify chain linkage
+        match (prev_cosignature, cosig.chain_index) {
+            (None, 0) => {} // Genesis: no previous required
+            (Some(prev), idx) if idx > 0 => {
+                let stored_prev = cosig.prev_hw_signature.as_deref().unwrap_or(&[]);
+                if stored_prev != prev.signature.as_slice() {
+                    return Err(Error::signature(
+                        "hardware co-signature chain broken: prev_hw_signature mismatch",
+                    ));
+                }
+            }
+            (None, idx) if idx > 0 => {
+                return Err(Error::signature(format!(
+                    "hardware co-signature chain_index is {idx} but no previous co-signature provided"
+                )));
+            }
+            (Some(_), 0) => {
+                return Err(Error::signature(
+                    "hardware co-signature chain_index is 0 but previous co-signature provided",
+                ));
+            }
+            _ => {}
+        }
+
+        let prev_sig = prev_cosignature
+            .map(|c| c.signature.as_slice())
+            .unwrap_or(&[]);
+
         let doc_hash = self.document.final_hash.as_bytes();
 
         let expected_hash = Self::compute_hw_cosign_hash(
@@ -557,11 +601,12 @@ impl Packet {
             cosig.tpm_clock_ms,
             cosig.monotonic_counter,
             &cosig.device_id,
+            prev_sig,
         );
 
         if expected_hash.ct_eq(&cosig.entangled_hash).unwrap_u8() != 1 {
             return Err(Error::signature(
-                "hardware co-signature entangled hash mismatch; document or signature was modified",
+                "hardware co-signature entangled hash mismatch; document, signature, or chain was modified",
             ));
         }
 

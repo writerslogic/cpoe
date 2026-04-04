@@ -54,8 +54,13 @@ fn default_version() -> i32 {
 /// - Device identity (device binding)
 ///
 /// The entangled hash is: SHA-256("cpop-hw-cosign-v1" || doc_hash || sw_signature
-///                                 || tpm_clock_ms || monotonic_counter || device_id)
+///                                 || tpm_clock_ms || monotonic_counter || device_id
+///                                 || prev_hw_signature)
 /// Signed by the hardware-bound key that never leaves the TPM/Secure Enclave.
+///
+/// Self-entanglement: each co-signature chains the previous one's signature bytes
+/// into its hash input. This creates a hardware-signed causal chain where forging
+/// checkpoint N requires valid hardware signatures for all preceding checkpoints.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HardwareCosignature {
     pub entangled_hash: Vec<u8>,
@@ -66,6 +71,16 @@ pub struct HardwareCosignature {
     pub monotonic_counter: u64,
     pub provider_type: String,
     pub algorithm: String,
+    /// SHA-256 commitment to the SE-derived threshold salt used for co-sign scheduling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub salt_commitment: Option<Vec<u8>>,
+    /// Previous hardware co-signature bytes for self-entanglement chain.
+    /// Genesis (first) co-signature uses an empty vec.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prev_hw_signature: Option<Vec<u8>>,
+    /// Sequence number in the hardware co-signature chain (0-indexed).
+    #[serde(default)]
+    pub chain_index: u64,
 }
 
 /// Domain separator for the hardware co-signature entangled hash.
