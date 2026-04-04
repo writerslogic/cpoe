@@ -37,6 +37,7 @@ use crate::codec::{self, CodecError};
 ///     ? 15 => uint,                 ; packet-sequence
 ///     ? 18 => physical-liveness,
 ///     ? 19 => baseline-verification,
+///     ? 20 => tstr,                  ; author-did
 /// }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +97,10 @@ pub struct EvidencePacketWire {
 
     #[serde(rename = "19", default, skip_serializing_if = "Option::is_none")]
     pub baseline_verification: Option<BaselineVerification>,
+
+    /// Author DID URI (e.g., "did:webvh:..." or "did:key:...").
+    #[serde(rename = "20", default, skip_serializing_if = "Option::is_none")]
+    pub author_did: Option<String>,
 }
 
 /// Minimum number of checkpoints per CDDL: `6 => [3* checkpoint]`.
@@ -248,6 +253,21 @@ impl EvidencePacketWire {
             if seq == 0 {
                 return Err(CodecError::Validation(
                     "packet_sequence is 1-based, got 0".into(),
+                ));
+            }
+        }
+
+        if let Some(ref did) = self.author_did {
+            if did.is_empty() || did.len() > MAX_STRING_LEN {
+                return Err(CodecError::Validation(format!(
+                    "author_did length {} out of range [1, {}]",
+                    did.len(),
+                    MAX_STRING_LEN
+                )));
+            }
+            if !did.starts_with("did:") {
+                return Err(CodecError::Validation(
+                    "author_did must start with 'did:'".into(),
                 ));
             }
         }

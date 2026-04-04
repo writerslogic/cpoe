@@ -436,6 +436,17 @@ impl Packet {
         Ok(())
     }
 
+    /// Sign the packet and attach an author DID.
+    pub fn sign_with_did(
+        &mut self,
+        signing_key: &SigningKey,
+        author_did: Option<&str>,
+    ) -> crate::error::Result<()> {
+        self.sign(signing_key)?;
+        self.author_did = author_did.map(String::from);
+        Ok(())
+    }
+
     /// Convenience: set nonce and sign in one call.
     pub fn sign_with_nonce(
         &mut self,

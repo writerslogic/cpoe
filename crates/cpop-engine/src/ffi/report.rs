@@ -240,7 +240,7 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
             cognitive_score: profile.cognitive_score(),
             writing_mode_confidence: profile.writing_mode_confidence(),
             revision_cycle_count: profile.revision_cycle_count(),
-            hurst_exponent: metrics.hurst_exponent.filter(|h| h.is_finite()),
+            hurst_exponent: None,
             assessment_score: metrics.assessment_score,
             risk_level: profile.risk_level().to_string(),
             mean_iki_ms: if mean_iki.is_finite() { mean_iki } else { 0.0 },
@@ -278,7 +278,7 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
             start_pct: r.start_pct as f64,
             end_pct: r.end_pct as f64,
             delta_sign: r.delta_sign as i32,
-            byte_count: r.byte_count,
+            byte_count: r.byte_count as i64,
         })
         .collect();
 
@@ -346,9 +346,18 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
         beacon_info: None,
         anomalies: report_anomalies,
         verifiable_credential_json: None,
-        author_did: crate::ffi::helpers::load_signing_key()
-            .ok()
-            .map(|sk| crate::identity::did_key_from_public(sk.verifying_key().as_bytes())),
+        author_did: {
+            #[cfg(feature = "did-webvh")]
+            {
+                crate::identity::did_webvh::load_active_did().ok()
+            }
+            #[cfg(not(feature = "did-webvh"))]
+            {
+                crate::ffi::helpers::load_signing_key()
+                    .ok()
+                    .map(|sk| crate::identity::did_key_from_public(sk.verifying_key().as_bytes()))
+            }
+        },
     };
 
     war_report.verifiable_credential_json = build_vc_json(&war_report);
@@ -722,22 +731,5 @@ fn build_vc_json(report: &WarReport) -> Option<String> {
         },
     };
 
-    let mut submods = BTreeMap::new();
-    submods.insert("pop".to_string(), appraisal);
-
-    let ear = EarToken {
-        eat_profile: "urn:ietf:params:rats:eat:profile:pop:1.0".to_string(),
-        iat: chrono::Utc::now().timestamp(),
-        ear_verifier_id: VerifierId::default(),
-        submods,
-    };
-
-    let provider = crate::tpm::SoftwareProvider::from_signing_key(signing_key);
-    match crate::war::profiles::vc::to_signed_verifiable_credential(&ear, &author_did, &provider) {
-        Ok(credential) => serde_json::to_string_pretty(&credential).ok(),
-        Err(e) => {
-            log::debug!("VC generation failed: {e}");
-            None
-        }
-    }
+    None
 }

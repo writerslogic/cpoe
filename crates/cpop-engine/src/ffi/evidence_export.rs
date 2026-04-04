@@ -318,6 +318,7 @@ pub fn ffi_export_evidence(path: String, tier: String, output: String) -> FfiRes
         packet_sequence: None,
         physical_liveness: None,
         baseline_verification: None,
+        author_did: None,
     };
 
     match wire_packet.encode_cbor() {

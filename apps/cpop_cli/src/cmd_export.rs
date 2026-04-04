@@ -832,6 +832,7 @@ fn build_wire_packet_from_events(
         packet_sequence: None,
         physical_liveness: None,
         baseline_verification: None,
+        author_did: None,
     })
 }
 

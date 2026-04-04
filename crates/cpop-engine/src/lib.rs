@@ -25,6 +25,8 @@ pub mod evidence;
 pub mod fingerprint;
 pub mod forensics;
 pub mod identity;
+#[cfg(feature = "did-webvh")]
+pub use identity::did_webvh::{CpopSigner, WebVHIdentity};
 pub mod ipc;
 pub mod jitter;
 pub mod keyhierarchy;

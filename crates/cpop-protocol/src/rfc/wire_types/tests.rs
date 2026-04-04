@@ -156,6 +156,7 @@ fn create_test_evidence_packet() -> EvidencePacketWire {
         packet_sequence: None,
         physical_liveness: None,
         baseline_verification: None,
+        author_did: None,
     }
 }
 

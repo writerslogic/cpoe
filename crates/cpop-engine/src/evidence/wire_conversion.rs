@@ -129,6 +129,7 @@ pub fn chain_to_wire_with_signatures(
         packet_sequence: None,
         physical_liveness: None,
         baseline_verification: None,
+        author_did: None,
     }
 }
 

@@ -72,6 +72,7 @@ impl Builder {
             verifier_nonce: None,
             packet_signature: None,
             signing_public_key: None,
+            author_did: None,
             biology_claim: None,
             physical_context: None,
             trust_tier: None,

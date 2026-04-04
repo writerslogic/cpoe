@@ -107,6 +107,8 @@ pub struct Packet {
         deserialize_with = "deserialize_optional_pubkey"
     )]
     pub signing_public_key: Option<[u8; 32]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author_did: Option<String>,
     /// RFC-compliant biology invariant claim (RFC Section: Biology Invariant).
     /// Contains behavioral biometric evidence with millibits scoring.
     #[serde(default, skip_serializing_if = "Option::is_none")]
