@@ -13,6 +13,7 @@ use std::sync::Arc;
 use didwebvh_rs::{
     DIDWebVHError, DIDWebVHState, Multibase, Signer, async_trait,
     create::{CreateDIDConfig, create_did},
+    log_entry::LogEntryMethods,
     parameters::Parameters,
 };
 use affinidi_data_integrity::DataIntegrityError;
@@ -24,6 +25,7 @@ use crate::error::Error;
 use crate::identity::did_document::did_key_from_public;
 
 const WEBVH_IDENTITY_DOMAIN: &str = "cpop-did-webvh-v1";
+const MAX_ADDRESS_LEN: usize = 253;
 
 const DID_CORE_CONTEXT: &str = "https://www.w3.org/ns/did/v1";
 const ED25519_CONTEXT: &str = "https://w3id.org/security/suites/ed25519-2020/v1";
@@ -90,6 +92,38 @@ impl Signer for CpopSigner {
 // Key derivation
 // ---------------------------------------------------------------------------
 
+/// Validate a did:webvh address (hostname or hostname:path).
+fn validate_address(address: &str) -> Result<(), Error> {
+    if address.is_empty() {
+        return Err(Error::identity("address must not be empty"));
+    }
+    if address.len() > MAX_ADDRESS_LEN {
+        return Err(Error::identity(format!(
+            "address too long: {} (max {})",
+            address.len(),
+            MAX_ADDRESS_LEN
+        )));
+    }
+    if !address.bytes().all(|b| b.is_ascii()) {
+        return Err(Error::identity("address must be ASCII"));
+    }
+    for b in address.bytes() {
+        match b {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'.' | b':' | b'-' | b'_' => {}
+            _ => {
+                return Err(Error::identity(format!(
+                    "address contains invalid character: '{}'",
+                    b as char
+                )));
+            }
+        }
+    }
+    if address.contains("..") || address.contains("//") {
+        return Err(Error::identity("address must not contain '..' or '//'"));
+    }
+    Ok(())
+}
+
 /// Derive a dedicated did:webvh signing key from the master key via HKDF.
 ///
 /// The address (e.g. "writersproof.com:authors:alice") is mixed into the
@@ -132,6 +166,7 @@ impl WebVHIdentity {
         address: impl Into<String>,
     ) -> Result<Self, Error> {
         let address = address.into();
+        validate_address(&address)?;
         let webvh_key = derive_webvh_signing_key(master_key, &address)?;
         let signer = CpopSigner::from_key(webvh_key);
         let pk_mb = signer.public_key_multibase();
@@ -226,7 +261,8 @@ impl WebVHIdentity {
     pub fn save(&self) -> Result<(), Error> {
         let data_dir =
             data_dir().ok_or_else(|| Error::identity("data directory not available"))?;
-        let path = data_dir.join("did_webvh_state.json");
+        std::fs::create_dir_all(&data_dir)
+            .map_err(|e| Error::identity(format!("create data directory: {e}")))?;
 
         let envelope = serde_json::json!({
             "did": self.did,
@@ -235,15 +271,25 @@ impl WebVHIdentity {
         let state_json = serde_json::to_string(&envelope)
             .map_err(|e| Error::identity(format!("serialize webvh metadata: {e}")))?;
 
+        // Atomic write: temp file with restricted perms, then rename
         let meta_path = data_dir.join("did_webvh_meta.json");
-        std::fs::write(&meta_path, state_json.as_bytes())
+        let meta_tmp = data_dir.join("did_webvh_meta.json.tmp");
+        std::fs::write(&meta_tmp, state_json.as_bytes())
             .map_err(|e| Error::identity(format!("write webvh metadata: {e}")))?;
-        let _ = crate::crypto::restrict_permissions(&meta_path, 0o600);
+        if let Err(e) = crate::crypto::restrict_permissions(&meta_tmp, 0o600) {
+            log::warn!("could not restrict did_webvh_meta.json.tmp permissions: {e}");
+        }
+        std::fs::rename(&meta_tmp, &meta_path)
+            .map_err(|e| Error::identity(format!("rename webvh metadata: {e}")))?;
 
-        self.state
-            .save_state(path.to_str().unwrap_or_default())
-            .map_err(map_webvh_err)?;
-        let _ = crate::crypto::restrict_permissions(&path, 0o600);
+        let path = data_dir.join("did_webvh_state.json");
+        let path_str = path
+            .to_str()
+            .ok_or_else(|| Error::identity("non-UTF-8 data directory path"))?;
+        self.state.save_state(path_str).map_err(map_webvh_err)?;
+        if let Err(e) = crate::crypto::restrict_permissions(&path, 0o600) {
+            log::warn!("could not restrict did_webvh_state.json permissions: {e}");
+        }
 
         Ok(())
     }
@@ -271,8 +317,10 @@ impl WebVHIdentity {
             .to_string();
 
         let state_path = data_dir.join("did_webvh_state.json");
-        let state = DIDWebVHState::load_state(state_path.to_str().unwrap_or_default())
-            .map_err(map_webvh_err)?;
+        let path_str = state_path
+            .to_str()
+            .ok_or_else(|| Error::identity("non-UTF-8 data directory path"))?;
+        let state = DIDWebVHState::load_state(path_str).map_err(map_webvh_err)?;
 
         Ok(Self { state, address, did })
     }
@@ -292,6 +340,79 @@ pub fn load_active_did() -> Result<String, Error> {
     let sk = load_signing_key()
         .map_err(|e| Error::identity(format!("load signing key: {e}")))?;
     Ok(did_key_from_public(sk.verifying_key().as_bytes()))
+}
+
+// ---------------------------------------------------------------------------
+// Verification (resolve + key match)
+// ---------------------------------------------------------------------------
+
+/// Resolve a did:webvh DID and verify the signing public key matches.
+///
+/// Fetches the DID document via HTTP, validates the log chain, and checks
+/// that `expected_pubkey` appears as a verification method in the document.
+/// Optionally resolves at a specific `version_time` to verify historical keys.
+pub async fn resolve_and_verify_key(
+    did: &str,
+    expected_pubkey: &[u8; 32],
+    version_time: Option<chrono::DateTime<chrono::FixedOffset>>,
+) -> Result<bool, Error> {
+    if !did.starts_with("did:webvh:") {
+        return Err(Error::identity(format!(
+            "not a did:webvh identifier: {did}"
+        )));
+    }
+
+    let resolve_did = match version_time {
+        Some(ts) => format!("{}?versionTime={}", did, ts.to_rfc3339()),
+        None => did.to_string(),
+    };
+
+    let mut state = DIDWebVHState::default();
+    let (log_entry, _metadata) = state
+        .resolve(
+            &resolve_did,
+            didwebvh_rs::resolve::ResolveOptions::default(),
+        )
+        .await
+        .map_err(|e| Error::identity(format!("did:webvh resolution failed: {e}")))?;
+
+    let doc = log_entry
+        .get_did_document()
+        .map_err(|e| Error::identity(format!("failed to get DID document: {e}")))?;
+
+    let expected_multibase = encode_multibase_ed25519(expected_pubkey);
+
+    let methods = match doc["verificationMethod"].as_array() {
+        Some(arr) => arr,
+        None => return Ok(false),
+    };
+
+    for method in methods {
+        if let Some(key_mb) = method["publicKeyMultibase"].as_str() {
+            if key_mb == expected_multibase {
+                return Ok(true);
+            }
+        }
+    }
+
+    Ok(false)
+}
+
+/// Verify that an evidence packet's author_did resolves to its signing key.
+///
+/// Converts `packet_created_ms` to a `DateTime` for `versionTime` resolution
+/// so the DID document is resolved at the point in time the packet was created.
+pub async fn verify_packet_author_did(
+    author_did: &str,
+    signing_public_key: &[u8; 32],
+    packet_created_ms: u64,
+) -> Result<bool, Error> {
+    let secs = (packet_created_ms / 1000) as i64;
+    let nanos = ((packet_created_ms % 1000) * 1_000_000) as u32;
+    let version_time =
+        chrono::DateTime::from_timestamp(secs, nanos).map(|dt| dt.fixed_offset());
+
+    resolve_and_verify_key(author_did, signing_public_key, version_time).await
 }
 
 // ---------------------------------------------------------------------------
@@ -621,5 +742,70 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Empty address must be rejected.
+    #[test]
+    fn validate_address_empty() {
+        assert!(validate_address("").is_err());
+    }
+
+    /// Address exceeding 253 chars must be rejected.
+    #[test]
+    fn validate_address_too_long() {
+        let long = "a".repeat(254);
+        assert!(validate_address(&long).is_err());
+    }
+
+    /// Path traversal must be rejected.
+    #[test]
+    fn validate_address_path_traversal() {
+        assert!(validate_address("evil.com:..:..:admin").is_err());
+    }
+
+    /// Query/fragment characters must be rejected.
+    #[test]
+    fn validate_address_special_chars() {
+        assert!(validate_address("evil.com?q=1").is_err());
+        assert!(validate_address("evil.com#frag").is_err());
+        assert!(validate_address("user@evil.com").is_err());
+        assert!(validate_address("evil.com/path").is_err());
+    }
+
+    /// Valid hostname address must be accepted.
+    #[test]
+    fn validate_address_valid() {
+        assert!(validate_address("example.com").is_ok());
+        assert!(validate_address("writersproof.com:authors:alice").is_ok());
+        assert!(validate_address("sub.example.com").is_ok());
+    }
+
+    /// WebVHIdentity::create rejects invalid addresses.
+    #[tokio::test]
+    async fn create_rejects_empty_address() {
+        let master = test_signing_key();
+        let result = WebVHIdentity::create(&master, "").await;
+        assert!(result.is_err());
+    }
+
+    /// Malformed did:webvh string should produce a resolution error.
+    #[tokio::test]
+    async fn resolve_and_verify_key_invalid_did() {
+        let key = [0u8; 32];
+        let result = resolve_and_verify_key("did:webvh:bad", &key, None).await;
+        assert!(result.is_err(), "malformed DID should produce an error");
+    }
+
+    /// Non-did:webvh DIDs should be rejected with a clear error.
+    #[tokio::test]
+    async fn verify_packet_author_did_rejects_non_webvh() {
+        let key = [0u8; 32];
+        let result = verify_packet_author_did("did:key:z6Mk...", &key, 1700000000000).await;
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("not a did:webvh"),
+            "expected 'not a did:webvh' in error, got: {err_msg}"
+        );
     }
 }

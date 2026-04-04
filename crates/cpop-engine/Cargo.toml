@@ -105,7 +105,7 @@ typeshare = "1.0.5"
 cpop-protocol = { path = "../cpop-protocol" }
 
 # did:webvh identity (requires Rust >= 1.90.0 when enabled)
-didwebvh-rs = { version = "0.4", default-features = false, optional = true }
+didwebvh-rs = { version = "0.4", default-features = false, features = ["network"], optional = true }
 affinidi-data-integrity = { version = "0.5", optional = true }
 affinidi-secrets-resolver = { version = "0.5", optional = true }
 

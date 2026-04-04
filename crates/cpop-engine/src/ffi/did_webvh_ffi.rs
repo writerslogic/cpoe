@@ -33,13 +33,26 @@ pub fn ffi_create_webvh_identity(address: String) -> FfiResult {
         }
     };
 
-    let identity = match rt.block_on(WebVHIdentity::create(&signing_key, &address)) {
-        Ok(id) => id,
-        Err(e) => {
+    let identity = match rt.block_on(async {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            WebVHIdentity::create(&signing_key, &address),
+        )
+        .await
+    }) {
+        Ok(Ok(id)) => id,
+        Ok(Err(e)) => {
             return FfiResult {
                 success: false,
                 message: None,
                 error_message: Some(format!("Failed to create did:webvh identity: {e}")),
+            };
+        }
+        Err(_) => {
+            return FfiResult {
+                success: false,
+                message: None,
+                error_message: Some("did:webvh identity creation timed out".to_string()),
             };
         }
     };
@@ -138,12 +151,28 @@ pub fn ffi_deactivate_webvh_identity() -> FfiResult {
         }
     };
 
-    if let Err(e) = rt.block_on(identity.deactivate(&signing_key)) {
-        return FfiResult {
-            success: false,
-            message: None,
-            error_message: Some(format!("Failed to deactivate did:webvh identity: {e}")),
-        };
+    match rt.block_on(async {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            identity.deactivate(&signing_key),
+        )
+        .await
+    }) {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            return FfiResult {
+                success: false,
+                message: None,
+                error_message: Some(format!("Failed to deactivate did:webvh identity: {e}")),
+            };
+        }
+        Err(_) => {
+            return FfiResult {
+                success: false,
+                message: None,
+                error_message: Some("did:webvh deactivation timed out".to_string()),
+            };
+        }
     }
 
     if let Err(e) = identity.save() {
