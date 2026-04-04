@@ -1,0 +1,19 @@
+Third-Party Licenses
+====================
+
+WritersProof uses the following open-source libraries:
+
+{{#each overview}}
+{{name}} v{{version}}
+License: {{#each licenses}}{{name}}{{#unless @last}}, {{/unless}}{{/each}}
+{{#if authors}}Authors: {{authors}}{{/if}}
+{{#if repository}}Repository: {{repository}}{{/if}}
+
+{{#each licenses}}
+--- {{name}} ---
+{{text}}
+{{/each}}
+
+---
+
+{{/each}}

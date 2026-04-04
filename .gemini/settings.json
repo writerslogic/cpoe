@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "./"
+      ]
+    },
+    "cargo-mcp": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@gemini-mcp/cargo-server"
+      ]
+    }
+  }
+}
