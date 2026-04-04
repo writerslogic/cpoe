@@ -59,8 +59,9 @@ impl SecureStore {
                 vdf_iterations, forensic_score, is_paste, hardware_counter, input_method,
                 lamport_signature, lamport_pubkey_fingerprint, challenge_nonce,
                 hw_cosign_signature, hw_cosign_pubkey, hw_cosign_salt_commitment,
-                hw_cosign_chain_index, hw_cosign_entangled_hash
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                hw_cosign_chain_index, hw_cosign_entangled_hash,
+                hw_cosign_entropy_digest, hw_cosign_entropy_bytes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params![
                 &e.device_id[..],
                 &e.machine_id,
@@ -99,7 +100,9 @@ impl SecureStore {
                 e.hw_cosign_pubkey.as_deref(),
                 e.hw_cosign_salt_commitment.as_deref(),
                 e.hw_cosign_chain_index.map(|c| c as i64),
-                e.hw_cosign_entangled_hash.as_deref()
+                e.hw_cosign_entangled_hash.as_deref(),
+                e.hw_cosign_entropy_digest.as_deref(),
+                e.hw_cosign_entropy_bytes.map(|v| v as i64)
             ],
         )?;
 
@@ -147,7 +150,8 @@ impl SecureStore {
                 forensic_score, is_paste, hardware_counter, input_method, \
                 lamport_signature, lamport_pubkey_fingerprint, challenge_nonce, \
                 hw_cosign_signature, hw_cosign_pubkey, hw_cosign_salt_commitment, \
-                hw_cosign_chain_index, hw_cosign_entangled_hash \
+                hw_cosign_chain_index, hw_cosign_entangled_hash, \
+                hw_cosign_entropy_digest, hw_cosign_entropy_bytes \
                 FROM secure_events WHERE file_path = ?1 ORDER BY id ASC";
         let query = match limit {
             Some(_) => format!("{base_query} LIMIT ?2"),
@@ -257,6 +261,10 @@ impl SecureStore {
                 .get::<_, Option<i64>>(25)?
                 .map(|v| v as u64),
             hw_cosign_entangled_hash: row.get(26)?,
+            hw_cosign_entropy_digest: row.get(27)?,
+            hw_cosign_entropy_bytes: row
+                .get::<_, Option<i64>>(28)?
+                .map(|v| v as u64),
         })
     }
 
@@ -302,7 +310,8 @@ impl SecureStore {
                 forensic_score, is_paste, hardware_counter, input_method, \
                 lamport_signature, lamport_pubkey_fingerprint, challenge_nonce, \
                 hw_cosign_signature, hw_cosign_pubkey, hw_cosign_salt_commitment, \
-                hw_cosign_chain_index, hw_cosign_entangled_hash \
+                hw_cosign_chain_index, hw_cosign_entangled_hash, \
+                hw_cosign_entropy_digest, hw_cosign_entropy_bytes \
                 FROM secure_events ORDER BY id ASC",
         )?;
         let rows = stmt.query_map([], Self::row_to_event)?;
@@ -425,6 +434,7 @@ impl SecureStore {
     }
 
     /// Update the most recent event for a file path with hardware co-signature data.
+    #[allow(clippy::too_many_arguments)]
     pub fn update_hw_cosign(
         &self,
         file_path: &str,
@@ -433,6 +443,8 @@ impl SecureStore {
         salt_commitment: &[u8],
         chain_index: u64,
         entangled_hash: &[u8],
+        entropy_digest: Option<&[u8]>,
+        entropy_bytes: Option<u64>,
     ) -> anyhow::Result<()> {
         self.conn.execute(
             "UPDATE secure_events SET
@@ -440,10 +452,12 @@ impl SecureStore {
                 hw_cosign_pubkey = ?2,
                 hw_cosign_salt_commitment = ?3,
                 hw_cosign_chain_index = ?4,
-                hw_cosign_entangled_hash = ?5
+                hw_cosign_entangled_hash = ?5,
+                hw_cosign_entropy_digest = ?6,
+                hw_cosign_entropy_bytes = ?7
              WHERE id = (
                 SELECT id FROM secure_events
-                WHERE file_path = ?6
+                WHERE file_path = ?8
                 ORDER BY id DESC LIMIT 1
              )",
             rusqlite::params![
@@ -452,6 +466,8 @@ impl SecureStore {
                 salt_commitment,
                 chain_index as i64,
                 entangled_hash,
+                entropy_digest,
+                entropy_bytes.map(|v| v as i64),
                 file_path,
             ],
         )?;

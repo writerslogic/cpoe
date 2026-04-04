@@ -40,6 +40,10 @@ pub struct SecureEvent {
     pub hw_cosign_chain_index: Option<u64>,
     /// Hardware co-signature: entangled hash bytes for verification.
     pub hw_cosign_entangled_hash: Option<Vec<u8>>,
+    /// Hardware co-signature: SHA-256 digest of accumulated behavioral entropy.
+    pub hw_cosign_entropy_digest: Option<Vec<u8>>,
+    /// Hardware co-signature: byte count of accumulated entropy at co-sign time.
+    pub hw_cosign_entropy_bytes: Option<u64>,
 }
 
 fn now_ns() -> i64 {
@@ -91,6 +95,8 @@ impl SecureEvent {
             hw_cosign_salt_commitment: None,
             hw_cosign_chain_index: None,
             hw_cosign_entangled_hash: None,
+            hw_cosign_entropy_digest: None,
+            hw_cosign_entropy_bytes: None,
         }
     }
 }

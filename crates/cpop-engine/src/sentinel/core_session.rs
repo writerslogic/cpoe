@@ -263,6 +263,7 @@ impl Sentinel {
                                 session.last_hw_cosign_signature = Some(sig.clone());
                                 session.hw_cosign_chain_index += 1;
                                 let salt_commit = sched.salt_commitment().to_vec();
+                                let (ent_digest, ent_bytes) = sched.flush_entropy();
                                 let _ = store.update_hw_cosign(
                                     path,
                                     &sig,
@@ -270,6 +271,8 @@ impl Sentinel {
                                     &salt_commit,
                                     chain_idx,
                                     &entangled_hash,
+                                    Some(&ent_digest),
+                                    Some(ent_bytes as u64),
                                 );
                             }
                             sched.reset_after_cosign();

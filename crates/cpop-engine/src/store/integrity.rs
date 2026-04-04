@@ -159,7 +159,9 @@ impl SecureStore {
                  ALTER TABLE secure_events ADD COLUMN hw_cosign_pubkey BLOB;
                  ALTER TABLE secure_events ADD COLUMN hw_cosign_salt_commitment BLOB;
                  ALTER TABLE secure_events ADD COLUMN hw_cosign_chain_index INTEGER;
-                 ALTER TABLE secure_events ADD COLUMN hw_cosign_entangled_hash BLOB;",
+                 ALTER TABLE secure_events ADD COLUMN hw_cosign_entangled_hash BLOB;
+                 ALTER TABLE secure_events ADD COLUMN hw_cosign_entropy_digest BLOB;
+                 ALTER TABLE secure_events ADD COLUMN hw_cosign_entropy_bytes INTEGER;",
             )?;
         }
 

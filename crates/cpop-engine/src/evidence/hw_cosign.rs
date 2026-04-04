@@ -150,6 +150,25 @@ impl HwCosignScheduler {
         out
     }
 
+    /// Return the SHA-256 digest of accumulated entropy since the last co-sign,
+    /// plus the raw byte count. This proves the entropy that determined the
+    /// threshold crossing was genuine and allows auditors to verify the
+    /// threshold computation was deterministic from the recorded data.
+    pub fn entropy_digest(&self) -> ([u8; 32], usize) {
+        let hash = Sha256::digest(&self.accumulated_entropy);
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&hash);
+        (out, self.accumulated_entropy.len())
+    }
+
+    /// Drain accumulated entropy after co-sign, returning the digest and count
+    /// for persistence. The raw entropy is cleared to bound memory usage.
+    pub fn flush_entropy(&mut self) -> ([u8; 32], usize) {
+        let result = self.entropy_digest();
+        self.accumulated_entropy.clear();
+        result
+    }
+
     /// Number of checkpoints recorded since the last co-signature.
     pub fn checkpoints_since_cosign(&self) -> u32 {
         self.checkpoints_since_cosign

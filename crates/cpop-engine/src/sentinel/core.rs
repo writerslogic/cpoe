@@ -1080,8 +1080,8 @@ impl Sentinel {
                                                 session.last_hw_cosign_signature = Some(sig.clone());
                                                 session.hw_cosign_chain_index += 1;
                                                 let salt_commit = sched.salt_commitment().to_vec();
+                                                let (ent_digest, ent_bytes) = sched.flush_entropy();
 
-                                                // Persist to the most recent event in the store
                                                 if let Some(ref sk) = *signing_key_for_cp.read_recover() {
                                                     let db = writersproof_dir.join("events.db");
                                                     if let Ok(store) = crate::store::open_store_with_signing_key(sk, &db) {
@@ -1092,6 +1092,8 @@ impl Sentinel {
                                                             &salt_commit,
                                                             chain_idx,
                                                             &entangled_hash,
+                                                            Some(&ent_digest),
+                                                            Some(ent_bytes as u64),
                                                         );
                                                     }
                                                 }
