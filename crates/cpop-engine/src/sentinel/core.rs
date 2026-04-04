@@ -181,6 +181,8 @@ pub struct Sentinel {
     /// Set to `true` when `stop()` begins; checked by checkpoint tasks to bail
     /// before opening SQLite, preventing a `findReusableFd` mutex deadlock.
     stopping: Arc<AtomicBool>,
+    /// Hardware TPM/Secure Enclave provider for co-sign scheduling.
+    pub(crate) tpm_provider: Option<Arc<dyn crate::tpm::Provider>>,
 }
 
 impl Sentinel {
@@ -197,6 +199,20 @@ impl Sentinel {
         rand::rng().fill_bytes(&mut mouse_stego_seed);
 
         let snapshots_default = config.snapshots_enabled;
+
+        let tpm_provider: Option<Arc<dyn crate::tpm::Provider>> = {
+            #[cfg(target_os = "macos")]
+            {
+                crate::tpm::secure_enclave::try_init()
+                    .map(|p| Arc::new(p) as Arc<dyn crate::tpm::Provider>)
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                Some(Arc::new(crate::tpm::SoftwareProvider::new())
+                    as Arc<dyn crate::tpm::Provider>)
+            }
+        };
+
         let sentinel = Self {
             config: Arc::new(config),
             snapshots_enabled: Arc::new(AtomicBool::new(snapshots_default)),
@@ -226,6 +242,7 @@ impl Sentinel {
             start_time: Arc::new(Mutex::new(None)),
             bridge_healthy: Arc::new(AtomicBool::new(true)),
             stopping: Arc::new(AtomicBool::new(false)),
+            tpm_provider,
         };
         mouse_stego_seed.zeroize();
         Ok(sentinel)
@@ -631,6 +648,8 @@ impl Sentinel {
             }
         }
 
+        let tpm_provider_for_loop = self.tpm_provider.clone();
+
         let tap_check_capture = Arc::clone(&self.keystroke_capture);
         let tap_check_active = Arc::clone(&self.keystroke_capture_active);
         let bridge_health_threads = Arc::clone(&self.bridge_threads);
@@ -761,6 +780,27 @@ impl Sentinel {
                                     super::trace!(
                                         "[KEYSTROKE] REJECTED conf={:.2}", validation.confidence
                                     );
+                                } else if let Some(ref tpm) = tpm_provider_for_loop {
+                                    // Lazily initialize scheduler on first accepted keystroke.
+                                    if session.hw_cosign_scheduler.is_none() {
+                                        match crate::evidence::hw_cosign::HwCosignScheduler::with_defaults(
+                                            tpm.as_ref(),
+                                            &session.session_id,
+                                        ) {
+                                            Ok(sched) => {
+                                                session.hw_cosign_scheduler = Some(sched);
+                                            }
+                                            Err(e) => {
+                                                log::trace!(
+                                                    "HW co-sign scheduler init failed: {e}"
+                                                );
+                                            }
+                                        }
+                                    }
+                                    if let Some(ref mut sched) = session.hw_cosign_scheduler {
+                                        let entropy = duration_since_last_ns.to_le_bytes();
+                                        sched.record_entropy(&entropy);
+                                    }
                                 }
                             } else {
                                 super::trace!(
@@ -1002,6 +1042,17 @@ impl Sentinel {
                                                 "Snapshot save failed for {}: {e}",
                                                 path
                                             );
+                                        }
+                                    }
+
+                                    // HW co-sign threshold check
+                                    if let Some(ref mut sched) = session.hw_cosign_scheduler {
+                                        if sched.record_checkpoint() {
+                                            log::trace!(
+                                                "HW co-sign triggered at checkpoint {}",
+                                                session.keystroke_count
+                                            );
+                                            sched.reset_after_cosign();
                                         }
                                     }
                                 }

@@ -8,7 +8,7 @@ mod verification;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]
-mod secure_enclave;
+pub(crate) mod secure_enclave;
 #[cfg(target_os = "windows")]
 mod windows;
 

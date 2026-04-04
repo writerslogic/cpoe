@@ -237,7 +237,7 @@ pub struct DetectedAiTool {
     pub detected_at: SystemTime,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct DocumentSession {
     pub path: String,
     pub session_id: String,
@@ -277,6 +277,45 @@ pub struct DocumentSession {
     pub last_checkpoint_keystrokes: u64,
     /// When this session last had focus (for idle auto-stop).
     pub last_focused_at: SystemTime,
+    /// HW co-sign scheduler; present when a TPM provider is available.
+    pub(crate) hw_cosign_scheduler: Option<crate::evidence::hw_cosign::HwCosignScheduler>,
+}
+
+impl Clone for DocumentSession {
+    fn clone(&self) -> Self {
+        Self {
+            path: self.path.clone(),
+            session_id: self.session_id.clone(),
+            shadow_id: self.shadow_id.clone(),
+            start_time: self.start_time,
+            last_focus_time: self.last_focus_time,
+            total_focus_ms: self.total_focus_ms,
+            focus_count: self.focus_count,
+            initial_hash: self.initial_hash.clone(),
+            current_hash: self.current_hash.clone(),
+            save_count: self.save_count,
+            change_count: self.change_count,
+            keystroke_count: self.keystroke_count,
+            app_bundle_id: self.app_bundle_id.clone(),
+            app_name: self.app_name.clone(),
+            window_title: self.window_title.clone(),
+            jitter_samples: self.jitter_samples.clone(),
+            focus_switches: self.focus_switches.clone(),
+            ai_tools_detected: self.ai_tools_detected.clone(),
+            capture_gaps: self.capture_gaps,
+            has_focus: self.has_focus,
+            focus_started: self.focus_started,
+            event_validation: self.event_validation.clone(),
+            cumulative_keystrokes_base: self.cumulative_keystrokes_base,
+            cumulative_focus_ms_base: self.cumulative_focus_ms_base,
+            session_number: self.session_number,
+            first_tracked_at: self.first_tracked_at,
+            last_checkpoint_keystrokes: self.last_checkpoint_keystrokes,
+            last_focused_at: self.last_focused_at,
+            // Scheduler contains zeroize-protected SE salt; not cloned.
+            hw_cosign_scheduler: None,
+        }
+    }
 }
 
 impl DocumentSession {
@@ -318,6 +357,7 @@ impl DocumentSession {
             first_tracked_at: None,
             last_checkpoint_keystrokes: 0,
             last_focused_at: now,
+            hw_cosign_scheduler: None,
         }
     }
 

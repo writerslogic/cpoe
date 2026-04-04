@@ -240,6 +240,15 @@ impl Sentinel {
                 let mut sessions = self.sessions.write_recover();
                 if let Some(session) = sessions.get_mut(path) {
                     session.last_checkpoint_keystrokes = session.keystroke_count;
+                    if let Some(ref mut sched) = session.hw_cosign_scheduler {
+                        if sched.record_checkpoint() {
+                            log::trace!(
+                                "HW co-sign triggered at checkpoint {}",
+                                session.keystroke_count
+                            );
+                            sched.reset_after_cosign();
+                        }
+                    }
                 }
                 true
             }
