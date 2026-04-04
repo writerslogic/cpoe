@@ -1051,7 +1051,14 @@ impl Sentinel {
                                             let src = std::path::Path::new(path);
                                             match std::fs::read(src) {
                                                 Ok(data) => sha2::Sha256::digest(&data).into(),
-                                                Err(_) => [0u8; 32],
+                                                Err(e) => {
+                                                    log::warn!(
+                                                        "Skipping HW co-sign: file read failed \
+                                                         for {}: {e}",
+                                                        path
+                                                    );
+                                                    continue;
+                                                }
                                             }
                                         };
                                         let store_and_path = signing_key_for_cp
@@ -1195,7 +1202,9 @@ impl Sentinel {
                     tokio::task::spawn_blocking(move || {
                         if let Ok(store) = crate::store::SecureStore::open(&db, hmac_vec) {
                             for stats in &stats_list {
-                                let _ = store.save_document_stats(stats);
+                                if let Err(e) = store.save_document_stats(stats) {
+                                    log::warn!("Failed to persist document stats: {e}");
+                                }
                             }
                         }
                     }),

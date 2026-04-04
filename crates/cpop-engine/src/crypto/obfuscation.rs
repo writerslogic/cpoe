@@ -30,7 +30,16 @@ impl ObfuscatedString {
     pub fn reveal(&self) -> Zeroizing<String> {
         let mut data = self.data.clone();
         Self::xor(&mut data, &self.nonce);
-        let s = String::from_utf8(std::mem::take(&mut data)).unwrap_or_default();
+        let s = match String::from_utf8(std::mem::take(&mut data)) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!(
+                    "ObfuscatedString reveal failed: UTF-8 decode error \
+                     (possible corruption): {e}"
+                );
+                String::new()
+            }
+        };
         data.zeroize();
         Zeroizing::new(s)
     }

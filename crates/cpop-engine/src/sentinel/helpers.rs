@@ -831,7 +831,7 @@ pub(crate) fn try_hw_cosign(
     let (ent_digest, ent_bytes) = sched.flush_entropy();
 
     if let Some((store, path)) = store {
-        let _ = store.update_hw_cosign(
+        if let Err(e) = store.update_hw_cosign(
             path,
             &sig,
             &tpm.public_key(),
@@ -840,7 +840,9 @@ pub(crate) fn try_hw_cosign(
             &entangled_hash,
             Some(&ent_digest),
             Some(ent_bytes as u64),
-        );
+        ) {
+            log::error!("HW co-sign persistence failed for {}: {e}", path);
+        }
     }
 
     session.last_hw_cosign_signature = Some(sig);

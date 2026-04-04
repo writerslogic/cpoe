@@ -60,7 +60,13 @@ pub struct LinuxTpmProvider {
 
 /// Initialize the Linux TPM provider, returning `None` if no TPM is available.
 pub fn try_init() -> Option<LinuxTpmProvider> {
-    let tcti = TctiNameConf::Device("/dev/tpmrm0".parse().unwrap_or_default());
+    let tcti = TctiNameConf::Device(match "/dev/tpmrm0".parse() {
+        Ok(p) => p,
+        Err(e) => {
+            log::warn!("TPM device path parse failed, using default: {e}");
+            DeviceConfig::default()
+        }
+    });
     let context = Context::new(tcti)
         .or_else(|_| Context::new(TctiNameConf::Device(DeviceConfig::default())))
         .ok()?;
