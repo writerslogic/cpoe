@@ -1072,6 +1072,7 @@ impl Sentinel {
                                             session,
                                             tpm.as_ref(),
                                             &content_hash,
+                                            None,
                                             store_and_path.as_ref().map(|s| (s, path.as_str())),
                                         );
                                     }

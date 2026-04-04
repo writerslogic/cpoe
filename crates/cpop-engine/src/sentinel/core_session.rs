@@ -245,6 +245,7 @@ impl Sentinel {
                             session,
                             tpm.as_ref(),
                             &event.content_hash,
+                            Some(&event.event_hash),
                             Some((&store, path)),
                         );
                     }

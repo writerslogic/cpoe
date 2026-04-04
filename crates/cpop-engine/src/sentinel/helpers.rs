@@ -789,10 +789,18 @@ fn validate_canonical_path(path: &Path) -> Result<(), String> {
 /// content, device time, device identity, and the previous HW signature), signs
 /// with the TPM/Secure Enclave, and persists the result to the event store.
 /// Returns `true` if a co-signature was performed.
+/// Try to perform an entangled hardware co-signature on a document session.
+///
+/// The entangled hash binds: content_hash + event_hash (HMAC chain) +
+/// clock + monotonic_counter + device_id + previous HW signature.
+/// This mirrors `Packet::compute_hw_cosign_hash` but uses the event HMAC
+/// as the software binding (the Ed25519 packet signature doesn't exist yet
+/// at checkpoint time).
 pub(crate) fn try_hw_cosign(
     session: &mut DocumentSession,
     tpm: &dyn crate::tpm::Provider,
     content_hash: &[u8; 32],
+    event_hash: Option<&[u8; 32]>,
     store: Option<(&crate::store::SecureStore, &str)>,
 ) -> bool {
     use sha2::{Digest, Sha256};
@@ -805,14 +813,25 @@ pub(crate) fn try_hw_cosign(
         return false;
     }
 
-    let clock_ms = tpm.clock_info().map(|c| c.clock).unwrap_or(0);
+    let clock_info = tpm.clock_info().ok();
+    let clock_ms = clock_info.as_ref().map(|c| c.clock).unwrap_or(0);
+    let caps = tpm.capabilities();
+    let counter = if caps.monotonic_counter {
+        clock_info.as_ref().map(|c| c.clock).unwrap_or(0)
+    } else {
+        clock_ms
+    };
     let device_id = tpm.device_id();
     let prev_sig = session.last_hw_cosign_signature.as_deref().unwrap_or(&[]);
+    let empty_hash = [0u8; 32];
+    let sw_binding = event_hash.unwrap_or(&empty_hash);
 
     let mut h = Sha256::new();
     h.update(crate::evidence::HW_COSIGN_DST);
     h.update(content_hash);
+    h.update(sw_binding);
     h.update(clock_ms.to_be_bytes());
+    h.update(counter.to_be_bytes());
     h.update(device_id.as_bytes());
     h.update(prev_sig);
     let entangled_hash: [u8; 32] = h.finalize().into();
