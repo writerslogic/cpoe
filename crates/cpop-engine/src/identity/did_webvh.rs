@@ -216,6 +216,41 @@ impl WebVHIdentity {
         &self.state
     }
 
+    /// Returns the address this identity is bound to.
+    pub fn address(&self) -> &str {
+        &self.address
+    }
+
+    /// Returns whether the identity has been deactivated.
+    pub fn is_deactivated(&self) -> bool {
+        self.state.deactivated()
+    }
+
+    /// Returns the number of log entries.
+    pub fn log_entry_count(&self) -> usize {
+        self.state.log_entries().len()
+    }
+
+    /// Returns the first log entry's version_time as an ISO 8601 string,
+    /// or `None` if there are no log entries.
+    pub fn created_at(&self) -> Option<String> {
+        let ts = self.state.meta_first_ts();
+        if ts.is_empty() { None } else { Some(ts.to_string()) }
+    }
+
+    /// Returns the last log entry's version_time as an ISO 8601 string,
+    /// or `None` if there are no log entries.
+    pub fn updated_at(&self) -> Option<String> {
+        let ts = self.state.meta_last_ts();
+        if ts.is_empty() { None } else { Some(ts.to_string()) }
+    }
+
+    /// Returns the hex-encoded public key of the derived webvh signing key.
+    pub fn public_key_hex(&self, master_key: &SigningKey) -> Result<String, Error> {
+        let derived = derive_webvh_signing_key(master_key, &self.address)?;
+        Ok(hex::encode(derived.verifying_key().as_bytes()))
+    }
+
     /// Update the DID document.
     pub async fn update_document(
         &mut self,
@@ -807,5 +842,85 @@ mod tests {
             err_msg.contains("not a did:webvh"),
             "expected 'not a did:webvh' in error, got: {err_msg}"
         );
+    }
+
+    /// address() must return the address the identity was constructed with.
+    #[test]
+    fn accessor_address() {
+        let identity = WebVHIdentity {
+            state: DIDWebVHState::default(),
+            address: "example.com".to_string(),
+            did: "did:webvh:abc123:example.com".to_string(),
+        };
+        assert_eq!(identity.address(), "example.com");
+    }
+
+    /// did() must return a non-empty did:webvh string.
+    #[test]
+    fn accessor_did_not_empty() {
+        let identity = WebVHIdentity {
+            state: DIDWebVHState::default(),
+            address: "example.com".to_string(),
+            did: "did:webvh:abc123:example.com".to_string(),
+        };
+        assert!(!identity.did().is_empty());
+        assert!(identity.did().starts_with("did:webvh:"));
+    }
+
+    /// is_deactivated() must return false for a default state.
+    #[test]
+    fn accessor_is_deactivated_default() {
+        let identity = WebVHIdentity {
+            state: DIDWebVHState::default(),
+            address: "example.com".to_string(),
+            did: "did:webvh:abc123:example.com".to_string(),
+        };
+        assert!(!identity.is_deactivated());
+    }
+
+    /// log_entry_count() must return 0 for a default state.
+    #[test]
+    fn accessor_log_entry_count_empty() {
+        let identity = WebVHIdentity {
+            state: DIDWebVHState::default(),
+            address: "example.com".to_string(),
+            did: "did:webvh:abc123:example.com".to_string(),
+        };
+        assert_eq!(identity.log_entry_count(), 0);
+    }
+
+    /// created_at() must return None for a default state with no log entries.
+    #[test]
+    fn accessor_created_at_none_when_empty() {
+        let identity = WebVHIdentity {
+            state: DIDWebVHState::default(),
+            address: "example.com".to_string(),
+            did: "did:webvh:abc123:example.com".to_string(),
+        };
+        assert!(identity.created_at().is_none());
+    }
+
+    /// updated_at() must return None for a default state with no log entries.
+    #[test]
+    fn accessor_updated_at_none_when_empty() {
+        let identity = WebVHIdentity {
+            state: DIDWebVHState::default(),
+            address: "example.com".to_string(),
+            did: "did:webvh:abc123:example.com".to_string(),
+        };
+        assert!(identity.updated_at().is_none());
+    }
+
+    /// public_key_hex() must return a 64-char hex string (32 bytes).
+    #[test]
+    fn accessor_public_key_hex() {
+        let master = test_signing_key();
+        let identity = WebVHIdentity {
+            state: DIDWebVHState::default(),
+            address: "example.com".to_string(),
+            did: "did:webvh:abc123:example.com".to_string(),
+        };
+        let hex_key = identity.public_key_hex(&master).unwrap();
+        assert_eq!(hex_key.len(), 64);
     }
 }
