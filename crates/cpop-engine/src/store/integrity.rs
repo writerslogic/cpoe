@@ -146,6 +146,23 @@ impl SecureStore {
                 .execute_batch("ALTER TABLE secure_events ADD COLUMN challenge_nonce TEXT;")?;
         }
 
+        let has_hw_cosign: bool = {
+            let mut stmt = self.conn.prepare("PRAGMA table_info(secure_events)")?;
+            let found = stmt
+                .query_map([], |row| row.get::<_, String>(1))?
+                .any(|name| matches!(name.as_deref(), Ok("hw_cosign_signature")));
+            found
+        };
+        if !has_hw_cosign {
+            self.conn.execute_batch(
+                "ALTER TABLE secure_events ADD COLUMN hw_cosign_signature BLOB;
+                 ALTER TABLE secure_events ADD COLUMN hw_cosign_pubkey BLOB;
+                 ALTER TABLE secure_events ADD COLUMN hw_cosign_salt_commitment BLOB;
+                 ALTER TABLE secure_events ADD COLUMN hw_cosign_chain_index INTEGER;
+                 ALTER TABLE secure_events ADD COLUMN hw_cosign_entangled_hash BLOB;",
+            )?;
+        }
+
         Ok(())
     }
 

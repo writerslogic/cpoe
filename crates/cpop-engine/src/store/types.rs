@@ -30,6 +30,16 @@ pub struct SecureEvent {
     pub lamport_pubkey_fingerprint: Option<Vec<u8>>,
     /// Timeline challenge nonce from WritersProof CA (30s TTL).
     pub challenge_nonce: Option<String>,
+    /// Hardware co-signature: entangled hash signed by TPM/Secure Enclave.
+    pub hw_cosign_signature: Option<Vec<u8>>,
+    /// Hardware co-signature: public key of the signing hardware.
+    pub hw_cosign_pubkey: Option<Vec<u8>>,
+    /// Hardware co-signature: SHA-256 commitment to the SE-derived threshold salt.
+    pub hw_cosign_salt_commitment: Option<Vec<u8>>,
+    /// Hardware co-signature: chain index (0 = genesis).
+    pub hw_cosign_chain_index: Option<u64>,
+    /// Hardware co-signature: entangled hash bytes for verification.
+    pub hw_cosign_entangled_hash: Option<Vec<u8>>,
 }
 
 fn now_ns() -> i64 {
@@ -76,6 +86,11 @@ impl SecureEvent {
             lamport_signature: None,
             lamport_pubkey_fingerprint: None,
             challenge_nonce: None,
+            hw_cosign_signature: None,
+            hw_cosign_pubkey: None,
+            hw_cosign_salt_commitment: None,
+            hw_cosign_chain_index: None,
+            hw_cosign_entangled_hash: None,
         }
     }
 }

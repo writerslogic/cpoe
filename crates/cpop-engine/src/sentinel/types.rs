@@ -279,6 +279,10 @@ pub struct DocumentSession {
     pub last_focused_at: SystemTime,
     /// HW co-sign scheduler; present when a TPM provider is available.
     pub(crate) hw_cosign_scheduler: Option<crate::evidence::hw_cosign::HwCosignScheduler>,
+    /// Last hardware co-signature bytes for self-entanglement chain.
+    pub(crate) last_hw_cosign_signature: Option<Vec<u8>>,
+    /// Chain index counter for hardware co-signatures.
+    pub(crate) hw_cosign_chain_index: u64,
 }
 
 impl Clone for DocumentSession {
@@ -314,6 +318,8 @@ impl Clone for DocumentSession {
             last_focused_at: self.last_focused_at,
             // Scheduler contains zeroize-protected SE salt; not cloned.
             hw_cosign_scheduler: None,
+            last_hw_cosign_signature: None,
+            hw_cosign_chain_index: 0,
         }
     }
 }
@@ -358,6 +364,8 @@ impl DocumentSession {
             last_checkpoint_keystrokes: 0,
             last_focused_at: now,
             hw_cosign_scheduler: None,
+            last_hw_cosign_signature: None,
+            hw_cosign_chain_index: 0,
         }
     }
 

@@ -32,6 +32,11 @@ fn create_test_event(file_path: &str, content_hash: [u8; 32]) -> SecureEvent {
         lamport_signature: None,
         lamport_pubkey_fingerprint: None,
         challenge_nonce: None,
+        hw_cosign_signature: None,
+        hw_cosign_pubkey: None,
+        hw_cosign_salt_commitment: None,
+        hw_cosign_chain_index: None,
+        hw_cosign_entangled_hash: None,
     }
 }
 
@@ -224,6 +229,11 @@ fn test_event_with_optional_fields() {
         lamport_signature: None,
         lamport_pubkey_fingerprint: None,
         challenge_nonce: None,
+        hw_cosign_signature: None,
+        hw_cosign_pubkey: None,
+        hw_cosign_salt_commitment: None,
+        hw_cosign_chain_index: None,
+        hw_cosign_entangled_hash: None,
     };
 
     store.add_secure_event(&mut event).expect("insert event");

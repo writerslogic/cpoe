@@ -57,8 +57,10 @@ impl SecureStore {
                 device_id, machine_id, timestamp_ns, file_path, content_hash, file_size, size_delta,
                 previous_hash, event_hash, hmac, context_type, context_note, vdf_input, vdf_output,
                 vdf_iterations, forensic_score, is_paste, hardware_counter, input_method,
-                lamport_signature, lamport_pubkey_fingerprint, challenge_nonce
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                lamport_signature, lamport_pubkey_fingerprint, challenge_nonce,
+                hw_cosign_signature, hw_cosign_pubkey, hw_cosign_salt_commitment,
+                hw_cosign_chain_index, hw_cosign_entangled_hash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params![
                 &e.device_id[..],
                 &e.machine_id,
@@ -92,7 +94,12 @@ impl SecureStore {
                 e.input_method,
                 e.lamport_signature.as_deref(),
                 e.lamport_pubkey_fingerprint.as_deref(),
-                e.challenge_nonce
+                e.challenge_nonce,
+                e.hw_cosign_signature.as_deref(),
+                e.hw_cosign_pubkey.as_deref(),
+                e.hw_cosign_salt_commitment.as_deref(),
+                e.hw_cosign_chain_index.map(|c| c as i64),
+                e.hw_cosign_entangled_hash.as_deref()
             ],
         )?;
 
@@ -138,7 +145,9 @@ impl SecureStore {
                 content_hash, file_size, size_delta, previous_hash, event_hash, \
                 context_type, context_note, vdf_input, vdf_output, vdf_iterations, \
                 forensic_score, is_paste, hardware_counter, input_method, \
-                lamport_signature, lamport_pubkey_fingerprint, challenge_nonce \
+                lamport_signature, lamport_pubkey_fingerprint, challenge_nonce, \
+                hw_cosign_signature, hw_cosign_pubkey, hw_cosign_salt_commitment, \
+                hw_cosign_chain_index, hw_cosign_entangled_hash \
                 FROM secure_events WHERE file_path = ?1 ORDER BY id ASC";
         let query = match limit {
             Some(_) => format!("{base_query} LIMIT ?2"),
@@ -241,6 +250,13 @@ impl SecureStore {
             lamport_signature: row.get(19)?,
             lamport_pubkey_fingerprint: row.get(20)?,
             challenge_nonce: row.get(21)?,
+            hw_cosign_signature: row.get(22)?,
+            hw_cosign_pubkey: row.get(23)?,
+            hw_cosign_salt_commitment: row.get(24)?,
+            hw_cosign_chain_index: row
+                .get::<_, Option<i64>>(25)?
+                .map(|v| v as u64),
+            hw_cosign_entangled_hash: row.get(26)?,
         })
     }
 
@@ -284,7 +300,9 @@ impl SecureStore {
                 content_hash, file_size, size_delta, previous_hash, event_hash, \
                 context_type, context_note, vdf_input, vdf_output, vdf_iterations, \
                 forensic_score, is_paste, hardware_counter, input_method, \
-                lamport_signature, lamport_pubkey_fingerprint, challenge_nonce \
+                lamport_signature, lamport_pubkey_fingerprint, challenge_nonce, \
+                hw_cosign_signature, hw_cosign_pubkey, hw_cosign_salt_commitment, \
+                hw_cosign_chain_index, hw_cosign_entangled_hash \
                 FROM secure_events ORDER BY id ASC",
         )?;
         let rows = stmt.query_map([], Self::row_to_event)?;
@@ -353,7 +371,9 @@ impl SecureStore {
             "SELECT id, device_id, machine_id, timestamp_ns, file_path, content_hash, file_size, size_delta,
                     previous_hash, event_hash, context_type, context_note, vdf_input, vdf_output,
                     vdf_iterations, forensic_score, is_paste, hardware_counter, input_method,
-                    lamport_signature, lamport_pubkey_fingerprint, challenge_nonce
+                    lamport_signature, lamport_pubkey_fingerprint, challenge_nonce,
+                    hw_cosign_signature, hw_cosign_pubkey, hw_cosign_salt_commitment,
+                    hw_cosign_chain_index, hw_cosign_entangled_hash
              FROM secure_events WHERE device_id = ? ORDER BY id ASC",
         )?;
 
@@ -402,5 +422,39 @@ impl SecureStore {
         )?;
 
         Ok(count)
+    }
+
+    /// Update the most recent event for a file path with hardware co-signature data.
+    pub fn update_hw_cosign(
+        &self,
+        file_path: &str,
+        signature: &[u8],
+        pubkey: &[u8],
+        salt_commitment: &[u8],
+        chain_index: u64,
+        entangled_hash: &[u8],
+    ) -> anyhow::Result<()> {
+        self.conn.execute(
+            "UPDATE secure_events SET
+                hw_cosign_signature = ?1,
+                hw_cosign_pubkey = ?2,
+                hw_cosign_salt_commitment = ?3,
+                hw_cosign_chain_index = ?4,
+                hw_cosign_entangled_hash = ?5
+             WHERE id = (
+                SELECT id FROM secure_events
+                WHERE file_path = ?6
+                ORDER BY id DESC LIMIT 1
+             )",
+            rusqlite::params![
+                signature,
+                pubkey,
+                salt_commitment,
+                chain_index as i64,
+                entangled_hash,
+                file_path,
+            ],
+        )?;
+        Ok(())
     }
 }
