@@ -1,0 +1,425 @@
+// SPDX-License-Identifier: Apache-2.0
+
+use super::*;
+use crate::rfc::{Checkpoint, DocumentRef, HashAlgorithm, HashValue};
+use ed25519_dalek::SigningKey;
+
+fn test_evidence_packet() -> EvidencePacket {
+    EvidencePacket {
+        version: 1,
+        profile_uri: "urn:ietf:params:pop:profile:1.0".to_string(),
+        packet_id: vec![0xAA; 16],
+        created: 1710000000000,
+        document: DocumentRef {
+            content_hash: HashValue {
+                algorithm: HashAlgorithm::Sha256,
+                digest: vec![0xAB; 32],
+            },
+            filename: Some("test.txt".to_string()),
+            byte_length: 1024,
+            char_count: 512,
+        },
+        checkpoints: vec![
+            make_checkpoint(0, 1710000001000),
+            make_checkpoint(1, 1710000002000),
+            make_checkpoint(2, 1710000003000),
+        ],
+        attestation_tier: None,
+        baseline_verification: None,
+    }
+}
+
+fn make_checkpoint(seq: u64, ts: u64) -> Checkpoint {
+    Checkpoint {
+        sequence: seq,
+        checkpoint_id: vec![0u8; 16],
+        timestamp: ts,
+        content_hash: HashValue {
+            algorithm: HashAlgorithm::Sha256,
+            digest: vec![seq as u8; 32],
+        },
+        char_count: 100 + seq * 50,
+        prev_hash: HashValue {
+            algorithm: HashAlgorithm::Sha256,
+            digest: vec![0u8; 32],
+        },
+        checkpoint_hash: HashValue {
+            algorithm: HashAlgorithm::Sha256,
+            digest: vec![seq as u8 + 0x10; 32],
+        },
+        jitter_hash: None,
+    }
+}
+
+fn test_signing_key() -> SigningKey {
+    SigningKey::from_bytes(&[1u8; 32])
+}
+
+fn build_test_manifest() -> C2paManifest {
+    let packet = test_evidence_packet();
+    let evidence_bytes = b"fake evidence cbor".to_vec();
+    let doc_hash = [0xABu8; 32];
+    let key = test_signing_key();
+
+    C2paManifestBuilder::new(packet, evidence_bytes, doc_hash)
+        .document_filename("test.txt")
+        .title("Test Document")
+        .build_manifest(&key)
+        .unwrap()
+}
+
+#[test]
+fn cpop_assertion_from_evidence() {
+    let packet = test_evidence_packet();
+    let evidence_bytes = b"fake evidence cbor";
+    let assertion = ProcessAssertion::from_evidence(&packet, evidence_bytes);
+
+    assert_eq!(assertion.label, ASSERTION_LABEL_CPOP);
+    assert_eq!(assertion.version, 1);
+    assert_eq!(assertion.jitter_seals.len(), 3);
+    assert!(!assertion.evidence_hash.is_empty());
+}
+
+#[test]
+fn claim_v2_required_fields() {
+    let manifest = build_test_manifest();
+
+    assert!(
+        !manifest.claim.instance_id.is_empty(),
+        "instanceID required"
+    );
+    assert!(
+        manifest.claim.instance_id.starts_with("xmp:iid:"),
+        "instanceID should use XMP format"
+    );
+    assert!(
+        !manifest.claim.signature.is_empty(),
+        "signature URI required"
+    );
+    assert!(
+        manifest.claim.signature.contains("c2pa.signature"),
+        "signature should reference signature box"
+    );
+    assert!(
+        !manifest.claim.claim_generator_info.is_empty(),
+        "claim_generator_info required"
+    );
+    assert!(
+        !manifest.claim.claim_generator_info[0].name.is_empty(),
+        "first entry must have name"
+    );
+    // 3 core assertions + 1 metadata assertion (title was set in build_test_manifest)
+    assert_eq!(manifest.claim.created_assertions.len(), 4);
+}
+
+#[test]
+fn manifest_label_consistent_in_urls() {
+    let manifest = build_test_manifest();
+
+    for assertion in &manifest.claim.created_assertions {
+        assert!(
+            assertion.url.contains(&manifest.manifest_label),
+            "Assertion URL '{}' must contain manifest label '{}'",
+            assertion.url,
+            manifest.manifest_label
+        );
+    }
+
+    assert!(
+        manifest.claim.signature.contains(&manifest.manifest_label),
+        "Signature URL must contain manifest label"
+    );
+}
+
+#[test]
+fn assertion_hashes_match_stored_boxes() {
+    let manifest = build_test_manifest();
+
+    assert_eq!(
+        manifest.assertion_boxes.len(),
+        manifest.claim.created_assertions.len()
+    );
+
+    for (assertion_ref, box_bytes) in manifest
+        .claim
+        .created_assertions
+        .iter()
+        .zip(manifest.assertion_boxes.iter())
+    {
+        let computed = sha2::Sha256::digest(&box_bytes[8..]);
+        assert_eq!(
+            assertion_ref.hash,
+            computed.to_vec(),
+            "Stored box hash must match claim reference"
+        );
+    }
+}
+
+#[test]
+fn hashed_uri_uses_binary_hash() {
+    let manifest = build_test_manifest();
+    for assertion_ref in &manifest.claim.created_assertions {
+        assert_eq!(assertion_ref.hash.len(), 32, "SHA-256 = 32 raw bytes");
+    }
+}
+
+#[test]
+fn signature_contains_public_key_in_protected_header() {
+    let manifest = build_test_manifest();
+
+    let sign1 = coset::CoseSign1::from_slice(&manifest.signature).expect("valid COSE_Sign1");
+    let protected = sign1.protected.header;
+    let pk_entry = protected
+        .rest
+        .iter()
+        .find(|(label, _)| *label == coset::Label::Int(33)); // x5chain
+    assert!(
+        pk_entry.is_some(),
+        "Public key must be in protected header (C2PA 2.4)"
+    );
+
+    if let Some((_, ciborium::Value::Bytes(pk_bytes))) = pk_entry {
+        let key = test_signing_key();
+        assert_eq!(
+            pk_bytes,
+            &key.verifying_key().to_bytes().to_vec(),
+            "Embedded key must match signer"
+        );
+    } else {
+        panic!("Public key header value must be bytes");
+    }
+}
+
+#[test]
+fn standard_manifest_validation_passes() {
+    let manifest = build_test_manifest();
+    let result = validate_manifest(&manifest);
+    assert!(
+        result.is_valid(),
+        "Valid manifest should pass: {:?}",
+        result.errors
+    );
+}
+
+#[test]
+fn validation_catches_label_mismatch() {
+    let mut manifest = build_test_manifest();
+    manifest.manifest_label = "urn:wrong:label".to_string();
+    let result = validate_manifest(&manifest);
+    assert!(!result.is_valid());
+    assert!(
+        result.errors.iter().any(|e| e.contains("manifest label")),
+        "Should catch label mismatch: {:?}",
+        result.errors
+    );
+}
+
+#[test]
+fn validation_catches_hash_mismatch() {
+    let mut manifest = build_test_manifest();
+    if let Some(first_box) = manifest.assertion_boxes.first_mut() {
+        if first_box.len() > 10 {
+            first_box[10] ^= 0xFF;
+        }
+    }
+    let result = validate_manifest(&manifest);
+    assert!(!result.is_valid());
+    assert!(
+        result.errors.iter().any(|e| e.contains("hash mismatch")),
+        "Should catch hash mismatch: {:?}",
+        result.errors
+    );
+}
+
+#[test]
+fn validation_catches_missing_hard_binding() {
+    let mut manifest = build_test_manifest();
+    manifest
+        .claim
+        .created_assertions
+        .retain(|a| !a.url.contains(ASSERTION_LABEL_HASH_DATA));
+    manifest.assertion_boxes.remove(0); // hash.data is first
+    let result = validate_manifest(&manifest);
+    assert!(!result.is_valid());
+    assert!(result.errors.iter().any(|e| e.contains("hard binding")));
+}
+
+#[test]
+fn validation_catches_missing_actions() {
+    let mut manifest = build_test_manifest();
+    manifest
+        .claim
+        .created_assertions
+        .retain(|a| !a.url.contains(ASSERTION_LABEL_ACTIONS));
+    manifest.assertion_boxes.remove(1); // actions is second
+    let result = validate_manifest(&manifest);
+    assert!(!result.is_valid());
+    assert!(result.errors.iter().any(|e| e.contains("actions")));
+}
+
+#[test]
+fn encode_jumbf_roundtrip() {
+    let manifest = build_test_manifest();
+    let jumbf = encode_jumbf(&manifest).unwrap();
+
+    assert!(jumbf.len() > 100);
+    let info = verify_jumbf_structure(&jumbf).unwrap();
+    assert!(info.child_boxes >= 2);
+    assert_eq!(&jumbf[4..8], b"jumb");
+
+    let box_len = u32::from_be_bytes([jumbf[0], jumbf[1], jumbf[2], jumbf[3]]) as usize;
+    assert_eq!(box_len, jumbf.len());
+}
+
+#[test]
+fn jumbf_contains_manifest_label() {
+    let manifest = build_test_manifest();
+    let jumbf = encode_jumbf(&manifest).unwrap();
+    let jumbf_str = String::from_utf8_lossy(&jumbf);
+
+    assert!(
+        jumbf_str.contains(&manifest.manifest_label),
+        "JUMBF must contain the manifest label as the box label"
+    );
+    assert!(
+        jumbf_str.contains("c2pa.claim.v2"),
+        "JUMBF must contain c2pa.claim.v2 label"
+    );
+}
+
+#[test]
+fn jumbf_contains_cbor_content() {
+    let manifest = build_test_manifest();
+    let jumbf = encode_jumbf(&manifest).unwrap();
+    let has_cbor_box = jumbf.windows(4).any(|w| w == b"cbor");
+    assert!(has_cbor_box, "JUMBF should contain cbor content boxes");
+}
+
+#[test]
+fn jumbf_structure_validation_errors() {
+    assert!(verify_jumbf_structure(&[]).is_err());
+    assert!(verify_jumbf_structure(&[0; 4]).is_err());
+
+    let mut bad = vec![0, 0, 0, 16];
+    bad.extend_from_slice(b"xxxx");
+    bad.extend_from_slice(&[0; 8]);
+    assert!(verify_jumbf_structure(&bad).is_err());
+}
+
+#[test]
+fn jumbf_extended_size_box() {
+    // Build a valid extended-size JUMBF superbox:
+    // compact_len=1, type="jumb", extended_len=<total>, then a jumd child.
+    let jumd_content = [0u8; 17]; // 16-byte UUID + 1-byte toggles
+    let jumd_len: u32 = 8 + jumd_content.len() as u32;
+    let total: u64 = 16 + jumd_len as u64; // 16-byte extended header + child
+
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&1u32.to_be_bytes()); // compact_len = 1
+    buf.extend_from_slice(b"jumb");
+    buf.extend_from_slice(&total.to_be_bytes()); // extended size
+    buf.extend_from_slice(&jumd_len.to_be_bytes());
+    buf.extend_from_slice(b"jumd");
+    buf.extend_from_slice(&jumd_content);
+
+    let info = verify_jumbf_structure(&buf).unwrap();
+    assert_eq!(info.total_size, total as usize);
+    assert_eq!(info.child_boxes, 1);
+}
+
+#[test]
+fn unique_packet_id_produces_unique_manifest() {
+    let mut p1 = test_evidence_packet();
+    let mut p2 = test_evidence_packet();
+    p1.packet_id = vec![0x01; 16];
+    p2.packet_id = vec![0x02; 16];
+    let key = test_signing_key();
+
+    let m1 = C2paManifestBuilder::new(p1, b"ev1".to_vec(), [0xAA; 32])
+        .build_manifest(&key)
+        .unwrap();
+    let m2 = C2paManifestBuilder::new(p2, b"ev2".to_vec(), [0xBB; 32])
+        .build_manifest(&key)
+        .unwrap();
+
+    assert_ne!(m1.manifest_label, m2.manifest_label);
+    assert_ne!(m1.claim.instance_id, m2.claim.instance_id);
+}
+
+#[test]
+fn full_pipeline_build_validate_encode() {
+    let packet = test_evidence_packet();
+    let evidence_bytes = b"fake evidence cbor".to_vec();
+    let doc_hash = [0xABu8; 32];
+    let key = test_signing_key();
+
+    let builder = C2paManifestBuilder::new(packet, evidence_bytes, doc_hash)
+        .document_filename("test.txt")
+        .title("Test Document");
+
+    let manifest = builder.build_manifest(&key).unwrap();
+
+    let validation = validate_manifest(&manifest);
+    assert!(validation.is_valid(), "Errors: {:?}", validation.errors);
+
+    let jumbf = encode_jumbf(&manifest).unwrap();
+    assert!(jumbf.len() > 200);
+
+    let info = verify_jumbf_structure(&jumbf).unwrap();
+    assert_eq!(info.total_size, jumbf.len());
+}
+
+#[test]
+fn test_manifest_with_format_produces_metadata_assertion() {
+    let packet = test_evidence_packet();
+    let key = test_signing_key();
+
+    let manifest = C2paManifestBuilder::new(packet, b"ev".to_vec(), [0xAB; 32])
+        .format("image/jpeg")
+        .build_manifest(&key)
+        .unwrap();
+
+    // Format is now in a c2pa.metadata assertion, not the claim.
+    let has_metadata = manifest
+        .claim
+        .created_assertions
+        .iter()
+        .any(|a| a.url.contains(ASSERTION_LABEL_METADATA));
+    assert!(has_metadata, "Metadata assertion should be present when format is set");
+    let validation = validate_manifest(&manifest);
+    assert!(validation.is_valid(), "Errors: {:?}", validation.errors);
+}
+
+#[test]
+fn test_manifest_without_format_has_no_metadata_assertion() {
+    let packet = test_evidence_packet();
+    let key = test_signing_key();
+
+    let manifest = C2paManifestBuilder::new(packet, b"ev".to_vec(), [0xAB; 32])
+        .build_manifest(&key)
+        .unwrap();
+
+    let has_metadata = manifest
+        .claim
+        .created_assertions
+        .iter()
+        .any(|a| a.url.contains(ASSERTION_LABEL_METADATA));
+    assert!(!has_metadata, "No metadata assertion when format is not set");
+    let validation = validate_manifest(&manifest);
+    assert!(validation.is_valid(), "Errors: {:?}", validation.errors);
+}
+
+#[test]
+fn test_asset_info_construction() {
+    let info = AssetInfo {
+        mime_type: "application/pdf".to_string(),
+        file_extension: "pdf".to_string(),
+    };
+    assert_eq!(info.mime_type, "application/pdf");
+    assert_eq!(info.file_extension, "pdf");
+
+    let json = serde_json::to_string(&info).unwrap();
+    let roundtrip: AssetInfo = serde_json::from_str(&json).unwrap();
+    assert_eq!(roundtrip.mime_type, info.mime_type);
+    assert_eq!(roundtrip.file_extension, info.file_extension);
+}
