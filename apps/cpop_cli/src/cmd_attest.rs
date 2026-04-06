@@ -6,7 +6,7 @@ use anyhow::{anyhow, Result};
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::PathBuf;
 
-use cpop_engine::ffi;
+use witnessd::ffi;
 
 use crate::output::OutputMode;
 

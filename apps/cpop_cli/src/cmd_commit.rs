@@ -8,8 +8,8 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 
-use cpop_engine::vdf;
-use cpop_engine::SecureEvent;
+use witnessd::vdf;
+use witnessd::SecureEvent;
 
 use crate::output::OutputMode;
 use crate::util::{
@@ -233,7 +233,7 @@ pub(crate) async fn cmd_commit_smart(
 }
 
 async fn cmd_anchor(file_path: &PathBuf) -> Result<()> {
-    use cpop_engine::writersproof::{AnchorMetadata, AnchorRequest, WritersProofClient};
+    use witnessd::writersproof::{AnchorMetadata, AnchorRequest, WritersProofClient};
 
     let abs_path = fs::canonicalize(file_path)?;
     let abs_path_str = abs_path.to_string_lossy().into_owned();

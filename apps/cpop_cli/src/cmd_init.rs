@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 use anyhow::{anyhow, Context, Result};
-use cpop_engine::identity::SecureStorage;
-use cpop_engine::keyhierarchy::{derive_master_identity, SoftwarePUF};
-use cpop_engine::tpm;
-use cpop_engine::{derive_hmac_key, SecureStore};
+use witnessd::identity::SecureStorage;
+use witnessd::keyhierarchy::{derive_master_identity, SoftwarePUF};
+use witnessd::tpm;
+use witnessd::{derive_hmac_key, SecureStore};
 use ed25519_dalek::SigningKey;
 use std::fs;
 use zeroize::Zeroize;
@@ -111,7 +111,7 @@ pub(crate) fn cmd_init() -> Result<()> {
     let mut config = crate::util::ensure_dirs()?;
     if config.vdf.iterations_per_second == 0 {
         println!("Calibrating VDF for your CPU...");
-        let calibrated = cpop_engine::vdf::params::calibrate(std::time::Duration::from_secs(2))
+        let calibrated = witnessd::vdf::params::calibrate(std::time::Duration::from_secs(2))
             .map_err(|e| anyhow!("Calibration failed: {}", e))?;
         config.vdf.iterations_per_second = calibrated.iterations_per_second;
         config.vdf.min_iterations = calibrated.min_iterations;

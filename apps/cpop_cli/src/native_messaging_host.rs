@@ -23,6 +23,8 @@ enum Request {
     StartSession {
         document_url: String,
         document_title: String,
+        #[serde(default)]
+        protocol_version: Option<String>,
     },
     Checkpoint {
         content_hash: String,
@@ -40,7 +42,10 @@ enum Request {
     InjectJitter {
         intervals: Vec<u64>,
     },
-    Ping,
+    Ping {
+        #[serde(default)]
+        protocol_version: Option<String>,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -95,7 +100,8 @@ struct Session {
     session_nonce: [u8; 16],
     last_char_count: u64,
     last_checkpoint_ts: u64,
-    bucket_tokens: f64,
+    /// Token bucket in milli-batches (1 batch = 1000 units; refill at 10 batches/sec = 10 units/ms).
+    bucket_millitokens: u64,
     last_refill: std::time::Instant,
 }
 
@@ -120,7 +126,7 @@ fn request_type_name(req: &Request) -> &'static str {
         Request::StopSession => "StopSession",
         Request::GetStatus => "GetStatus",
         Request::InjectJitter { .. } => "InjectJitter",
-        Request::Ping => "Ping",
+        Request::Ping { .. } => "Ping",
     }
 }
 
@@ -156,9 +162,20 @@ fn read_message() -> io::Result<Option<Request>> {
     read_message_from(&mut io::stdin().lock())
 }
 
+const PROTOCOL_VERSION: &str = "1.0";
+
 /// Write a length-prefixed NMH response to a generic writer.
 fn write_message_to<W: Write>(writer: &mut W, response: &Response) -> io::Result<()> {
-    let json = serde_json::to_vec(response)?;
+    let mut map = serde_json::to_value(response)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    if let Some(obj) = map.as_object_mut() {
+        obj.insert(
+            "protocol_version".to_string(),
+            serde_json::Value::String(PROTOCOL_VERSION.to_string()),
+        );
+    }
+    let json = serde_json::to_vec(&map)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     if json.len() > MAX_MESSAGE_LENGTH {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -241,7 +258,7 @@ fn handle_start_session(document_url: String, document_title: String) -> Respons
         };
     }
 
-    let init_result = cpop_engine::ffi::ffi_init();
+    let init_result = witnessd::ffi::ffi_init();
     if !init_result.success {
         return Response::Error {
             message: init_result
@@ -306,7 +323,7 @@ fn handle_start_session(document_url: String, document_title: String) -> Respons
             }
         };
         // Restrict permissions on the temp file before writing content.
-        if let Err(e) = cpop_engine::restrict_permissions(tmp.path(), 0o600) {
+        if let Err(e) = witnessd::restrict_permissions(tmp.path(), 0o600) {
             eprintln!("Warning: chmod temp evidence file: {e}");
         }
         if let Err(e) = tmp.write_all(format!("<!-- {safe_title_html} -->\n").as_bytes()) {
@@ -323,7 +340,7 @@ fn handle_start_session(document_url: String, document_title: String) -> Respons
         }
     }
 
-    let checkpoint_result = cpop_engine::ffi::ffi_create_checkpoint(
+    let checkpoint_result = witnessd::ffi::ffi_create_checkpoint(
         evidence_path.display().to_string(),
         format!("Browser session started: {document_title}"),
     );
@@ -363,7 +380,7 @@ fn handle_start_session(document_url: String, document_title: String) -> Respons
             "Finalizing previous session {} ('{}', {} checkpoints) before starting new session",
             prev.id, prev.document_title, prev.checkpoint_count
         );
-        let final_result = cpop_engine::ffi::ffi_create_checkpoint(
+        let final_result = witnessd::ffi::ffi_create_checkpoint(
             prev.evidence_path.display().to_string(),
             format!(
                 "Browser session ended (superseded): {} ({} checkpoints)",
@@ -391,7 +408,7 @@ fn handle_start_session(document_url: String, document_title: String) -> Respons
         session_nonce,
         last_char_count: 0,
         last_checkpoint_ts: now_ns,
-        bucket_tokens: MAX_JITTER_BATCHES_PER_WINDOW as f64,
+        bucket_millitokens: JITTER_TOKEN_MAX,
         last_refill: Instant::now(),
     });
 
@@ -551,7 +568,7 @@ fn handle_checkpoint(
         };
     }
 
-    let result = cpop_engine::ffi::ffi_create_checkpoint(
+    let result = witnessd::ffi::ffi_create_checkpoint(
         session.evidence_path.display().to_string(),
         format!(
             "Browser checkpoint #{}: {} chars, delta {}",
@@ -621,7 +638,7 @@ fn handle_stop_session() -> Response {
         }
     };
 
-    let final_result = cpop_engine::ffi::ffi_create_checkpoint(
+    let final_result = witnessd::ffi::ffi_create_checkpoint(
         session.evidence_path.display().to_string(),
         format!(
             "Browser session ended: {} ({} checkpoints)",
@@ -636,6 +653,8 @@ fn handle_stop_session() -> Response {
         );
     }
 
+    let _ = std::fs::File::open(&session.evidence_path).and_then(|f| f.sync_all());
+
     Response::SessionStopped {
         message: format!(
             "Session ended for '{}' with {} checkpoints",
@@ -645,7 +664,7 @@ fn handle_stop_session() -> Response {
 }
 
 fn handle_get_status() -> Response {
-    let status = cpop_engine::ffi::ffi_get_status();
+    let status = witnessd::ffi::ffi_get_status();
     // Poison recovery — see handle_start_session for logging rationale
     let session_lock = session().lock().unwrap_or_else(|p| {
         eprintln!("Warning: session lock poisoned, recovering");
@@ -667,7 +686,11 @@ fn handle_get_status() -> Response {
 }
 
 const MAX_JITTER_BATCHES_PER_WINDOW: u64 = 50;
-const JITTER_TOKEN_REFILL_RATE: f64 = 10.0; // batches/sec
+/// Refill rate: 10 batches/sec = 10 milli-tokens per millisecond.
+const JITTER_REFILL_PER_MS: u64 = 10;
+/// One batch costs 1000 milli-tokens; max bucket = 50 * 1000.
+const JITTER_TOKEN_COST: u64 = 1_000;
+const JITTER_TOKEN_MAX: u64 = MAX_JITTER_BATCHES_PER_WINDOW * JITTER_TOKEN_COST;
 const MAX_BATCH_SIZE: usize = 200;
 
 fn handle_inject_jitter(intervals: Vec<u64>) -> Response {
@@ -700,19 +723,18 @@ fn handle_inject_jitter(intervals: Vec<u64>) -> Response {
     };
 
     let now = Instant::now();
-    let elapsed = now.duration_since(session.last_refill);
-    let refill = elapsed.as_secs_f64() * JITTER_TOKEN_REFILL_RATE;
-    session.bucket_tokens =
-        (session.bucket_tokens + refill).min(MAX_JITTER_BATCHES_PER_WINDOW as f64);
+    let elapsed_ms = now.duration_since(session.last_refill).as_millis() as u64;
+    let refill = elapsed_ms.saturating_mul(JITTER_REFILL_PER_MS);
+    session.bucket_millitokens = session.bucket_millitokens.saturating_add(refill).min(JITTER_TOKEN_MAX);
     session.last_refill = now;
 
-    if session.bucket_tokens < 1.0 {
+    if session.bucket_millitokens < JITTER_TOKEN_COST {
         return Response::Error {
             message: "Jitter batch rate limit exceeded".into(),
             code: "RATE_LIMITED".into(),
         };
     }
-    session.bucket_tokens -= 1.0;
+    session.bucket_millitokens -= JITTER_TOKEN_COST;
 
     let valid: Vec<u64> = intervals
         .into_iter()
@@ -1729,7 +1751,7 @@ fn main() {
         env!("CARGO_PKG_VERSION")
     );
 
-    let init_result = cpop_engine::ffi::ffi_init();
+    let init_result = witnessd::ffi::ffi_init();
     if !init_result.success {
         eprintln!(
             "Warning: cpop init failed: {}",
@@ -1762,7 +1784,15 @@ fn main() {
             Request::StartSession {
                 document_url,
                 document_title,
-            } => handle_start_session(document_url, document_title),
+                protocol_version,
+            } => {
+                if let Some(ref v) = protocol_version {
+                    if v != PROTOCOL_VERSION {
+                        eprintln!("protocol_version mismatch: client={v} server={PROTOCOL_VERSION}"); // intentional
+                    }
+                }
+                handle_start_session(document_url, document_title)
+            }
             Request::Checkpoint {
                 content_hash,
                 char_count,
@@ -1773,9 +1803,16 @@ fn main() {
             Request::StopSession => handle_stop_session(),
             Request::GetStatus => handle_get_status(),
             Request::InjectJitter { intervals } => handle_inject_jitter(intervals),
-            Request::Ping => Response::Pong {
-                version: env!("CARGO_PKG_VERSION").into(),
-            },
+            Request::Ping { protocol_version } => {
+                if let Some(ref v) = protocol_version {
+                    if v != PROTOCOL_VERSION {
+                        eprintln!("protocol_version mismatch: client={v} server={PROTOCOL_VERSION}"); // intentional
+                    }
+                }
+                Response::Pong {
+                    version: env!("CARGO_PKG_VERSION").into(),
+                }
+            }
         };
 
         if let Err(e) = write_message(&response) {

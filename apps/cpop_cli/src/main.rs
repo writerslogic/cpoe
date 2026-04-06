@@ -138,9 +138,9 @@ async fn maybe_auto_start(cli: &Cli, out: &OutputMode) -> Result<()> {
     }
 
     if let Ok(dir) = util::writersproof_dir() {
-        if let Ok(config) = cpop_engine::config::CpopConfig::load_or_default(&dir) {
+        if let Ok(config) = witnessd::config::CpopConfig::load_or_default(&dir) {
             if config.sentinel.auto_start {
-                let daemon_manager = cpop_engine::DaemonManager::new(&config.data_dir);
+                let daemon_manager = witnessd::DaemonManager::new(&config.data_dir);
                 if !daemon_manager.is_running() {
                     if !out.quiet {
                         eprintln!("Starting CPOP daemon...");
@@ -216,7 +216,17 @@ async fn interactive_menu(out: &OutputMode) -> Result<()> {
             let path: String = Input::new()
                 .with_prompt("Path to file or folder")
                 .interact_text()?;
-            let resolved = util::normalize_path(&PathBuf::from(path))?;
+            let input_path = PathBuf::from(path);
+            if std::fs::symlink_metadata(&input_path)
+                .map(|m| m.file_type().is_symlink())
+                .unwrap_or(false)
+            {
+                anyhow::bail!(
+                    "path '{}' is a symlink; track the real path directly",
+                    input_path.display()
+                );
+            }
+            let resolved = util::normalize_path(&input_path)?;
             // Reject paths outside cwd and home directory (potential traversal).
             if let (Ok(cwd), Some(home)) = (std::env::current_dir(), dirs::home_dir()) {
                 if !resolved.starts_with(&cwd) && !resolved.starts_with(&home) {

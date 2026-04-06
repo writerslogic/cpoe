@@ -2,9 +2,9 @@
 
 use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
-use cpop_engine::jitter::{default_parameters as default_jitter_params, Session as JitterSession};
-use cpop_engine::vdf;
-use cpop_engine::SecureEvent;
+use witnessd::jitter::{default_parameters as default_jitter_params, Session as JitterSession};
+use witnessd::vdf;
+use witnessd::SecureEvent;
 use glob::Pattern;
 use notify::{
     Config as NotifyConfig, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
@@ -242,7 +242,7 @@ enum CheckpointResult {
 
 fn auto_checkpoint_file(
     file_path: &Path,
-    db: &mut cpop_engine::SecureStore,
+    db: &mut witnessd::SecureStore,
     vdf_params: &vdf::Parameters,
     device_id: &[u8; 16],
     machine_id: &str,
@@ -324,13 +324,13 @@ fn auto_checkpoint_file(
 fn setup_keystroke_capture(
     session: &Arc<Mutex<JitterSession>>,
 ) -> (
-    Option<Box<dyn cpop_engine::platform::KeystrokeCapture>>,
+    Option<Box<dyn witnessd::platform::KeystrokeCapture>>,
     Option<std::thread::JoinHandle<()>>,
 ) {
-    let perms = cpop_engine::platform::check_permissions();
+    let perms = witnessd::platform::check_permissions();
     if !perms.all_granted {
         println!("Requesting input monitoring permissions...");
-        let updated = cpop_engine::platform::request_permissions();
+        let updated = witnessd::platform::request_permissions();
         if !updated.all_granted {
             eprintln!("Warning: Permissions not granted. Keystroke capture disabled.");
             eprintln!("Grant access in System Settings > Privacy & Security > Input Monitoring.");
@@ -339,11 +339,11 @@ fn setup_keystroke_capture(
         }
     }
 
-    if !cpop_engine::platform::has_required_permissions() {
+    if !witnessd::platform::has_required_permissions() {
         return (None, None);
     }
 
-    match cpop_engine::platform::create_keystroke_capture() {
+    match witnessd::platform::create_keystroke_capture() {
         Ok(mut capture) => match capture.start() {
             Ok(rx) => {
                 let session_clone = Arc::clone(session);
@@ -385,7 +385,7 @@ fn setup_keystroke_capture(
 }
 
 fn finalize_session(
-    capture_box: &mut Option<Box<dyn cpop_engine::platform::KeystrokeCapture>>,
+    capture_box: &mut Option<Box<dyn witnessd::platform::KeystrokeCapture>>,
     keystroke_handle: Option<std::thread::JoinHandle<()>>,
     session: &Arc<Mutex<JitterSession>>,
     session_path: &Path,
@@ -472,7 +472,7 @@ async fn cmd_track_start(
     let mut config = ensure_dirs()?;
     if config.vdf.iterations_per_second == 0 {
         println!("Calibrating VDF (one-time)...");
-        let calibrated = cpop_engine::vdf::params::calibrate(Duration::from_secs(2))
+        let calibrated = witnessd::vdf::params::calibrate(Duration::from_secs(2))
             .map_err(|e| anyhow!("Calibration failed: {}", e))?;
         config.vdf.iterations_per_second = calibrated.iterations_per_second;
         config.vdf.min_iterations = calibrated.min_iterations;
@@ -636,13 +636,13 @@ async fn cmd_track_start(
                             Err(_) => continue, // file may have been deleted
                         };
 
-                        // Warn if the path was a symlink pointing elsewhere
-                        if path != &canonical && path.is_symlink() {
-                            eprintln!(
-                                "Warning: {} is a symlink to {}",
-                                path.display(),
-                                canonical.display()
-                            );
+                        // Reject symlinks to prevent TOCTOU attacks
+                        if path != &canonical
+                            && fs::symlink_metadata(path)
+                                .map(|m| m.file_type().is_symlink())
+                                .unwrap_or(false)
+                        {
+                            continue;
                         }
 
                         // For single file, match exactly; for dirs, check containment + trackability
@@ -861,7 +861,7 @@ pub(crate) async fn cmd_track_smart(
             #[cfg(feature = "cpop_jitter")]
             if _is_hybrid {
                 let session_path = tracking_dir.join(format!("{}.hybrid.json", session_id));
-                if let Ok(session) = cpop_engine::HybridJitterSession::load(&session_path, None) {
+                if let Ok(session) = witnessd::HybridJitterSession::load(&session_path, None) {
                     let duration = session.duration();
                     if !out.quiet {
                         println!("Stopping tracking session...");
@@ -960,7 +960,7 @@ pub(crate) async fn cmd_track_smart(
             #[cfg(feature = "cpop_jitter")]
             if _is_hybrid {
                 let session_path = tracking_dir.join(format!("{}.hybrid.json", session_id));
-                let session = cpop_engine::HybridJitterSession::load(&session_path, None)
+                let session = witnessd::HybridJitterSession::load(&session_path, None)
                     .map_err(|e| anyhow!("Error loading hybrid session: {}", e))?;
 
                 let duration = session.duration();
@@ -1191,7 +1191,7 @@ pub(crate) async fn cmd_track_smart(
 
                 #[cfg(feature = "cpop_jitter")]
                 if filename.ends_with(".hybrid.json") {
-                    if let Ok(session) = cpop_engine::HybridJitterSession::load(&path, None) {
+                    if let Ok(session) = witnessd::HybridJitterSession::load(&path, None) {
                         hybrid_sessions.push(session);
                     }
                 }
@@ -1282,7 +1282,7 @@ pub(crate) async fn cmd_track_smart(
             {
                 let hybrid_path = tracking_dir.join(format!("{}.hybrid.json", id));
                 if hybrid_path.exists() {
-                    let session = cpop_engine::HybridJitterSession::load(&hybrid_path, None)
+                    let session = witnessd::HybridJitterSession::load(&hybrid_path, None)
                         .map_err(|e| anyhow!("Error loading hybrid session: {}", e))?;
 
                     if out.json {
@@ -1373,7 +1373,7 @@ pub(crate) async fn cmd_track_smart(
             {
                 let hybrid_path = tracking_dir.join(format!("{}.hybrid.json", session_id));
                 if hybrid_path.exists() {
-                    let session = cpop_engine::HybridJitterSession::load(&hybrid_path, None)
+                    let session = witnessd::HybridJitterSession::load(&hybrid_path, None)
                         .map_err(|e| anyhow!("Error loading hybrid session: {}", e))?;
 
                     let ev = session.export();

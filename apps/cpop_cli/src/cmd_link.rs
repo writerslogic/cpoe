@@ -7,8 +7,8 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use cpop_engine::vdf;
-use cpop_engine::SecureEvent;
+use witnessd::vdf;
+use witnessd::SecureEvent;
 
 use crate::output::OutputMode;
 use crate::util::{

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 use anyhow::{anyhow, Result};
-use cpop_engine::fingerprint::{ConsentManager, ConsentStatus, FingerprintManager, ProfileId};
+use witnessd::fingerprint::{ConsentManager, ConsentStatus, FingerprintManager, ProfileId};
 use std::io::{self, BufRead, IsTerminal, Write};
 
 use crate::cli::FingerprintAction;

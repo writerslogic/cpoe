@@ -2,14 +2,14 @@
 
 use anyhow::{anyhow, Result};
 use chrono::DateTime;
-use cpop_engine::tpm;
-use cpop_engine::vdf::params::calibrate;
-use cpop_engine::{derive_hmac_key, SecureStore};
+use witnessd::tpm;
+use witnessd::vdf::params::calibrate;
+use witnessd::{derive_hmac_key, SecureStore};
 use std::fs;
 use std::time::Duration;
 use zeroize::Zeroizing;
 
-use cpop_engine::config::CpopConfig;
+use witnessd::config::CpopConfig;
 
 use crate::output::OutputMode;
 use crate::util::{ensure_dirs, open_secure_store, writersproof_dir};
@@ -67,7 +67,7 @@ pub(crate) fn cmd_status(out: &OutputMode) -> Result<()> {
 
     let db_path = dir.join("events.db");
     let (db_status, tracked_files) = if db_path.exists() {
-        let hmac_key = if let Ok(Some(key)) = cpop_engine::identity::SecureStorage::load_hmac_key()
+        let hmac_key = if let Ok(Some(key)) = witnessd::identity::SecureStorage::load_hmac_key()
         {
             Some(Zeroizing::new(key.to_vec()))
         } else {

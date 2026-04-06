@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 use anyhow::{anyhow, Context, Result};
-use cpop_engine::DaemonManager;
+use witnessd::DaemonManager;
 use std::fs;
 use std::time::Duration;
 
@@ -53,7 +53,7 @@ pub(crate) async fn cmd_start(foreground: bool) -> Result<()> {
         eprintln!("Press Ctrl+C to stop.");
         eprintln!();
 
-        let result = cpop_engine::sentinel::daemon::cmd_start_foreground(&config.data_dir)
+        let result = witnessd::sentinel::daemon::cmd_start_foreground(&config.data_dir)
             .await
             .map_err(|e| anyhow!("Daemon error: {}", e));
         if result.is_err() {
@@ -67,12 +67,12 @@ pub(crate) async fn cmd_start(foreground: bool) -> Result<()> {
 
         let log_dir = config.data_dir.join("logs");
         fs::create_dir_all(&log_dir)?;
-        if let Err(e) = cpop_engine::restrict_permissions(&log_dir, 0o700) {
+        if let Err(e) = witnessd::restrict_permissions(&log_dir, 0o700) {
             eprintln!("Warning: failed to set log directory permissions: {e}");
         }
         let log_path = log_dir.join("daemon.log");
         let log_file = fs::File::create(&log_path).context("cannot create daemon log")?;
-        if let Err(e) = cpop_engine::restrict_permissions(&log_path, 0o600) {
+        if let Err(e) = witnessd::restrict_permissions(&log_path, 0o600) {
             eprintln!("Warning: failed to set log file permissions: {e}");
         }
         let stderr_file = log_file.try_clone().context("log file clone")?;

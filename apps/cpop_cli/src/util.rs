@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 use anyhow::{anyhow, Result};
-use cpop_engine::config::CpopConfig;
-use cpop_engine::vdf::params::Parameters as VdfParameters;
-use cpop_engine::{derive_hmac_key, SecureStore};
+use witnessd::config::CpopConfig;
+use witnessd::vdf::params::Parameters as VdfParameters;
+use witnessd::{derive_hmac_key, SecureStore};
 use ed25519_dalek::SigningKey;
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -55,7 +55,7 @@ pub fn ensure_dirs() -> Result<CpopConfig> {
             }
         })?;
 
-        cpop_engine::restrict_permissions(d, 0o700)
+        witnessd::restrict_permissions(d, 0o700)
             .map_err(|e| anyhow!("chmod {}: {}", d.display(), e))?;
     }
 
@@ -109,7 +109,7 @@ pub fn open_secure_store() -> Result<SecureStore> {
     let dir = config.data_dir;
     let db_path = dir.join("events.db");
 
-    if let Ok(Some(hmac_key)) = cpop_engine::identity::SecureStorage::load_hmac_key() {
+    if let Ok(Some(hmac_key)) = witnessd::identity::SecureStorage::load_hmac_key() {
         // Clone out of Zeroizing: SecureStore::open takes Vec<u8> by value,
         // so the inner vec must be copied. The Zeroizing wrapper still zeroes
         // its copy on drop; SecureStore owns and zeroes the other.
@@ -120,7 +120,7 @@ pub fn open_secure_store() -> Result<SecureStore> {
     let signing_key = load_signing_key(&dir)?;
     let hmac_key = derive_hmac_key(&signing_key.to_bytes());
 
-    if let Err(e) = cpop_engine::identity::SecureStorage::save_hmac_key(&hmac_key) {
+    if let Err(e) = witnessd::identity::SecureStorage::save_hmac_key(&hmac_key) {
         eprintln!("Warning: HMAC key migration: {}", e);
     }
 
@@ -192,7 +192,7 @@ pub fn write_restrictive(path: &Path, data: &[u8]) -> Result<()> {
     // This prevents a window where the file exists with wrong permissions.
     let tmp = PathBuf::from(format!("{}.tmp", path.display()));
     fs::write(&tmp, data).map_err(|e| anyhow!("write {}: {}", tmp.display(), e))?;
-    cpop_engine::restrict_permissions(&tmp, 0o600).map_err(|e| {
+    witnessd::restrict_permissions(&tmp, 0o600).map_err(|e| {
         let _ = fs::remove_file(&tmp);
         anyhow!("chmod {}: {}", tmp.display(), e)
     })?;

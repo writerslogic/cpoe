@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 use anyhow::{anyhow, bail, Context, Result};
-use cpop_engine::config::CpopConfig;
+use witnessd::config::CpopConfig;
 use std::fs;
 use std::io::{self, BufRead, Write};
 
@@ -118,7 +118,7 @@ pub(crate) fn cmd_config(action: ConfigAction) -> Result<()> {
 
                     if enabled {
                         // Trigger voice consent flow
-                        use cpop_engine::fingerprint::{ConsentManager, ConsentStatus};
+                        use witnessd::fingerprint::{ConsentManager, ConsentStatus};
 
                         let mut consent_manager = ConsentManager::new(&config.data_dir)
                             .map_err(|e| anyhow!("consent manager: {}", e))
@@ -142,7 +142,7 @@ pub(crate) fn cmd_config(action: ConfigAction) -> Result<()> {
                             }
                         }
                     } else {
-                        use cpop_engine::fingerprint::ConsentManager;
+                        use witnessd::fingerprint::ConsentManager;
 
                         let mut consent_manager = ConsentManager::new(&config.data_dir)
                             .map_err(|e| anyhow!("consent manager: {}", e))?;
@@ -335,12 +335,12 @@ pub(crate) fn cmd_config(action: ConfigAction) -> Result<()> {
 }
 
 fn prompt_voice_consent(
-    consent_manager: &mut cpop_engine::fingerprint::ConsentManager,
+    consent_manager: &mut witnessd::fingerprint::ConsentManager,
     config: &mut CpopConfig,
 ) -> Result<bool> {
     println!("=== Voice Fingerprinting Consent ===");
     println!();
-    println!("{}", cpop_engine::fingerprint::consent::CONSENT_EXPLANATION);
+    println!("{}", witnessd::fingerprint::consent::CONSENT_EXPLANATION);
     println!();
 
     print!("Do you consent to voice fingerprinting? (yes/no): ");

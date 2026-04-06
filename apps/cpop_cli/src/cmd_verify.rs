@@ -5,15 +5,15 @@ use anyhow::{anyhow, Context, Result};
 use std::fs;
 use std::path::PathBuf;
 
-use cpop_engine::cpop_protocol::forensics::ForensicVerdict;
-use cpop_engine::cpop_protocol::rfc::{CBOR_TAG_ATTESTATION_RESULT, CBOR_TAG_EVIDENCE_PACKET};
-use cpop_engine::evidence;
-use cpop_engine::verify::{self, FullVerificationResult, VerifyOptions};
-use cpop_engine::war;
+use witnessd::authorproof_protocol::forensics::ForensicVerdict;
+use witnessd::authorproof_protocol::rfc::{CBOR_TAG_ATTESTATION_RESULT, CBOR_TAG_EVIDENCE_PACKET};
+use witnessd::evidence;
+use witnessd::verify::{self, FullVerificationResult, VerifyOptions};
+use witnessd::war;
 
 use crate::output::OutputMode;
 use crate::spec::{EAT_PROFILE_URI, MIN_CHECKPOINTS_PER_PACKET, PROFILE_URI};
-use cpop_engine::{derive_hmac_key, SecureStore};
+use witnessd::{derive_hmac_key, SecureStore};
 use zeroize::Zeroizing;
 
 use crate::util::{ensure_dirs, load_vdf_params, writersproof_dir};
@@ -199,10 +199,10 @@ fn print_json_result(
             "cadence_cv": forensics.cadence.coefficient_of_variation,
             "is_robotic": forensics.cadence.is_robotic,
             "hurst_exponent": forensics.hurst_exponent,
-            "snr_flagged": forensics.snr.as_ref().map(|s: &cpop_engine::analysis::SnrAnalysis| s.flagged),
-            "lyapunov_flagged": forensics.lyapunov.as_ref().map(|l: &cpop_engine::analysis::LyapunovAnalysis| l.flagged),
-            "iki_compression_flagged": forensics.iki_compression.as_ref().map(|c: &cpop_engine::analysis::IkiCompressionAnalysis| c.flagged),
-            "labyrinth_plausible": forensics.labyrinth.as_ref().map(|l: &cpop_engine::analysis::LabyrinthAnalysis| l.is_biologically_plausible()),
+            "snr_flagged": forensics.snr.as_ref().map(|s: &witnessd::analysis::SnrAnalysis| s.flagged),
+            "lyapunov_flagged": forensics.lyapunov.as_ref().map(|l: &witnessd::analysis::LyapunovAnalysis| l.flagged),
+            "iki_compression_flagged": forensics.iki_compression.as_ref().map(|c: &witnessd::analysis::IkiCompressionAnalysis| c.flagged),
+            "labyrinth_plausible": forensics.labyrinth.as_ref().map(|l: &witnessd::analysis::LabyrinthAnalysis| l.is_biologically_plausible()),
         });
     }
 
@@ -389,7 +389,7 @@ fn print_human_result(
 }
 
 fn write_war_appraisal(packet: &evidence::Packet, war_path: &PathBuf) -> Result<()> {
-    let policy = cpop_engine::AppraisalPolicy::new("urn:cpop:policy:verify", "1.0");
+    let policy = witnessd::AppraisalPolicy::new("urn:cpop:policy:verify", "1.0");
     match war::appraise(packet, &policy) {
         Ok(ear) => {
             let json = serde_json::to_string_pretty(&ear).context("serialize WAR appraisal")?;
@@ -404,8 +404,8 @@ fn write_war_appraisal(packet: &evidence::Packet, war_path: &PathBuf) -> Result<
 fn verify_cpop(file_path: &PathBuf, out: &OutputMode) -> Result<()> {
     let data = fs::read(file_path).context("read CPOP file")?;
     // Evidence files may be COSE_Sign1 envelopes (signed) or raw CBOR (unsigned).
-    let cbor_payload = cpop_engine::ffi::helpers::unwrap_cose_or_raw(&data);
-    match cpop_engine::cpop_protocol::rfc::wire_types::packet::EvidencePacketWire::decode_cbor(
+    let cbor_payload = witnessd::ffi::helpers::unwrap_cose_or_raw(&data);
+    match witnessd::authorproof_protocol::rfc::wire_types::packet::EvidencePacketWire::decode_cbor(
         &cbor_payload,
     ) {
         Ok(packet) => {

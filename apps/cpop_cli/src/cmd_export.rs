@@ -7,14 +7,14 @@ use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use cpop_engine::cpop_protocol::crypto::EvidenceSigner;
-use cpop_engine::cpop_protocol::rfc::{CBOR_TAG_ATTESTATION_RESULT, CBOR_TAG_EVIDENCE_PACKET};
-use cpop_engine::declaration::{self, AiExtent, AiPurpose, ModalityType};
-use cpop_engine::evidence;
-use cpop_engine::jitter::Session as JitterSession;
-use cpop_engine::report::{self, WarReport};
-use cpop_engine::tpm;
-use cpop_engine::war;
+use witnessd::authorproof_protocol::crypto::EvidenceSigner;
+use witnessd::authorproof_protocol::rfc::{CBOR_TAG_ATTESTATION_RESULT, CBOR_TAG_EVIDENCE_PACKET};
+use witnessd::declaration::{self, AiExtent, AiPurpose, ModalityType};
+use witnessd::evidence;
+use witnessd::jitter::Session as JitterSession;
+use witnessd::report::{self, WarReport};
+use witnessd::tpm;
+use witnessd::war;
 use sha2::Digest;
 
 use crate::output::OutputMode;
@@ -33,9 +33,9 @@ const CHAR_COUNT_READ_LIMIT: i64 = 10_000_000;
 struct EvidencePacketContext<'a> {
     file_path: &'a Path,
     abs_path_str: &'a str,
-    events: &'a [cpop_engine::SecureEvent],
-    latest: &'a cpop_engine::SecureEvent,
-    vdf_params: &'a cpop_engine::vdf::params::Parameters,
+    events: &'a [witnessd::SecureEvent],
+    latest: &'a witnessd::SecureEvent,
+    vdf_params: &'a witnessd::vdf::params::Parameters,
     tier_lower: &'a str,
     spec_content_tier: u8,
     spec_profile_uri: &'a str,
@@ -50,17 +50,17 @@ struct EvidenceOutputContext<'a> {
     format_lower: &'a str,
     out_path: &'a Path,
     file_path: &'a Path,
-    events: &'a [cpop_engine::SecureEvent],
+    events: &'a [witnessd::SecureEvent],
     packet: &'a serde_json::Value,
     signer: &'a dyn EvidenceSigner,
-    vdf_params: &'a cpop_engine::vdf::params::Parameters,
+    vdf_params: &'a witnessd::vdf::params::Parameters,
     tier: &'a str,
     tier_lower: &'a str,
     spec_content_tier: u8,
     spec_profile_uri: &'a str,
     spec_attestation_tier: u8,
     total_vdf_time: &'a Duration,
-    caps: &'a cpop_engine::tpm::Capabilities,
+    caps: &'a witnessd::tpm::Capabilities,
     tpm_device_id: &'a str,
     out: &'a OutputMode,
 }
@@ -238,7 +238,7 @@ pub(crate) async fn cmd_export(
     // Submit beacon anchor unless disabled.
     if !no_beacons {
         let beacon_result =
-            cpop_engine::ffi::beacon::ffi_submit_beacon(abs_path_str.clone(), beacon_timeout);
+            witnessd::ffi::beacon::ffi_submit_beacon(abs_path_str.clone(), beacon_timeout);
         if beacon_result.success {
             if !out.quiet && !out.json {
                 if let Some(ref url) = beacon_result.verification_url {
@@ -276,7 +276,7 @@ pub(crate) async fn cmd_export(
     Ok(())
 }
 
-fn validate_checkpoint_count(file_path: &Path, events: &[cpop_engine::SecureEvent]) -> Result<()> {
+fn validate_checkpoint_count(file_path: &Path, events: &[witnessd::SecureEvent]) -> Result<()> {
     let file_name = || {
         file_path
             .file_name()
@@ -417,7 +417,7 @@ fn load_session_evidence(session_path: &Path, hybrid_path: &Path) -> serde_json:
     if hybrid_path.exists() {
         #[cfg(feature = "cpop_jitter")]
         {
-            return match cpop_engine::HybridJitterSession::load(hybrid_path, None) {
+            return match witnessd::HybridJitterSession::load(hybrid_path, None) {
                 Ok(s) => serde_json::to_value(s.export()).unwrap_or_else(|e| {
                     eprintln!("Warning: failed to serialize jitter stats: {e}");
                     serde_json::Value::Null
@@ -516,7 +516,7 @@ fn build_evidence_packet(ctx: &EvidencePacketContext<'_>) -> Result<serde_json::
 
     // §7.5: entangled (21) for enhanced/maximum, standard (20) otherwise
     let proof_algorithm: u8 = if *spec_content_tier >= 2 { 21 } else { 20 };
-    let swf_params = cpop_engine::vdf::params_for_tier(*spec_content_tier);
+    let swf_params = witnessd::vdf::params_for_tier(*spec_content_tier);
 
     let mut packet_id = [0u8; 16];
     getrandom::getrandom(&mut packet_id)?;
@@ -690,14 +690,14 @@ fn write_atomic(out_path: &Path, data: &[u8]) -> Result<()> {
 /// the CBOR export must construct the wire packet from those events rather than
 /// loading a `Chain` from disk.
 fn build_wire_packet_from_events(
-    events: &[cpop_engine::SecureEvent],
+    events: &[witnessd::SecureEvent],
     file_path: &Path,
-    vdf_params: &cpop_engine::vdf::params::Parameters,
+    vdf_params: &witnessd::vdf::params::Parameters,
     spec_profile_uri: &str,
     spec_content_tier: u8,
     spec_attestation_tier: u8,
-) -> Result<cpop_engine::EvidencePacketWire> {
-    use cpop_engine::cpop_protocol::rfc::wire_types::{
+) -> Result<witnessd::EvidencePacketWire> {
+    use witnessd::authorproof_protocol::rfc::wire_types::{
         AttestationTier, ContentTier, DocumentRef, EditDelta, HashValue, ProcessProof,
         ProofAlgorithm, ProofParams,
     };
@@ -720,10 +720,10 @@ fn build_wire_packet_from_events(
         salt_commitment: None,
     };
 
-    let checkpoints: Vec<cpop_engine::CheckpointWire> = events
+    let checkpoints: Vec<witnessd::CheckpointWire> = events
         .iter()
         .enumerate()
-        .map(|(i, ev)| {
+        .map(|(i, ev)| -> anyhow::Result<witnessd::CheckpointWire> {
             let (input, merkle_root, iterations, claimed_ms) =
                 if let (Some(vdf_in), Some(vdf_out)) = (ev.vdf_input, ev.vdf_output) {
                     let ms = if vdf_params.iterations_per_second > 0 {
@@ -756,12 +756,12 @@ fn build_wire_packet_from_events(
             let mut cp_id = [0u8; 16];
             cp_id.copy_from_slice(&ev.event_hash[..16]);
 
-            let mut wire = cpop_engine::CheckpointWire {
+            let mut wire = witnessd::CheckpointWire {
                 sequence: i as u64,
                 checkpoint_id: cp_id,
                 timestamp: (ev.timestamp_ns / 1_000_000).max(0) as u64,
                 content_hash: HashValue::try_sha256(ev.content_hash.to_vec())
-                    .expect("content_hash is 32 bytes"),
+                    .map_err(|e| anyhow::anyhow!(e))?,
                 char_count: ev.file_size.max(0) as u64,
                 delta: EditDelta {
                     chars_added: if ev.size_delta > 0 {
@@ -782,9 +782,9 @@ fn build_wire_packet_from_events(
                     pause_duration_histogram: None,
                 },
                 prev_hash: HashValue::try_sha256(ev.previous_hash.to_vec())
-                    .expect("previous_hash is 32 bytes"),
+                    .map_err(|e| anyhow::anyhow!(e))?,
                 checkpoint_hash: HashValue::try_sha256(vec![0u8; 32])
-                    .expect("zeroed hash is 32 bytes"),
+                    .map_err(|e| anyhow::anyhow!(e))?,
                 process_proof,
                 jitter_binding: None,
                 physical_state: None,
@@ -797,15 +797,15 @@ fn build_wire_packet_from_events(
                 lamport_signature: None,
                 lamport_pubkey_fingerprint: None,
             };
-            wire.checkpoint_hash = wire.compute_hash().expect("checkpoint hash computation");
-            wire
+            wire.checkpoint_hash = wire.compute_hash().map_err(|e| anyhow::anyhow!(e))?;
+            Ok(wire)
         })
-        .collect();
+        .collect::<anyhow::Result<Vec<_>>>()?;
 
     let mut packet_id = [0u8; 16];
     getrandom::getrandom(&mut packet_id)?;
 
-    Ok(cpop_engine::EvidencePacketWire {
+    Ok(witnessd::EvidencePacketWire {
         version: 1,
         profile_uri: spec_profile_uri.to_string(),
         packet_id,
@@ -1014,7 +1014,7 @@ fn write_evidence_output(ctx: &EvidenceOutputContext<'_>) -> Result<()> {
             let evidence_packet: evidence::Packet =
                 serde_json::from_value(ctx.packet.clone()).context("create evidence packet")?;
 
-            let policy = cpop_engine::trust_policy::profiles::basic();
+            let policy = witnessd::trust_policy::profiles::basic();
             let block = war::Block::from_packet_appraised(&evidence_packet, ctx.signer, &policy)
                 .map_err(|e| anyhow!("WAR appraisal failed: {}", e))?;
 
@@ -1065,15 +1065,15 @@ fn write_evidence_output(ctx: &EvidenceOutputContext<'_>) -> Result<()> {
 
 #[allow(clippy::too_many_arguments)]
 fn build_war_report(
-    events: &[cpop_engine::store::SecureEvent],
-    vdf_params: &cpop_engine::vdf::params::Parameters,
+    events: &[witnessd::store::SecureEvent],
+    vdf_params: &witnessd::vdf::params::Parameters,
     tier: &str,
     total_vdf_time: &Duration,
     hardware_backed: bool,
     device_id: &str,
     signing_key_fingerprint: &str,
 ) -> WarReport {
-    use cpop_engine::report::*;
+    use witnessd::report::*;
 
     let now = Utc::now();
     let report_id = WarReport::generate_id();
@@ -1209,7 +1209,7 @@ fn build_report_flags(
     event_count: usize,
     total_min: f64,
 ) -> Vec<report::ReportFlag> {
-    use cpop_engine::report::*;
+    use witnessd::report::*;
 
     let mut flags = Vec::new();
     if avg_forensic > 0.7 {
@@ -1254,7 +1254,7 @@ fn build_report_flags(
 }
 
 fn verdict_description(verdict: &report::Verdict) -> String {
-    use cpop_engine::report::Verdict;
+    use witnessd::report::Verdict;
     match verdict {
         Verdict::VerifiedHuman => "Analysis indicates strong evidence of human authorship based on behavioral timing and revision patterns.".into(),
         Verdict::LikelyHuman => "Evidence suggests human authorship with moderate constraint indicators.".into(),
@@ -1264,7 +1264,7 @@ fn verdict_description(verdict: &report::Verdict) -> String {
     }
 }
 
-fn detect_sessions(events: &[cpop_engine::store::SecureEvent]) -> Vec<report::ReportSession> {
+fn detect_sessions(events: &[witnessd::store::SecureEvent]) -> Vec<report::ReportSession> {
     if events.is_empty() {
         return vec![];
     }
@@ -1295,7 +1295,7 @@ fn detect_sessions(events: &[cpop_engine::store::SecureEvent]) -> Vec<report::Re
 fn make_session(
     start_idx: usize,
     end_idx: usize,
-    events: &[cpop_engine::store::SecureEvent],
+    events: &[witnessd::store::SecureEvent],
     session_num: usize,
 ) -> report::ReportSession {
     let first = &events[start_idx];

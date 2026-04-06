@@ -9,7 +9,7 @@ use std::path::Path;
 use crate::cli::PresenceAction;
 use crate::output::OutputMode;
 use crate::util::{ensure_dirs, write_restrictive};
-use cpop_engine::presence::{
+use witnessd::presence::{
     ChallengeStatus, Config as PresenceConfig, Session as PresenceSession, Verifier,
 };
 
@@ -28,7 +28,7 @@ fn acquire_session_lock(session_file: &Path) -> Result<fs::File> {
         .truncate(true)
         .open(&lock_path)
         .context("open session lock file")?;
-    cpop_engine::restrict_permissions(&lock_path, 0o600)
+    witnessd::restrict_permissions(&lock_path, 0o600)
         .context("restrict lock file permissions")?;
 
     let deadline =
