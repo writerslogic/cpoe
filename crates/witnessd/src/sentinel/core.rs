@@ -54,10 +54,7 @@ fn commit_checkpoint_for_path(
 
     let mut store = {
         let guard = signing_key.read_recover();
-        let sk = match guard.key() {
-            Some(sk) => sk,
-            None => return None,
-        };
+        let sk = guard.key()?;
         let db_path = writersproof_dir.join("events.db");
         match crate::store::open_store_with_signing_key(&sk, &db_path) {
             Ok(s) => s,
@@ -195,6 +192,7 @@ pub struct Sentinel {
     /// Pre-fetched challenge nonce from the host app, consumed by the next checkpoint.
     /// Tuple: (nonce_value, nonce_id). `nonce_id` is `None` for FFI-sourced nonces
     /// (which arrive without a server-side UUID for confirmation).
+    #[allow(clippy::type_complexity)]
     pub(crate) pending_challenge: Arc<RwLock<Option<(String, Option<String>)>>>,
     /// Timestamp when the sentinel was started via start().
     pub(crate) start_time: Arc<Mutex<Option<SystemTime>>>,
