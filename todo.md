@@ -12,7 +12,7 @@
 | Severity | Open | Fixed | Skipped |
 |----------|------|-------|---------|
 | CRITICAL | 0    | 12    | 0       |
-| HIGH     | 5    | 130   | 0       |
+| HIGH     | 4    | 131   | 0       |
 | MEDIUM   | 27   | 228   | 14      |
 
 ---
@@ -141,7 +141,7 @@ All 265 findings from prior audit (2026-03-30) and 255 from 2026-03-25 are resol
   Impact: Timing side-channel on chain structure | Fix: Use ct_eq consistently | Effort: small
 
 ### Evidence/Checkpoint
-- [ ] **H-011** `[security]` `evidence/builder/mod.rs:304`: period_type stored as String instead of enum
+- [-] **H-011** `[security]` `evidence/builder/mod.rs:304`: period_type stored as String instead of enum -- FALSE POSITIVE: ContextPeriodType enum exists in evidence/types.rs:335 and is used throughout evidence/builder. The String field is in report/types.rs:288 (display layer, not wire format).
   <!-- pid:missing_validation | batch:4 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
   Impact: Arbitrary values at wire time; evades authorship analysis | Fix: Create ContextPeriodType enum | Effort: large
 
@@ -149,9 +149,9 @@ All 265 findings from prior audit (2026-03-30) and 255 from 2026-03-25 are resol
   <!-- pid:missing_validation | batch:4 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
   Impact: Attacker can substitute public key; self-signing provides no protection | Fix: Require external trusted key parameter | Effort: medium
 
-- [ ] **H-013** `[error_handling]` `checkpoint/chain.rs:159`: VDF skipped for genesis checkpoint in Legacy mode
-  <!-- pid:silent_error | batch:4 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
-  Impact: Genesis can be forged without VDF proof | Fix: Require VDF for genesis in all modes | Effort: large
+- [x] **H-013** `[error_handling]` `checkpoint/chain.rs:159`: VDF skipped for genesis checkpoint in Legacy mode -- FIXED 2026-04-06
+  <!-- pid:silent_error | batch:4 | verified:analytical | first:2026-04-02 | last:2026-04-06 -->
+  Impact: Genesis can be forged without VDF proof | Fix: VDF now computed for genesis in all modes; 3 stale test assertions updated
 
 - [x] **H-014** `[error_handling]` `checkpoint/chain_verification.rs:32`: verify_hash_chain returns bool with no error context
   <!-- pid:unhelpful_error_msg | batch:4 | verified:analytical | first:2026-04-02 | last:2026-04-02 -->
@@ -282,9 +282,10 @@ All 265 findings from prior audit (2026-03-30) and 255 from 2026-03-25 are resol
 ## Medium
 
 ### Sentinel
-- [ ] **M-001** `[architecture]` `sentinel/core.rs:98`: God module, 1162 lines, 18 Arc<RwLock<>> fields
+- [ ] **M-001** `[architecture]` `sentinel/core.rs:98`: God module, 1568 lines, 18 Arc<RwLock<>> fields
   <!-- pid:god_module | batch:2 | verified:true -->
-- [ ] **M-002** `[maintainability]` `sentinel/types.rs:356`: DOC_EXTENSIONS array hardcoded; 40+ extensions
+  Deferred: architectural, use /split-module. core.rs grown to 1568 lines as of 2026-04-06.
+- [-] **M-002** `[maintainability]` `sentinel/types.rs:544`: DOC_EXTENSIONS array hardcoded -- FALSE POSITIVE: intentionally hardcoded per inline doc comment; heuristics require code review, not user config
   <!-- pid:hardcoded_config | batch:2 -->
 - [x] **M-003** `[code_quality]` `sentinel/ipc_handler.rs:405`: Magic numbers in process score computation -- ALREADY FIXED: weights already extracted to named constants
   <!-- pid:magic_value | batch:2 -->
