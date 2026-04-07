@@ -111,20 +111,11 @@ impl Chain {
         let last_cp = self.checkpoints.last();
         let previous_hash = match last_cp {
             Some(cp) => cp.hash,
-            None => genesis_prev_hash(
-                content_hash,
-                content_size,
-                &self.metadata.document_path,
-            )?,
+            None => genesis_prev_hash(content_hash, content_size, &self.metadata.document_path)?,
         };
 
-        let mut checkpoint = Checkpoint::new_base(
-            ordinal,
-            previous_hash,
-            content_hash,
-            content_size,
-            message,
-        );
+        let mut checkpoint =
+            Checkpoint::new_base(ordinal, previous_hash, content_hash, content_size, message);
 
         {
             let duration = if ordinal == 0 {
@@ -147,8 +138,7 @@ impl Chain {
                 })
             };
             let vdf_input = vdf::chain_input(content_hash, previous_hash, ordinal);
-            checkpoint.vdf =
-                Some(vdf::compute(vdf_input, duration, self.metadata.vdf_params)?);
+            checkpoint.vdf = Some(vdf::compute(vdf_input, duration, self.metadata.vdf_params)?);
         }
 
         self.commit_finish(checkpoint)
@@ -208,9 +198,7 @@ impl Chain {
     fn acquire_lock(file: &fs::File) -> Result<()> {
         let ret = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
         if ret != 0 {
-            return Err(Error::checkpoint(
-                "Concurrent commit blocked by file lock",
-            ));
+            return Err(Error::checkpoint("Concurrent commit blocked by file lock"));
         }
         Ok(())
     }
@@ -298,11 +286,7 @@ impl Chain {
         let last_cp = self.checkpoints.last();
         let previous_hash = match last_cp {
             Some(cp) => cp.hash,
-            None => genesis_prev_hash(
-                content_hash,
-                content_size,
-                &self.metadata.document_path,
-            )?,
+            None => genesis_prev_hash(content_hash, content_size, &self.metadata.document_path)?,
         };
 
         let previous_vdf_output = last_cp
@@ -310,9 +294,8 @@ impl Chain {
             .map(|v| v.output)
             .unwrap_or([0u8; 32]);
 
-        let physics_seed = physics.map(|ctx| {
-            crate::physics::entanglement::Entanglement::create_seed(content_hash, ctx)
-        });
+        let physics_seed = physics
+            .map(|ctx| crate::physics::entanglement::Entanglement::create_seed(content_hash, ctx));
 
         let mut checkpoint =
             Checkpoint::new_base(ordinal, previous_hash, content_hash, content_size, message);
@@ -323,12 +306,8 @@ impl Chain {
             physics_seed,
         });
 
-        let base_input = vdf::chain_input_entangled(
-            previous_vdf_output,
-            jitter_hash,
-            content_hash,
-            ordinal,
-        );
+        let base_input =
+            vdf::chain_input_entangled(previous_vdf_output, jitter_hash, content_hash, ordinal);
         let vdf_input = mix_physics_seed(base_input, physics_seed);
         let proof = vdf::compute(vdf_input, vdf_duration, self.metadata.vdf_params)?;
         checkpoint.vdf = Some(proof);
@@ -461,26 +440,19 @@ impl Chain {
         let last_cp = self.checkpoints.last();
         let previous_hash = match last_cp {
             Some(cp) => cp.hash,
-            None => genesis_prev_hash(
-                content_hash,
-                content_size,
-                &self.metadata.document_path,
-            )?,
+            None => genesis_prev_hash(content_hash, content_size, &self.metadata.document_path)?,
         };
 
-        let physics_seed =
-            if self.metadata.entanglement_mode == EntanglementMode::Entangled {
-                physics.map(|ctx| {
-                    crate::physics::entanglement::Entanglement::create_seed(content_hash, ctx)
-                })
-            } else {
-                None
-            };
+        let physics_seed = if self.metadata.entanglement_mode == EntanglementMode::Entangled {
+            physics.map(|ctx| {
+                crate::physics::entanglement::Entanglement::create_seed(content_hash, ctx)
+            })
+        } else {
+            None
+        };
 
         let vdf_input = match self.metadata.entanglement_mode {
-            EntanglementMode::Legacy => {
-                vdf::chain_input(content_hash, previous_hash, ordinal)
-            }
+            EntanglementMode::Legacy => vdf::chain_input(content_hash, previous_hash, ordinal),
             EntanglementMode::Entangled => {
                 let previous_vdf_output = last_cp
                     .and_then(|cp| cp.vdf.as_ref())
@@ -513,14 +485,12 @@ impl Chain {
 
         let rfc_vdf = vdf_proof.as_ref().map(|vdf| {
             use super::types::{
-                VDF_RFC_FIELD_SIZE, VDF_RFC_INPUT_END, VDF_RFC_INPUT_OFFSET,
-                VDF_RFC_OUTPUT_END, VDF_RFC_OUTPUT_OFFSET,
+                VDF_RFC_FIELD_SIZE, VDF_RFC_INPUT_END, VDF_RFC_INPUT_OFFSET, VDF_RFC_OUTPUT_END,
+                VDF_RFC_OUTPUT_OFFSET,
             };
             let mut output = [0u8; VDF_RFC_FIELD_SIZE];
-            output[VDF_RFC_OUTPUT_OFFSET..VDF_RFC_OUTPUT_END]
-                .copy_from_slice(&vdf.output);
-            output[VDF_RFC_INPUT_OFFSET..VDF_RFC_INPUT_END]
-                .copy_from_slice(&vdf.input);
+            output[VDF_RFC_OUTPUT_OFFSET..VDF_RFC_OUTPUT_END].copy_from_slice(&vdf.output);
+            output[VDF_RFC_INPUT_OFFSET..VDF_RFC_INPUT_END].copy_from_slice(&vdf.input);
 
             VdfProofRfc::new(
                 vdf.input,
@@ -562,10 +532,8 @@ impl Chain {
                 authorproof_protocol::codec::cbor::encode(&jb.summary.sample_count)
                     .map_err(|e| Error::checkpoint(format!("SWF intervals CBOR: {e}")))?;
             let phys_cbor = match physics {
-                Some(p) => {
-                    authorproof_protocol::codec::cbor::encode(&p.combined_hash.to_vec())
-                        .map_err(|e| Error::checkpoint(format!("SWF physics CBOR: {e}")))?
-                }
+                Some(p) => authorproof_protocol::codec::cbor::encode(&p.combined_hash.to_vec())
+                    .map_err(|e| Error::checkpoint(format!("SWF physics CBOR: {e}")))?,
                 None => vec![],
             };
             vdf::swf_seed_enhanced(&previous_hash, &intervals_cbor, &phys_cbor)
@@ -584,13 +552,8 @@ impl Chain {
             )
         };
 
-        let mut checkpoint = Checkpoint::new_base(
-            ordinal,
-            previous_hash,
-            content_hash,
-            content_size,
-            message,
-        );
+        let mut checkpoint =
+            Checkpoint::new_base(ordinal, previous_hash, content_hash, content_size, message);
         checkpoint.vdf = vdf_proof;
         checkpoint.jitter_binding = jitter_binding;
         checkpoint.rfc_vdf = rfc_vdf;

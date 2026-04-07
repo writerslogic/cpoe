@@ -242,8 +242,11 @@ pub fn ffi_export_c2pa_manifest(
         .and_then(|ext| ext.to_str())
         .map(detect_mime_type);
 
-    let mut builder =
-        authorproof_protocol::c2pa::C2paManifestBuilder::new(evidence_packet, evidence_bytes, doc_hash);
+    let mut builder = authorproof_protocol::c2pa::C2paManifestBuilder::new(
+        evidence_packet,
+        evidence_bytes,
+        doc_hash,
+    );
     if let Some(ref name) = doc_filename {
         builder = builder.document_filename(name);
     }

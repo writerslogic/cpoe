@@ -385,7 +385,10 @@ fn test_manifest_with_format_produces_metadata_assertion() {
         .created_assertions
         .iter()
         .any(|a| a.url.contains(ASSERTION_LABEL_METADATA));
-    assert!(has_metadata, "Metadata assertion should be present when format is set");
+    assert!(
+        has_metadata,
+        "Metadata assertion should be present when format is set"
+    );
     let validation = validate_manifest(&manifest);
     assert!(validation.is_valid(), "Errors: {:?}", validation.errors);
 }
@@ -404,7 +407,10 @@ fn test_manifest_without_format_has_no_metadata_assertion() {
         .created_assertions
         .iter()
         .any(|a| a.url.contains(ASSERTION_LABEL_METADATA));
-    assert!(!has_metadata, "No metadata assertion when format is not set");
+    assert!(
+        !has_metadata,
+        "No metadata assertion when format is not set"
+    );
     let validation = validate_manifest(&manifest);
     assert!(validation.is_valid(), "Errors: {:?}", validation.errors);
 }

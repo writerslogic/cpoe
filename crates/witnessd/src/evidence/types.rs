@@ -391,8 +391,7 @@ pub struct ContextPeriod {
     pub end_time: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DocumentInfo {
     pub title: String,
     pub path: String,

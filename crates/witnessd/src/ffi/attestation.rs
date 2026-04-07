@@ -134,21 +134,22 @@ pub fn ffi_sign_attestation_challenge(challenge_b64: String) -> FfiAttestationRe
 
     // Build COSE_Sign1 envelope wrapping the challenge as payload.
     let tpm_signer = crate::tpm::TpmSigner::new(provider.clone());
-    let cose_sign1_b64 = match authorproof_protocol::crypto::sign_evidence_cose(&challenge, &tpm_signer) {
-        Ok(cose_bytes) => b64.encode(&cose_bytes),
-        Err(e) => {
-            return FfiAttestationResponse {
-                success: false,
-                signature_b64: b64.encode(&signature),
-                public_key_b64: b64.encode(&public_key),
-                cose_sign1_b64: String::new(),
-                device_id: provider.device_id(),
-                model: get_model(),
-                os_version: get_os_version(),
-                error_message: Some(format!("COSE_Sign1 envelope creation failed: {e}")),
-            };
-        }
-    };
+    let cose_sign1_b64 =
+        match authorproof_protocol::crypto::sign_evidence_cose(&challenge, &tpm_signer) {
+            Ok(cose_bytes) => b64.encode(&cose_bytes),
+            Err(e) => {
+                return FfiAttestationResponse {
+                    success: false,
+                    signature_b64: b64.encode(&signature),
+                    public_key_b64: b64.encode(&public_key),
+                    cose_sign1_b64: String::new(),
+                    device_id: provider.device_id(),
+                    model: get_model(),
+                    os_version: get_os_version(),
+                    error_message: Some(format!("COSE_Sign1 envelope creation failed: {e}")),
+                };
+            }
+        };
 
     FfiAttestationResponse {
         success: true,

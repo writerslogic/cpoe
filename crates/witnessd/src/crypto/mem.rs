@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
+use crate::utils::mlock::{mlock, munlock};
 use std::ops::Deref;
 use zeroize::{Zeroize, Zeroizing};
-use crate::utils::mlock::{mlock, munlock};
 
 pub struct ProtectedKey<const N: usize>(Zeroizing<[u8; N]>);
 
@@ -39,7 +39,9 @@ impl<const N: usize> Drop for ProtectedKey<N> {
 
 impl<const N: usize> Deref for ProtectedKey<N> {
     type Target = [u8; N];
-    fn deref(&self) -> &Self::Target { &self.0 }
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 pub struct ProtectedBuf(Zeroizing<Vec<u8>>);
@@ -54,11 +56,15 @@ impl ProtectedBuf {
 
 impl Deref for ProtectedBuf {
     type Target = [u8];
-    fn deref(&self) -> &Self::Target { &self.0 }
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 impl ProtectedBuf {
-    pub fn as_slice(&self) -> &[u8] { &self.0 }
+    pub fn as_slice(&self) -> &[u8] {
+        &self.0
+    }
 }
 
 impl Drop for ProtectedBuf {

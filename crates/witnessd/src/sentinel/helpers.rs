@@ -813,7 +813,6 @@ pub(crate) fn try_hw_cosign(
     event_hash: Option<&[u8; 32]>,
     store: Option<(&crate::store::SecureStore, &str)>,
 ) -> bool {
-
     let sched = match session.hw_cosign_scheduler.as_mut() {
         Some(s) => s,
         None => return false,

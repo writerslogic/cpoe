@@ -331,7 +331,7 @@ impl EvidenceChain {
 
         expected_mac.ct_eq(&self.chain_mac).into()
     }
-    
+
     pub fn validate_timestamps(&self) -> bool {
         self.records
             .windows(2)

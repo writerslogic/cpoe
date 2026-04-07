@@ -11,7 +11,9 @@ use witnessd::tpm;
 
 use crate::output::OutputMode;
 use crate::spec::{attestation_tier_value, content_tier_from_cli, profile_uri_from_cli};
-use crate::util::{ensure_dirs, load_signing_key, load_vdf_params, open_secure_store, retry_on_busy};
+use crate::util::{
+    ensure_dirs, load_signing_key, load_vdf_params, open_secure_store, retry_on_busy,
+};
 
 mod keystroke;
 mod output;

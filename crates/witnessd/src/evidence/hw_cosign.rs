@@ -106,10 +106,7 @@ impl HwCosignScheduler {
     }
 
     /// Create a scheduler with default interval parameters.
-    pub fn with_defaults(
-        tpm_provider: &dyn tpm::Provider,
-        session_id: &str,
-    ) -> Result<Self> {
+    pub fn with_defaults(tpm_provider: &dyn tpm::Provider, session_id: &str) -> Result<Self> {
         Self::new(
             tpm_provider,
             session_id,
@@ -346,7 +343,10 @@ mod tests {
 
         // With base=2, variance=3, mod=3, threshold is 2..8, so across 50
         // checkpoints we should have triggered multiple co-signs
-        assert!(cosign_count >= 2, "expected multiple co-signs, got {cosign_count}");
+        assert!(
+            cosign_count >= 2,
+            "expected multiple co-signs, got {cosign_count}"
+        );
     }
 
     #[test]
@@ -359,10 +359,7 @@ mod tests {
             sched.record_entropy(&[i; 16]);
             let t = sched.compute_threshold();
             assert!(t >= 3, "threshold {t} below base_interval");
-            assert!(
-                t < 3 + 5 + ENTROPY_MOD_RANGE,
-                "threshold {t} exceeds max"
-            );
+            assert!(t < 3 + 5 + ENTROPY_MOD_RANGE, "threshold {t} exceeds max");
         }
     }
 }

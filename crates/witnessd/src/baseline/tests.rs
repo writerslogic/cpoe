@@ -27,8 +27,7 @@ fn make_summary(
 #[test]
 fn initial_digest_has_zero_sessions() {
     let fp = vec![0xAA; 32];
-    let d = compute_initial_digest(
-fp.clone());
+    let d = compute_initial_digest(fp.clone());
     assert_eq!(d.version, 1);
     assert_eq!(d.session_count, 0);
     assert_eq!(d.total_keystrokes, 0);
@@ -39,8 +38,7 @@ fp.clone());
 
 #[test]
 fn initial_digest_histogram_is_zeroed() {
-    let d = compute_initial_digest(
-vec![1, 2, 3]);
+    let d = compute_initial_digest(vec![1, 2, 3]);
     for bin in &d.aggregate_iki_histogram {
         assert_eq!(*bin, 0.0);
     }
@@ -48,8 +46,7 @@ vec![1, 2, 3]);
 
 #[test]
 fn initial_digest_stats_are_empty() {
-    let d = compute_initial_digest(
-vec![]);
+    let d = compute_initial_digest(vec![]);
     assert_eq!(d.iki_stats.count, 0);
     assert_eq!(d.cv_stats.count, 0);
     assert_eq!(d.hurst_stats.count, 0);
@@ -62,8 +59,7 @@ fn initial_digest_computed_at_is_recent() {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    let d = compute_initial_digest(
-vec![]);
+    let d = compute_initial_digest(vec![]);
     assert!(d.computed_at >= before);
     assert!(d.computed_at <= before + 2);
 }
@@ -72,8 +68,7 @@ vec![]);
 
 #[test]
 fn single_update_increments_session_count() {
-    let mut d = compute_initial_digest(
-vec![]);
+    let mut d = compute_initial_digest(vec![]);
     let s = make_summary(100, 0.5, 0.7, 3.0);
     update_digest_in_place(&mut d, &s);
     assert_eq!(d.session_count, 1);
@@ -82,8 +77,7 @@ vec![]);
 
 #[test]
 fn multiple_updates_accumulate_keystrokes() {
-    let mut d = compute_initial_digest(
-vec![]);
+    let mut d = compute_initial_digest(vec![]);
     let s1 = make_summary(100, 0.5, 0.7, 3.0);
     let s2 = make_summary(200, 0.5, 0.7, 3.0);
     let s3 = make_summary(50, 0.5, 0.7, 3.0);
@@ -96,8 +90,7 @@ vec![]);
 
 #[test]
 fn update_advances_confidence_tier() {
-    let mut d = compute_initial_digest(
-vec![]);
+    let mut d = compute_initial_digest(vec![]);
     let s = make_summary(100, 0.5, 0.7, 3.0);
 
     for _ in 0..5 {
@@ -118,8 +111,7 @@ vec![]);
 
 #[test]
 fn update_sets_histogram_to_session_on_first_update() {
-    let mut d = compute_initial_digest(
-vec![]);
+    let mut d = compute_initial_digest(vec![]);
     let s = make_summary(100, 0.5, 0.7, 3.0);
     update_digest_in_place(&mut d, &s);
     for i in 0..9 {
@@ -135,8 +127,7 @@ vec![]);
 
 #[test]
 fn update_averages_histogram_over_sessions() {
-    let mut d = compute_initial_digest(
-vec![]);
+    let mut d = compute_initial_digest(vec![]);
     let s1 = SessionBehavioralSummary {
         iki_histogram: [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
         ..make_summary(100, 0.5, 0.7, 3.0)
@@ -153,8 +144,7 @@ vec![]);
 
 #[test]
 fn update_tracks_iki_stats() {
-    let mut d = compute_initial_digest(
-vec![]);
+    let mut d = compute_initial_digest(vec![]);
     let s = make_summary(100, 0.5, 0.7, 3.0);
     update_digest_in_place(&mut d, &s);
     assert_eq!(d.iki_stats.count, 1);
@@ -215,8 +205,7 @@ fn streaming_stats_min_max_tracked() {
 // ── verify_against_baseline ─────────────────────────────────────────
 
 fn build_trained_digest(sessions: u64) -> BaselineDigest {
-    let mut d = compute_initial_digest(
-vec![0xAA; 32]);
+    let mut d = compute_initial_digest(vec![0xAA; 32]);
     let s = make_summary(500, 0.45, 0.72, 3.5);
     for _ in 0..sessions {
         update_digest_in_place(&mut d, &s);
@@ -266,8 +255,7 @@ fn verify_score_bounded_zero_to_one() {
 #[test]
 fn verify_with_few_sessions_is_lenient() {
     // With count < 2, gaussian_similarity returns 1.0
-    let mut d = compute_initial_digest(
-vec![]);
+    let mut d = compute_initial_digest(vec![]);
     let s = make_summary(100, 0.5, 0.7, 3.0);
     update_digest_in_place(&mut d, &s);
 
@@ -290,8 +278,7 @@ vec![]);
 #[test]
 fn full_roundtrip_enrollment_to_verification() {
     let fp = vec![0xDE, 0xAD, 0xBE, 0xEF];
-    let mut d = compute_initial_digest(
-fp.clone());
+    let mut d = compute_initial_digest(fp.clone());
     assert_eq!(d.confidence_tier, ConfidenceTier::PopulationReference);
 
     let session = make_summary(1000, 0.45, 0.72, 3.5);
@@ -312,8 +299,7 @@ fp.clone());
 
 #[test]
 fn roundtrip_with_varying_sessions() {
-    let mut d = compute_initial_digest(
-vec![]);
+    let mut d = compute_initial_digest(vec![]);
 
     // Train with slightly varying sessions
     let sessions = [

@@ -8,19 +8,31 @@ const N: usize = 256;
 const H_SZ: usize = 32;
 const PAIR: usize = N * 2 * H_SZ;
 
-pub struct LamportPrivateKey { secrets: Zeroizing<Vec<u8>> }
+pub struct LamportPrivateKey {
+    secrets: Zeroizing<Vec<u8>>,
+}
 
 #[derive(Clone)]
-pub struct LamportPublicKey { pub hashes: Vec<u8> }
+pub struct LamportPublicKey {
+    pub hashes: Vec<u8>,
+}
 
 #[derive(Clone)]
-pub struct LamportSignature { pub revealed: Vec<u8> }
+pub struct LamportSignature {
+    pub revealed: Vec<u8>,
+}
 
 impl LamportSignature {
-    pub fn to_bytes(&self) -> &[u8] { &self.revealed }
+    pub fn to_bytes(&self) -> &[u8] {
+        &self.revealed
+    }
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() != N * H_SZ { return None; }
-        Some(Self { revealed: bytes.to_vec() })
+        if bytes.len() != N * H_SZ {
+            return None;
+        }
+        Some(Self {
+            revealed: bytes.to_vec(),
+        })
     }
 }
 
@@ -32,7 +44,8 @@ impl LamportPrivateKey {
             let s = Sha256::new()
                 .chain_update(b"cpop-lamport-v1")
                 .chain_update(seed)
-                .chain_update((i as u32).to_le_bytes()).finalize();
+                .chain_update((i as u32).to_le_bytes())
+                .finalize();
             let off = i * H_SZ;
             secrets[off..off + H_SZ].copy_from_slice(&s);
             hashes[off..off + H_SZ].copy_from_slice(&Sha256::digest(s));
@@ -53,21 +66,31 @@ impl LamportPrivateKey {
 
 impl LamportPublicKey {
     pub fn verify(&self, msg_hash: &[u8; 32], sig: &LamportSignature) -> bool {
-        if sig.revealed.len() != N * H_SZ { return false; }
+        if sig.revealed.len() != N * H_SZ {
+            return false;
+        }
         let mut ok = Choice::from(1u8);
         for i in 0..N {
             let bit = (msg_hash[i / 8] >> (7 - (i % 8))) & 1;
             let actual = Sha256::digest(&sig.revealed[i * H_SZ..(i + 1) * H_SZ]);
             let exp_off = (i * 2 + bit as usize) * H_SZ;
-            ok &= actual.as_slice().ct_eq(&self.hashes[exp_off..exp_off + H_SZ]);
+            ok &= actual
+                .as_slice()
+                .ct_eq(&self.hashes[exp_off..exp_off + H_SZ]);
         }
         ok.into()
     }
 
-    pub fn to_bytes(&self) -> &[u8] { &self.hashes }
+    pub fn to_bytes(&self) -> &[u8] {
+        &self.hashes
+    }
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() != PAIR { return None; }
-        Some(Self { hashes: bytes.to_vec() })
+        if bytes.len() != PAIR {
+            return None;
+        }
+        Some(Self {
+            hashes: bytes.to_vec(),
+        })
     }
 
     pub fn fingerprint(&self) -> [u8; 8] {

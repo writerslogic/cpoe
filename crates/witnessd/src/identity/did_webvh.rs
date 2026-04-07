@@ -10,16 +10,17 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use didwebvh_rs::{
-    DIDWebVHError, DIDWebVHState, Multibase, Signer, async_trait,
-    create::{CreateDIDConfig, create_did},
-    log_entry::LogEntryMethods,
-    parameters::Parameters,
-};
 use affinidi_data_integrity::DataIntegrityError;
 use affinidi_secrets_resolver::secrets::KeyType;
+use didwebvh_rs::{
+    async_trait,
+    create::{create_did, CreateDIDConfig},
+    log_entry::LogEntryMethods,
+    parameters::Parameters,
+    DIDWebVHError, DIDWebVHState, Multibase, Signer,
+};
 use ed25519_dalek::SigningKey;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::error::Error;
 use crate::identity::did_document::did_key_from_public;
@@ -194,18 +195,21 @@ impl WebVHIdentity {
         let mut state = DIDWebVHState::default();
         let log_entry = result.log_entry().clone();
         // Rebuild state from the created log entry
-        state.log_entries_mut().push(
-            didwebvh_rs::log_entry_state::LogEntryState {
+        state
+            .log_entries_mut()
+            .push(didwebvh_rs::log_entry_state::LogEntryState {
                 log_entry,
                 version_number: 1,
                 validated_parameters: Parameters::default(),
-                validation_status:
-                    didwebvh_rs::log_entry_state::LogEntryValidationStatus::Ok,
-            },
-        );
+                validation_status: didwebvh_rs::log_entry_state::LogEntryValidationStatus::Ok,
+            });
         *state.witness_proofs_mut() = result.witness_proofs().clone();
 
-        Ok(Self { state, address, did })
+        Ok(Self {
+            state,
+            address,
+            did,
+        })
     }
 
     pub fn did(&self) -> &str {
@@ -235,14 +239,22 @@ impl WebVHIdentity {
     /// or `None` if there are no log entries.
     pub fn created_at(&self) -> Option<String> {
         let ts = self.state.meta_first_ts();
-        if ts.is_empty() { None } else { Some(ts.to_string()) }
+        if ts.is_empty() {
+            None
+        } else {
+            Some(ts.to_string())
+        }
     }
 
     /// Returns the last log entry's version_time as an ISO 8601 string,
     /// or `None` if there are no log entries.
     pub fn updated_at(&self) -> Option<String> {
         let ts = self.state.meta_last_ts();
-        if ts.is_empty() { None } else { Some(ts.to_string()) }
+        if ts.is_empty() {
+            None
+        } else {
+            Some(ts.to_string())
+        }
     }
 
     /// Returns the hex-encoded public key of the derived webvh signing key.
@@ -294,8 +306,7 @@ impl WebVHIdentity {
 
     /// Save the did:webvh state to disk.
     pub fn save(&self) -> Result<(), Error> {
-        let data_dir =
-            data_dir().ok_or_else(|| Error::identity("data directory not available"))?;
+        let data_dir = data_dir().ok_or_else(|| Error::identity("data directory not available"))?;
         std::fs::create_dir_all(&data_dir)
             .map_err(|e| Error::identity(format!("create data directory: {e}")))?;
 
@@ -327,8 +338,7 @@ impl WebVHIdentity {
 
     /// Load a previously saved did:webvh identity from disk.
     pub fn load() -> Result<Self, Error> {
-        let data_dir =
-            data_dir().ok_or_else(|| Error::identity("data directory not available"))?;
+        let data_dir = data_dir().ok_or_else(|| Error::identity("data directory not available"))?;
 
         let meta_path = data_dir.join("did_webvh_meta.json");
         let meta_json = std::fs::read_to_string(&meta_path)
@@ -353,7 +363,11 @@ impl WebVHIdentity {
             .ok_or_else(|| Error::identity("non-UTF-8 data directory path"))?;
         let state = DIDWebVHState::load_state(path_str).map_err(map_webvh_err)?;
 
-        Ok(Self { state, address, did })
+        Ok(Self {
+            state,
+            address,
+            did,
+        })
     }
 }
 
@@ -446,8 +460,7 @@ pub async fn verify_packet_author_did(
     }
     let secs = (packet_created_ms / 1000) as i64;
     let nanos = ((packet_created_ms % 1000) * 1_000_000) as u32;
-    let version_time =
-        chrono::DateTime::from_timestamp(secs, nanos).map(|dt| dt.fixed_offset());
+    let version_time = chrono::DateTime::from_timestamp(secs, nanos).map(|dt| dt.fixed_offset());
 
     resolve_and_verify_key(author_did, signing_public_key, version_time).await
 }
@@ -585,10 +598,7 @@ mod tests {
         let master = test_signing_key();
         let k1 = derive_webvh_signing_key(&master, "alice.example.com").unwrap();
         let k2 = derive_webvh_signing_key(&master, "bob.example.com").unwrap();
-        assert_ne!(
-            k1.verifying_key().as_bytes(),
-            k2.verifying_key().as_bytes()
-        );
+        assert_ne!(k1.verifying_key().as_bytes(), k2.verifying_key().as_bytes());
     }
 
     /// Same master + address must produce the same derived key (deterministic).
@@ -597,10 +607,7 @@ mod tests {
         let master = test_signing_key();
         let k1 = derive_webvh_signing_key(&master, "example.com").unwrap();
         let k2 = derive_webvh_signing_key(&master, "example.com").unwrap();
-        assert_eq!(
-            k1.verifying_key().as_bytes(),
-            k2.verifying_key().as_bytes()
-        );
+        assert_eq!(k1.verifying_key().as_bytes(), k2.verifying_key().as_bytes());
     }
 
     /// Multibase encoding must produce z-prefixed base58btc with Ed25519 multicodec.
@@ -677,7 +684,10 @@ mod tests {
     fn derived_key_empty_address() {
         let master = test_signing_key();
         let result = derive_webvh_signing_key(&master, "");
-        assert!(result.is_ok(), "empty address must not fail HKDF derivation");
+        assert!(
+            result.is_ok(),
+            "empty address must not fail HKDF derivation"
+        );
     }
 
     /// Derive with a very long address (1000 chars) should succeed.
@@ -694,7 +704,10 @@ mod tests {
     fn did_document_contains_scid_placeholder() {
         let doc = build_did_document("did:webvh:{SCID}:example.com", "z6MkTest");
         let id = doc["id"].as_str().expect("id must be a string");
-        assert!(id.contains("{SCID}"), "DID template must contain {{SCID}} placeholder");
+        assert!(
+            id.contains("{SCID}"),
+            "DID template must contain {{SCID}} placeholder"
+        );
     }
 
     /// Verify the publicKeyMultibase in the DID doc matches the key we provided.
@@ -706,7 +719,10 @@ mod tests {
         let vm_key = doc["verificationMethod"][0]["publicKeyMultibase"]
             .as_str()
             .expect("publicKeyMultibase must be a string");
-        assert_eq!(vm_key, pk_mb, "document key must match the provided multibase");
+        assert_eq!(
+            vm_key, pk_mb,
+            "document key must match the provided multibase"
+        );
     }
 
     /// Authentication array must reference the same key id as verificationMethod.
@@ -719,7 +735,10 @@ mod tests {
         let auth_ref = doc["authentication"][0]
             .as_str()
             .expect("authentication entry must be a string reference");
-        assert_eq!(auth_ref, vm_id, "authentication must reference the verification method id");
+        assert_eq!(
+            auth_ref, vm_id,
+            "authentication must reference the verification method id"
+        );
     }
 
     /// Multibase encoding of a known key produces the expected output.
@@ -754,8 +773,16 @@ mod tests {
         let pk_mb = signer.public_key_multibase();
         let vm = signer.verification_method();
         // verification_method is "did:key:{mb}#{mb}", extract the key part
-        let key_part = vm.strip_prefix("did:key:").unwrap().split('#').next().unwrap();
-        assert_eq!(pk_mb, key_part, "public_key_multibase must match the key in verification_method");
+        let key_part = vm
+            .strip_prefix("did:key:")
+            .unwrap()
+            .split('#')
+            .next()
+            .unwrap();
+        assert_eq!(
+            pk_mb, key_part,
+            "public_key_multibase must match the key in verification_method"
+        );
     }
 
     /// Full lifecycle: create a WebVHIdentity, verify DID is non-empty and state accessible.

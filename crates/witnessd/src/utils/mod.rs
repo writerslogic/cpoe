@@ -11,7 +11,11 @@ pub use time::now_ns;
 
 /// Return `fallback` when `v` is NaN or infinite.
 pub fn finite_or(v: f64, fallback: f64) -> f64 {
-    if v.is_finite() { v } else { fallback }
+    if v.is_finite() {
+        v
+    } else {
+        fallback
+    }
 }
 
 /// Return a short hex string from the first 8 bytes (or fewer) of `hash`.

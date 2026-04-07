@@ -125,9 +125,9 @@ impl PhysJitter {
             // diffusion. Entropy quality depends primarily on kernel_seed.
             let varied_seed = kernel_seed ^ (i as u64);
             samples.push(timing ^ varied_seed);
-            
+
             std::hint::spin_loop();
-            
+
             core::hint::black_box(timing);
         }
 

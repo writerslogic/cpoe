@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
-use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU64, Ordering};
-use zeroize::{Zeroize, Zeroizing};
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
+use zeroize::{Zeroize, Zeroizing};
 
 static SECRET: OnceLock<u64> = OnceLock::new();
 static NONCE: AtomicU64 = AtomicU64::new(0);
@@ -28,10 +28,15 @@ fn apply_mask(data: &mut [u8], mut mask: u64) {
 }
 
 #[derive(Clone, zeroize::ZeroizeOnDrop)]
-pub struct ObfuscatedString { nonce: u64, data: Vec<u8> }
+pub struct ObfuscatedString {
+    nonce: u64,
+    data: Vec<u8>,
+}
 
 impl Default for ObfuscatedString {
-    fn default() -> Self { Self::new("") }
+    fn default() -> Self {
+        Self::new("")
+    }
 }
 
 impl std::fmt::Debug for ObfuscatedString {
@@ -56,19 +61,23 @@ impl ObfuscatedString {
 }
 
 #[derive(Clone, zeroize::ZeroizeOnDrop)]
-pub struct Obfuscated<T> { 
-    nonce: u64, 
-    data: Vec<u8>, 
+pub struct Obfuscated<T> {
+    nonce: u64,
+    data: Vec<u8>,
     _p: std::marker::PhantomData<T>,
 }
 
 impl<T: Serialize + for<'de> Deserialize<'de>> Obfuscated<T> {
     pub fn new(val: &T) -> Self {
         let nonce = NONCE.fetch_add(1, Ordering::Relaxed);
-        let mut data = bincode::serde::encode_to_vec(val, bincode::config::standard())
-            .unwrap_or_default();
+        let mut data =
+            bincode::serde::encode_to_vec(val, bincode::config::standard()).unwrap_or_default();
         apply_mask(&mut data, get_mask(nonce));
-        Self { nonce, data, _p: std::marker::PhantomData }
+        Self {
+            nonce,
+            data,
+            _p: std::marker::PhantomData,
+        }
     }
 
     pub fn reveal(&self) -> Option<T> {
@@ -85,7 +94,10 @@ impl<T: Serialize + for<'de> Deserialize<'de>> Obfuscated<T> {
 impl PartialEq for ObfuscatedString {
     fn eq(&self, other: &Self) -> bool {
         use subtle::ConstantTimeEq;
-        self.reveal().as_bytes().ct_eq(other.reveal().as_bytes()).into()
+        self.reveal()
+            .as_bytes()
+            .ct_eq(other.reveal().as_bytes())
+            .into()
     }
 }
 

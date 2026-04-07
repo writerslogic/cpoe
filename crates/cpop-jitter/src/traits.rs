@@ -19,17 +19,23 @@ pub(crate) fn hmac_jitter(
     debug_assert!(range > 0, "range must be > 0");
     let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC accepts any key size");
     mac.update(b"cpop_jitter/v1/jitter");
-    
+
     // Length-prefix each field to prevent concatenation ambiguity.
     // Safe truncation: turns silent integer wrap in release builds into a secure panic.
-    let input_len: u32 = inputs.len().try_into().expect("inputs exceeds u32 length prefix");
-    let extra_len: u32 = extra.len().try_into().expect("extra exceeds u32 length prefix");
-    
+    let input_len: u32 = inputs
+        .len()
+        .try_into()
+        .expect("inputs exceeds u32 length prefix");
+    let extra_len: u32 = extra
+        .len()
+        .try_into()
+        .expect("extra exceeds u32 length prefix");
+
     mac.update(&input_len.to_be_bytes());
     mac.update(inputs);
     mac.update(&extra_len.to_be_bytes());
     mac.update(extra);
-    
+
     let result = mac.finalize().into_bytes();
     let hash_val = u32::from_be_bytes([result[0], result[1], result[2], result[3]]);
     let jitter = ((hash_val as u64 * range as u64) >> 32) as u32;

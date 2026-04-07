@@ -8,13 +8,13 @@ use super::rbac::IpcRole;
 use super::server_handler::handle_connection_inner;
 use crate::store::access_log::AccessLog;
 use anyhow::{anyhow, Result};
+#[cfg(unix)]
+use std::os::unix::fs::FileTypeExt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 #[cfg(target_os = "windows")]
 use tokio::net::windows::named_pipe;
-#[cfg(unix)]
-use std::os::unix::fs::FileTypeExt;
 #[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
 

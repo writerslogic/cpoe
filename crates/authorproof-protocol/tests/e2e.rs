@@ -180,7 +180,10 @@ fn test_c2pa_manifest_with_all_formats() {
             .created_assertions
             .iter()
             .any(|a| a.url.contains("c2pa.metadata"));
-        assert!(has_metadata, "Metadata assertion should be present for {mime}");
+        assert!(
+            has_metadata,
+            "Metadata assertion should be present for {mime}"
+        );
         let validation = validate_manifest(&manifest);
         assert!(
             validation.is_valid(),

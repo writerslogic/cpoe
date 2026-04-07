@@ -492,9 +492,7 @@ impl PacketRfc {
             if k.bytes().any(|b| b < 0x20 || b == 0x7F) {
                 errors.push(format!("extension key '{}' contains control characters", k));
             }
-            let value_bytes = serde_json::to_vec(v)
-                .map(|b| b.len())
-                .unwrap_or(usize::MAX);
+            let value_bytes = serde_json::to_vec(v).map(|b| b.len()).unwrap_or(usize::MAX);
             if value_bytes > MAX_EXTENSION_VALUE_BYTES {
                 errors.push(format!(
                     "extension '{}' value exceeds {} bytes",
@@ -519,12 +517,8 @@ impl PacketRfc {
 
 fn json_depth(v: &serde_json::Value) -> usize {
     match v {
-        serde_json::Value::Array(arr) => {
-            1 + arr.iter().map(json_depth).max().unwrap_or(0)
-        }
-        serde_json::Value::Object(map) => {
-            1 + map.values().map(json_depth).max().unwrap_or(0)
-        }
+        serde_json::Value::Array(arr) => 1 + arr.iter().map(json_depth).max().unwrap_or(0),
+        serde_json::Value::Object(map) => 1 + map.values().map(json_depth).max().unwrap_or(0),
         _ => 0,
     }
 }

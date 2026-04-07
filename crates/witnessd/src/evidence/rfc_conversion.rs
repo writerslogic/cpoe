@@ -7,7 +7,9 @@
 //! format (with integer keys and fixed-point types for CBOR wire encoding).
 
 use authorproof_protocol::rfc;
-use authorproof_protocol::rfc::packet::{ErrorTopology as PacketErrorTopology, JitterSealStructure};
+use authorproof_protocol::rfc::packet::{
+    ErrorTopology as PacketErrorTopology, JitterSealStructure,
+};
 
 use super::types::{Packet, TrustTier};
 

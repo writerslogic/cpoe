@@ -85,7 +85,8 @@ pub fn analyze_labyrinth(
         construct_1d_embedding(&k_norm, dim, delay)
     };
 
-    let (rr, det, entropy) = compute_rqa(&embed, params.recurrence_threshold, params.min_line_length);
+    let (rr, det, entropy) =
+        compute_rqa(&embed, params.recurrence_threshold, params.min_line_length);
     let lyapunov = estimate_lyapunov(&embed, delay);
     let corr_dim = estimate_correlation_dimension(&embed);
     let q_index = detect_quantization(&embed);
@@ -115,9 +116,9 @@ pub fn analyze_labyrinth(
 // ---------------------------------------------------------------------------
 
 fn normalize(data: &[f64]) -> Vec<f64> {
-    let (min, max) = data.iter().fold((f64::MAX, f64::MIN), |(m, ax), &x| {
-        (m.min(x), ax.max(x))
-    });
+    let (min, max) = data
+        .iter()
+        .fold((f64::MAX, f64::MIN), |(m, ax), &x| (m.min(x), ax.max(x)));
     let range = (max - min).max(1e-9);
     data.iter().map(|&x| (x - min) / range).collect()
 }
@@ -181,11 +182,7 @@ fn construct_fused_embedding(
 // Recurrence Quantification Analysis
 // ---------------------------------------------------------------------------
 
-fn compute_rqa(
-    embed: &FlatEmbedding,
-    threshold: f64,
-    min_line: usize,
-) -> (f64, f64, f64) {
+fn compute_rqa(embed: &FlatEmbedding, threshold: f64, min_line: usize) -> (f64, f64, f64) {
     let n = embed.count;
     let theil_window: usize = 10;
     let eps_sq = threshold.powi(2);
@@ -228,7 +225,11 @@ fn compute_rqa(
         .filter(|&&c| c > 0)
         .map(|&c| {
             let p = c as f64 / diag_pts.max(1) as f64;
-            if p > f64::EPSILON { -p * p.ln() } else { 0.0 }
+            if p > f64::EPSILON {
+                -p * p.ln()
+            } else {
+                0.0
+            }
         })
         .sum();
 
@@ -267,8 +268,11 @@ fn estimate_lyapunov(embed: &FlatEmbedding, delay: usize) -> f64 {
 
         if let Some(j) = nn_idx {
             let d0 = min_dist.sqrt();
-            let dt =
-                sq_dist(embed.get_point(i + evol_steps), embed.get_point(j + evol_steps)).sqrt();
+            let dt = sq_dist(
+                embed.get_point(i + evol_steps),
+                embed.get_point(j + evol_steps),
+            )
+            .sqrt();
             if d0 > 1e-10 && dt > 1e-10 {
                 divergence += (dt / d0).ln();
                 count += 1;
@@ -409,7 +413,9 @@ mod tests {
     use super::*;
 
     fn make_sine_data(n: usize) -> Vec<f64> {
-        (0..n).map(|i| (i as f64 * 0.1).sin() * 100.0 + 150.0).collect()
+        (0..n)
+            .map(|i| (i as f64 * 0.1).sin() * 100.0 + 150.0)
+            .collect()
     }
 
     fn make_mouse_data(n: usize) -> Vec<(f64, f64)> {

@@ -28,8 +28,7 @@ fn acquire_session_lock(session_file: &Path) -> Result<fs::File> {
         .truncate(true)
         .open(&lock_path)
         .context("open session lock file")?;
-    witnessd::restrict_permissions(&lock_path, 0o600)
-        .context("restrict lock file permissions")?;
+    witnessd::restrict_permissions(&lock_path, 0o600).context("restrict lock file permissions")?;
 
     let deadline =
         std::time::Instant::now() + std::time::Duration::from_millis(SESSION_LOCK_TIMEOUT_MS);

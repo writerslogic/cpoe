@@ -386,7 +386,10 @@ fn test_vdf_input_mismatch_detection() {
 fn test_entangled_chain_creation() {
     let (dir, path) = temp_document();
     let chain = test_chain_entangled(&path);
-    assert_eq!(chain.metadata.entanglement_mode, EntanglementMode::Entangled);
+    assert_eq!(
+        chain.metadata.entanglement_mode,
+        EntanglementMode::Entangled
+    );
     assert!(chain.checkpoints.is_empty());
     drop(dir);
 }
@@ -618,7 +621,10 @@ fn test_entangled_chain_save_load() {
     chain.save(&chain_path).expect("save");
 
     let loaded = Chain::load(&chain_path).expect("load");
-    assert_eq!(loaded.metadata.entanglement_mode, EntanglementMode::Entangled);
+    assert_eq!(
+        loaded.metadata.entanglement_mode,
+        EntanglementMode::Entangled
+    );
     assert_eq!(loaded.checkpoints.len(), 1);
 
     let binding = loaded.checkpoints[0].jitter_binding.as_ref().unwrap();
@@ -1274,8 +1280,14 @@ fn test_save_load_roundtrip() {
     assert_eq!(loaded.metadata.document_id, chain.metadata.document_id);
     assert_eq!(loaded.metadata.document_path, chain.metadata.document_path);
     assert_eq!(loaded.checkpoints.len(), 2);
-    assert_eq!(loaded.metadata.entanglement_mode, chain.metadata.entanglement_mode);
-    assert_eq!(loaded.metadata.signature_policy, chain.metadata.signature_policy);
+    assert_eq!(
+        loaded.metadata.entanglement_mode,
+        chain.metadata.entanglement_mode
+    );
+    assert_eq!(
+        loaded.metadata.signature_policy,
+        chain.metadata.signature_policy
+    );
 
     for i in 0..2 {
         assert_eq!(loaded.checkpoints[i].ordinal, chain.checkpoints[i].ordinal);

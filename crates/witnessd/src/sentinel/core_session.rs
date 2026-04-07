@@ -19,7 +19,10 @@ use super::core::Sentinel;
 impl Sentinel {
     /// Open the event store using the sentinel's signing key.
     fn open_event_store(&self) -> anyhow::Result<crate::store::SecureStore> {
-        let signing_key_local = self.signing_key.read_recover().key()
+        let signing_key_local = self
+            .signing_key
+            .read_recover()
+            .key()
             .ok_or_else(|| anyhow::anyhow!("signing key not initialized"))?;
         let db_path = self.config.writersproof_dir.join("events.db");
         crate::store::open_store_with_signing_key(&signing_key_local, &db_path)
@@ -42,12 +45,14 @@ impl Sentinel {
         // AUD-041: Acquire signing_key before sessions to maintain lock ordering.
         let key = {
             #[cfg(debug_assertions)]
-            let _guard = super::core::lock_order::assert_order(super::core::lock_order::SIGNING_KEY);
+            let _guard =
+                super::core::lock_order::assert_order(super::core::lock_order::SIGNING_KEY);
             self.signing_key.read_recover().key()
         };
 
         #[cfg(debug_assertions)]
-        let _session_guard = super::core::lock_order::assert_order(super::core::lock_order::SESSIONS);
+        let _session_guard =
+            super::core::lock_order::assert_order(super::core::lock_order::SESSIONS);
 
         // Single write lock for check+insert to avoid TOCTOU race
         let mut sessions = self.sessions.write_recover();
@@ -367,7 +372,10 @@ impl Sentinel {
 
         // Clone signing key into a local and drop the read lock immediately
         // to avoid holding it across database I/O below.
-        let signing_key_local = self.signing_key.read_recover().key()
+        let signing_key_local = self
+            .signing_key
+            .read_recover()
+            .key()
             .ok_or_else(|| anyhow::anyhow!("signing key not initialized"))?;
         let public_key = signing_key_local.verifying_key().to_bytes();
         let mut hasher = sha2::Sha256::new();

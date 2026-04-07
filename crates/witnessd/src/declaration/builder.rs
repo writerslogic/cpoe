@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
-use chrono::Utc;
 use authorproof_protocol::crypto::EvidenceSigner;
+use chrono::Utc;
 
 use crate::error::Error;
 

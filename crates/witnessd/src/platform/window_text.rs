@@ -63,7 +63,8 @@ unsafe fn capture_visible_windows_macos(exclude_pid: Option<u32>) -> Vec<WindowT
     const K_CG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY: u32 = 1;
     const K_CG_NULL_WINDOW_ID: u32 = 0;
 
-    let list = CGWindowListCopyWindowInfo(K_CG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY, K_CG_NULL_WINDOW_ID);
+    let list =
+        CGWindowListCopyWindowInfo(K_CG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY, K_CG_NULL_WINDOW_ID);
     if list.is_null() {
         return Vec::new();
     }
@@ -77,19 +78,15 @@ unsafe fn capture_visible_windows_macos(exclude_pid: Option<u32>) -> Vec<WindowT
     let mut results = Vec::new();
 
     for i in 0..count {
-        let raw_dict = CFArrayGetValueAtIndex(list, i)
-            as core_foundation_sys::dictionary::CFDictionaryRef;
+        let raw_dict =
+            CFArrayGetValueAtIndex(list, i) as core_foundation_sys::dictionary::CFDictionaryRef;
         if raw_dict.is_null() {
             continue;
         }
 
         // Only layer 0 (normal windows).
         let mut layer_ptr: *const std::ffi::c_void = std::ptr::null();
-        if CFDictionaryGetValueIfPresent(
-            raw_dict,
-            key_layer.as_CFTypeRef(),
-            &mut layer_ptr,
-        ) != 0
+        if CFDictionaryGetValueIfPresent(raw_dict, key_layer.as_CFTypeRef(), &mut layer_ptr) != 0
             && !layer_ptr.is_null()
         {
             let layer_num =

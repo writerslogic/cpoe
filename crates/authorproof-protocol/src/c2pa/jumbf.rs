@@ -3,7 +3,7 @@
 use crate::error::{Error, Result};
 use serde::Serialize;
 
-use super::types::{JumbfInfo, C2paManifest};
+use super::types::{C2paManifest, JumbfInfo};
 
 /// C2PA manifest store superbox UUID (C2PA 2.2 §8.1).
 const C2PA_MANIFEST_STORE_UUID: [u8; 16] = [

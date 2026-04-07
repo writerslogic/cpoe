@@ -276,7 +276,8 @@ impl SecureStore {
                         return Err(anyhow!("Event {} hash mismatch", id));
                     }
 
-                    let expected_event_hmac = crypto::compute_event_hmac(&self.hmac_key, &event_data);
+                    let expected_event_hmac =
+                        crypto::compute_event_hmac(&self.hmac_key, &event_data);
                     if stored_event_hmac.ct_eq(&expected_event_hmac).unwrap_u8() == 0 {
                         return Err(anyhow!("Event {} HMAC mismatch", id));
                     }

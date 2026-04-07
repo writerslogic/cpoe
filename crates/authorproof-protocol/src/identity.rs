@@ -2,6 +2,7 @@
 
 use crate::error::{Error, Result};
 use const_oid::AssociatedOid;
+use der::{Encode, FixedTag, Tag};
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use rand::rngs::OsRng;
 use rand::RngCore;
@@ -12,7 +13,6 @@ use spki::{
     SignatureBitStringEncoding, SubjectPublicKeyInfoOwned,
 };
 use x509_cert::der::asn1::{BitString, OctetString};
-use der::{Encode, FixedTag, Tag};
 use zeroize::Zeroizing;
 
 const ED25519_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.101.112");

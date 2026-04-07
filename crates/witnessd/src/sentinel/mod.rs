@@ -17,9 +17,10 @@ macro_rules! trace {
 }
 pub(crate) use trace;
 
+pub mod behavioral_key;
 pub mod core;
-mod core_setup;
 pub mod core_session;
+mod core_setup;
 pub mod daemon;
 pub mod error;
 pub mod focus;
@@ -27,7 +28,6 @@ pub mod helpers;
 pub mod ipc_handler;
 pub mod shadow;
 pub mod types;
-pub mod behavioral_key;
 
 #[cfg(target_os = "macos")]
 pub mod macos_focus;

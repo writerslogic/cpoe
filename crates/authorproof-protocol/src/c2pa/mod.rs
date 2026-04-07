@@ -17,10 +17,10 @@ mod tests;
 pub use builder::C2paManifestBuilder;
 pub use jumbf::{encode_jumbf, verify_jumbf_structure};
 pub use types::{
-    Action, ActionParameters, ActionsAssertion, AssertionMetadata, AssetInfo, AssetType,
-    C2paClaim, C2paManifest, ClaimGeneratorInfo, DataSource, ExclusionRange,
-    ExternalReferenceAssertion, HashedExtUri, HashedUri, HashDataAssertion, JumbfInfo,
-    JitterSeal, MetadataAssertion, ProcessAssertion, SoftwareAgent, ValidationResult,
+    Action, ActionParameters, ActionsAssertion, AssertionMetadata, AssetInfo, AssetType, C2paClaim,
+    C2paManifest, ClaimGeneratorInfo, DataSource, ExclusionRange, ExternalReferenceAssertion,
+    HashDataAssertion, HashedExtUri, HashedUri, JitterSeal, JumbfInfo, MetadataAssertion,
+    ProcessAssertion, SoftwareAgent, ValidationResult,
 };
 pub use validation::validate_manifest;
 
@@ -29,4 +29,3 @@ pub const ASSERTION_LABEL_ACTIONS: &str = "c2pa.actions.v2";
 pub const ASSERTION_LABEL_HASH_DATA: &str = "c2pa.hash.data";
 pub const ASSERTION_LABEL_METADATA: &str = "c2pa.metadata";
 pub const ASSERTION_LABEL_EXTERNAL_REF: &str = "c2pa.external-reference";
-

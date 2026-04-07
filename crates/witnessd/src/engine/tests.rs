@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 use super::watcher::{load_or_create_device_identity, load_or_create_hmac_key};
-use crate::utils::now_ns;
 use super::*;
+use crate::utils::now_ns;
 use std::collections::HashMap;
 use std::path::Path;
 use tempfile::TempDir;

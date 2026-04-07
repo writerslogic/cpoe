@@ -131,9 +131,13 @@ pub fn chain_to_wire_with_signatures(
         baseline_verification: None,
         author_did: {
             #[cfg(feature = "did-webvh")]
-            { crate::identity::did_webvh::load_active_did().ok() }
+            {
+                crate::identity::did_webvh::load_active_did().ok()
+            }
             #[cfg(not(feature = "did-webvh"))]
-            { None }
+            {
+                None
+            }
         },
     }
 }

@@ -506,7 +506,9 @@ mod tests {
         use crate::native_messaging_host::protocol::request_type_name;
 
         assert_eq!(
-            request_type_name(&Request::Ping { protocol_version: None }),
+            request_type_name(&Request::Ping {
+                protocol_version: None
+            }),
             "Ping",
             "Ping should return 'Ping'"
         );
@@ -665,10 +667,7 @@ mod tests {
         );
         // JITTER_REFILL_PER_MS is integer milli-tokens, so check > 0 as u64
         use crate::native_messaging_host::jitter::JITTER_REFILL_PER_MS;
-        assert!(
-            JITTER_REFILL_PER_MS > 0,
-            "refill rate must be positive"
-        );
+        assert!(JITTER_REFILL_PER_MS > 0, "refill rate must be positive");
     }
 
     // === Additional edge case tests ===

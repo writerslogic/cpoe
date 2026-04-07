@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
+use crate::crypto::mem::ProtectedKey;
 use ed25519_dalek::SigningKey;
+use sha2::{Digest, Sha256};
 use std::time::{Duration, Instant};
 use zeroize::{Zeroize, Zeroizing};
-use sha2::{Sha256, Digest};
-use crate::crypto::mem::ProtectedKey;
 
 /// A wrapper for the sentinel's signing key that is tied to human behavioral entropy.
 ///

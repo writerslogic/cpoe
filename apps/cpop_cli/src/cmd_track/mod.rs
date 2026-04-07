@@ -26,8 +26,12 @@ use crate::util::{
     validate_session_id, write_restrictive,
 };
 
-use checkpoint::{auto_checkpoint_file, finalize_session, setup_keystroke_capture, CheckpointResult};
-use filesystem::{classify_target, collect_trackable_files, is_within_target, matches_patterns, should_track_file};
+use checkpoint::{
+    auto_checkpoint_file, finalize_session, setup_keystroke_capture, CheckpointResult,
+};
+use filesystem::{
+    classify_target, collect_trackable_files, is_within_target, matches_patterns, should_track_file,
+};
 
 /// Minimum seconds between checkpoints on the same file.
 const DEBOUNCE_SECONDS: u64 = 5;

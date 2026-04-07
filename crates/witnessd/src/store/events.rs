@@ -250,14 +250,10 @@ impl SecureStore {
             hw_cosign_signature: row.get(22)?,
             hw_cosign_pubkey: row.get(23)?,
             hw_cosign_salt_commitment: row.get(24)?,
-            hw_cosign_chain_index: row
-                .get::<_, Option<i64>>(25)?
-                .map(|v| v as u64),
+            hw_cosign_chain_index: row.get::<_, Option<i64>>(25)?.map(|v| v as u64),
             hw_cosign_entangled_hash: row.get(26)?,
             hw_cosign_entropy_digest: row.get(27)?,
-            hw_cosign_entropy_bytes: row
-                .get::<_, Option<i64>>(28)?
-                .map(|v| v as u64),
+            hw_cosign_entropy_bytes: row.get::<_, Option<i64>>(28)?.map(|v| v as u64),
         })
     }
 

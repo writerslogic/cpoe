@@ -354,7 +354,13 @@ pub(crate) fn build_edit_regions(
     for e in events {
         if let Some(id) = e.id {
             let delta = e.size_delta;
-            let sign = if delta > 0 { 1 } else if delta < 0 { -1 } else { 0 };
+            let sign = if delta > 0 {
+                1
+            } else if delta < 0 {
+                -1
+            } else {
+                0
+            };
             let (cursor_pct, extent) =
                 crate::forensics::compute_edit_extents(e.file_size, delta, max_file_size);
             let end_pct = (cursor_pct + extent).min(1.0);

@@ -589,10 +589,7 @@ fn build_trust_vector(report: &WarReport, tier_num: u8) -> TrustworthinessVector
 ///
 /// Uses domain-separated SHA-256 hashing and signs h3 with Ed25519 using
 /// the `cpop-war-seal-v1` DST to match `Block::sign()`.
-fn compute_report_seal(
-    report: &WarReport,
-    signing_key: &ed25519_dalek::SigningKey,
-) -> SealClaims {
+fn compute_report_seal(report: &WarReport, signing_key: &ed25519_dalek::SigningKey) -> SealClaims {
     use sha2::{Digest, Sha256};
 
     let pub_key = signing_key.verifying_key();
@@ -688,10 +685,20 @@ fn build_vc_json(report: &WarReport) -> Option<String> {
         pop_forensic_summary: None,
         pop_chain_length: Some(report.checkpoints.len() as u64),
         pop_chain_duration: chain_duration,
-        pop_process_start: report.checkpoints.first().map(|cp| cp.timestamp.to_rfc3339()),
-        pop_process_end: report.checkpoints.last().map(|cp| cp.timestamp.to_rfc3339()),
+        pop_process_start: report
+            .checkpoints
+            .first()
+            .map(|cp| cp.timestamp.to_rfc3339()),
+        pop_process_end: report
+            .checkpoints
+            .last()
+            .map(|cp| cp.timestamp.to_rfc3339()),
         pop_absence_claims: None,
-        pop_warnings: if warnings.is_empty() { None } else { Some(warnings) },
+        pop_warnings: if warnings.is_empty() {
+            None
+        } else {
+            Some(warnings)
+        },
     };
 
     let mut submods = BTreeMap::new();

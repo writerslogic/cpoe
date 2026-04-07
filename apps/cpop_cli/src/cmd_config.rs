@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 use anyhow::{anyhow, bail, Context, Result};
-use witnessd::config::CpopConfig;
 use std::fs;
 use std::io::{self, BufRead, Write};
+use witnessd::config::CpopConfig;
 
 use crate::cli::ConfigAction;
 use crate::util::writersproof_dir;

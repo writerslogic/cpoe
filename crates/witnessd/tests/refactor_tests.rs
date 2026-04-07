@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
-use cpop_engine::utils::stats::{mean, std_dev, coefficient_of_variation, median};
+use cpop_engine::utils::stats::{coefficient_of_variation, mean, median, std_dev};
 use cpop_engine::utils::time::now_ns;
 
 #[test]
@@ -16,14 +16,14 @@ fn test_now_ns_monotonic() {
 fn test_stats_helpers() {
     let data = vec![100.0, 200.0, 300.0];
     assert_eq!(mean(&data), 200.0);
-    
+
     let expected_std = (20000.0f64 / 3.0).sqrt();
     assert!((std_dev(&data) - expected_std).abs() < 1e-10);
-    
+
     assert!((coefficient_of_variation(&data) - (expected_std / 200.0)).abs() < 1e-10);
-    
+
     assert_eq!(median(&data), 200.0);
-    
+
     let data2 = vec![1.0, 2.0, 3.0, 4.0];
     assert_eq!(median(&data2), 2.5);
 }

@@ -160,8 +160,7 @@ impl Sentinel {
             }
             #[cfg(not(target_os = "macos"))]
             {
-                Some(Arc::new(crate::tpm::SoftwareProvider::new())
-                    as Arc<dyn crate::tpm::Provider>)
+                Some(Arc::new(crate::tpm::SoftwareProvider::new()) as Arc<dyn crate::tpm::Provider>)
             }
         };
 

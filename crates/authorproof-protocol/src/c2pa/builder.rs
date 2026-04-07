@@ -9,10 +9,9 @@ use super::jumbf::{
     build_assertion_jumbf_cbor, build_assertion_jumbf_json, ciborium_to_vec, encode_jumbf,
 };
 use super::types::{
-    Action, ActionParameters, ActionsAssertion, AssertionMetadata, AssetType,
-    C2paClaim, C2paManifest, ClaimGeneratorInfo, DataSource, ExternalReferenceAssertion,
-    HashedExtUri, HashedUri, HashDataAssertion, MetadataAssertion, ProcessAssertion,
-    SoftwareAgent,
+    Action, ActionParameters, ActionsAssertion, AssertionMetadata, AssetType, C2paClaim,
+    C2paManifest, ClaimGeneratorInfo, DataSource, ExternalReferenceAssertion, HashDataAssertion,
+    HashedExtUri, HashedUri, MetadataAssertion, ProcessAssertion, SoftwareAgent,
 };
 use super::{
     ASSERTION_LABEL_ACTIONS, ASSERTION_LABEL_CPOP, ASSERTION_LABEL_EXTERNAL_REF,
@@ -133,9 +132,7 @@ impl C2paManifestBuilder {
         ]) {
             let hash = Sha256::digest(&box_bytes[8..]);
             created_assertions.push(HashedUri {
-                url: format!(
-                    "self#jumbf=/c2pa/{manifest_label}/c2pa.assertions/{label}"
-                ),
+                url: format!("self#jumbf=/c2pa/{manifest_label}/c2pa.assertions/{label}"),
                 hash: hash.to_vec(),
                 alg: Some("sha256".to_string()),
             });
@@ -162,22 +159,12 @@ impl C2paManifestBuilder {
         // c2pa.external-reference assertion (hashed link to .cpop evidence packet)
         if let Some(ref url) = self.evidence_url {
             let evidence_hash = Sha256::digest(&self.evidence_bytes);
-            let process_start = self
-                .evidence_packet
-                .checkpoints
-                .first()
-                .and_then(|cp| {
-                    chrono::DateTime::from_timestamp(cp.timestamp as i64, 0)
-                        .map(|dt| dt.to_rfc3339())
-                });
-            let process_end = self
-                .evidence_packet
-                .checkpoints
-                .last()
-                .and_then(|cp| {
-                    chrono::DateTime::from_timestamp(cp.timestamp as i64, 0)
-                        .map(|dt| dt.to_rfc3339())
-                });
+            let process_start = self.evidence_packet.checkpoints.first().and_then(|cp| {
+                chrono::DateTime::from_timestamp(cp.timestamp as i64, 0).map(|dt| dt.to_rfc3339())
+            });
+            let process_end = self.evidence_packet.checkpoints.last().and_then(|cp| {
+                chrono::DateTime::from_timestamp(cp.timestamp as i64, 0).map(|dt| dt.to_rfc3339())
+            });
             let ext_ref = ExternalReferenceAssertion {
                 location: HashedExtUri {
                     url: url.clone(),
@@ -188,9 +175,7 @@ impl C2paManifestBuilder {
                         type_id: "c2pa.types.audit-log".to_string(),
                     }]),
                 },
-                description: Some(
-                    "CPOP proof-of-process evidence packet".to_string(),
-                ),
+                description: Some("CPOP proof-of-process evidence packet".to_string()),
                 metadata: Some(AssertionMetadata {
                     process_start,
                     process_end,
@@ -200,8 +185,7 @@ impl C2paManifestBuilder {
                     }),
                 }),
             };
-            let ext_box =
-                build_assertion_jumbf_cbor(ASSERTION_LABEL_EXTERNAL_REF, &ext_ref)?;
+            let ext_box = build_assertion_jumbf_cbor(ASSERTION_LABEL_EXTERNAL_REF, &ext_ref)?;
             let ext_hash = Sha256::digest(&ext_box[8..]);
             created_assertions.push(HashedUri {
                 url: format!(

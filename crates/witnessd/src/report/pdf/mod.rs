@@ -166,10 +166,7 @@ fn embed_vc_attachment(pdf_bytes: Vec<u8>, vc_json: &[u8]) -> Result<Vec<u8>, St
     //    on Document::compress(), which printpdf calls in release builds).
     let mut stream_dict = LoDict::new();
     stream_dict.set("Type", Object::Name(b"EmbeddedFile".to_vec()));
-    stream_dict.set(
-        "Subtype",
-        Object::Name(b"application/ld+json".to_vec()),
-    );
+    stream_dict.set("Subtype", Object::Name(b"application/ld+json".to_vec()));
     stream_dict.set(
         "Params",
         Object::Dictionary({
@@ -249,9 +246,7 @@ fn embed_vc_attachment(pdf_bytes: Vec<u8>, vc_json: &[u8]) -> Result<Vec<u8>, St
             let catalog = doc
                 .catalog_mut()
                 .map_err(|e| format!("failed to access PDF catalog: {e}"))?;
-            if let Ok(Object::Dictionary(ref mut names_dict)) =
-                catalog.get_mut(b"Names")
-            {
+            if let Ok(Object::Dictionary(ref mut names_dict)) = catalog.get_mut(b"Names") {
                 names_dict.set("EmbeddedFiles", Object::Reference(embedded_files_id));
             }
         }

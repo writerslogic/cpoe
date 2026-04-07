@@ -792,12 +792,24 @@ pub(super) fn draw_forensics_page(
         y -= 7.0;
 
         let metrics: [(&str, String); 6] = [
-            ("Mean IKI (ms)", format!("{:.1}", finite_or(fm.mean_iki_ms, 0.0))),
-            ("CV", format!("{:.3}", finite_or(fm.coefficient_of_variation, 0.0))),
+            (
+                "Mean IKI (ms)",
+                format!("{:.1}", finite_or(fm.mean_iki_ms, 0.0)),
+            ),
+            (
+                "CV",
+                format!("{:.3}", finite_or(fm.coefficient_of_variation, 0.0)),
+            ),
             ("Burst Count", format!("{}", fm.burst_count)),
             ("Pause Count", format!("{}", fm.pause_count)),
-            ("Correction Ratio", format!("{:.3}", finite_or(fm.correction_ratio, 0.0))),
-            ("Burst Speed CV", format!("{:.3}", finite_or(fm.burst_speed_cv, 0.0))),
+            (
+                "Correction Ratio",
+                format!("{:.3}", finite_or(fm.correction_ratio, 0.0)),
+            ),
+            (
+                "Burst Speed CV",
+                format!("{:.3}", finite_or(fm.burst_speed_cv, 0.0)),
+            ),
         ];
 
         let card_w = (CONTENT_WIDTH - 4.0) / 3.0;

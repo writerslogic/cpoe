@@ -6,7 +6,9 @@ use hex;
 use serde::{Deserialize, Serialize};
 
 // Re-export identical types from protocol to avoid duplication.
-pub use authorproof_protocol::war::types::{CheckResult, ForensicDetails, VerificationReport, Version};
+pub use authorproof_protocol::war::types::{
+    CheckResult, ForensicDetails, VerificationReport, Version,
+};
 
 // ASCII-armor delimiters (single source of truth for encoder, decoder, and detection)
 pub const HEADER_BEGIN: &str = "-----BEGIN CPOP WAR-----";
@@ -154,4 +156,3 @@ impl<'de> Deserialize<'de> for Seal {
         Ok(seal)
     }
 }
-

@@ -30,18 +30,18 @@ pub fn ffi_export_evidence_json(path: String, tier: String, output: String) -> F
     // Decode without validation: we just wrote this file ourselves, and packets
     // with fewer than MIN_CHECKPOINTS are valid for export even if they don't
     // meet the full wire-format spec threshold.
-    let wire: EvidencePacketWire =
-        match authorproof_protocol::codec::cbor::decode_tagged(&cbor_payload, authorproof_protocol::codec::CBOR_TAG_CPOP) {
+    let wire: EvidencePacketWire = match authorproof_protocol::codec::cbor::decode_tagged(
+        &cbor_payload,
+        authorproof_protocol::codec::CBOR_TAG_CPOP,
+    ) {
+        Ok(w) => w,
+        Err(_) => match authorproof_protocol::codec::cbor::decode(&cbor_payload) {
             Ok(w) => w,
-            Err(_) => match authorproof_protocol::codec::cbor::decode(&cbor_payload) {
-                Ok(w) => w,
-                Err(e) => {
-                    return FfiResult::err(format!(
-                        "Evidence packet could not be decoded: {e}"
-                    ));
-                }
-            },
-        };
+            Err(e) => {
+                return FfiResult::err(format!("Evidence packet could not be decoded: {e}"));
+            }
+        },
+    };
     match serde_json::to_string_pretty(&wire) {
         Ok(json) => {
             if let Err(e) = std::fs::write(output_path, json.as_bytes()) {
@@ -100,7 +100,9 @@ pub fn ffi_export_evidence(path: String, tier: String, output: String) -> FfiRes
 
     let content_tier = match tier.to_lowercase().as_str() {
         "basic" | "core" => Some(authorproof_protocol::rfc::wire_types::ContentTier::Core),
-        "standard" | "enhanced" => Some(authorproof_protocol::rfc::wire_types::ContentTier::Enhanced),
+        "standard" | "enhanced" => {
+            Some(authorproof_protocol::rfc::wire_types::ContentTier::Enhanced)
+        }
         "maximum" => Some(authorproof_protocol::rfc::wire_types::ContentTier::Maximum),
         _ => Some(authorproof_protocol::rfc::wire_types::ContentTier::Core),
     };
@@ -268,9 +270,13 @@ pub fn ffi_export_evidence(path: String, tier: String, output: String) -> FfiRes
         baseline_verification: None,
         author_did: {
             #[cfg(feature = "did-webvh")]
-            { crate::identity::did_webvh::load_active_did().ok() }
+            {
+                crate::identity::did_webvh::load_active_did().ok()
+            }
             #[cfg(not(feature = "did-webvh"))]
-            { None }
+            {
+                None
+            }
         },
     };
 
@@ -281,16 +287,18 @@ pub fn ffi_export_evidence(path: String, tier: String, output: String) -> FfiRes
             // to the packet content invalidates the signature.
             let mut is_signed = false;
             let signed_bytes = match signing_key {
-                Some(ref sk) => match authorproof_protocol::crypto::sign_evidence_cose(&encoded, sk) {
-                    Ok(cose) => {
-                        is_signed = true;
-                        cose
+                Some(ref sk) => {
+                    match authorproof_protocol::crypto::sign_evidence_cose(&encoded, sk) {
+                        Ok(cose) => {
+                            is_signed = true;
+                            cose
+                        }
+                        Err(e) => {
+                            log::warn!("COSE signing failed, exporting unsigned: {e}");
+                            encoded
+                        }
                     }
-                    Err(e) => {
-                        log::warn!("COSE signing failed, exporting unsigned: {e}");
-                        encoded
-                    }
-                },
+                }
                 None => {
                     log::warn!("Signing key unavailable, exporting unsigned");
                     encoded

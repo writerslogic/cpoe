@@ -494,9 +494,9 @@ impl Packet {
         tpm_provider: &dyn tpm::Provider,
         prev_cosignature: Option<&super::types::HardwareCosignature>,
     ) -> crate::error::Result<()> {
-        let sw_sig = self
-            .packet_signature
-            .ok_or_else(|| Error::signature("must sign with software key before hardware co-sign"))?;
+        let sw_sig = self.packet_signature.ok_or_else(|| {
+            Error::signature("must sign with software key before hardware co-sign")
+        })?;
 
         let doc_hash = self.document.final_hash.as_bytes();
 
@@ -510,9 +510,7 @@ impl Packet {
         let prev_sig = prev_cosignature
             .map(|c| c.signature.as_slice())
             .unwrap_or(&[]);
-        let chain_index = prev_cosignature
-            .map(|c| c.chain_index + 1)
-            .unwrap_or(0);
+        let chain_index = prev_cosignature.map(|c| c.chain_index + 1).unwrap_or(0);
 
         let entangled_hash = Self::compute_hw_cosign_hash(
             doc_hash,

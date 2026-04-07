@@ -452,8 +452,8 @@ pub fn apply_cross_window_penalties(
     let mut total_penalty = 0.0;
     for m in matches {
         if m.similarity_score >= CROSS_WINDOW_SIM_FLOOR {
-            let excess = (m.similarity_score - CROSS_WINDOW_SIM_FLOOR)
-                / (1.0 - CROSS_WINDOW_SIM_FLOOR);
+            let excess =
+                (m.similarity_score - CROSS_WINDOW_SIM_FLOOR) / (1.0 - CROSS_WINDOW_SIM_FLOOR);
             total_penalty += CROSS_WINDOW_MAX_PER_MATCH * excess;
         }
     }

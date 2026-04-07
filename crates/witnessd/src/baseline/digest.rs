@@ -29,10 +29,7 @@ pub fn compute_initial_digest(identity_fingerprint: Vec<u8>) -> BaselineDigest {
 /// Incorporate a session's behavioral summary into the running digest in place.
 ///
 /// Uses numerically stable running average: mu_n = mu_{n-1} + (x_n - mu_{n-1}) / n
-pub fn update_digest_in_place(
-    digest: &mut BaselineDigest,
-    summary: &SessionBehavioralSummary,
-) {
+pub fn update_digest_in_place(digest: &mut BaselineDigest, summary: &SessionBehavioralSummary) {
     digest.session_count += 1;
     digest.total_keystrokes += summary.keystroke_count;
 

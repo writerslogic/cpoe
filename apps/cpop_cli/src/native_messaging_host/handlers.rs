@@ -6,8 +6,7 @@ use std::time::Instant;
 use subtle::ConstantTimeEq;
 
 use super::jitter::{
-    compute_jitter_stats, JITTER_REFILL_PER_MS, JITTER_TOKEN_COST, JITTER_TOKEN_MAX,
-    MAX_BATCH_SIZE,
+    compute_jitter_stats, JITTER_REFILL_PER_MS, JITTER_TOKEN_COST, JITTER_TOKEN_MAX, MAX_BATCH_SIZE,
 };
 use super::protocol::{is_domain_allowed, now_nanos, validate_content_hash};
 use super::types::{session, Response, Session};
@@ -483,7 +482,10 @@ pub(crate) fn handle_inject_jitter(intervals: Vec<u64>) -> Response {
     let now = Instant::now();
     let elapsed_ms = now.duration_since(session.last_refill).as_millis() as u64;
     let refill = elapsed_ms.saturating_mul(JITTER_REFILL_PER_MS);
-    session.bucket_millitokens = session.bucket_millitokens.saturating_add(refill).min(JITTER_TOKEN_MAX);
+    session.bucket_millitokens = session
+        .bucket_millitokens
+        .saturating_add(refill)
+        .min(JITTER_TOKEN_MAX);
     session.last_refill = now;
 
     if session.bucket_millitokens < JITTER_TOKEN_COST {

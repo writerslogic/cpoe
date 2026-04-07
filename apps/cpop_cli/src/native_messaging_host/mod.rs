@@ -65,7 +65,9 @@ fn main() {
             } => {
                 if let Some(ref v) = protocol_version {
                     if v != PROTOCOL_VERSION {
-                        eprintln!("protocol_version mismatch: client={v} server={PROTOCOL_VERSION}"); // intentional
+                        eprintln!(
+                            "protocol_version mismatch: client={v} server={PROTOCOL_VERSION}"
+                        ); // intentional
                     }
                 }
                 handle_start_session(document_url, document_title)
@@ -83,7 +85,9 @@ fn main() {
             Request::Ping { protocol_version } => {
                 if let Some(ref v) = protocol_version {
                     if v != PROTOCOL_VERSION {
-                        eprintln!("protocol_version mismatch: client={v} server={PROTOCOL_VERSION}"); // intentional
+                        eprintln!(
+                            "protocol_version mismatch: client={v} server={PROTOCOL_VERSION}"
+                        ); // intentional
                     }
                 }
                 Response::Pong {

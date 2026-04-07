@@ -782,8 +782,7 @@ fn author_did_untagged_round_trip() {
     packet.author_did = Some("did:webvh:example.com:abc123".to_string());
 
     let bytes = packet.encode_cbor_untagged().expect("encode untagged");
-    let decoded =
-        EvidencePacketWire::decode_cbor_untagged(&bytes).expect("decode untagged");
+    let decoded = EvidencePacketWire::decode_cbor_untagged(&bytes).expect("decode untagged");
 
     assert_eq!(
         decoded.author_did.as_deref(),

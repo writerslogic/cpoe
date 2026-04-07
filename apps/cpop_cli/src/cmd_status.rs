@@ -2,11 +2,11 @@
 
 use anyhow::{anyhow, Result};
 use chrono::DateTime;
+use std::fs;
+use std::time::Duration;
 use witnessd::tpm;
 use witnessd::vdf::params::calibrate;
 use witnessd::{derive_hmac_key, SecureStore};
-use std::fs;
-use std::time::Duration;
 use zeroize::Zeroizing;
 
 use witnessd::config::CpopConfig;
@@ -67,8 +67,7 @@ pub(crate) fn cmd_status(out: &OutputMode) -> Result<()> {
 
     let db_path = dir.join("events.db");
     let (db_status, tracked_files) = if db_path.exists() {
-        let hmac_key = if let Ok(Some(key)) = witnessd::identity::SecureStorage::load_hmac_key()
-        {
+        let hmac_key = if let Ok(Some(key)) = witnessd::identity::SecureStorage::load_hmac_key() {
             Some(Zeroizing::new(key.to_vec()))
         } else {
             let signing_key_path = dir.join("signing_key");

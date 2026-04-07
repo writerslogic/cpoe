@@ -67,7 +67,9 @@ fn test_packet_roundtrip_and_verify() {
         .build()
         .expect("build packet");
 
-    packet.verify(chain.metadata.vdf_params).expect("verify packet");
+    packet
+        .verify(chain.metadata.vdf_params)
+        .expect("verify packet");
 
     let encoded = packet.encode().expect("encode");
     let decoded = Packet::decode(&encoded).expect("decode");
@@ -998,7 +1000,10 @@ fn test_cbor_encoding_with_ppp_tag() {
     let encoded = packet.encode().expect("encode");
 
     assert!(
-        authorproof_protocol::codec::cbor::has_tag(&encoded, authorproof_protocol::codec::CBOR_TAG_CPOP),
+        authorproof_protocol::codec::cbor::has_tag(
+            &encoded,
+            authorproof_protocol::codec::CBOR_TAG_CPOP
+        ),
         "encoded packet should have CPOP semantic tag"
     );
 

@@ -69,8 +69,8 @@ pub(crate) fn write_message_to<W: Write>(writer: &mut W, response: &Response) ->
             serde_json::Value::String(PROTOCOL_VERSION.to_string()),
         );
     }
-    let json = serde_json::to_vec(&map)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let json =
+        serde_json::to_vec(&map).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     if json.len() > MAX_MESSAGE_LENGTH {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,

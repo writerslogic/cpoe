@@ -221,9 +221,7 @@ pub fn ffi_ephemeral_checkpoint(session_id: String, content: String, message: St
 
     let mut entry = match sessions().get_mut(&session_id) {
         Some(e) => e,
-        None => {
-            return FfiResult::err(format!("No ephemeral session: {session_id}"))
-        }
+        None => return FfiResult::err(format!("No ephemeral session: {session_id}")),
     };
 
     if content.len() > MAX_CONTENT_SIZE {
@@ -306,9 +304,7 @@ pub fn ffi_ephemeral_checkpoint(session_id: String, content: String, message: St
 pub fn ffi_ephemeral_inject_jitter(session_id: String, intervals: Vec<u64>) -> FfiResult {
     let mut entry = match sessions().get_mut(&session_id) {
         Some(e) => e,
-        None => {
-            return FfiResult::err(format!("No ephemeral session: {session_id}"))
-        }
+        None => return FfiResult::err(format!("No ephemeral session: {session_id}")),
     };
 
     let total = intervals.len();
@@ -463,9 +459,7 @@ pub fn ffi_ephemeral_checkpoint_hash(
 ) -> FfiResult {
     let mut entry = match sessions().get_mut(&session_id) {
         Some(e) => e,
-        None => {
-            return FfiResult::err(format!("No ephemeral session: {session_id}"))
-        }
+        None => return FfiResult::err(format!("No ephemeral session: {session_id}")),
     };
 
     if content_hash_hex.len() != 64 {
@@ -481,9 +475,7 @@ pub fn ffi_ephemeral_checkpoint_hash(
             arr.copy_from_slice(&bytes);
             arr
         }
-        _ => {
-            return FfiResult::err("Invalid hex in content hash".to_string())
-        }
+        _ => return FfiResult::err("Invalid hex in content hash".to_string()),
     };
 
     if entry.content_snapshots.len() >= MAX_SNAPSHOTS {
@@ -549,9 +541,7 @@ pub fn ffi_ephemeral_checkpoint_hash(
 pub fn ffi_ephemeral_set_canary_seed(session_id: String, canary_seed_hex: String) -> FfiResult {
     let mut entry = match sessions().get_mut(&session_id) {
         Some(e) => e,
-        None => {
-            return FfiResult::err(format!("No ephemeral session: {session_id}"))
-        }
+        None => return FfiResult::err(format!("No ephemeral session: {session_id}")),
     };
 
     if canary_seed_hex.len() != 64 {

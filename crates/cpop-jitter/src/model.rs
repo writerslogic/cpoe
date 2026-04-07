@@ -196,10 +196,10 @@ impl HumanModel {
             .iter()
             .map(|&v| v.min(u32::MAX as u64) as u32)
             .collect();
-            
+
         let perfect_ratio = self.compute_perfect_ratio_jitters(&capped);
         let pattern = self.detect_repeating_pattern_jitters(&capped);
-        
+
         self.validate_inner(
             capped.len(),
             self.compute_stats(capped.into_iter()),
@@ -226,10 +226,7 @@ impl HumanModel {
                 anomalies: vec![Anomaly {
                     kind: AnomalyKind::InsufficientData,
                     position: 0,
-                    detail: format!(
-                        "Sequence too short: {} < {}",
-                        len, self.min_sequence_length
-                    ),
+                    detail: format!("Sequence too short: {} < {}", len, self.min_sequence_length),
                 }],
                 stats,
             };
@@ -326,9 +323,12 @@ impl HumanModel {
             0.0
         }
     }
-    
+
     fn compute_perfect_ratio_records(&self, records: &[Evidence]) -> f64 {
-        let perfect_count = records.windows(2).filter(|w| w[0].jitter() == w[1].jitter()).count();
+        let perfect_count = records
+            .windows(2)
+            .filter(|w| w[0].jitter() == w[1].jitter())
+            .count();
         if records.len() > 1 {
             perfect_count as f64 / (records.len() - 1) as f64
         } else {
@@ -367,7 +367,7 @@ impl HumanModel {
         }
         None
     }
-    
+
     fn detect_repeating_pattern_records(&self, records: &[Evidence]) -> Option<usize> {
         if records.len() < 6 {
             return None;
@@ -385,7 +385,10 @@ impl HumanModel {
             for chunk in records.chunks(pattern_len) {
                 if chunk.len() == pattern_len {
                     checks += 1;
-                    let is_match = chunk.iter().zip(pattern.iter()).all(|(c, p)| c.jitter() == p.jitter());
+                    let is_match = chunk
+                        .iter()
+                        .zip(pattern.iter())
+                        .all(|(c, p)| c.jitter() == p.jitter());
                     if is_match {
                         matches += 1;
                     }

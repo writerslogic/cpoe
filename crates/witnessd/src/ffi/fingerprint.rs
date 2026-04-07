@@ -165,7 +165,9 @@ pub fn ffi_revoke_voice_consent() -> FfiResult {
     match with_manager(|mgr| {
         mgr.disable_voice()
             .map_err(|e| format!("Failed to revoke consent: {e}"))?;
-        Ok(FfiResult::ok("Voice fingerprinting disabled and data deleted"))
+        Ok(FfiResult::ok(
+            "Voice fingerprinting disabled and data deleted",
+        ))
     }) {
         Ok(r) => r,
         Err(e) => FfiResult::err(e),

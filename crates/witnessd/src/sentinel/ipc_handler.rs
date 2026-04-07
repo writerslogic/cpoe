@@ -29,7 +29,9 @@ impl SentinelIpcHandler {
     fn open_db(&self) -> Result<crate::store::SecureStore, String> {
         let db_path = self.sentinel.config.writersproof_dir.join("events.db");
         let guard = self.sentinel.signing_key.read_recover();
-        let signing_key = guard.key().ok_or("Signing key not initialized (or locked)")?;
+        let signing_key = guard
+            .key()
+            .ok_or("Signing key not initialized (or locked)")?;
         let store = crate::store::open_store_with_signing_key(&signing_key, &db_path)
             .map_err(|e| format!("Database error: {e}"))?;
         drop(guard);

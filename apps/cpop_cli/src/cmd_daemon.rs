@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
 use anyhow::{anyhow, Context, Result};
-use witnessd::DaemonManager;
 use std::fs;
 use std::time::Duration;
+use witnessd::DaemonManager;
 
 use crate::util::ensure_dirs;
 

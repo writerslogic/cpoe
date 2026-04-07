@@ -13,7 +13,9 @@ use crate::analysis::{
 use crate::forensics::cross_modal::CrossModalResult;
 use crate::forensics::forgery_cost::ForgeryCostEstimate;
 use crate::forensics::writing_mode::WritingModeAnalysis;
-use authorproof_protocol::forensics::{ForensicAnalysis as ProtocolForensicAnalysis, ForensicVerdict};
+use authorproof_protocol::forensics::{
+    ForensicAnalysis as ProtocolForensicAnalysis, ForensicVerdict,
+};
 
 /// Edits past this position (95%) count as "append".
 pub const DEFAULT_APPEND_THRESHOLD: f32 = 0.95;
@@ -349,9 +351,19 @@ impl AuthorshipProfile {
             Assessment::Suspicious => "transcriptive",
         }
     }
-    pub fn cognitive_score(&self) -> f64 { 0.7 }
-    pub fn writing_mode_confidence(&self) -> f64 { if self.event_count > 20 { 0.8 } else { 0.3 } }
-    pub fn revision_cycle_count(&self) -> u32 { self.session_count as u32 }
+    pub fn cognitive_score(&self) -> f64 {
+        0.7
+    }
+    pub fn writing_mode_confidence(&self) -> f64 {
+        if self.event_count > 20 {
+            0.8
+        } else {
+            0.3
+        }
+    }
+    pub fn revision_cycle_count(&self) -> u32 {
+        self.session_count as u32
+    }
     pub fn risk_level(&self) -> &str {
         match self.assessment {
             Assessment::Consistent => "low",

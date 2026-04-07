@@ -10,10 +10,18 @@ pub struct FfiResult {
 
 impl FfiResult {
     pub fn ok(message: impl Into<String>) -> Self {
-        Self { success: true, message: Some(message.into()), error_message: None }
+        Self {
+            success: true,
+            message: Some(message.into()),
+            error_message: None,
+        }
     }
     pub fn err(message: impl Into<String>) -> Self {
-        Self { success: false, message: None, error_message: Some(message.into()) }
+        Self {
+            success: false,
+            message: None,
+            error_message: Some(message.into()),
+        }
     }
 }
 

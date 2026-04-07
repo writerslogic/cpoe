@@ -12,9 +12,7 @@ const FFI_TIMEOUT_SECS: u64 = 30;
 static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 
 fn runtime() -> &'static tokio::runtime::Runtime {
-    RUNTIME.get_or_init(|| {
-        tokio::runtime::Runtime::new().expect("failed to create tokio runtime")
-    })
+    RUNTIME.get_or_init(|| tokio::runtime::Runtime::new().expect("failed to create tokio runtime"))
 }
 
 /// Create a new did:webvh identity bound to the given address.

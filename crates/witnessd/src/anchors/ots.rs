@@ -66,7 +66,11 @@ impl OpenTimestampsProvider {
         Ok(proof_bytes.to_vec())
     }
 
-    async fn upgrade_proof(&self, proof_data: &[u8], anchored_hash: &[u8; 32]) -> Result<Option<Vec<u8>>, AnchorError> {
+    async fn upgrade_proof(
+        &self,
+        proof_data: &[u8],
+        anchored_hash: &[u8; 32],
+    ) -> Result<Option<Vec<u8>>, AnchorError> {
         let pending_urls = self.find_pending_calendars(proof_data)?;
 
         for url in pending_urls {
@@ -134,7 +138,12 @@ impl OpenTimestampsProvider {
 
     /// Extract the calendar-specific commitment hash from an OTS proof
     /// by replaying operations starting from the anchored hash.
-    fn extract_commitment(&self, proof_data: &[u8], url: &str, anchored_hash: &[u8; 32]) -> Result<Vec<u8>, AnchorError> {
+    fn extract_commitment(
+        &self,
+        proof_data: &[u8],
+        url: &str,
+        anchored_hash: &[u8; 32],
+    ) -> Result<Vec<u8>, AnchorError> {
         if proof_data.len() < OTS_MAGIC.len() {
             return Err(AnchorError::InvalidFormat("Proof too short".into()));
         }
@@ -147,18 +156,22 @@ impl OpenTimestampsProvider {
             pos += 1;
 
             match op {
-                0x08 => { // sha256
+                0x08 => {
+                    // sha256
                     current_hash = Sha256::digest(&current_hash).to_vec();
                 }
-                0x02 => { // ripemd160
+                0x02 => {
+                    // ripemd160
                     use ripemd::Ripemd160;
                     current_hash = Ripemd160::digest(&current_hash).to_vec();
                 }
-                0xf0 => { // append
+                0xf0 => {
+                    // append
                     let data = Self::read_data(proof_data, &mut pos)?;
                     current_hash.extend_from_slice(&data);
                 }
-                0xf1 => { // prepend
+                0xf1 => {
+                    // prepend
                     let data = Self::read_data(proof_data, &mut pos)?;
                     let mut new = data;
                     new.extend_from_slice(&current_hash);
@@ -174,13 +187,22 @@ impl OpenTimestampsProvider {
             }
         }
 
-        Err(AnchorError::Unavailable(format!("URL {url} not found in proof")))
+        Err(AnchorError::Unavailable(format!(
+            "URL {url} not found in proof"
+        )))
     }
 
     /// Merge an upgraded calendar response into the original OTS proof.
-    fn merge_proofs(&self, original: &[u8], upgrade: &[u8], url: &str) -> Result<Vec<u8>, AnchorError> {
+    fn merge_proofs(
+        &self,
+        original: &[u8],
+        upgrade: &[u8],
+        url: &str,
+    ) -> Result<Vec<u8>, AnchorError> {
         if original.len() < OTS_MAGIC.len() {
-            return Err(AnchorError::InvalidFormat("Original proof too short".into()));
+            return Err(AnchorError::InvalidFormat(
+                "Original proof too short".into(),
+            ));
         }
 
         let mut result = original[..OTS_MAGIC.len()].to_vec();
@@ -304,7 +326,8 @@ impl OpenTimestampsProvider {
     /// Read a varint-prefixed UTF-8 string from `data` at `pos`.
     fn read_string(data: &[u8], pos: &mut usize) -> Result<String, AnchorError> {
         let bytes = Self::read_data(data, pos)?;
-        String::from_utf8(bytes).map_err(|e| AnchorError::InvalidFormat(format!("Invalid UTF-8: {e}")))
+        String::from_utf8(bytes)
+            .map_err(|e| AnchorError::InvalidFormat(format!("Invalid UTF-8: {e}")))
     }
 
     fn parse_attestation_path(
@@ -463,7 +486,10 @@ impl AnchorProvider for OpenTimestampsProvider {
     }
 
     async fn check_status(&self, proof: &Proof) -> Result<Proof, AnchorError> {
-        if let Some(upgraded_data) = self.upgrade_proof(&proof.proof_data, &proof.anchored_hash).await? {
+        if let Some(upgraded_data) = self
+            .upgrade_proof(&proof.proof_data, &proof.anchored_hash)
+            .await?
+        {
             let path = self.parse_attestation_path(&upgraded_data)?;
             let has_bitcoin = path.iter().any(|s| s.operation == AttestationOp::Verify);
 
@@ -519,7 +545,10 @@ impl AnchorProvider for OpenTimestampsProvider {
             return Ok(None);
         }
 
-        if let Some(upgraded_data) = self.upgrade_proof(&proof.proof_data, &proof.anchored_hash).await? {
+        if let Some(upgraded_data) = self
+            .upgrade_proof(&proof.proof_data, &proof.anchored_hash)
+            .await?
+        {
             let mut updated = proof.clone();
             updated.proof_data = upgraded_data;
             updated.attestation_path = Some(self.parse_attestation_path(&updated.proof_data)?);
