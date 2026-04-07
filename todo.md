@@ -27,8 +27,8 @@
 - [-] **CLU-006** `evidence_integrity_triple_bypass`, CRITICAL, components: C-015, C-016, C-017 -- FALSE POSITIVE 2026-04-07
   <!-- compound_impact: C-015 FP (sign() already uses ? operator); C-016 FP (verify() checks signature field before proceeding); C-017 FP (HMAC verified per-row before pushing to output via verify_event_row_hmac) -->
 
-- [ ] **CLU-007** `checkpoint_rollback_surface`, CRITICAL, components: C-019(-fp), C-020(-fp), H-007(open)
-  <!-- compound_impact: C-019 FP (at() is an index accessor, not a sequential read API; monotonicity is enforced at commit layer); C-020 FP (verify() receives root from caller, not self-validated peaks); H-007 still open (MMR root not externally anchored) -->
+- [x] **CLU-007** `checkpoint_rollback_surface`, CRITICAL, components: C-019(-fp), C-020(-fp), H-007(fixed) -- RESOLVED 2026-04-07
+  <!-- compound_impact: C-019 FP (at() is an index accessor, not a sequential read API; monotonicity is enforced at commit layer); C-020 FP (verify() receives root from caller, not self-validated peaks); H-007 fixed (MMR root anchored in signed checkpoint; cross-checkpoint proof verification in verify_detailed) -->
 
 - [ ] **CLU-002** `identity_trust_chain_failure`, CRITICAL, components: C-011(-fixed), C-012(open), C-013(-fixed)
   <!-- compound_impact: C-011 XOR recovery rejected; C-013 no plaintext key fallback; C-012 DID SSRF+sig chain deferred (architectural) -->
@@ -227,9 +227,9 @@
   <!-- pid:missing_validation | verified:true | first:2026-04-06 -->
   Impact: External process injects keystrokes that appear in evidence without being flagged as synthetic | Fix: Remove is_unverified_ffi exception; require all keystrokes to pass dual-layer (CGEvent + HID) validation | Effort: medium
 
-- [ ] **H-007** `[security]` `mmr/mmr.rs:34`: MMR proofs validated in memory only against in-process root hash; no external anchor
+- [x] **H-007** `[security]` `mmr/mmr.rs:34`: MMR proofs validated in memory only against in-process root hash; no external anchor -- FIXED 2026-04-07
   <!-- pid:missing_validation | verified:analytical | first:2026-04-06 -->
-  Impact: MMR root fabricated in memory; proof verification has no ground truth; attacker controls full proof chain | Fix: Anchor MMR root in signed checkpoint or RFC3161 timestamp before accepting proofs | Effort: large
+  Fix applied: `Chain::with_mmr()` attaches a `CheckpointMmr`; `commit_finish` calls `finalize_checkpoint` which embeds the pre-append MMR root in the signed checkpoint hash and stores the inclusion proof as `mmr_inclusion_proof`; `verify_detailed` checks each inclusion proof and verifies `proof[N].root == checkpoint[N+1].mmr_root` to detect rollback. 3 tests added.
 
 - [x] **H-008** `[error_handling]` `wal/operations.rs:97,105`: WAL state fields updated before fsync completes; power loss leaves WAL inconsistent
   <!-- pid:toctou | verified:true | first:2026-04-06 -->

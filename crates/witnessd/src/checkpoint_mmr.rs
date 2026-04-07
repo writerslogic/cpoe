@@ -73,6 +73,12 @@ pub struct CheckpointMmr {
     mmr: Mmr,
 }
 
+impl std::fmt::Debug for CheckpointMmr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CheckpointMmr").finish_non_exhaustive()
+    }
+}
+
 impl CheckpointMmr {
     /// Open or create a file-backed MMR for the given chain.
     pub fn open(mmr_dir: &Path, chain_id: &str) -> Result<Self> {

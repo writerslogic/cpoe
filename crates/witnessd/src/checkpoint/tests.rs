@@ -1357,3 +1357,88 @@ fn test_chain_handles_empty_file() {
     chain.verify().expect("verify chain with empty file");
     drop(dir);
 }
+
+#[test]
+fn test_mmr_anchored_chain_verifies() {
+    let (dir, path) = temp_document();
+    let mmr = crate::checkpoint_mmr::CheckpointMmr::in_memory().expect("in-memory mmr");
+    let mut chain = test_chain(&path).with_mmr(mmr);
+
+    let cp0 = chain
+        .commit_with_vdf_duration(None, Duration::from_millis(10))
+        .expect("commit 0");
+    assert!(cp0.mmr_root.is_some(), "genesis checkpoint should have mmr_root");
+    assert!(cp0.mmr_inclusion_proof.is_some(), "genesis checkpoint should have mmr_inclusion_proof");
+
+    fs::write(&path, b"second version").expect("update file");
+    let cp1 = chain
+        .commit_with_vdf_duration(None, Duration::from_millis(10))
+        .expect("commit 1");
+    assert!(cp1.mmr_root.is_some(), "checkpoint 1 should have mmr_root");
+    assert!(cp1.mmr_inclusion_proof.is_some(), "checkpoint 1 should have mmr_inclusion_proof");
+
+    chain.verify().expect("MMR-anchored chain should verify");
+    drop(dir);
+}
+
+#[test]
+fn test_mmr_proof_cross_checkpoint_anchor() {
+    use crate::mmr::InclusionProof;
+
+    let (dir, path) = temp_document();
+    let mmr = crate::checkpoint_mmr::CheckpointMmr::in_memory().expect("in-memory mmr");
+    let mut chain = test_chain(&path).with_mmr(mmr);
+
+    chain
+        .commit_with_vdf_duration(None, Duration::from_millis(10))
+        .expect("commit 0");
+
+    fs::write(&path, b"second version").expect("update file");
+    chain
+        .commit_with_vdf_duration(None, Duration::from_millis(10))
+        .expect("commit 1");
+
+    let proof_bytes = chain.checkpoints[0]
+        .mmr_inclusion_proof
+        .as_ref()
+        .expect("checkpoint 0 proof");
+    let proof = InclusionProof::deserialize(proof_bytes).expect("deserialize proof");
+
+    let next_mmr_root = chain.checkpoints[1]
+        .mmr_root
+        .expect("checkpoint 1 mmr_root");
+
+    assert_eq!(
+        proof.root, next_mmr_root,
+        "proof[0].root must equal checkpoint[1].mmr_root (cross-checkpoint anchor)"
+    );
+    drop(dir);
+}
+
+#[test]
+fn test_mmr_tampered_root_rejected() {
+    let (dir, path) = temp_document();
+    let mmr = crate::checkpoint_mmr::CheckpointMmr::in_memory().expect("in-memory mmr");
+    let mut chain = test_chain(&path).with_mmr(mmr);
+
+    chain
+        .commit_with_vdf_duration(None, Duration::from_millis(10))
+        .expect("commit 0");
+
+    fs::write(&path, b"second version").expect("update file");
+    chain
+        .commit_with_vdf_duration(None, Duration::from_millis(10))
+        .expect("commit 1");
+
+    // Tamper the mmr_root in checkpoint 1 so the cross-checkpoint anchor fails.
+    chain.checkpoints[1].mmr_root = Some([0xABu8; 32]);
+
+    let report = chain.verify_detailed();
+    assert!(!report.valid, "tampered mmr_root should fail verification");
+    assert!(
+        report.errors.iter().any(|e| e.contains("rollback detected")),
+        "expected rollback error, got: {:?}",
+        report.errors
+    );
+    drop(dir);
+}

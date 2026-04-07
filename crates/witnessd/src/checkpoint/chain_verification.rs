@@ -301,6 +301,40 @@ impl Chain {
                     }
                 }
             }
+
+            // H-007: Verify MMR inclusion proof if present. Cross-checkpoint anchor:
+            // proof[N].root must equal checkpoint[N+1].mmr_root (the pre-append root
+            // stored by finalize_checkpoint), detecting any MMR rollback or root swap.
+            if let Some(proof_bytes) = &checkpoint.mmr_inclusion_proof {
+                match crate::mmr::InclusionProof::deserialize(proof_bytes) {
+                    Err(_) => {
+                        report.fail(format!(
+                            "checkpoint {i}: malformed mmr_inclusion_proof"
+                        ));
+                        return report;
+                    }
+                    Ok(proof) => {
+                        if let Err(e) = proof.verify(&checkpoint.hash) {
+                            report.fail(format!(
+                                "checkpoint {i}: MMR inclusion proof invalid: {e}"
+                            ));
+                            return report;
+                        }
+                        if let Some(next_cp) = self.checkpoints.get(i + 1) {
+                            if let Some(next_mmr_root) = next_cp.mmr_root {
+                                if proof.root != next_mmr_root {
+                                    report.fail(format!(
+                                        "checkpoint {i}: MMR proof root does not match \
+                                         checkpoint {} mmr_root (rollback detected)",
+                                        i + 1
+                                    ));
+                                    return report;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // Integrity metadata (checkpoint_count, mmr_root, metadata_signature)

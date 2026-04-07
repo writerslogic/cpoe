@@ -33,17 +33,28 @@ pub struct ChainMetadata {
     pub signature_policy: SignaturePolicy,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Chain {
     pub metadata: ChainMetadata,
     pub checkpoints: Vec<Checkpoint>,
     #[serde(skip)]
     storage_path: Option<PathBuf>,
+    /// Optional MMR coordinator for anti-deletion anchoring.
+    /// When present, each commit sets `checkpoint.mmr_root` and
+    /// `checkpoint.mmr_inclusion_proof` before finalizing the hash.
+    #[serde(skip)]
+    mmr: Option<crate::checkpoint_mmr::CheckpointMmr>,
 }
 
 impl Chain {
     pub fn new(document_path: impl AsRef<Path>, vdf_params: Parameters) -> Result<Self> {
         Self::new_with_mode(document_path, vdf_params, EntanglementMode::Legacy)
+    }
+
+    /// Attach an MMR coordinator so each commit anchors its root in the signed hash.
+    pub fn with_mmr(mut self, mmr: crate::checkpoint_mmr::CheckpointMmr) -> Self {
+        self.mmr = Some(mmr);
+        self
     }
 
     pub fn with_signature_policy(mut self, policy: SignaturePolicy) -> Self {
@@ -81,6 +92,7 @@ impl Chain {
             },
             checkpoints: Vec::with_capacity(1024),
             storage_path: None,
+            mmr: None,
         })
     }
 
@@ -149,7 +161,14 @@ impl Chain {
         if checkpoint.explicit_hash_version.is_none() {
             checkpoint.explicit_hash_version = Some(checkpoint.hash_domain_version());
         }
-        checkpoint.hash = checkpoint.compute_hash();
+        if let Some(mmr) = &self.mmr {
+            let append = mmr.finalize_checkpoint(&mut checkpoint)?;
+            if let Ok(proof_bytes) = append.proof().serialize() {
+                checkpoint.mmr_inclusion_proof = Some(proof_bytes);
+            }
+        } else {
+            checkpoint.hash = checkpoint.compute_hash();
+        }
         let result = checkpoint.clone();
         self.checkpoints.push(checkpoint);
         Ok(result)
