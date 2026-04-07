@@ -526,7 +526,10 @@ pub(crate) fn handle_inject_jitter(intervals: Vec<u64>) -> Response {
             .open(&session.evidence_path)
             .and_then(|mut f| f.write_all(jitter_line.as_bytes()))
         {
-            eprintln!("write jitter evidence: {e}");
+            return Response::Error {
+                message: format!("Failed to write jitter evidence: {e}"),
+                code: "JITTER_WRITE_FAILED".into(),
+            };
         }
     }
 

@@ -355,9 +355,9 @@
   <!-- pid:nan_inf_unguarded | verified:false | first:2026-04-07 -->
   Guard already present at line 438: `if elapsed_secs < 0.001 { return Err(...) }` before the division; near-zero elapsed time is already rejected.
 
-- [ ] **H-039** `[error_handling]` `native_messaging_host/handlers.rs:529`: Jitter evidence write error silently logged; success returned to browser extension client
+- [x] **H-039** `[error_handling]` `native_messaging_host/handlers.rs:529`: Jitter evidence write error silently logged; success returned to browser extension client -- FIXED 2026-04-07
   <!-- pid:silent_error | verified:true | first:2026-04-07 -->
-  Impact: Jitter evidence lost on write failure; client believes evidence was recorded; integrity violation unreported upstream | Fix: Return error response to client on write failure; do not swallow jitter storage errors | Effort: small
+  Now returns Response::Error { code: "JITTER_WRITE_FAILED" } on write failure instead of eprintln + success response.
 
 - [-] **H-040** `[security]` `apps/cpop_macos/cpop/AppDelegate.swift:464`: File descriptor not validated before `flock()` call -- FALSE POSITIVE 2026-04-07
   <!-- pid:missing_validation | verified:false | first:2026-04-07 -->
@@ -403,9 +403,7 @@ Run `/suggest --since HEAD~1` after fixing C-015 through C-029 + H-026 through H
 ---
 
 ## Quick Wins (small effort, open)
-| ID | Sev | File:Line | Issue | Effort |
-|----|-----|-----------|-------|--------|
-| H-039 | HIGH | native_messaging/handlers.rs:529 | jitter write error silent | small |
+*None remaining — all small-effort findings resolved.*
 
 ## Coverage
 <!-- reviewed: 677 non-test files across 15 batches, 3 waves (session 4) -->
