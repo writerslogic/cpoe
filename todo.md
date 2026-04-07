@@ -1,21 +1,21 @@
 # CPOP Project Audit -- Consolidated Findings
 
-<!-- suggest | Updated: 2026-04-06 | Domain: code | Languages: rust | Files: 407 | Issues: 120 -->
+<!-- suggest | Updated: 2026-04-07 | Domain: code | Languages: rust,swift,typescript | Files: 677 | Issues: 296 -->
 
-**Updated**: 2026-04-06 (session 3 -- full workspace re-audit, 407 files, 15 batch agents)
-**Scope**: Full workspace -- CLI (25 files), Engine (315+ files), Protocol (56 files), Jitter (11 files)
-**Previous audit**: 2026-04-02 -- 148 findings, all resolved
-**macOS app**: 381 findings fixed, 0 open (see apps/cpop_macos/audit-todo.md)
+**Updated**: 2026-04-07 (session 4 -- full workspace re-audit, 677 files, 15 batch agents, waves 1-3)
+**Scope**: Full workspace -- CLI, Engine (315+ files), Protocol (56 files), Jitter (11 files), macOS (Swift), API (TS)
+**Previous audit**: 2026-04-06 -- 120 findings; C-001..C-014 + H-001..H-025
+**macOS app**: StorageSettingsView.swift added; audit findings C-029, H-040, H-041 (see below)
 **Baseline**: 1094 pass, 0 fail, 1 ignored (witnessd --lib)
 
 ## Summary
-| Severity | Open | Fixed (prior) | Skipped (prior) |
-|----------|------|---------------|-----------------|
-| CRITICAL | 4    | 20            | 5               |
-| HIGH     | 4    | 148           | 14              |
-| MEDIUM   | 0*   | 247           | 22              |
+| Severity | Open | Fixed (prior) | Skipped/FP (prior) |
+|----------|------|---------------|---------------------|
+| CRITICAL | 18   | 20            | 5+                  |
+| HIGH     | 22   | 148           | 14+                 |
+| MEDIUM   | 0*   | 247           | 22                  |
 
-*Medium findings deferred; ~50 files uncovered in wave 3 (see Coverage section).
+*Medium findings require follow-up wave (see Coverage section).
 
 ---
 
@@ -23,6 +23,12 @@
 
 - [ ] **CLU-001** `timestamp_anchor_bypass`, CRITICAL, components: C-001, C-002, C-003
   <!-- compound_impact: RFC3161 sig unverified + OTS block unverified + EAT CWT unsigned = all timestamp anchors can be forged; three independent evidence layers each completely bypassable -->
+
+- [ ] **CLU-006** `evidence_integrity_triple_bypass`, CRITICAL, components: C-015, C-016, C-017
+  <!-- compound_impact: sign() swallows error (C-015) + no presence check on verify (C-016) + HMAC fires post-deserialization (C-017) = three independent integrity layers all bypassable; attacker can deliver unsigned, unverified, HMAC-tampered evidence that passes all checks -->
+
+- [ ] **CLU-007** `checkpoint_rollback_surface`, CRITICAL, components: C-019, C-020, H-007
+  <!-- compound_impact: no monotonic ordinal (C-019) + stale MMR peaks accepted (C-020) + MMR root unanchored (H-007) = full checkpoint chain rollback attack; attacker rewinds evidence state with no cryptographic resistance -->
 
 - [ ] **CLU-002** `identity_trust_chain_failure`, CRITICAL, components: C-011(-fixed), C-012(open), C-013(-fixed)
   <!-- compound_impact: C-011 XOR recovery rejected; C-013 no plaintext key fallback; C-012 DID SSRF+sig chain deferred (architectural) -->
@@ -46,10 +52,16 @@
   <!-- pid:silent_error | first:2026-04-06 -->
   rats/eat.rs: C-003 architectural (COSE verification). vc.rs:245: already returns error via sign_error capture. keyhierarchy/recovery.rs: fixed in C-011 (XOR path removed). ffi/sentinel_inject.rs: intentional design (caller doesn't need per-keystroke errors). trust_policy, declaration: no actionable silent swallows found. Remaining in research/collaboration are benign log::warn fallbacks.
 
-- [ ] **SYS-003** `business_logic_in_ffi`, 6 files, HIGH
-  <!-- pid:logic_in_boundary | first:2026-04-06 -->
-  Files: `ffi/sentinel_inject.rs:102` (keystroke acceptance logic with is_unverified_ffi exception), `ffi/sentinel_witnessing.rs:51` (path validation bypass), `ffi/sentinel_witnessing.rs` (chain lookup with untrusted path), `ffi/evidence_export.rs` (session detection logic), `ffi/beacon.rs` (calendar validation), `ffi/attestation.rs` (blocking shell command in init path).
+- [ ] **SYS-003** `business_logic_in_ffi`, 8 files, HIGH
+  <!-- pid:logic_in_boundary | first:2026-04-06 | updated:2026-04-07 -->
+  Files (session 3): `ffi/sentinel_inject.rs:102`, `ffi/sentinel_witnessing.rs:51`, `ffi/sentinel_witnessing.rs` (chain lookup), `ffi/evidence_export.rs`, `ffi/beacon.rs`, `ffi/attestation.rs`.
+  New instances (session 4): `ffi/ephemeral.rs:565` (C-027 -- WAR proof signing), `ffi/report.rs:198` (C-028 -- full forensic analysis per call).
   Fix: Move to crate modules; FFI layer should only marshal types and forward to engine.
+
+- [ ] **SYS-008** `debug_output_regression`, 1 file, CRITICAL
+  <!-- pid:no_structured_logging | first:2026-04-07 -->
+  Regression of SYS-004 (fixed 2026-04-02). New instance: `ffi/system.rs:228-255` -- `#[cfg(debug_assertions)]` block writes list output to `/tmp/cpop_list_debug.txt`. Debug files persist in CI/production builds unless `debug_assertions` is explicitly disabled.
+  Fix: Remove file write; use `log::debug!()` (see C-025).
 
 - [ ] **SYS-004** `hmac_not_verified_on_read`, 3 files, HIGH
   <!-- pid:missing_validation | first:2026-04-06 -->
@@ -128,6 +140,66 @@
   <!-- pid:missing_validation | verified:true | first:2026-04-06 -->
   Impact: Debug build in CI or staging allows cleartext API calls; credentials and evidence packets transmitted in the clear | Fix: Unconditionally require HTTPS; remove debug HTTP exception entirely | Effort: small
 
+- [ ] **C-015** `[security]` `evidence/packet.rs:432`: `sign()` swallows `signing_payload()` error; returns `Ok(())` with packet unsigned
+  <!-- pid:silent_error | verified:true | first:2026-04-07 | cluster:CLU-006 -->
+  Impact: Evidence packet delivered as "signed" with no signature when payload encoding fails; downstream verification cannot distinguish from forge | Fix: Propagate `signing_payload()` via `?`; never return Ok from sign() unless signature is set | Effort: small
+
+- [ ] **C-016** `[security]` `evidence/packet.rs:645`: No pre-flight signature presence check in `verify()`; verification proceeds on unsigned packet
+  <!-- pid:missing_validation | verified:true | first:2026-04-07 | cluster:CLU-006 -->
+  Impact: Unsigned packet (e.g., from C-015 failure path) passes verify() without error; attacker strips signature field entirely | Fix: Check `self.signature.is_some()` at top of verify(); return Err if absent | Effort: small
+
+- [ ] **C-017** `[security]` `store/events.rs:323,396`: Per-entry HMAC verified AFTER full event deserialization in `get_all_events_grouped` and `export_all_events_for_identity`
+  <!-- pid:missing_validation | verified:true | first:2026-04-07 | cluster:CLU-006 -->
+  Impact: Tampered event fields (sequence number, content, timestamp) reach output buffers before HMAC rejection fires; H-009 fix is incomplete | Fix: SELECT hmac as column 0; verify before deserializing any other field; reject row immediately on mismatch | Effort: medium
+
+- [ ] **C-018** `[security]` `war/verification.rs:23`: Non-constant-time length check (`trusted.len() == other.len()`) before `ct_eq()` call; timing side-channel reveals key length
+  <!-- pid:timing_side_channel | verified:true | first:2026-04-07 -->
+  Impact: Attacker probes key length via response timing; narrows brute-force search space; leaks secret key structure before ct_eq runs | Fix: Use `subtle::ConstantTimeEq` for the length check itself, or pad to fixed size; never branch on secret-length equality | Effort: small
+
+- [ ] **C-019** `[security]` `checkpoint/chain.rs:368`: `at()` accepts arbitrary ordinal without monotonicity enforcement; enables out-of-order retrieval and rollback attacks
+  <!-- pid:missing_validation | verified:true | first:2026-04-07 | cluster:CLU-007 -->
+  Impact: Attacker supplies old ordinal; chain returns stale checkpoint as current; evidence state rolled back silently | Fix: Track last-accessed ordinal; reject any `at()` call with ordinal <= last seen | Effort: medium
+
+- [ ] **C-020** `[security]` `mmr/proof.rs:59-72`: `InclusionProof::verify()` does not validate that peaks match current MMR state; stale peaks accepted
+  <!-- pid:missing_validation | verified:true | first:2026-04-07 | cluster:CLU-007 -->
+  Impact: Attacker supplies inclusion proof with stale peak list; proof verifies against old state; rollback attack bypasses MMR integrity | Fix: Accept current peaks as explicit parameter to verify(); reject proof if peaks don't match provided root | Effort: medium
+
+- [ ] **C-021** `[concurrency]` `sentinel/core.rs:839`: Lock ordering violation -- acquires `sessions` write lock before `signing_key` read lock; violates AUD-041 invariant (`signing_key < sessions`)
+  <!-- pid:lock_ordering | verified:true | first:2026-04-07 -->
+  Impact: Potential deadlock with any path that acquires signing_key under sessions lock; deadlock at 100+ WPM | Fix: Acquire signing_key read lock before sessions write lock in this callsite to match AUD-041 ordering | Effort: small
+
+- [ ] **C-022** `[security]` `forensics/cross_modal.rs:234`: Division by `checkpoint_count` (u64) without zero-check; NaN/inf forensic verdict when no checkpoints recorded
+  <!-- pid:nan_inf_unguarded | verified:true | first:2026-04-07 -->
+  Impact: `checkpoint_count=0` produces `inf` consistency ratio; forensic verdict `Authentic` even on AI-generated content with zero checkpoints | Fix: Guard `if checkpoint_count == 0 { return CrossModalVerdict::Inconsistent; }` before division | Effort: small
+
+- [ ] **C-023** `[security]` `forensics/writing_mode.rs:236`: Division by `TRANSCRIPTIVE_THRESHOLD` without epsilon guard; NaN confidence on degenerate threshold
+  <!-- pid:nan_inf_unguarded | verified:true | first:2026-04-07 -->
+  Impact: If threshold constant is 0.0 (e.g., misconfigured feature flag), confidence returns NaN; NaN propagates into signed forensic report | Fix: Assert `TRANSCRIPTIVE_THRESHOLD > f64::EPSILON` at startup; guard division with `if threshold.abs() < f64::EPSILON` | Effort: small
+
+- [ ] **C-024** `[security]` `anchors/rfc3161.rs:31`: No timeout on TSA HTTP POST; slow or malicious TSA server can hang daemon indefinitely
+  <!-- pid:no_timeout | verified:true | first:2026-04-07 -->
+  Impact: Attacker controls TSA endpoint; sends response byte-by-byte at 1 byte/hour; daemon thread blocked forever | Fix: Add `reqwest::Client::builder().timeout(Duration::from_secs(10))` before TSA POST | Effort: small
+
+- [ ] **C-025** `[security]` `ffi/system.rs:228-255`: `#[cfg(debug_assertions)]` block writes list output to `/tmp/cpop_list_debug.txt`; SYS-004 regression
+  <!-- pid:no_structured_logging | verified:true | first:2026-04-07 | systemic:SYS-008 -->
+  Impact: Debug file persists in CI and App Store builds if `debug_assertions` not explicitly disabled at link time; evidence session IDs leak to world-readable /tmp | Fix: Remove file write; replace with `log::debug!()` | Effort: small
+
+- [ ] **C-026** `[security]` `authorproof-protocol/src/rfc/jitter_binding.rs:443`: `attractor_points: Vec<Vec<f64>>` inner vector length not validated against `embedding_dimension`; memory exhaustion on malformed input
+  <!-- pid:no_backpressure | verified:true | first:2026-04-07 -->
+  Impact: Untrusted CBOR deserialization can supply `attractor_points[i]` with 10M floats per row; OOM kills daemon before validation runs | Fix: After deserializing, reject any inner vec with `len() != embedding_dimension`; reject overall vec with `len() > MAX_ATTRACTOR_POINTS` (suggest 10000) | Effort: small
+
+- [ ] **C-027** `[architecture]` `ffi/ephemeral.rs:565`: `build_war_block()` (cryptographic WAR proof signing) implemented inside FFI layer instead of engine internals
+  <!-- pid:logic_in_boundary | verified:true | first:2026-04-07 | systemic:SYS-003 -->
+  Impact: Signing logic inaccessible to unit tests; any refactor of FFI types silently breaks WAR signing; cannot fuzz signing path without Swift runtime | Fix: Move `build_war_block()` to `war/builder.rs`; FFI wrapper calls engine function and marshals result | Effort: medium
+
+- [ ] **C-028** `[architecture]` `ffi/report.rs:198-227`: Full forensic analysis (`ForensicEngine::evaluate_authorship` + `run_full_forensics`) re-executed at FFI boundary on every Swift call
+  <!-- pid:logic_in_boundary | verified:true | first:2026-04-07 | systemic:SYS-003 -->
+  Impact: Expensive analysis (O(n) over all events) runs per UI refresh; results not cached; cannot test analysis path without crossing FFI | Fix: Cache `ForensicMetrics` in engine session state; FFI reads cached result; re-run only on session checkpoint | Effort: medium
+
+- [ ] **C-029** `[security]` `apps/cpop_macos/cpop/SubscriptionService.swift:176`: Storage upgrade purchase proceeds without `appAccountToken` when `userId` is nil; IAP not bound to server account
+  <!-- pid:missing_validation | verified:true | first:2026-04-07 -->
+  Impact: If user is not signed in (userId=nil), Apple's server-to-server notification cannot identify the account; upgrade is orphaned and storage tier never set server-side | Fix: Guard purchase with `guard userId != nil else { purchaseError = "Sign in required"; return false }` | Effort: small
+
 ---
 
 ## High
@@ -164,9 +236,9 @@
   <!-- pid:toctou | verified:true | first:2026-04-06 -->
   Impact: WAL shows entry committed but data never persisted; evidence loss undetectable on recovery | Fix: Update state fields only after successful fsync returns; treat pre-fsync update as bug | Effort: small
 
-- [ ] **H-009** `[security]` `store/integrity.rs:174`: HMAC integrity check only at store open; mid-session tampering goes undetected
-  <!-- pid:missing_validation | verified:true | first:2026-04-06 -->
-  Impact: Attacker writes to SQLite DB mid-session; modified events bypass HMAC check (was only done at open) | Fix: Verify per-entry HMAC on each read in high-integrity mode; or re-verify full chain on checkpoint | Effort: large
+- [ ] **H-009** `[security]` `store/integrity.rs:174` + `store/events.rs:323,396`: HMAC integrity check only at store open; per-entry fix in events.rs is post-hoc (HMAC verified AFTER deserialization)
+  <!-- pid:missing_validation | verified:true | first:2026-04-06 | updated:2026-04-07 | related:C-017 -->
+  Impact: Attacker writes to SQLite DB mid-session; modified events reach output buffers before HMAC rejection; H-009 commit (ff25c537) is incomplete | Fix: See C-017 for immediate fix (SELECT hmac first, verify before deserializing); H-009 covers full per-read verification in high-integrity mode | Effort: large
 
 - [x] **H-010** `[security]` `sentinel/helpers.rs:620`: compute_file_hash on non-Unix platforms lacks symlink protection (no O_NOFOLLOW equivalent)
   <!-- pid:toctou | verified:analytical | first:2026-04-06 -->
@@ -232,11 +304,85 @@
   <!-- pid:path_traversal | verified:true | first:2026-04-06 -->
   Impact: Same pattern as H-013 in stop_witnessing path; path validation cosmetic | Fix: Use &validated_path throughout stop_witnessing after validate_path call | Effort: small
 
+- [ ] **H-026** `[error_handling]` `sentinel/core.rs:905`: `let _ = std::fs::create_dir_all(&snap_dir)` silently discards directory creation failure
+  <!-- pid:silent_error | verified:true | first:2026-04-07 -->
+  Impact: Snapshot directory creation fails (permissions, disk full); subsequent file writes silently fail; evidence snapshots lost with no indication | Fix: Propagate via `?` or log::error! + return Err; never discard filesystem errors | Effort: small
+
+- [ ] **H-027** `[security]` `sentinel/core.rs:893`: Document path from HashMap key used directly in file path construction without sanitization
+  <!-- pid:path_traversal | verified:true | first:2026-04-07 -->
+  Impact: Attacker-controlled document path (e.g., via IPC session create) with `../` components writes snapshot file to arbitrary location | Fix: Canonicalize and validate path component before use in file construction; reject any path escaping the snapshot directory | Effort: small
+
+- [ ] **H-028** `[performance]` `sentinel/core.rs:565`: Jitter sample cloned before validation; allocation per keystroke even if keystroke subsequently rejected
+  <!-- pid:alloc_in_loop | verified:analytical | first:2026-04-07 -->
+  Impact: At 150+ WPM, per-keystroke clone + drop in hot path adds GC pressure; O(n) allocations even for rejected events | Fix: Validate jitter sample before cloning; pass reference to validation; clone only on acceptance | Effort: small
+
+- [ ] **H-029** `[security]` `evidence/packet.rs:112`: `copy_from_slice` on VDF hex-decoded bytes without length validation; panics if decoded length != expected
+  <!-- pid:missing_validation | verified:true | first:2026-04-07 -->
+  Impact: Malformed VDF proof (wrong hex length) panics the daemon via `copy_from_slice` slice length mismatch | Fix: Check `decoded.len() == expected_len` before `copy_from_slice`; return Err on mismatch | Effort: small
+
+- [ ] **H-030** `[security]` `evidence/packet.rs:232-283`: Baseline verification accepts self-signed key with only `log::warn!()`; no hard failure on unanchored baseline
+  <!-- pid:missing_validation | verified:analytical | first:2026-04-07 -->
+  Impact: Attacker substitutes baseline with self-signed artifact; baseline "verified" with warning-only; no rejection | Fix: Downgrade verdict to `Unverified` or return Err when baseline has no external trust anchor; document explicit allow-list for self-signed baselines | Effort: medium
+
+- [ ] **H-031** `[security]` `war/verification.rs:216,220`: Hex-decoded document hash and chain hash used without immediate length validation after decode
+  <!-- pid:missing_validation | verified:true | first:2026-04-07 -->
+  Impact: Truncated or malformed hex hash accepted; comparison against 32-byte expected value may succeed or panic depending on decode library behavior | Fix: Verify `decoded_hash.len() == 32` before any comparison; return Err on mismatch | Effort: small
+
+- [ ] **H-032** `[security]` `anchors/rfc3161.rs:588`: CMS/PKCS#7 outer signature not verified; only inner hash structure validated
+  <!-- pid:missing_validation | verified:true | first:2026-04-07 -->
+  Impact: Attacker generates TSA response with correct hash structure but forged CMS signature; timestamp accepted as valid RFC3161 | Fix: Verify CMS SignedData signature using TSA certificate; reject response if CMS signature invalid | Effort: large
+
+- [ ] **H-033** `[security]` `anchors/rfc3161.rs:95`: Nonce accepts variable length; DER encoding strips leading zeros creating nonce bypass covert channel
+  <!-- pid:missing_validation | verified:analytical | first:2026-04-07 -->
+  Impact: Nonce `0x0001` and `0x01` both DER-encode to the same value; attacker submits response with different nonce encoding that matches after DER normalization | Fix: Fix nonce to 8 bytes; compare bytes before DER encoding; reject any response where nonce bytes don't match exactly | Effort: medium
+
+- [ ] **H-034** `[security]` `mmr/proof.rs:150`: No maximum path length cap on `InclusionProof`; DoS via pathological proof
+  <!-- pid:no_backpressure | verified:true | first:2026-04-07 -->
+  Impact: Untrusted proof with `path_len = u64::MAX` triggers O(n) verification loop; daemon OOM or CPU DoS | Fix: Reject any proof where `path.len() > MAX_MMR_PATH_LENGTH` (suggest 64 for current tree sizes) | Effort: small
+
+- [ ] **H-035** `[security]` `wal/operations.rs:393`: TOCTOU race in WAL truncate between existence check and truncation
+  <!-- pid:toctou | verified:true | first:2026-04-07 -->
+  Impact: File deleted between check and truncate; truncate operates on stale fd or wrong file | Fix: Open file with O_NOFOLLOW before checking; truncate the already-opened fd | Effort: small
+
+- [ ] **H-036** `[security]` `wal/operations.rs:692`: File truncation performed without validating target offset is within file bounds
+  <!-- pid:missing_validation | verified:true | first:2026-04-07 -->
+  Impact: Attacker-supplied or corrupt WAL metadata causes truncation to extend file (seek_to_end past EOF), potentially zeroing WAL entries | Fix: Validate offset <= file_size before truncate; return Err if out of bounds | Effort: small
+
+- [ ] **H-037** `[security]` `vdf/swf_argon2.rs:206`: Argon2 `time_cost` and `memory_cost` parameters not bounds-checked before use
+  <!-- pid:no_backpressure | verified:true | first:2026-04-07 -->
+  Impact: External VDF challenge with `memory_cost = u32::MAX` triggers OOM kill; `time_cost = u32::MAX` blocks daemon thread indefinitely | Fix: Clamp to `MIN_TIME_COST..=MAX_TIME_COST` and `MIN_MEMORY_COST..=MAX_MEMORY_COST`; defined as named constants | Effort: small
+
+- [ ] **H-038** `[security]` `vdf/swf_argon2.rs:427`: `calibrate()` divides by `elapsed_secs` without near-zero guard; NaN/inf IPS estimate on fast hardware
+  <!-- pid:nan_inf_unguarded | verified:true | first:2026-04-07 -->
+  Impact: Sub-millisecond Argon2 run on fast machine produces elapsed_secs ≈ 0; division yields `inf` IPS; calibration sets `time_cost = 0` | Fix: Clamp `elapsed_secs = elapsed_secs.max(0.001)` before division; validate IPS is finite before using | Effort: small
+
+- [ ] **H-039** `[error_handling]` `native_messaging_host/handlers.rs:529`: Jitter evidence write error silently logged; success returned to browser extension client
+  <!-- pid:silent_error | verified:true | first:2026-04-07 -->
+  Impact: Jitter evidence lost on write failure; client believes evidence was recorded; integrity violation unreported upstream | Fix: Return error response to client on write failure; do not swallow jitter storage errors | Effort: small
+
+- [ ] **H-040** `[security]` `apps/cpop_macos/cpop/AppDelegate.swift:464`: File descriptor not validated (`fd < 0`) before `flock()` call; undefined behavior on `open()` failure
+  <!-- pid:missing_validation | verified:true | first:2026-04-07 -->
+  Impact: If lock file open fails (permissions, disk full), `flock(-1)` invoked; POSIX behavior undefined; may lock arbitrary fd | Fix: Check `fd >= 0` before `flock()`; return / log error on invalid fd | Effort: small
+
+- [ ] **H-041** `[concurrency]` `apps/cpop_macos/cpop/AppDelegate.swift:165`: `applicationShouldTerminate` cancels async tasks but returns `.terminateNow` without awaiting cancellation
+  <!-- pid:data_race | verified:analytical | first:2026-04-07 -->
+  Impact: Tasks cancelled but still running when app exits; SQLite writes, WAL flushes, IPC teardown may be interrupted mid-operation leaving DB inconsistent | Fix: Return `.terminateLater` from applicationShouldTerminate; await task cancellation in a detached Task; call `reply(toApplicationShouldTerminate: true)` when done | Effort: medium
+
+- [ ] **H-042** `[security]` `authorproof-protocol/src/components.rs:844`: `StreamingStats` f64 fields (`mean`, `variance`, `skewness`) have no `is_finite()` validation after update
+  <!-- pid:nan_inf_unguarded | verified:true | first:2026-04-07 -->
+  Impact: Single NaN input propagates through all subsequent streaming stats; signed protocol components contain NaN with no detection | Fix: After each `update()`, assert fields are finite; substitute 0.0 and increment a `degenerate_count` | Effort: small
+
+- [ ] **H-043** `[security]` `authorproof-protocol/src/rfc/jitter_binding.rs:680`: `hurst_exponent` out-of-range (outside [0.0, 1.0]) produces warning-only; binding proceeds with invalid value
+  <!-- pid:missing_validation | verified:true | first:2026-04-07 -->
+  Impact: Invalid Hurst exponent in signed jitter binding weakens authorship proof without caller awareness; value may be NaN if upstream chain is degenerate | Fix: Return `Err` if `hurst_exponent < 0.0 || hurst_exponent > 1.0 || !hurst_exponent.is_finite()`; never sign invalid values | Effort: small
+
 ---
 
 ## Medium
 
-*Medium findings (est. 68 items) require a follow-up audit wave covering ~50 uncovered files:*
+*Medium findings require follow-up audit waves. Session 4 audit did not produce medium findings (all severity thresholds set to HIGH for 677-file scan with QUALITY_BAR=critical).*
+
+Estimated uncovered files for medium sweep:
 - `crates/witnessd/src/tpm/linux.rs` (684 lines) -- Linux TPM attestation
 - `crates/witnessd/src/ipc/async_client.rs` (637 lines) -- async IPC client
 - `crates/witnessd/src/cpop_jitter_bridge/session.rs` (519 lines) -- jitter bridge
@@ -248,35 +394,42 @@
 - `crates/witnessd/src/research/` -- research analysis
 - `crates/witnessd/src/physics/` -- physics-based timing models
 - `crates/witnessd/src/collaboration.rs`, `continuation.rs`
+- `report/html/sections.rs` (1858 lines) -- HTML report (largest file, uncovered)
+- `report/pdf/layout_sections.rs` (994 lines) -- PDF layout
+- `ffi/sentinel_witnessing.rs`, `war/profiles/cawg.rs`, `platform/windows.rs` (788 lines)
+- `sealed_chain.rs`, `fingerprint/` modules
 
-Run `/suggest --since HEAD~1` after fixing H-001 through H-025 to capture medium findings.
+Run `/suggest --since HEAD~1` after fixing C-015 through C-029 + H-026 through H-043 to capture medium findings.
 
 ---
 
-## Quick Wins
+## Quick Wins (small effort, open)
 | ID | Sev | File:Line | Issue | Effort |
 |----|-----|-----------|-------|--------|
-| C-004 | CRITICAL | war/profiles/vc.rs:31 | VC no expirationDate | small |
-| C-006 | CRITICAL | forensics/cross_modal.rs:190 | Zero-edit → Inconsistent | small |
-| C-008 | CRITICAL | evidence/wire_conversion.rs:249 | CBOR failure → zero seal | small |
-| C-009 | CRITICAL | checkpoint/chain.rs | [0u8;32] VDF fallback | small |
-| C-010 | CRITICAL | report/html/sections.rs:69 | XSS in HTML report | small |
-| C-014 | CRITICAL | writersproof/client.rs:38 | HTTP in debug builds | small |
-| H-002 | HIGH | sentinel/core_session.rs:208 | Relative path traversal | small |
-| H-004 | HIGH | sentinel/core_session.rs:36 | Path not canonicalized | small |
-| H-005 | HIGH | forensics/analysis.rs:173 | NaN in ForensicMetrics | small |
-| H-008 | HIGH | wal/operations.rs:97,105 | WAL state before fsync | small |
-| H-013 | HIGH | ffi/sentinel_witnessing.rs:51 | validate_path discarded | small |
-| H-014 | HIGH | verify/verdict.rs:71 | verdict not capped | small |
-| H-019 | HIGH | jitter_bridge/session.rs | IKI variance NaN guard | small |
-| H-022 | HIGH | tpm/linux.rs | TSS2 error context | small |
-| H-023 | HIGH | evidence/builder/mod.rs | physical_state CBOR error | small |
-| H-025 | HIGH | ffi/sentinel_witnessing.rs | &validated_path in stop | small |
+| C-015 | CRITICAL | evidence/packet.rs:432 | sign() swallows error | small |
+| C-016 | CRITICAL | evidence/packet.rs:645 | no signature presence check | small |
+| C-021 | CRITICAL | sentinel/core.rs:839 | AUD-041 lock order violation | small |
+| C-022 | CRITICAL | forensics/cross_modal.rs:234 | div by checkpoint_count=0 | small |
+| C-023 | CRITICAL | forensics/writing_mode.rs:236 | div by threshold | small |
+| C-024 | CRITICAL | anchors/rfc3161.rs:31 | no TSA HTTP timeout | small |
+| C-025 | CRITICAL | ffi/system.rs:230 | debug file write regression | small |
+| C-026 | CRITICAL | jitter_binding.rs:443 | unbounded attractor_points | small |
+| C-029 | CRITICAL | SubscriptionService.swift:176 | no appAccountToken guard | small |
+| H-026 | HIGH | sentinel/core.rs:905 | silent dir create error | small |
+| H-029 | HIGH | evidence/packet.rs:112 | VDF hex no length check | small |
+| H-031 | HIGH | war/verification.rs:216,220 | hash hex no length check | small |
+| H-034 | HIGH | mmr/proof.rs:150 | no max path length cap | small |
+| H-037 | HIGH | vdf/swf_argon2.rs:206 | Argon2 params no bounds | small |
+| H-038 | HIGH | vdf/swf_argon2.rs:427 | calibrate() div near-zero | small |
+| H-039 | HIGH | native_messaging/handlers.rs:529 | jitter write error silent | small |
+| H-040 | HIGH | AppDelegate.swift:464 | fd not checked before flock | small |
+| H-042 | HIGH | authorproof-protocol/components.rs:844 | StreamingStats NaN | small |
+| H-043 | HIGH | jitter_binding.rs:680 | hurst_exponent no bounds | small |
 
 ## Coverage
-<!-- reviewed: 407 non-test files across 15 batches, 3 waves -->
-<!-- uncovered: tpm/linux.rs, ipc/async_client.rs, cpop_jitter_bridge/session.rs, trust_policy/*, presence/*, declaration/*, engine/watcher.rs, transcription/*, research/*, physics/*, collaboration.rs, continuation.rs (~50 files) -->
-<!-- confirmed_clean: vdf/params.rs, vdf/proof.rs, error.rs, cpop-jitter/evidence.rs (re-verified) -->
+<!-- reviewed: 677 non-test files across 15 batches, 3 waves (session 4) -->
+<!-- uncovered: tpm/linux.rs, ipc/async_client.rs, cpop_jitter_bridge/session.rs, trust_policy/*, presence/*, declaration/*, engine/watcher.rs, transcription/*, research/*, physics/*, collaboration.rs, continuation.rs, report/html/sections.rs, report/pdf/layout_sections.rs, ffi/sentinel_witnessing.rs, war/profiles/cawg.rs, platform/windows.rs, sealed_chain.rs, fingerprint/* -->
+<!-- confirmed_clean: vdf/params.rs, vdf/proof.rs, error.rs, cpop-jitter/evidence.rs (re-verified), cmd_verify.rs, cmd_anchor.rs, war/profiles/standards.rs -->
 
 ---
 
