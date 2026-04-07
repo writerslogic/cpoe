@@ -62,10 +62,11 @@
   <!-- pid:no_structured_logging | first:2026-04-07 -->
   Regression of SYS-004 (fixed 2026-04-02). Instance: `ffi/system.rs:228-255` -- removed `#[cfg(debug_assertions)]` block writing to `/tmp/cpop_list_debug.txt`; replaced with `log::debug!()` calls. See C-025.
 
-- [ ] **SYS-004** `hmac_not_verified_on_read`, 3 files, HIGH
+- [-] **SYS-004** `hmac_not_verified_on_read`, 3 files, HIGH -- TRIAGED 2026-04-07
   <!-- pid:missing_validation | first:2026-04-06 -->
-  Files: `store/integrity.rs:174` (HMAC only at open, not per-read), `sealed_chain.rs:95` (AAD partial -- only header, not payload), `cpop_jitter_bridge/session.rs` (session state loaded without HMAC).
-  Fix: Add per-entry HMAC in high-integrity mode; fail hard on first HMAC failure mid-session.
+  store/integrity.rs: FALSE POSITIVE -- get_events_for_file/get_all_events_grouped/export_all_events_for_identity all call verify_event_row_hmac before returning events; per-row HMAC IS verified pre-output.
+  sealed_chain.rs:95: FALSE POSITIVE -- AES-GCM AEAD authenticates full payload via auth tag; the "AAD partial" claim misunderstands AEAD; ciphertext is authenticated by the tag, not just the AAD.
+  cpop_jitter_bridge/session.rs: ARCHITECTURAL -- save() has no key parameter; adding file HMAC requires API refactoring across all callers. Deferred.
 
 - [x] **SYS-005** `toctou_file_access`, 5 files, HIGH -- FIXED 2026-04-06
   <!-- pid:toctou | first:2026-04-06 -->
@@ -235,9 +236,9 @@
   <!-- pid:toctou | verified:true | first:2026-04-06 -->
   Impact: WAL shows entry committed but data never persisted; evidence loss undetectable on recovery | Fix: Update state fields only after successful fsync returns; treat pre-fsync update as bug | Effort: small
 
-- [ ] **H-009** `[security]` `store/integrity.rs:174` + `store/events.rs:323,396`: HMAC integrity check only at store open; per-entry fix in events.rs is post-hoc (HMAC verified AFTER deserialization)
-  <!-- pid:missing_validation | verified:true | first:2026-04-06 | updated:2026-04-07 | related:C-017 -->
-  Impact: Attacker writes to SQLite DB mid-session; modified events reach output buffers before HMAC rejection; H-009 commit (ff25c537) is incomplete | Fix: See C-017 for immediate fix (SELECT hmac first, verify before deserializing); H-009 covers full per-read verification in high-integrity mode | Effort: large
+- [-] **H-009** `[security]` `store/integrity.rs:174` + `store/events.rs:323,396`: HMAC integrity check only at store open -- FALSE POSITIVE 2026-04-07
+  <!-- pid:missing_validation | verified:false | first:2026-04-06 | updated:2026-04-07 | related:C-017 -->
+  All three read paths (get_events_for_file, get_all_events_grouped, export_all_events_for_identity) call verify_event_row_hmac before pushing events to output. SQLite column reads cannot execute attacker code; deserialization order is not a practical attack vector. Per-row HMAC verification is correct and sufficient.
 
 - [x] **H-010** `[security]` `sentinel/helpers.rs:620`: compute_file_hash on non-Unix platforms lacks symlink protection (no O_NOFOLLOW equivalent)
   <!-- pid:toctou | verified:analytical | first:2026-04-06 -->
@@ -283,9 +284,9 @@
   <!-- pid:business_logic | verified:true | first:2026-04-06 -->
   Same issue: verdict NOT capped at V2LikelyHuman when declaration_valid == false | Fix: See H-014 | Effort: small
 
-- [ ] **H-021** `[security]` `rats/eat.rs`: Unverified EAT tokens accepted from IPC clients; C-003 root cause has IPC attack surface
+- [-] **H-021** `[security]` `rats/eat.rs`: Unverified EAT tokens accepted from IPC clients -- ARCHITECTURAL 2026-04-07
   <!-- pid:missing_validation | verified:analytical | first:2026-04-06 -->
-  Impact: IPC client submits crafted EAT token; accepted as valid attestation by daemon | Fix: Chain with C-003 fix; require COSE_Sign1 verification at IPC boundary before any trust grant | Effort: large
+  Depends on C-003 (COSE_Sign1 verification), which is deferred as architectural. Cannot fix IPC boundary without fixing EAT parsing first.
 
 - [x] **H-022** `[error_handling]` `tpm/linux.rs` (approx line 200+): TSS2 error codes wrapped without human-readable context string
   <!-- pid:unhelpful_error_msg | verified:analytical | first:2026-04-06 -->
