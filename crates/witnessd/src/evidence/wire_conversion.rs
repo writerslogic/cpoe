@@ -8,6 +8,7 @@
 use sha2::{Digest, Sha256};
 
 use crate::checkpoint::{Chain, Checkpoint};
+use crate::error::{Error, Result};
 use crate::keyhierarchy::types::CheckpointSignature;
 use authorproof_protocol::rfc::wire_types::checkpoint::CheckpointWire;
 use authorproof_protocol::rfc::wire_types::components::{
@@ -28,7 +29,7 @@ const JITTER_QUANTIZATION_MS: u64 = 5;
 /// Each call mixes a fresh 8-byte random salt into the packet and checkpoint
 /// ID hashes so that re-exporting the same chain produces unique IDs and
 /// prevents accidental cross-export collisions.
-pub fn chain_to_wire(chain: &Chain) -> EvidencePacketWire {
+pub fn chain_to_wire(chain: &Chain) -> Result<EvidencePacketWire> {
     chain_to_wire_with_signatures(chain, &[])
 }
 
@@ -37,7 +38,7 @@ pub fn chain_to_wire(chain: &Chain) -> EvidencePacketWire {
 pub fn chain_to_wire_with_signatures(
     chain: &Chain,
     checkpoint_sigs: &[CheckpointSignature],
-) -> EvidencePacketWire {
+) -> Result<EvidencePacketWire> {
     // Random salt so each export produces unique packet/checkpoint IDs even
     // when re-exporting an identical chain.
     let export_nonce = rand::random::<[u8; 8]>();
@@ -65,7 +66,7 @@ pub fn chain_to_wire_with_signatures(
             let lamport = checkpoint_sigs.iter().find(|s| s.ordinal == cp.ordinal);
             checkpoint_to_wire(cp, use_entangled, &export_nonce, lamport)
         })
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
 
     let last_cp = chain.checkpoints.last();
     let content_hash = last_cp.map(|cp| cp.content_hash).unwrap_or([0u8; 32]);
@@ -102,7 +103,7 @@ pub fn chain_to_wire_with_signatures(
         Some(ContentTier::Core)
     };
 
-    EvidencePacketWire {
+    Ok(EvidencePacketWire {
         version: 1,
         profile_uri: PROFILE_URI.to_string(),
         packet_id: {
@@ -139,7 +140,7 @@ pub fn chain_to_wire_with_signatures(
                 None
             }
         },
-    }
+    })
 }
 
 fn checkpoint_to_wire(
@@ -147,7 +148,7 @@ fn checkpoint_to_wire(
     use_entangled: bool,
     export_nonce: &[u8; 8],
     lamport: Option<&CheckpointSignature>,
-) -> CheckpointWire {
+) -> Result<CheckpointWire> {
     let process_proof = if let Some(swf) = &cp.argon2_swf {
         // §entangled-mode-requirement: ENHANCED/MAXIMUM → algorithm 21
         let algorithm = if use_entangled {
@@ -246,17 +247,9 @@ fn checkpoint_to_wire(
         };
 
         let jitter_seal = if has_merkle_root {
-            match authorproof_protocol::codec::cbor::encode(&intervals) {
-                Ok(intervals_cbor) => {
-                    crate::crypto::compute_jitter_seal(merkle_root, swf_input, &intervals_cbor)
-                }
-                Err(e) => {
-                    log::error!(
-                        "CBOR encode intervals for jitter seal failed: {e} — skipping seal"
-                    );
-                    vec![0u8; 32]
-                }
-            }
+            let intervals_cbor = authorproof_protocol::codec::cbor::encode(&intervals)
+                .map_err(|e| Error::evidence(format!("CBOR encode intervals for jitter seal: {e}")))?;
+            crate::crypto::compute_jitter_seal(merkle_root, swf_input, &intervals_cbor)
         } else {
             vec![0u8; 32]
         };
@@ -361,7 +354,7 @@ fn checkpoint_to_wire(
     };
     // SHA-256(CBOR(checkpoint \ {8})) per spec
     wire.checkpoint_hash = wire.compute_hash().expect("checkpoint hash computation");
-    wire
+    Ok(wire)
 }
 
 #[cfg(test)]
@@ -422,7 +415,7 @@ mod tests {
             },
         ];
 
-        let packet = chain_to_wire_with_signatures(&chain, &sigs);
+        let packet = chain_to_wire_with_signatures(&chain, &sigs).expect("chain_to_wire");
         assert_eq!(packet.checkpoints.len(), 3);
 
         // Ordinal 0 has a matching signature
@@ -453,7 +446,7 @@ mod tests {
         std::fs::write(&path, "hello").expect("write");
         let chain = test_chain_with_checkpoints(&path);
 
-        let packet = chain_to_wire(&chain);
+        let packet = chain_to_wire(&chain).expect("chain_to_wire");
         assert_eq!(packet.checkpoints.len(), 3);
         for cp in &packet.checkpoints {
             assert!(cp.lamport_signature.is_none());

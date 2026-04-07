@@ -351,20 +351,12 @@ fn load_or_create_fingerprint_key(storage_dir: &Path) -> Result<[u8; KEY_SIZE]> 
         .map_err(|e| anyhow!("Failed to generate key material: {}", e))?;
 
     if let Err(e) = SecureStorage::save_fingerprint_key(&key) {
-        log::warn!(
-            "Secure storage unavailable ({}), using file-based fallback",
-            e
-        );
-        // Write raw material and derive via HKDF, so re-reads through step 2
-        // produce the same derived key.
-        let mut material = [0u8; KEY_SIZE];
-        getrandom::getrandom(&mut material)
-            .map_err(|e| anyhow!("Failed to generate key material: {}", e))?;
-        fs::write(&key_file, material)?;
-        let _ = crate::crypto::restrict_permissions(&key_file, 0o600);
-        material.zeroize();
         key.zeroize();
-        return hkdf_derive_from_file(&key_file);
+        return Err(anyhow!(
+            "Secure storage unavailable for fingerprint key ({}); \
+             plaintext file fallback is disabled. Ensure the OS keychain is accessible.",
+            e
+        ));
     }
 
     Ok(key)

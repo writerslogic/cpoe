@@ -20,6 +20,10 @@ use crate::tpm;
 use crate::war::common::{derive_attestation_tier, SerializedTrustVector};
 use crate::war::ear::EarToken;
 
+/// Maximum lifetime of a Verifiable Credential in days (W3C VC 2.0 §5.3).
+/// After this period, the credential must be re-issued.
+const MAX_VC_VALIDITY_DAYS: i64 = 365;
+
 /// W3C Verifiable Credential 2.0 structure.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VerifiableCredential {
@@ -30,6 +34,9 @@ pub struct VerifiableCredential {
     pub issuer: String,
     #[serde(rename = "validFrom")]
     pub valid_from: String,
+    /// Expiry date per W3C VC 2.0 §5.3. After this date the credential is no longer valid.
+    #[serde(rename = "validUntil", skip_serializing_if = "Option::is_none")]
+    pub valid_until: Option<String>,
     #[serde(rename = "credentialSubject")]
     pub credential_subject: CredentialSubject,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -118,6 +125,9 @@ fn build_vc_core(ear: &EarToken, author_did: &str) -> Result<VerifiableCredentia
         .map(|tv| derive_attestation_tier(tv).to_string());
 
     let valid_from: DateTime<Utc> = DateTime::from_timestamp(ear.iat, 0).unwrap_or_else(Utc::now);
+    let valid_until = valid_from
+        .checked_add_signed(chrono::Duration::days(MAX_VC_VALIDITY_DAYS))
+        .map(|dt| dt.to_rfc3339());
 
     let seal_hash = appr.pop_seal.as_ref().map(|s| hex::encode(s.h3));
 
@@ -138,6 +148,7 @@ fn build_vc_core(ear: &EarToken, author_did: &str) -> Result<VerifiableCredentia
         ],
         issuer: "did:web:writerslogic.com".to_string(),
         valid_from: valid_from.to_rfc3339(),
+        valid_until,
         credential_subject: CredentialSubject {
             id: author_did.to_string(),
             subject_type: "Author".to_string(),

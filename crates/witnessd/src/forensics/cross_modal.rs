@@ -186,12 +186,13 @@ fn check_content_growth_rate(input: &CrossModalInput<'_>) -> CrossModalCheck {
         .map(|e| (e.size_delta as i64).max(0))
         .sum();
     // When gross_additions is 0 but document_length > 0, the event stream shows no
-    // recorded growth despite an existing document; treat as suspicious.
+    // recorded growth despite an existing document. This is a definitive inconsistency
+    // (AI-generated content or evidence fabrication), not merely suspicious, so score 0.0.
     if gross_additions == 0 && input.document_length > 0 {
         return CrossModalCheck {
             name: "content_growth_rate".into(),
             passed: false,
-            score: 0.3,
+            score: 0.0,
             detail: "zero gross additions with non-empty document".into(),
         };
     }

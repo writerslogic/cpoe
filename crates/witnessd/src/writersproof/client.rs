@@ -28,19 +28,11 @@ impl WritersProofClient {
     /// local development.
     pub fn new(base_url: &str) -> Result<Self> {
         let url = base_url.trim_end_matches('/').to_string();
-        #[cfg(not(debug_assertions))]
         if !url.starts_with("https://") {
             return Err(Error::crypto(format!(
-                "WritersProof base_url must use HTTPS in release builds: {}",
+                "WritersProof base_url must use HTTPS: {}",
                 &url[..url.len().min(40)]
             )));
-        }
-        #[cfg(debug_assertions)]
-        if !url.starts_with("https://") {
-            log::warn!(
-                "WritersProof base_url using HTTP (debug build only): {}",
-                &url[..url.len().min(40)]
-            );
         }
         Ok(Self {
             base_url: url,

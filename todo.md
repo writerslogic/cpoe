@@ -11,7 +11,7 @@
 ## Summary
 | Severity | Open | Fixed (prior) | Skipped (prior) |
 |----------|------|---------------|-----------------|
-| CRITICAL | 14   | 12            | 0               |
+| CRITICAL | 8    | 18            | 3               |
 | HIGH     | 25   | 135           | 0               |
 | MEDIUM   | 0*   | 247           | 22              |
 
@@ -85,19 +85,19 @@
   <!-- pid:missing_validation | verified:true | first:2026-04-06 -->
   Impact: OTS proofs accepted from calendar without block confirmation; attacker fabricates calendar responses | Fix: Fetch and validate Bitcoin block header for each confirmed proof; fail hard without confirmation | Effort: large
 
-- [ ] **C-003** `[security]` `rats/eat.rs:75`: decode_eat_cwt() parses EAT payload without COSE_Sign1 verification
+- [-] **C-003** `[security]` `rats/eat.rs:75`: decode_eat_cwt() parses EAT payload without COSE_Sign1 verification
   <!-- pid:missing_validation | verified:true | first:2026-04-06 -->
   Impact: Any CBOR payload passes EAT parsing; no integrity guarantee on attestation tokens | Fix: Verify COSE_Sign1 signature before decoding payload; require trusted key parameter from caller | Effort: large
 
-- [ ] **C-004** `[security]` `war/profiles/vc.rs:31`: W3C Verifiable Credential has no validUntil/expirationDate field
+- [x] **C-004** `[security]` `war/profiles/vc.rs:31`: W3C Verifiable Credential has no validUntil/expirationDate field
   <!-- pid:missing_validation | verified:true | first:2026-04-06 -->
   Impact: Issued VCs never expire; revoked or compromised credentials remain valid indefinitely | Fix: Add expirationDate (VC 1.x) or validUntil (VC 2.0) field; document max VC lifetime constant | Effort: small
 
-- [ ] **C-005** `[security]` `evidence/packet.rs:29`: Self-signed verification used as default; no external trust anchor required
+- [-] **C-005** `[security]` `evidence/packet.rs:29`: Self-signed verification used as default; no external trust anchor required
   <!-- pid:missing_validation | verified:true | first:2026-04-06 -->
   Impact: Attacker substitutes signing key in packet; verification passes using their own key as anchor | Fix: Require external trusted key parameter for verification; reject self-verification by default | Effort: medium
 
-- [ ] **C-006** `[security]` `forensics/cross_modal.rs:190`: Zero-edit document receives 0.3 partial consistency score instead of Inconsistent verdict
+- [x] **C-006** `[security]` `forensics/cross_modal.rs:190`: Zero-edit document receives 0.3 partial consistency score instead of Inconsistent verdict
   <!-- pid:business_logic | verified:true | first:2026-04-06 -->
   Impact: AI-generated document with no recorded keystrokes passes cross-modal check; bypasses behavioral detection | Fix: Return CrossModalVerdict::Inconsistent when total_edits == 0; no partial score on missing data | Effort: small
 
@@ -105,15 +105,15 @@
   <!-- pid:key_zeroize_error_path | verified:true | first:2026-04-06 -->
   Impact: Key material persists in cloned cipher after use; unsafe ptr write in zeroize_cipher may not zero actual cipher state (compiler can optimize out non-volatile writes) | Fix: Use Zeroizing<> wrapper; replace unsafe ptr with zeroize::Zeroize on cipher state directly | Effort: medium
 
-- [ ] **C-008** `[error_handling]` `evidence/wire_conversion.rs:249`: CBOR encode failure produces all-zero jitter_seal vector silently
+- [x] **C-008** `[error_handling]` `evidence/wire_conversion.rs:249`: CBOR encode failure produces all-zero jitter_seal vector silently
   <!-- pid:silent_error | verified:true | first:2026-04-06 -->
   Impact: Evidence packet ships with fake all-zero seal on encode error; caller cannot detect failure; all-zero seal passes zero-check | Fix: Propagate error via Result; never produce all-zero seal on failure path | Effort: small
 
-- [ ] **C-009** `[security]` `checkpoint/chain.rs` (commit_entangled): Uses [0u8;32] stub when previous VDF output is missing
+- [x] **C-009** `[security]` `checkpoint/chain.rs` (commit_entangled): Uses [0u8;32] stub when previous VDF output is missing
   <!-- pid:missing_validation | verified:true | first:2026-04-06 -->
   Impact: Entangled mode checkpoint chain can be broken at any link by substituting all-zero VDF output; no chain integrity | Fix: Return Error if previous VDF output required but missing; reject [0u8;32] as invalid VDF | Effort: small
 
-- [ ] **C-010** `[security]` `report/html/sections.rs:69`: HTML report templates interpolate user-controlled strings (document paths, author names) without escaping
+- [-] **C-010** `[security]` `report/html/sections.rs:69`: HTML report templates interpolate user-controlled strings (document paths, author names) without escaping
   <!-- pid:command_injection | verified:true | first:2026-04-06 -->
   Impact: XSS via document path containing `<script>`; attacker-controlled file name executes arbitrary script in any viewer | Fix: html_escape() all user-controlled fields before interpolation; use a safe templating API | Effort: small
 
@@ -125,11 +125,11 @@
   <!-- pid:missing_validation | verified:true | first:2026-04-06 -->
   Impact: Attacker provides DID URI pointing to internal network endpoint; DID document accepted without COSE signature verification per did:webvh spec | Fix: Allowlist DID URI hostnames; validate DID log signature chain before trusting any document content | Effort: large
 
-- [ ] **C-013** `[security]` `fingerprint/storage.rs:363`: Biometric encryption key written to disk in plaintext as fallback when keychain unavailable
+- [x] **C-013** `[security]` `fingerprint/storage.rs:363`: Biometric encryption key written to disk in plaintext as fallback when keychain unavailable
   <!-- pid:hardcoded_secret | verified:true | first:2026-04-06 -->
   Impact: If keychain fails, biometric key stored unprotected in filesystem; attacker with read access recovers key | Fix: Fail hard if keychain unavailable; never write key material to plaintext files; provide migration UX | Effort: medium
 
-- [ ] **C-014** `[security]` `writersproof/client.rs:38`: HTTP (non-TLS) connections permitted in debug builds
+- [x] **C-014** `[security]` `writersproof/client.rs:38`: HTTP (non-TLS) connections permitted in debug builds
   <!-- pid:missing_validation | verified:true | first:2026-04-06 -->
   Impact: Debug build in CI or staging allows cleartext API calls; credentials and evidence packets transmitted in the clear | Fix: Unconditionally require HTTPS; remove debug HTTP exception entirely | Effort: small
 

@@ -289,10 +289,14 @@ impl Chain {
             None => genesis_prev_hash(content_hash, content_size, &self.metadata.document_path)?,
         };
 
-        let previous_vdf_output = last_cp
-            .and_then(|cp| cp.vdf.as_ref())
-            .map(|v| v.output)
-            .unwrap_or([0u8; 32]);
+        let previous_vdf_output = match last_cp {
+            None => [0u8; 32], // genesis: no prior checkpoint, zeros are the defined initial input
+            Some(cp) => cp.vdf.as_ref().map(|v| v.output).ok_or_else(|| {
+                Error::checkpoint(
+                    "commit_entangled: prior checkpoint has no VDF proof; entangled chain broken",
+                )
+            })?,
+        };
 
         let physics_seed = physics
             .map(|ctx| crate::physics::entanglement::Entanglement::create_seed(content_hash, ctx));
