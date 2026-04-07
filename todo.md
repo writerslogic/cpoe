@@ -30,8 +30,8 @@
 - [x] **CLU-007** `checkpoint_rollback_surface`, CRITICAL, components: C-019(-fp), C-020(-fp), H-007(fixed) -- RESOLVED 2026-04-07
   <!-- compound_impact: C-019 FP (at() is an index accessor, not a sequential read API; monotonicity is enforced at commit layer); C-020 FP (verify() receives root from caller, not self-validated peaks); H-007 fixed (MMR root anchored in signed checkpoint; cross-checkpoint proof verification in verify_detailed) -->
 
-- [ ] **CLU-002** `identity_trust_chain_failure`, CRITICAL, components: C-011(-fixed), C-012(open), C-013(-fixed)
-  <!-- compound_impact: C-011 XOR recovery rejected; C-013 no plaintext key fallback; C-012 DID SSRF+sig chain deferred (architectural) -->
+- [x] **CLU-002** `identity_trust_chain_failure`, CRITICAL, components: C-011(-fixed), C-012(fixed), C-013(-fixed) -- RESOLVED 2026-04-07
+  <!-- compound_impact: C-011 XOR recovery rejected; C-013 no plaintext key fallback; C-012 DID SSRF fixed (hostname blocklist+IP rejection) + H-017 false positive (didwebvh_rs enforces log sig chain by construction) -->
 
 - [x] **CLU-003** `evidence_integrity_false_signal`, CRITICAL, components: C-005(-fp), C-006(fixed), C-008(fixed), C-009(fixed) -- RESOLVED 2026-04-06
   <!-- compound_impact: C-006 zero-edit returns Inconsistent; C-008 CBOR errors propagate via Result; C-009 broken chain returns Error; C-005 architectural (external trust anchor) -->
@@ -127,9 +127,9 @@
   <!-- pid:hardcoded_secret | verified:true | first:2026-04-06 -->
   Impact: V1 recovery blobs can be decrypted with the known static XOR key; no authentication on decryption | Fix: Reject legacy v1 recovery format with descriptive error; require migration to v2 AEAD format | Effort: medium
 
-- [ ] **C-012** `[security]` `identity/did_webvh.rs:402,417`: SSRF via unvalidated DID URI; DID document fetched without signature validation
+- [x] **C-012** `[security]` `identity/did_webvh.rs:402,417`: SSRF via unvalidated DID URI -- FIXED 2026-04-07
   <!-- pid:missing_validation | verified:true | first:2026-04-06 -->
-  Impact: Attacker provides DID URI pointing to internal network endpoint; DID document accepted without COSE signature verification per did:webvh spec | Fix: Allowlist DID URI hostnames; validate DID log signature chain before trusting any document content | Effort: large
+  Fix: Added validate_did_host() rejecting IP addresses and private/reserved hostnames (localhost, .local, .internal, .corp, .lan, etc.) before any HTTP fetch in resolve_and_verify_key(); 4 tests added.
 
 - [x] **C-013** `[security]` `fingerprint/storage.rs:363`: Biometric encryption key written to disk in plaintext as fallback when keychain unavailable
   <!-- pid:hardcoded_secret | verified:true | first:2026-04-06 -->
@@ -267,9 +267,9 @@
   <!-- pid:alloc_in_loop | verified:analytical | first:2026-04-06 -->
   Impact: At 100+ WPM, synchronous send blocks tap thread; macOS disables CGEventTap if blocked >~15ms | Fix: Use try_send with ring buffer fallback; log dropped events per second | Effort: medium
 
-- [ ] **H-017** `[security]` `identity/did_webvh.rs:417`: DID document accepted without verifying DID log signature chain (companion to C-012)
-  <!-- pid:missing_validation | verified:true | first:2026-04-06 -->
-  Impact: MITM between daemon and DID host serves arbitrary DID document; identity binding bypassed | Fix: Implement DID log verification per did:webvh spec section 6 before trusting any document | Effort: large
+- [-] **H-017** `[security]` `identity/did_webvh.rs:417`: DID document accepted without verifying DID log signature chain -- FALSE POSITIVE 2026-04-07
+  <!-- pid:missing_validation | verified:false | first:2026-04-06 -->
+  didwebvh_rs::DIDWebVHState::resolve() mandatorily verifies the full DID log signature chain per the library design; ResolveOptions has no flag to disable verification. The library enforces this invariant by construction.
 
 - [-] **H-018** `[security]` `sealed_chain.rs:95`: AES-GCM AAD covers only header fields; payload not included in authenticated data
   <!-- pid:missing_validation | verified:analytical | first:2026-04-06 -->

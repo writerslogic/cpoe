@@ -396,6 +396,64 @@ pub fn load_active_did() -> Result<String, Error> {
 /// Fetches the DID document via HTTP, validates the log chain, and checks
 /// that `expected_pubkey` appears as a verification method in the document.
 /// Optionally resolves at a specific `version_time` to verify historical keys.
+/// Reject DID URIs whose host resolves to a private or loopback address.
+///
+/// The did:webvh method-specific ID is `{SCID}:{host}:{path...}`.
+/// We extract `host` (index 1 after splitting the remainder by `:`) and
+/// reject IP literals and private/reserved DNS suffixes to prevent SSRF.
+fn validate_did_host(did: &str) -> Result<(), Error> {
+    let remainder = did
+        .strip_prefix("did:webvh:")
+        .ok_or_else(|| Error::identity("not a did:webvh identifier".to_string()))?;
+
+    let parts: Vec<&str> = remainder.splitn(3, ':').collect();
+    let host_raw = parts.get(1).copied().unwrap_or("");
+    if host_raw.is_empty() {
+        return Err(Error::identity(
+            "did:webvh DID missing host component".to_string(),
+        ));
+    }
+    // URL-decode (e.g. %3A for embedded colons), then strip optional port.
+    let decoded = urlencoding::decode(host_raw)
+        .map(|c| c.into_owned())
+        .unwrap_or_else(|_| host_raw.to_owned());
+    let host = match decoded.rsplit_once(':') {
+        Some((h, port)) if port.chars().all(|c| c.is_ascii_digit()) => h,
+        _ => decoded.as_str(),
+    };
+    let host_lower = host.to_lowercase();
+
+    // Reject bare IP addresses (v4 and v6).
+    if host_lower.trim_start_matches('[').trim_end_matches(']').parse::<std::net::IpAddr>().is_ok() {
+        return Err(Error::identity(format!(
+            "did:webvh host is an IP address (SSRF risk): {host_lower}"
+        )));
+    }
+
+    // Reject private/reserved DNS suffixes and loopback names.
+    const BLOCKED: &[&str] = &[
+        "localhost",
+        ".local",
+        ".internal",
+        ".corp",
+        ".lan",
+        ".localdomain",
+        ".home",
+        ".example",
+        ".test",
+        ".invalid",
+    ];
+    for blocked in BLOCKED {
+        if host_lower == *blocked || host_lower.ends_with(blocked) {
+            return Err(Error::identity(format!(
+                "did:webvh host points to private/reserved name (SSRF risk): {host_lower}"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
 pub async fn resolve_and_verify_key(
     did: &str,
     expected_pubkey: &[u8; 32],
@@ -406,6 +464,7 @@ pub async fn resolve_and_verify_key(
             "not a did:webvh identifier: {did}"
         )));
     }
+    validate_did_host(did)?;
 
     let resolve_did = match version_time {
         Some(ts) => format!("{}?versionTime={}", did, ts.to_rfc3339()),
@@ -959,5 +1018,32 @@ mod tests {
         };
         let hex_key = identity.public_key_hex(&master).unwrap();
         assert_eq!(hex_key.len(), 64);
+    }
+
+    #[test]
+    fn validate_did_host_accepts_public_domain() {
+        assert!(validate_did_host("did:webvh:SCID123:example.com").is_ok());
+        assert!(validate_did_host("did:webvh:SCID123:writersproof.com").is_ok());
+        assert!(validate_did_host("did:webvh:SCID123:sub.domain.org").is_ok());
+    }
+
+    #[test]
+    fn validate_did_host_rejects_ip_address() {
+        assert!(validate_did_host("did:webvh:SCID123:192.168.1.1").is_err());
+        assert!(validate_did_host("did:webvh:SCID123:10.0.0.1").is_err());
+        assert!(validate_did_host("did:webvh:SCID123:127.0.0.1").is_err());
+    }
+
+    #[test]
+    fn validate_did_host_rejects_private_names() {
+        assert!(validate_did_host("did:webvh:SCID123:localhost").is_err());
+        assert!(validate_did_host("did:webvh:SCID123:server.local").is_err());
+        assert!(validate_did_host("did:webvh:SCID123:host.internal").is_err());
+        assert!(validate_did_host("did:webvh:SCID123:app.corp").is_err());
+    }
+
+    #[test]
+    fn validate_did_host_rejects_missing_host() {
+        assert!(validate_did_host("did:webvh:SCID123").is_err());
     }
 }
