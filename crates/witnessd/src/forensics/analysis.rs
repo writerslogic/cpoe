@@ -546,7 +546,7 @@ fn detect_reading_pattern(switches: &[FocusSwitchRecord]) -> bool {
                 .map(|d| (d - mean).powi(2))
                 .sum::<f64>()
                 / short_durations.len() as f64;
-            let cv = var.sqrt() / mean;
+            let cv = var.max(0.0).sqrt() / mean;
             cv < 0.3 // Very regular intervals
         } else {
             false

@@ -142,7 +142,7 @@ impl TranscriptionTimingStats {
             })
             .sum::<f64>()
             / n;
-        let std_dev = variance.sqrt();
+        let std_dev = variance.max(0.0).sqrt();
 
         let min = *intervals.iter().min()?;
         let max = *intervals.iter().max()?;

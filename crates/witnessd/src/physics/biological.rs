@@ -36,7 +36,7 @@ impl BiologicalCadence {
             }
         }
         variance /= count;
-        let stddev = variance.sqrt();
+        let stddev = variance.max(0.0).sqrt();
         let cv = if mean > 0.0 { stddev / mean } else { 0.0 };
 
         // Lower coefficient of variation indicates steadier cadence (closer to 1.0).

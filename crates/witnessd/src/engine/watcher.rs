@@ -74,7 +74,12 @@ pub(super) fn resolve_project_path(path: &Path) -> PathBuf {
 }
 
 fn process_file_event(inner: &Arc<EngineInner>, path: &Path) -> Result<()> {
-    if !path.is_file() {
+    // Use symlink_metadata so symlinks are not followed; reject non-regular-files and symlinks.
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(m) => m,
+        Err(_) => return Ok(()),
+    };
+    if !meta.is_file() || meta.file_type().is_symlink() {
         return Ok(());
     }
 
