@@ -105,7 +105,13 @@ pub fn ffi_submit_beacon(document_path: String, timeout_secs: u64) -> FfiBeaconR
         hex::encode(signing_key.sign(latest.event_hash.as_slice()).to_bytes())
     };
 
-    let did = load_did().unwrap_or_else(|_| "unknown".into());
+    let did = match load_did() {
+        Ok(d) => d,
+        Err(e) => {
+            log::warn!("DID unavailable for beacon submit, using placeholder: {e}");
+            "unknown".into()
+        }
+    };
     let api_key = match load_api_key() {
         Ok(k) => k,
         Err(e) => return err_beacon(format!("WritersProof API key not configured. {e}")),
@@ -243,7 +249,7 @@ pub fn ffi_check_beacon_status(document_path: String) -> FfiBeaconResult {
             }
         }
         None => FfiBeaconResult {
-            success: true,
+            success: false,
             anchor_id: None,
             timestamp_epoch_ms: None,
             drand_round: None,

@@ -73,7 +73,7 @@ pub(super) mod lock_order {
     pub fn release(level: u8) {
         MAX_HELD.with(|cell| {
             if cell.get() == level {
-                cell.set(level - 1);
+                cell.set(level.saturating_sub(1));
             }
         });
     }
@@ -441,7 +441,14 @@ impl Sentinel {
                         break;
                     }
 
-                    Ok(event) = session_events_rx.recv() => {
+                    result = session_events_rx.recv() => { let event = match result {
+                        Ok(e) => e,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            log::warn!("Session event receiver lagged, missed {n} events");
+                            continue;
+                        }
+                        Err(_) => break,
+                    };
                         let client = Arc::clone(&writersproof_client_for_loop);
                         match event.event_type {
                             SessionEventType::Started => {
@@ -629,7 +636,10 @@ impl Sentinel {
                             mouse_idle_stats.write_recover().record(&event);
                         }
 
-                        mouse_stego_engine.write_recover().next_jitter();
+                        // Throttle stego jitter to ~20 Hz to reduce write lock contention
+                        if _mouse_duration_ns >= 50_000_000 {
+                            mouse_stego_engine.write_recover().next_jitter();
+                        }
                     }
 
                     Some(event) = focus_rx.recv() => {
@@ -830,13 +840,35 @@ impl Sentinel {
                                     let guard = signing_key_for_cp.read_recover();
                                     guard.key()
                                 };
-                                let mut map = sessions.write_recover();
-                                if let Some(session) = map.get_mut(path.as_str()) {
-                                    session.last_checkpoint_keystrokes =
-                                        session.keystroke_count;
-                                    // Persist cumulative keystroke count so the
-                                    // history page shows accurate typing events
-                                    // even after app restart.
+                                // Extract session data under a brief lock, then release
+                                // before performing I/O to avoid blocking keystroke processing.
+                                let session_snapshot = {
+                                    let mut map = sessions.write_recover();
+                                    map.get_mut(path.as_str()).map(|session| {
+                                        session.last_checkpoint_keystrokes =
+                                            session.keystroke_count;
+                                        (
+                                            session.total_keystrokes(),
+                                            session.total_focus_ms_cumulative(),
+                                            session.session_number,
+                                            session.start_time
+                                                .elapsed()
+                                                .map(|d| d.as_secs() as i64)
+                                                .unwrap_or(0),
+                                            session.first_tracked_at
+                                                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                                                .map(|d| d.as_secs() as i64)
+                                                .unwrap_or(0),
+                                            session.last_checkpoint_keystrokes,
+                                            session.hw_cosign_scheduler.is_some(),
+                                            session.session_id.clone(),
+                                        )
+                                    })
+                                };
+                                if let Some((total_ks, focus_ms, session_num, duration_secs,
+                                             first_at, ordinal, has_hw_sched, _session_id)) = session_snapshot
+                                {
+                                    // Persist cumulative keystroke count (no lock held)
                                     if let Some(sk) = sk_opt {
                                         let db = writersproof_dir.join("events.db");
                                         if let Ok(store) =
@@ -844,30 +876,12 @@ impl Sentinel {
                                         {
                                             let stats = crate::store::DocumentStats {
                                                 file_path: path.clone(),
-                                                total_keystrokes: i64::try_from(
-                                                    session.total_keystrokes(),
-                                                )
-                                                .unwrap_or(i64::MAX),
-                                                total_focus_ms: session
-                                                    .total_focus_ms_cumulative(),
-                                                session_count: i64::from(
-                                                    session.session_number + 1,
-                                                ),
-                                                total_duration_secs: session
-                                                    .start_time
-                                                    .elapsed()
-                                                    .map(|d| d.as_secs() as i64)
-                                                    .unwrap_or(0),
-                                                first_tracked_at: session
-                                                    .first_tracked_at
-                                                    .and_then(|t| {
-                                                        t.duration_since(
-                                                            std::time::UNIX_EPOCH,
-                                                        )
-                                                        .ok()
-                                                    })
-                                                    .map(|d| d.as_secs() as i64)
-                                                    .unwrap_or(0),
+                                                total_keystrokes: i64::try_from(total_ks)
+                                                    .unwrap_or(i64::MAX),
+                                                total_focus_ms: focus_ms,
+                                                session_count: i64::from(session_num + 1),
+                                                total_duration_secs: duration_secs,
+                                                first_tracked_at: first_at,
                                                 last_tracked_at: SystemTime::now()
                                                     .duration_since(std::time::UNIX_EPOCH)
                                                     .map(|d| d.as_secs() as i64)
@@ -879,7 +893,7 @@ impl Sentinel {
                                         }
                                     }
 
-                                    // Save document snapshot if enabled
+                                    // Save document snapshot if enabled (no lock held)
                                     if snapshots_flag.load(Ordering::SeqCst)
                                         && !path.starts_with("shadow://")
                                     {
@@ -901,7 +915,6 @@ impl Sentinel {
                                                 snap_dir.display()
                                             );
                                         }
-                                        let ordinal = session.last_checkpoint_keystrokes;
                                         let snap_name =
                                             format!("{:06}.{}", ordinal, ext);
                                         let snap_path = snap_dir.join(&snap_name);
@@ -913,52 +926,57 @@ impl Sentinel {
                                         }
                                     }
 
-                                    if let Some(ref tpm) = tpm_provider_for_loop {
-                                        let content_hash: [u8; 32] = {
-                                            use sha2::Digest;
-                                            let src = std::path::Path::new(path);
-                                            match std::fs::read(src) {
-                                                Ok(data) => sha2::Sha256::digest(&data).into(),
-                                                Err(e) => {
-                                                    log::warn!(
-                                                        "Skipping HW co-sign: file read failed \
-                                                         for {}: {e}",
-                                                        path
-                                                    );
-                                                    continue;
+                                    // HW co-sign (no lock held for I/O; re-acquire briefly for session mutation)
+                                    if has_hw_sched {
+                                        if let Some(ref tpm) = tpm_provider_for_loop {
+                                            let content_hash: [u8; 32] = {
+                                                use sha2::Digest;
+                                                let src = std::path::Path::new(path);
+                                                match std::fs::read(src) {
+                                                    Ok(data) => sha2::Sha256::digest(&data).into(),
+                                                    Err(e) => {
+                                                        log::warn!(
+                                                            "Skipping HW co-sign: file read failed \
+                                                             for {}: {e}",
+                                                            path
+                                                        );
+                                                        continue;
+                                                    }
                                                 }
-                                            }
-                                        };
-                                        let store_and_path = signing_key_for_cp
-                                            .read_recover()
-                                            .key()
-                                            .and_then(|sk| {
-                                                let db = writersproof_dir.join("events.db");
-                                                crate::store::open_store_with_signing_key(&sk, &db).ok()
+                                            };
+                                            let store_and_path = signing_key_for_cp
+                                                .read_recover()
+                                                .key()
+                                                .and_then(|sk| {
+                                                    let db = writersproof_dir.join("events.db");
+                                                    crate::store::open_store_with_signing_key(&sk, &db).ok()
+                                                });
+
+                                            let nonce_bytes_opt = challenge_nonce.as_ref().and_then(|nonce_hex| {
+                                                match hex::decode(nonce_hex) {
+                                                    Ok(bytes) if bytes.len() == 32 => {
+                                                        let mut arr = [0u8; 32];
+                                                        arr.copy_from_slice(&bytes);
+                                                        Some(arr)
+                                                    }
+                                                    _ => {
+                                                        log::debug!("Failed to decode challenge nonce for binding");
+                                                        None
+                                                    }
+                                                }
                                             });
 
-                                        // Decode server-issued nonce for causal binding into hw_cosign
-                                        let nonce_bytes_opt = challenge_nonce.as_ref().and_then(|nonce_hex| {
-                                            match hex::decode(nonce_hex) {
-                                                Ok(bytes) if bytes.len() == 32 => {
-                                                    let mut arr = [0u8; 32];
-                                                    arr.copy_from_slice(&bytes);
-                                                    Some(arr)
-                                                }
-                                                _ => {
-                                                    log::debug!("Failed to decode challenge nonce for binding");
-                                                    None
-                                                }
+                                            let mut map = sessions.write_recover();
+                                            if let Some(session) = map.get_mut(path.as_str()) {
+                                                try_hw_cosign(
+                                                    session,
+                                                    tpm.as_ref(),
+                                                    &content_hash,
+                                                    nonce_bytes_opt.as_ref(),
+                                                    store_and_path.as_ref().map(|s| (s, path.as_str())),
+                                                );
                                             }
-                                        });
-
-                                        try_hw_cosign(
-                                            session,
-                                            tpm.as_ref(),
-                                            &content_hash,
-                                            nonce_bytes_opt.as_ref(),
-                                            store_and_path.as_ref().map(|s| (s, path.as_str())),
-                                        );
+                                        }
                                     }
                                 }
                             }

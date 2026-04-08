@@ -242,6 +242,10 @@ pub fn read_sealed_document_id(path: &Path) -> Result<[u8; 32]> {
     if &header[0..4] != SEALED_MAGIC {
         return Err(Error::checkpoint("invalid sealed file magic"));
     }
+    let version = u32::from_le_bytes(header[4..8].try_into().unwrap());
+    if version != SEALED_VERSION_V1 && version != SEALED_VERSION {
+        return Err(Error::checkpoint(format!("unsupported sealed file version: {version}")));
+    }
     let mut doc_id = [0u8; 32];
     doc_id.copy_from_slice(&header[20..52]);
     Ok(doc_id)
@@ -272,6 +276,12 @@ pub fn migrate_to_sealed(
     let chain = Chain::load(json_path)?;
 
     let sealed_path = json_path.with_extension("sealed");
+    if sealed_path.exists() {
+        let existing_id = read_sealed_document_id(&sealed_path)?;
+        if existing_id != *document_id {
+            return Err(Error::checkpoint("sealed file exists with different document_id"));
+        }
+    }
     save_sealed(&chain, &sealed_path, key, document_id)?;
 
     // Rename original to .bak — clean up sealed file on failure to avoid

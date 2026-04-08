@@ -20,6 +20,13 @@ pub fn ffi_anchor_to_writers_proof(document_path: String) -> FfiResult {
         }
     };
 
+    let doc_path = match doc_path.canonicalize() {
+        Ok(p) => p,
+        Err(e) => {
+            return FfiResult::err(format!("Cannot resolve document path: {e}"));
+        }
+    };
+
     // Load events from store to get the latest event_hash (matches CLI behavior)
     let store = match open_store() {
         Ok(s) => s,
