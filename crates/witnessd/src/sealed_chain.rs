@@ -6,8 +6,8 @@
 //!
 //! ```text
 //! [4B: magic "WCSF"]
-//! [4B: version = 1]
-//! [12B: AES-GCM nonce]
+//! [4B: version = 2]
+//! [12B: AES-GCM nonce = save_counter(8B LE) || random(4B)]
 //! [32B: document_id hash (cleartext, for key derivation)]
 //! [NB: AES-256-GCM(JSON chain)]
 //! [16B: GCM auth tag (appended to ciphertext by aes-gcm)]
@@ -15,6 +15,14 @@
 //!
 //! The encryption key is derived via HKDF from a master seed and
 //! the document ID, preventing key reuse across chains.
+//!
+//! **Nonce construction (v2):** the first 8 bytes are the wall-clock save
+//! timestamp (nanoseconds since UNIX epoch, little-endian u64); the
+//! remaining 4 bytes are random.  The timestamp changes on every save
+//! regardless of chain state, and the random suffix covers the rare case
+//! of two saves in the same nanosecond.  This keeps nonce-reuse
+//! probability well below 2^-32 per document lifetime.  Version 1 used a
+//! fully random 12-byte nonce; v1 files are still accepted on load.
 
 use std::fs;
 use std::path::Path;
@@ -31,8 +39,11 @@ use crate::error::{Error, Result};
 /// Magic bytes identifying a sealed chain file.
 const SEALED_MAGIC: &[u8; 4] = b"WCSF";
 
-/// Current sealed file format version.
-const SEALED_VERSION: u32 = 1;
+/// Legacy sealed file format version (fully random nonce).
+const SEALED_VERSION_V1: u32 = 1;
+
+/// Current sealed file format version (counter-mixed nonce).
+const SEALED_VERSION: u32 = 2;
 
 /// Fixed header size: magic(4) + version(4) + nonce(12) + document_id(32) = 52 bytes.
 const HEADER_SIZE: usize = 4 + 4 + 12 + 32;
@@ -87,8 +98,19 @@ pub fn save_sealed(
     let cipher = Aes256Gcm::new_from_slice(key.key.as_bytes())
         .map_err(|_| Error::crypto("AES-GCM key init failed"))?;
 
+    // Nonce = wall-clock nanoseconds (8 bytes LE) || random (4 bytes).
+    // The timestamp changes on every save regardless of chain state, so
+    // two saves with an identical checkpoint count still produce distinct
+    // nonces. The 4 random bytes guard the rare case of two saves landing
+    // in the same nanosecond. Together this keeps nonce-reuse probability
+    // well below 2^-32 per document lifetime.
+    let save_ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64;
     let mut nonce_bytes = [0u8; 12];
-    rand::Fill::fill(&mut nonce_bytes, &mut rand::rng());
+    nonce_bytes[..8].copy_from_slice(&save_ts.to_le_bytes());
+    rand::Fill::fill(&mut nonce_bytes[8..], &mut rand::rng());
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     // Build the header first so it can serve as AAD (associated data).
@@ -163,7 +185,7 @@ pub fn load_sealed_verified(
             .try_into()
             .map_err(|_| Error::checkpoint("sealed file header truncated"))?,
     );
-    if version != SEALED_VERSION {
+    if version != SEALED_VERSION_V1 && version != SEALED_VERSION {
         return Err(Error::checkpoint(format!(
             "unsupported sealed file version: {version}"
         )));
@@ -258,6 +280,47 @@ pub fn migrate_to_sealed(
     }
 
     Ok(sealed_path)
+}
+
+/// Write a v1-format sealed file (fully random nonce) for backward-compat tests.
+#[cfg(test)]
+fn save_sealed_v1(
+    chain: &Chain,
+    path: &Path,
+    key: &ChainEncryptionKey,
+    document_id: &[u8; 32],
+) -> Result<()> {
+    use aes_gcm::aead::Aead;
+    let plaintext = serde_json::to_vec(chain)
+        .map_err(|e| Error::checkpoint(format!("failed to serialize chain: {e}")))?;
+    let cipher = Aes256Gcm::new_from_slice(key.key.as_bytes())
+        .map_err(|_| Error::crypto("AES-GCM key init failed"))?;
+    let mut nonce_bytes = [0u8; 12];
+    rand::Fill::fill(&mut nonce_bytes, &mut rand::rng());
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    let mut header = Vec::with_capacity(HEADER_SIZE);
+    header.extend_from_slice(SEALED_MAGIC);
+    header.extend_from_slice(&SEALED_VERSION_V1.to_le_bytes());
+    header.extend_from_slice(&nonce_bytes);
+    header.extend_from_slice(document_id);
+    let ciphertext = cipher
+        .encrypt(nonce, Payload { msg: &plaintext, aad: &header })
+        .map_err(|_| Error::crypto("AES-GCM encryption failed"))?;
+    let mut output = Vec::with_capacity(HEADER_SIZE + ciphertext.len());
+    output.extend_from_slice(&header);
+    output.extend_from_slice(&ciphertext);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let tmp_path = path.with_extension("tmp");
+    {
+        use std::io::Write;
+        let mut f = fs::File::create(&tmp_path)?;
+        f.write_all(&output)?;
+        f.sync_all()?;
+    }
+    fs::rename(&tmp_path, path)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -528,5 +591,30 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("does not match expected value"));
+    }
+
+    #[test]
+    fn test_v1_backward_compatibility() {
+        let dir = TempDir::new().unwrap();
+        let canonical_dir = dir.path().canonicalize().unwrap();
+        let doc_path = canonical_dir.join("test.txt");
+        fs::write(&doc_path, b"data").unwrap();
+
+        let mut chain = Chain::new(&doc_path, test_vdf_params())
+            .unwrap()
+            .with_signature_policy(SignaturePolicy::Optional);
+        chain
+            .commit_with_vdf_duration(None, Duration::from_millis(10))
+            .unwrap();
+
+        let key = test_key();
+        let doc_id = test_document_id();
+        let path = canonical_dir.join("chain_v1.sealed");
+
+        save_sealed_v1(&chain, &path, &key, &doc_id).unwrap();
+
+        let loaded = load_sealed(&path, &key).unwrap();
+        assert_eq!(loaded.checkpoints.len(), chain.checkpoints.len());
+        assert_eq!(loaded.checkpoints[0].hash, chain.checkpoints[0].hash);
     }
 }

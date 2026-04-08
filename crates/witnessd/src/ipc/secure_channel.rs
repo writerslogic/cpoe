@@ -4,7 +4,7 @@
 
 use chacha20poly1305::{
     aead::{rand_core::RngCore, Aead, KeyInit, OsRng},
-    ChaCha20Poly1305, Nonce,
+    ChaCha20Poly1305, Key, Nonce,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvError, SendError, Sender};
@@ -20,20 +20,6 @@ const NONCE_COUNTER_MAX: u64 = u64::MAX - 1;
 /// Prevents a malicious or buggy sender from causing unbounded allocation.
 /// Uses the same cap as IPC wire frames.
 const MAX_SECURE_CHANNEL_PAYLOAD: usize = super::messages::MAX_MESSAGE_SIZE;
-
-/// Zeroize the key material inside a ChaCha20Poly1305 cipher on drop.
-/// The cipher is layout-equivalent to a 32-byte key (`GenericArray<u8, U32>`).
-fn zeroize_cipher(cipher: &mut ChaCha20Poly1305) {
-    // SAFETY: ChaCha20Poly1305 is repr(transparent) over Key (GenericArray<u8, U32>).
-    // We overwrite all 32 bytes of key material.
-    let ptr = cipher as *mut ChaCha20Poly1305 as *mut u8;
-    let len = std::mem::size_of::<ChaCha20Poly1305>();
-    // Use write_volatile to prevent the compiler from optimizing away the zeroization.
-    for i in 0..len {
-        unsafe { std::ptr::write_volatile(ptr.add(i), 0u8) };
-    }
-    std::sync::atomic::fence(Ordering::SeqCst);
-}
 
 /// Factory for creating matched sender/receiver pairs with ChaCha20-Poly1305 encryption.
 pub struct SecureChannel<T> {
@@ -51,18 +37,27 @@ impl<T: serde::Serialize + serde::de::DeserializeOwned> SecureChannel<T> {
     pub fn new_pair() -> (SecureSender<T>, SecureReceiver<T>) {
         let (tx, rx) = mpsc::channel();
 
-        let mut key = ChaCha20Poly1305::generate_key(&mut OsRng);
-        let cipher = ChaCha20Poly1305::new(&key);
-        key.as_mut_slice().zeroize();
+        // Hold key bytes in Zeroizing so they are wiped when this scope exits.
+        let key_bytes: Zeroizing<[u8; 32]> = {
+            let generated = ChaCha20Poly1305::generate_key(&mut OsRng);
+            let mut bytes = Zeroizing::new([0u8; 32]);
+            bytes.copy_from_slice(generated.as_slice());
+            bytes
+        };
+
+        // Build sender and receiver ciphers independently; no clone of key material.
+        let sender_cipher = ChaCha20Poly1305::new(Key::from_slice(&*key_bytes));
+        let receiver_cipher = ChaCha20Poly1305::new(Key::from_slice(&*key_bytes));
+        // key_bytes drops here and is zeroized by Zeroizing.
 
         // Generate a random 4-byte nonce prefix to fill nonce bytes [0..4],
         // preventing the first 4 bytes from always being zero.
-        let mut nonce_prefix = [0u8; 4];
-        OsRng.fill_bytes(&mut nonce_prefix);
+        let mut nonce_prefix = Zeroizing::new([0u8; 4]);
+        OsRng.fill_bytes(&mut *nonce_prefix);
 
         let sender = SecureSender {
             tx,
-            cipher: cipher.clone(),
+            cipher: sender_cipher,
             nonce_counter: AtomicU64::new(0),
             nonce_prefix,
             _phantom: std::marker::PhantomData,
@@ -70,7 +65,7 @@ impl<T: serde::Serialize + serde::de::DeserializeOwned> SecureChannel<T> {
 
         let receiver = SecureReceiver {
             rx,
-            cipher,
+            cipher: receiver_cipher,
             _phantom: std::marker::PhantomData,
         };
 
@@ -84,15 +79,8 @@ pub struct SecureSender<T> {
     cipher: ChaCha20Poly1305,
     pub(super) nonce_counter: AtomicU64,
     /// Random prefix for nonce bytes [0..4], generated once at channel creation.
-    nonce_prefix: [u8; 4],
+    nonce_prefix: Zeroizing<[u8; 4]>,
     _phantom: std::marker::PhantomData<T>,
-}
-
-impl<T> Drop for SecureSender<T> {
-    fn drop(&mut self) {
-        zeroize_cipher(&mut self.cipher);
-        self.nonce_prefix.zeroize();
-    }
 }
 
 impl<T: serde::Serialize> SecureSender<T> {
@@ -127,7 +115,7 @@ impl<T: serde::Serialize> SecureSender<T> {
             }
         };
         let mut nonce_bytes = [0u8; 12];
-        nonce_bytes[0..4].copy_from_slice(&self.nonce_prefix);
+        nonce_bytes[0..4].copy_from_slice(&*self.nonce_prefix);
         nonce_bytes[4..].copy_from_slice(&counter.to_le_bytes());
         let nonce = Nonce::from_slice(&nonce_bytes);
 
@@ -153,12 +141,6 @@ pub struct SecureReceiver<T> {
     rx: Receiver<EncryptedMessage>,
     cipher: ChaCha20Poly1305,
     _phantom: std::marker::PhantomData<T>,
-}
-
-impl<T> Drop for SecureReceiver<T> {
-    fn drop(&mut self) {
-        zeroize_cipher(&mut self.cipher);
-    }
 }
 
 impl<T: serde::de::DeserializeOwned> SecureReceiver<T> {

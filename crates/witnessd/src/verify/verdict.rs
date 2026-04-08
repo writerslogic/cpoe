@@ -67,13 +67,7 @@ pub(super) fn compute_verdict(
         }
     }
 
-    // H-001 (verify): Invalid declaration downgrades the verdict.
-    if !declaration_valid {
-        // Declaration is missing or has an invalid signature; the best
-        // attainable verdict is V2LikelyHuman.
-    }
-
-    // H-003 (verify): Cap forensic verdict when seals are structural-only
+    // Cap forensic verdict when seals are structural-only
     // (no HMAC re-derivation) or declaration is invalid, because the
     // verification strength is insufficient for V1VerifiedHuman.
     let seals_structural_only = seals.entangled_binding_valid.is_none();

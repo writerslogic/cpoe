@@ -14,10 +14,15 @@ use std::sync::{mpsc, Arc, Mutex};
 use crate::jitter::SimpleJitterSession;
 use crate::DateTimeNanosExt;
 
+/// Bounded capacity for the keystroke channel (~5 s at 100 WPM with key-up events).
+const KEYSTROKE_CHANNEL_CAPACITY: usize = 512;
+
 /// Global counter for debug file writes (only write every 100th keystroke).
 static DEBUG_KEYSTROKE_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// Global counter for tap-disabled-by-timeout events (for diagnostics).
 static TAP_DISABLED_COUNT: AtomicU64 = AtomicU64::new(0);
+/// Global counter for keystroke events dropped due to a full channel.
+static DROPPED_KEYSTROKE_COUNT: AtomicU64 = AtomicU64::new(0);
 
 /// Write a debug line to `$CPOP_DATA_DIR/keystroke_debug.txt` (append mode).
 /// Only writes every 100th call to avoid I/O overhead in the hot path.
@@ -444,7 +449,7 @@ impl Drop for KeystrokeMonitor {
 pub struct MacOSKeystrokeCapture {
     running: Arc<AtomicBool>,
     tap_alive: Arc<AtomicBool>,
-    sender: Option<mpsc::Sender<KeystrokeEvent>>,
+    sender: Option<mpsc::SyncSender<KeystrokeEvent>>,
     runner: Option<EventTapRunner>,
     strict_mode: bool,
     total_events: Arc<AtomicU64>,
@@ -473,7 +478,8 @@ impl KeystrokeCapture for MacOSKeystrokeCapture {
             return Err(anyhow!("Keystroke capture already running"));
         }
 
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx): (mpsc::SyncSender<KeystrokeEvent>, mpsc::Receiver<KeystrokeEvent>) =
+            mpsc::sync_channel(KEYSTROKE_CHANNEL_CAPACITY);
         self.sender = Some(tx.clone());
 
         let running = Arc::clone(&self.running);
@@ -557,8 +563,20 @@ impl KeystrokeCapture for MacOSKeystrokeCapture {
                     if event_type == K_CG_EVENT_KEY_DOWN {
                         debug_write_keystroke("capture_tx", total_events.load(Ordering::Relaxed));
                     }
-                    if tx.send(keystroke).is_err() {
-                        running.store(false, Ordering::SeqCst);
+                    match tx.try_send(keystroke) {
+                        Ok(()) => {}
+                        Err(mpsc::TrySendError::Full(_)) => {
+                            let prev = DROPPED_KEYSTROKE_COUNT.fetch_add(1, Ordering::Relaxed);
+                            if prev % 100 == 0 {
+                                log::warn!(
+                                    "CGEventTap keystroke channel full; dropped events={}",
+                                    prev + 1
+                                );
+                            }
+                        }
+                        Err(mpsc::TrySendError::Disconnected(_)) => {
+                            running.store(false, Ordering::SeqCst);
+                        }
                     }
                 }
             }

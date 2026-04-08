@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 use super::crypto::{
-    decode_message, decode_message_json, encode_message, encode_message_json, SecureSession,
+    decode_message_json, encode_message_json, SecureSession,
     KEY_CONFIRM_PLAINTEXT, SECURE_JSON_PROTOCOL_MAGIC,
 };
 use super::messages::MAX_MESSAGE_SIZE;
@@ -260,7 +260,9 @@ impl AsyncIpcClient {
 
     /// Send an IPC message to the daemon
     ///
-    /// Messages are serialized using bincode with a 4-byte little-endian length prefix.
+    /// Messages are serialized using JSON with a 4-byte little-endian length prefix and
+    /// encrypted with ChaCha20-Poly1305. A secure session must be established via
+    /// `connect()` before calling this method; plaintext sends are never permitted.
     pub async fn send_message(
         &mut self,
         msg: &IpcMessage,
@@ -272,21 +274,19 @@ impl AsyncIpcClient {
             .as_mut()
             .ok_or(AsyncIpcClientError::NotConnected)?;
 
-        let encoded = if self.secure_session.is_some() {
-            encode_message_json(msg)
-                .map_err(|e| AsyncIpcClientError::SerializationFailed(e.to_string()))?
-        } else {
-            encode_message(msg)
-                .map_err(|e| AsyncIpcClientError::SerializationFailed(e.to_string()))?
-        };
+        // Require an active encrypted session. This is always set by connect() and
+        // cleared by disconnect(), so NotConnected accurately reflects the state.
+        let session = self
+            .secure_session
+            .as_ref()
+            .ok_or(AsyncIpcClientError::NotConnected)?;
 
-        let payload = if let Some(session) = &self.secure_session {
-            session.encrypt(&encoded).map_err(|e| {
-                AsyncIpcClientError::ProtocolError(format!("Encryption failed: {}", e))
-            })?
-        } else {
-            encoded
-        };
+        let encoded = encode_message_json(msg)
+            .map_err(|e| AsyncIpcClientError::SerializationFailed(e.to_string()))?;
+
+        let payload = session.encrypt(&encoded).map_err(|e| {
+            AsyncIpcClientError::ProtocolError(format!("Encryption failed: {}", e))
+        })?;
 
         if payload.len() > MAX_MESSAGE_SIZE {
             return Err(AsyncIpcClientError::MessageTooLarge(
@@ -317,7 +317,8 @@ impl AsyncIpcClient {
 
     /// Receive an IPC message from the daemon
     ///
-    /// Reads a 4-byte little-endian length prefix followed by the bincode-serialized message.
+    /// Reads a 4-byte little-endian length prefix followed by the encrypted payload.
+    /// A secure session must be established via `connect()` before calling this method.
     pub async fn recv_message(&mut self) -> std::result::Result<IpcMessage, AsyncIpcClientError> {
         use tokio::io::AsyncReadExt;
 
@@ -353,23 +354,18 @@ impl AsyncIpcClient {
         .await
         .map_err(|_| AsyncIpcClientError::Timeout(IO_TIMEOUT))??;
 
-        let plaintext = if let Some(session) = &self.secure_session {
-            session.decrypt(&buffer).map_err(|e| {
-                AsyncIpcClientError::ProtocolError(format!("Decryption failed: {}", e))
-            })?
-        } else {
-            buffer
-        };
+        // Require an active encrypted session; plaintext receives are never permitted.
+        let session = self
+            .secure_session
+            .as_ref()
+            .ok_or(AsyncIpcClientError::NotConnected)?;
 
-        let msg = if self.secure_session.is_some() {
-            decode_message_json(&plaintext)
-                .map_err(|e| AsyncIpcClientError::DeserializationFailed(e.to_string()))?
-        } else {
-            decode_message(&plaintext)
-                .map_err(|e| AsyncIpcClientError::DeserializationFailed(e.to_string()))?
-        };
+        let plaintext = session.decrypt(&buffer).map_err(|e| {
+            AsyncIpcClientError::ProtocolError(format!("Decryption failed: {}", e))
+        })?;
 
-        Ok(msg)
+        decode_message_json(&plaintext)
+            .map_err(|e| AsyncIpcClientError::DeserializationFailed(e.to_string()))
     }
 
     /// Send a message and wait for a response (request-response pattern)
@@ -392,12 +388,14 @@ impl AsyncIpcClient {
             // Intentionally ignored: into_std() for graceful drop; failure is benign on disconnect
             let _ = stream.into_std();
         }
+        self.secure_session = None;
     }
 
     /// Disconnect from the daemon
     #[cfg(target_os = "windows")]
     pub async fn disconnect(&mut self) {
         self.stream = None;
+        self.secure_session = None;
     }
 
     /// Perform a handshake with the daemon
