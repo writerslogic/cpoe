@@ -141,7 +141,7 @@ impl SentinelIpcHandler {
             .map_err(|e| format!("Failed to decode evidence: {e}"))?;
 
         let vdf_params = packet.vdf_params;
-        let chain_ok = packet.verify(vdf_params).is_ok();
+        let chain_ok = packet.verify_self_signed(vdf_params).is_ok();
         let sig_ok = packet.verify_signature(expected_nonce.as_ref()).is_ok();
         let nonce_valid = match (&expected_nonce, packet.get_verifier_nonce()) {
             (Some(expected), Some(actual)) => *actual == *expected,
@@ -268,7 +268,7 @@ impl SentinelIpcHandler {
             .map_err(|e| format!("Failed to decode evidence: {e}"))?;
 
         let vdf_params = packet.vdf_params;
-        let chain_ok = packet.verify(vdf_params).is_ok();
+        let chain_ok = packet.verify_self_signed(vdf_params).is_ok();
         let sig_ok = packet.verify_signature(None).is_ok();
 
         Ok(IpcMessage::VerifyFileResponse {

@@ -91,6 +91,7 @@ pub fn ffi_verify_evidence_detailed(path: String) -> FfiVerifyDetail {
         vdf_params: packet.vdf_params,
         expected_nonce: None,
         run_forensics: true,
+        trusted_public_key: None,
     };
 
     let result = full_verify(&packet, &opts);

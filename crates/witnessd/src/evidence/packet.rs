@@ -21,17 +21,37 @@ use super::types::Packet;
 const BASELINE_SIMILARITY_THRESHOLD: f64 = 0.7;
 
 impl Packet {
-    /// Verify packet integrity: chain hashes, VDF proofs, declaration, hardware, and key hierarchy.
+    /// Verify packet integrity using self-signed key only (no external trust anchor).
     ///
-    /// Baseline verification uses the packet's own `signing_public_key`, so it only proves
-    /// internal consistency (self-signed), not authenticity. Use [`verify_with_trusted_key`]
-    /// to supply an externally trusted public key for stronger assurance.
-    pub fn verify(&self, _vdf_params: vdf::Parameters) -> crate::error::Result<()> {
-        self.verify_inner(_vdf_params, None)
+    /// This proves internal consistency (chain hashes, VDF proofs, declaration,
+    /// hardware, key hierarchy) but NOT authenticity, because the packet's own
+    /// embedded `signing_public_key` is used for baseline verification.
+    ///
+    /// Suitable for Free-tier offline local witnessing. For production verification
+    /// with an external trust anchor, use [`verify_with_trusted_key`].
+    pub fn verify_self_signed(&self, vdf_params: vdf::Parameters) -> crate::error::Result<()> {
+        log::warn!(
+            "Self-signed verification: proves internal consistency only, not authenticity. \
+             Use verify_with_trusted_key() for production verification."
+        );
+        self.verify_inner(vdf_params, None)
     }
 
-    /// Like [`verify`], but uses `trusted_public_key` for baseline verification instead of
-    /// the packet's embedded key, proving authenticity against an external trust anchor.
+    /// Deprecated alias for [`verify_self_signed`]. Use [`verify_with_trusted_key`] for
+    /// production verification, or [`verify_self_signed`] to make the security posture explicit.
+    #[deprecated(
+        since = "0.5.0",
+        note = "Renamed to verify_self_signed() to clarify security posture. \
+                Use verify_with_trusted_key() for production verification."
+    )]
+    pub fn verify(&self, vdf_params: vdf::Parameters) -> crate::error::Result<()> {
+        self.verify_self_signed(vdf_params)
+    }
+
+    /// Verify packet integrity against an externally trusted public key.
+    ///
+    /// Uses `trusted_public_key` for baseline verification instead of the packet's
+    /// embedded key, proving authenticity against an external trust anchor.
     pub fn verify_with_trusted_key(
         &self,
         _vdf_params: vdf::Parameters,

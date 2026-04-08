@@ -29,6 +29,9 @@ pub struct VerifyOptions {
     pub expected_nonce: Option<[u8; 32]>,
     /// Whether to run forensic analysis (requires behavioral data in packet).
     pub run_forensics: bool,
+    /// External trust anchor for baseline verification. When `Some`, uses
+    /// `verify_with_trusted_key()` instead of self-signed verification.
+    pub trusted_public_key: Option<[u8; 32]>,
 }
 
 /// Result of HMAC seal re-derivation checks.
@@ -98,7 +101,11 @@ pub fn full_verify(packet: &Packet, opts: &VerifyOptions) -> FullVerificationRes
     let mut warnings = Vec::new();
 
     // Phase 1: Structural verification
-    let structural = match packet.verify(opts.vdf_params) {
+    let structural = match if let Some(tk) = opts.trusted_public_key {
+        packet.verify_with_trusted_key(opts.vdf_params, tk)
+    } else {
+        packet.verify_self_signed(opts.vdf_params)
+    } {
         Ok(()) => true,
         Err(e) => {
             warnings.push(format!("Structural verification failed: {}", e));
