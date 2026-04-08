@@ -76,9 +76,7 @@ impl WritersProofClient {
             )));
         }
 
-        resp.json::<NonceResponse>()
-            .await
-            .map_err(|e| Error::crypto(format!("nonce response parse failed: {e}")))
+        Self::json_response::<NonceResponse>(resp).await
     }
 
     /// Enroll a device with WritersProof.
@@ -103,9 +101,7 @@ impl WritersProofClient {
             )));
         }
 
-        resp.json::<EnrollResponse>()
-            .await
-            .map_err(|e| Error::crypto(format!("enroll response parse failed: {e}")))
+        Self::json_response::<EnrollResponse>(resp).await
     }
 
     /// Submit evidence for attestation.
@@ -159,9 +155,7 @@ impl WritersProofClient {
             )));
         }
 
-        resp.json::<AttestResponse>()
-            .await
-            .map_err(|e| Error::crypto(format!("attest response parse failed: {e}")))
+        Self::json_response::<AttestResponse>(resp).await
     }
 
     /// Get an attestation certificate by ID.
@@ -286,9 +280,7 @@ impl WritersProofClient {
             )));
         }
 
-        resp.json::<AnchorResponse>()
-            .await
-            .map_err(|e| Error::crypto(format!("anchor response parse failed: {e}")))
+        Self::json_response::<AnchorResponse>(resp).await
     }
 
     /// Fetch temporal beacon attestation from WritersProof.
@@ -332,9 +324,7 @@ impl WritersProofClient {
             )));
         }
 
-        resp.json::<BeaconResponse>()
-            .await
-            .map_err(|e| Error::crypto(format!("beacon response parse failed: {e}")))
+        Self::json_response::<BeaconResponse>(resp).await
     }
 
     /// Start a tracking session on the server with an initial hash.
@@ -412,9 +402,7 @@ impl WritersProofClient {
             )));
         }
 
-        resp.json::<ChallengeResponse>()
-            .await
-            .map_err(|e| Error::crypto(format!("challenge response parse failed: {e}")))
+        Self::json_response::<ChallengeResponse>(resp).await
     }
 
     /// Send a pulse: atomically log current hash and fetch fresh 30-second nonce.
@@ -468,9 +456,7 @@ impl WritersProofClient {
             )));
         }
 
-        resp.json::<PulseResponse>()
-            .await
-            .map_err(|e| Error::crypto(format!("pulse response parse failed: {e}")))
+        Self::json_response::<PulseResponse>(resp).await
     }
 
     /// Verify an evidence packet.
@@ -500,10 +486,7 @@ impl WritersProofClient {
             )));
         }
 
-        let mut response = resp
-            .json::<VerifyResponse>()
-            .await
-            .map_err(|e| Error::crypto(format!("verify response parse failed: {e}")))?;
+        let mut response = Self::json_response::<VerifyResponse>(resp).await?;
         response.sanitize();
         Ok(response)
     }
@@ -542,6 +525,34 @@ impl WritersProofClient {
             )));
         }
         Ok(())
+    }
+
+    /// Deserialize a JSON response with a hard body-size cap.
+    ///
+    /// Checks `Content-Length` before downloading and verifies the actual body
+    /// size after download. Rejects responses larger than 1 MB to prevent
+    /// memory exhaustion from malicious or misconfigured servers.
+    async fn json_response<T: serde::de::DeserializeOwned>(resp: reqwest::Response) -> Result<T> {
+        const MAX_JSON_BYTES: u64 = 1_000_000; // 1 MB
+        if let Some(cl) = resp.content_length() {
+            if cl > MAX_JSON_BYTES {
+                return Err(Error::crypto(format!(
+                    "response too large: {cl} bytes (max {MAX_JSON_BYTES})"
+                )));
+            }
+        }
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| Error::crypto(format!("response read failed: {e}")))?;
+        if bytes.len() as u64 > MAX_JSON_BYTES {
+            return Err(Error::crypto(format!(
+                "response too large: {} bytes (max {MAX_JSON_BYTES})",
+                bytes.len()
+            )));
+        }
+        serde_json::from_slice(&bytes)
+            .map_err(|e| Error::crypto(format!("response parse failed: {e}")))
     }
 
     /// Check if the WritersProof service is reachable.
