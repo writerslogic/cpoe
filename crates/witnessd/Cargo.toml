@@ -16,6 +16,7 @@ documentation = "https://docs.rs/witnessd"
 exclude = ["tests/", "fuzz/", "benches/"]
 
 [lib]
+name = "cpop_engine"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [[bin]]

@@ -4,7 +4,7 @@
 pub mod ffi;
 
 #[cfg(feature = "ffi")]
-uniffi::setup_scaffolding!();
+uniffi::setup_scaffolding!("cpop_engine");
 
 pub mod analysis;
 pub mod anchors;
