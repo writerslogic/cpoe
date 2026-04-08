@@ -37,17 +37,6 @@ impl Packet {
         self.verify_inner(vdf_params, None)
     }
 
-    /// Deprecated alias for [`verify_self_signed`]. Use [`verify_with_trusted_key`] for
-    /// production verification, or [`verify_self_signed`] to make the security posture explicit.
-    #[deprecated(
-        since = "0.5.0",
-        note = "Renamed to verify_self_signed() to clarify security posture. \
-                Use verify_with_trusted_key() for production verification."
-    )]
-    pub fn verify(&self, vdf_params: vdf::Parameters) -> crate::error::Result<()> {
-        self.verify_self_signed(vdf_params)
-    }
-
     /// Verify packet integrity against an externally trusted public key.
     ///
     /// Uses `trusted_public_key` for baseline verification instead of the packet's
