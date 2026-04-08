@@ -20,7 +20,9 @@ pub mod toip;
 pub mod types;
 
 pub use corim::CpopReferenceValues;
-pub use eat::{decode_eat_cwt, encode_eat_cwt};
+#[allow(deprecated)]
+pub use eat::decode_eat_cwt_unverified;
+pub use eat::{decode_eat_cwt_verified, encode_eat_cwt};
 pub use scitt::{SignedStatement, TransparencyReceipt};
 pub use toip::{EcosystemGovernanceFramework, TrqpQuery, TrqpResponse};
 pub use types::{AttestationResult, Evidence, RatsRole};
@@ -31,11 +33,12 @@ mod tests {
 
     use coset::CborSerializable;
 
-    use crate::tpm::SoftwareProvider;
+    use crate::tpm::{Provider, SoftwareProvider};
     use crate::war::ear::{
         Ar4siStatus, EarAppraisal, EarToken, TrustworthinessVector, VerifierId, POP_EAR_PROFILE,
     };
 
+    #[allow(deprecated)]
     use super::*;
 
     fn test_ear_token() -> EarToken {
@@ -85,7 +88,8 @@ mod tests {
         let cwt_bytes = encode_eat_cwt(&ear, &provider).expect("encode failed");
         assert!(!cwt_bytes.is_empty());
 
-        let decoded = decode_eat_cwt(&cwt_bytes).expect("decode failed");
+        let pk: [u8; 32] = provider.public_key().try_into().unwrap();
+        let decoded = decode_eat_cwt_verified(&cwt_bytes, &pk).expect("decode failed");
 
         assert_eq!(decoded.eat_profile, ear.eat_profile);
         assert_eq!(decoded.iat, ear.iat);
@@ -217,5 +221,32 @@ mod tests {
         // Equality
         assert_eq!(RatsRole::Attester, RatsRole::Attester);
         assert_ne!(RatsRole::Attester, RatsRole::Verifier);
+    }
+
+    #[test]
+    fn test_eat_cwt_verified_correct_key() {
+        let ear = test_ear_token();
+        let provider = SoftwareProvider::new();
+        let cwt_bytes = encode_eat_cwt(&ear, &provider).expect("encode");
+
+        let pk: [u8; 32] = provider.public_key().try_into().unwrap();
+        let decoded = decode_eat_cwt_verified(&cwt_bytes, &pk).expect("verified decode");
+        assert_eq!(decoded.eat_profile, ear.eat_profile);
+        assert_eq!(decoded.iat, ear.iat);
+    }
+
+    #[test]
+    fn test_eat_cwt_verified_wrong_key_fails() {
+        let ear = test_ear_token();
+        let provider = SoftwareProvider::new();
+        let cwt_bytes = encode_eat_cwt(&ear, &provider).expect("encode");
+
+        let wrong_provider = SoftwareProvider::new();
+        let wrong_pk: [u8; 32] = wrong_provider.public_key().try_into().unwrap();
+        let err = decode_eat_cwt_verified(&cwt_bytes, &wrong_pk).unwrap_err();
+        assert!(
+            err.to_string().contains("signature verification failed"),
+            "expected signature error, got: {err}"
+        );
     }
 }

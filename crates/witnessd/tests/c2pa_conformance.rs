@@ -20,8 +20,8 @@ use cpop_engine::checkpoint;
 use cpop_engine::declaration;
 use cpop_engine::evidence;
 use cpop_engine::evidence::Packet;
-use cpop_engine::rats::{decode_eat_cwt, encode_eat_cwt};
-use cpop_engine::tpm::SoftwareProvider;
+use cpop_engine::rats::{decode_eat_cwt_verified, encode_eat_cwt};
+use cpop_engine::tpm::{Provider, SoftwareProvider};
 use cpop_engine::trust_policy::profiles;
 use cpop_engine::vdf;
 use cpop_engine::war::ear::{
@@ -269,7 +269,8 @@ fn test_rats_cwt_roundtrip() {
     let cwt_bytes = encode_eat_cwt(&ear, &provider).expect("CWT encode");
     assert!(!cwt_bytes.is_empty(), "CWT bytes must not be empty");
 
-    let decoded = decode_eat_cwt(&cwt_bytes).expect("CWT decode");
+    let pk: [u8; 32] = provider.public_key().try_into().unwrap();
+    let decoded = decode_eat_cwt_verified(&cwt_bytes, &pk).expect("CWT decode");
 
     // Core EAR fields preserved
     assert_eq!(decoded.eat_profile, ear.eat_profile);

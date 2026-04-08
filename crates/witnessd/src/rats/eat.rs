@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 
 use ciborium::Value;
 use coset::{CborSerializable, CoseSign1Builder, HeaderBuilder};
+use ed25519_dalek::Verifier as _;
 
 use crate::error::{Error, Result};
 use crate::tpm;
@@ -71,12 +72,50 @@ pub fn encode_eat_cwt(ear: &EarToken, signer: &dyn tpm::Provider) -> Result<Vec<
         .map_err(|e| Error::crypto(format!("COSE encoding error: {e}")))
 }
 
-/// Decode a CWT (COSE_Sign1) back into an `EarToken`.
+/// Decode and verify a CWT (COSE_Sign1) into an `EarToken`.
 ///
-/// This extracts the payload without verifying the signature, which is
-/// appropriate when the caller has already verified via a separate path
-/// or for inspection/debugging.
-pub fn decode_eat_cwt(bytes: &[u8]) -> Result<EarToken> {
+/// Verifies the Ed25519 signature against `trusted_key` before extracting
+/// the payload. Returns an error if the signature is missing, the algorithm
+/// is not EdDSA, or verification fails.
+pub fn decode_eat_cwt_verified(bytes: &[u8], trusted_key: &[u8; 32]) -> Result<EarToken> {
+    let sign1 = coset::CoseSign1::from_slice(bytes)
+        .map_err(|e| Error::crypto(format!("COSE decode error: {e}")))?;
+
+    let expected_alg = coset::Algorithm::Assigned(coset::iana::Algorithm::EdDSA);
+    if sign1.protected.header.alg.as_ref() != Some(&expected_alg) {
+        return Err(Error::crypto("EAT expected EdDSA algorithm in COSE header"));
+    }
+
+    if sign1.signature.is_empty() {
+        return Err(Error::crypto("EAT missing signature"));
+    }
+
+    let vk = ed25519_dalek::VerifyingKey::from_bytes(trusted_key)
+        .map_err(|_| Error::crypto("invalid Ed25519 public key"))?;
+
+    sign1.verify_signature(&[], |sig_bytes, tbs_data| {
+        let signature = ed25519_dalek::Signature::from_slice(sig_bytes)
+            .map_err(|_| Error::crypto("invalid Ed25519 signature format"))?;
+        vk.verify(tbs_data, &signature)
+            .map_err(|_| Error::crypto("EAT signature verification failed"))
+    })?;
+
+    let payload = sign1
+        .payload
+        .ok_or_else(|| Error::crypto("missing CWT payload"))?;
+
+    let value: Value = ciborium::from_reader(payload.as_slice())
+        .map_err(|e| Error::crypto(format!("CBOR decode error: {e}")))?;
+
+    cbor_map_to_ear(&value)
+}
+
+/// Decode a CWT (COSE_Sign1) back into an `EarToken` without signature
+/// verification. Use [`decode_eat_cwt_verified`] for production code paths.
+#[deprecated(
+    note = "Use decode_eat_cwt_verified() for production; this skips signature verification"
+)]
+pub fn decode_eat_cwt_unverified(bytes: &[u8]) -> Result<EarToken> {
     let sign1 = coset::CoseSign1::from_slice(bytes)
         .map_err(|e| Error::crypto(format!("COSE decode error: {e}")))?;
 

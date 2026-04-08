@@ -154,8 +154,12 @@ fn standards_conformance_e2e() {
     let sign1 = coset::CoseSign1::from_slice(&cwt_bytes).expect("parse COSE_Sign1");
     assert!(sign1.payload.is_some());
     assert!(!sign1.signature.is_empty());
-    // Decode back and verify profile preserved.
-    let decoded_ear = cpop_engine::rats::decode_eat_cwt(&cwt_bytes).expect("CWT decode");
+    // Decode back with signature verification and verify profile preserved.
+    let pk: [u8; 32] = cpop_engine::tpm::Provider::public_key(&provider)
+        .try_into()
+        .unwrap();
+    let decoded_ear =
+        cpop_engine::rats::decode_eat_cwt_verified(&cwt_bytes, &pk).expect("CWT decode");
     assert_eq!(decoded_ear.eat_profile, ear.eat_profile);
     assert_eq!(decoded_ear.iat, ear.iat);
 
