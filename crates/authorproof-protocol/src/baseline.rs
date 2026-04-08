@@ -137,6 +137,9 @@ impl StreamingStats {
 
 impl BaselineDigest {
     pub fn validate(&self) -> Result<(), String> {
+        if self.version != 1 {
+            return Err(format!("unsupported baseline version: {}", self.version));
+        }
         self.iki_stats.validate().map_err(|e| format!("iki_stats: {e}"))?;
         self.cv_stats.validate().map_err(|e| format!("cv_stats: {e}"))?;
         self.hurst_stats.validate().map_err(|e| format!("hurst_stats: {e}"))?;
@@ -319,5 +322,170 @@ mod tests {
         assert_eq!(d.identity_fingerprint, vec![0xBB; 32]);
         assert_eq!(decoded.digest_signature.as_ref().unwrap().len(), 64);
         assert!(buf.len() < 600, "Full wire overhead: {} bytes", buf.len());
+    }
+
+    // -- StreamingStats validation tests --
+
+    fn valid_stats() -> StreamingStats {
+        StreamingStats { count: 10, mean: 150.0, m2: 500.0, min: 80.0, max: 300.0 }
+    }
+
+    #[test]
+    fn test_streaming_stats_valid() {
+        assert!(valid_stats().validate().is_ok());
+    }
+
+    #[test]
+    fn test_streaming_stats_nan_mean() {
+        let mut s = valid_stats();
+        s.mean = f64::NAN;
+        assert!(s.validate().unwrap_err().contains("mean"));
+    }
+
+    #[test]
+    fn test_streaming_stats_negative_m2() {
+        let mut s = valid_stats();
+        s.m2 = -1.0;
+        assert!(s.validate().unwrap_err().contains("m2"));
+    }
+
+    #[test]
+    fn test_streaming_stats_infinity_max() {
+        let mut s = valid_stats();
+        s.max = f64::INFINITY;
+        assert!(s.validate().unwrap_err().contains("max"));
+    }
+
+    #[test]
+    fn test_streaming_stats_min_gt_max() {
+        let s = StreamingStats { count: 5, mean: 0.0, m2: 0.0, min: 10.0, max: 1.0 };
+        assert!(s.validate().unwrap_err().contains("min"));
+    }
+
+    #[test]
+    fn test_streaming_stats_min_gt_max_zero_count() {
+        let s = StreamingStats { count: 0, mean: 0.0, m2: 0.0, min: 10.0, max: 1.0 };
+        assert!(s.validate().is_ok(), "min > max allowed when count == 0");
+    }
+
+    // -- BaselineDigest validation tests --
+
+    fn valid_digest() -> BaselineDigest {
+        BaselineDigest {
+            version: 1,
+            session_count: 10,
+            total_keystrokes: 50000,
+            iki_stats: valid_stats(),
+            cv_stats: valid_stats(),
+            hurst_stats: valid_stats(),
+            aggregate_iki_histogram: [0.1, 0.2, 0.15, 0.1, 0.1, 0.15, 0.1, 0.05, 0.05],
+            pause_stats: valid_stats(),
+            session_merkle_root: vec![0xAA; 32],
+            confidence_tier: ConfidenceTier::Established,
+            computed_at: 1708790400,
+            identity_fingerprint: vec![0xBB; 32],
+        }
+    }
+
+    #[test]
+    fn test_baseline_digest_valid() {
+        assert!(valid_digest().validate().is_ok());
+    }
+
+    #[test]
+    fn test_baseline_digest_bad_version() {
+        let mut d = valid_digest();
+        d.version = 2;
+        assert!(d.validate().unwrap_err().contains("version"));
+    }
+
+    #[test]
+    fn test_baseline_digest_short_merkle_root() {
+        let mut d = valid_digest();
+        d.session_merkle_root = vec![0; 16];
+        assert!(d.validate().unwrap_err().contains("session_merkle_root"));
+    }
+
+    #[test]
+    fn test_baseline_digest_short_fingerprint() {
+        let mut d = valid_digest();
+        d.identity_fingerprint = vec![0; 31];
+        assert!(d.validate().unwrap_err().contains("identity_fingerprint"));
+    }
+
+    #[test]
+    fn test_baseline_digest_nan_in_stats() {
+        let mut d = valid_digest();
+        d.iki_stats.mean = f64::NAN;
+        assert!(d.validate().unwrap_err().contains("iki_stats"));
+    }
+
+    #[test]
+    fn test_baseline_digest_nan_aggregate_histogram() {
+        let mut d = valid_digest();
+        d.aggregate_iki_histogram[3] = f64::NAN;
+        assert!(d.validate().unwrap_err().contains("aggregate_iki_histogram"));
+    }
+
+    // -- SessionBehavioralSummary validation tests --
+
+    #[test]
+    fn test_summary_valid() {
+        let s = SessionBehavioralSummary {
+            iki_histogram: [0.1, 0.2, 0.15, 0.1, 0.1, 0.15, 0.1, 0.05, 0.05],
+            iki_cv: 0.45,
+            hurst: 0.72,
+            pause_frequency: 3.5,
+            duration_secs: 1800,
+            keystroke_count: 5000,
+        };
+        assert!(s.validate().is_ok());
+    }
+
+    #[test]
+    fn test_summary_default_valid() {
+        assert!(SessionBehavioralSummary::default().validate().is_ok());
+    }
+
+    #[test]
+    fn test_summary_nan_histogram() {
+        let mut s = SessionBehavioralSummary::default();
+        s.iki_histogram[4] = f64::NAN;
+        assert!(s.validate().unwrap_err().contains("iki_histogram"));
+    }
+
+    #[test]
+    fn test_summary_negative_iki_cv() {
+        let mut s = SessionBehavioralSummary::default();
+        s.iki_cv = -0.1;
+        assert!(s.validate().unwrap_err().contains("iki_cv"));
+    }
+
+    #[test]
+    fn test_summary_nan_iki_cv() {
+        let mut s = SessionBehavioralSummary::default();
+        s.iki_cv = f64::NAN;
+        assert!(s.validate().unwrap_err().contains("iki_cv"));
+    }
+
+    #[test]
+    fn test_summary_hurst_out_of_range() {
+        let mut s = SessionBehavioralSummary::default();
+        s.hurst = 1.5;
+        assert!(s.validate().unwrap_err().contains("hurst"));
+    }
+
+    #[test]
+    fn test_summary_negative_pause_frequency() {
+        let mut s = SessionBehavioralSummary::default();
+        s.pause_frequency = -1.0;
+        assert!(s.validate().unwrap_err().contains("pause_frequency"));
+    }
+
+    #[test]
+    fn test_summary_infinity_pause_frequency() {
+        let mut s = SessionBehavioralSummary::default();
+        s.pause_frequency = f64::INFINITY;
+        assert!(s.validate().unwrap_err().contains("pause_frequency"));
     }
 }
