@@ -3,6 +3,7 @@
 use crate::physics::SiliconPUF;
 use anyhow::{anyhow, Result};
 use bip39::{Language, Mnemonic};
+use hkdf::Hkdf;
 use rand::Rng;
 use sha2::{Digest, Sha256};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
@@ -36,23 +37,13 @@ impl MnemonicHandler {
         let mnemonic = Mnemonic::parse_in(Language::English, &*phrase_owned)
             .map_err(|_| anyhow!("Invalid mnemonic phrase"))?;
 
-        let seed = mnemonic.to_seed("");
-        let seed_bytes = seed.as_ref();
-
+        let raw_seed = Zeroizing::new(mnemonic.to_seed(""));
         let puf = SiliconPUF::generate_fingerprint();
 
-        let mut hasher = Sha256::new();
-        hasher.update(seed_bytes);
-        hasher.update(puf);
-
+        let hk = Hkdf::<Sha256>::new(Some(&puf), raw_seed.as_ref());
         let mut out = [0u8; 64];
-        let hash_result = hasher.finalize();
-        out[..32].copy_from_slice(&hash_result);
-
-        let mut hasher2 = Sha256::new();
-        hasher2.update(hash_result);
-        hasher2.update(b"expansion");
-        out[32..].copy_from_slice(&hasher2.finalize());
+        hk.expand(b"witnessd-silicon-seed-v1", &mut out)
+            .map_err(|_| anyhow!("HKDF expand failed for silicon seed"))?;
 
         Ok(SensitiveSeed(out))
     }

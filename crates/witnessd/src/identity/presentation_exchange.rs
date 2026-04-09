@@ -42,6 +42,13 @@ pub struct Field {
     pub purpose: Option<String>,
 }
 
+const TIER_ORDER: &[&str] = &["bronze", "silver", "gold", "platinum"];
+
+fn tiers_at_or_above(min_tier: &str) -> Vec<&str> {
+    let start = TIER_ORDER.iter().position(|&t| t == min_tier).unwrap_or(0);
+    TIER_ORDER[start..].to_vec()
+}
+
 /// Build a presentation definition requesting a CPOP attestation.
 ///
 /// The definition requires:
@@ -83,7 +90,7 @@ pub fn cpop_attestation_request(
                         path: vec!["$.forensic_tier".to_string()],
                         filter: Some(serde_json::json!({
                             "type": "string",
-                            "const": min_tier
+                            "enum": tiers_at_or_above(min_tier)
                         })),
                         purpose: None,
                     }],
@@ -114,7 +121,9 @@ mod tests {
         let tier = &pd.input_descriptors[1];
         assert_eq!(tier.id, "forensic_tier");
         let tier_filter = tier.constraints.fields[0].filter.as_ref().unwrap();
-        assert_eq!(tier_filter["const"], "gold");
+        let tier_enum = tier_filter["enum"].as_array().unwrap();
+        assert!(tier_enum.iter().any(|v| v == "gold"));
+        assert!(tier_enum.iter().any(|v| v == "platinum"));
     }
 
     #[test]
@@ -135,14 +144,19 @@ mod tests {
         assert_eq!(filter["type"], "number");
         assert_eq!(filter["minimum"], 1800);
 
-        // Forensic tier descriptor.
+        // Forensic tier descriptor: enum includes silver and above.
         let tier = &pd.input_descriptors[1];
         assert_eq!(tier.constraints.fields.len(), 1);
         let tier_field = &tier.constraints.fields[0];
         assert_eq!(tier_field.path, vec!["$.forensic_tier"]);
         let tier_filter = tier_field.filter.as_ref().unwrap();
         assert_eq!(tier_filter["type"], "string");
-        assert_eq!(tier_filter["const"], "silver");
+        let allowed = tier_filter["enum"].as_array().unwrap();
+        assert_eq!(allowed.len(), 3); // silver, gold, platinum
+        assert!(allowed.iter().any(|v| v == "silver"));
+        assert!(allowed.iter().any(|v| v == "gold"));
+        assert!(allowed.iter().any(|v| v == "platinum"));
+        assert!(!allowed.iter().any(|v| v == "bronze"));
 
         // JSON serialization should produce valid structure.
         let json = serde_json::to_value(&pd).expect("serialize");
@@ -152,11 +166,22 @@ mod tests {
 
     #[test]
     fn test_presentation_exchange_different_tiers() {
-        for tier in &["gold", "silver", "bronze"] {
-            let pd = cpop_attestation_request(60, tier);
-            let tier_field = &pd.input_descriptors[1].constraints.fields[0];
-            let filter = tier_field.filter.as_ref().unwrap();
-            assert_eq!(filter["const"], *tier);
-        }
+        // bronze accepts all tiers
+        let pd = cpop_attestation_request(60, "bronze");
+        let filter = pd.input_descriptors[1].constraints.fields[0].filter.as_ref().unwrap();
+        assert_eq!(filter["enum"].as_array().unwrap().len(), 4);
+
+        // gold accepts gold + platinum
+        let pd = cpop_attestation_request(60, "gold");
+        let filter = pd.input_descriptors[1].constraints.fields[0].filter.as_ref().unwrap();
+        let allowed = filter["enum"].as_array().unwrap();
+        assert_eq!(allowed.len(), 2);
+        assert!(allowed.iter().any(|v| v == "gold"));
+        assert!(allowed.iter().any(|v| v == "platinum"));
+
+        // platinum accepts only platinum
+        let pd = cpop_attestation_request(60, "platinum");
+        let filter = pd.input_descriptors[1].constraints.fields[0].filter.as_ref().unwrap();
+        assert_eq!(filter["enum"].as_array().unwrap().len(), 1);
     }
 }

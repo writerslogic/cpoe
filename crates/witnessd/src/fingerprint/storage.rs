@@ -316,14 +316,12 @@ impl Drop for FingerprintStorage {
 
 /// Load fingerprint encryption key from OS keychain, migrating from legacy file if needed.
 fn load_or_create_fingerprint_key(storage_dir: &Path) -> Result<[u8; KEY_SIZE]> {
-    if let Ok(Some(mut key_vec)) = SecureStorage::load_fingerprint_key() {
+    if let Ok(Some(key_vec)) = SecureStorage::load_fingerprint_key() {
         if key_vec.len() == KEY_SIZE {
             let mut key = [0u8; KEY_SIZE];
             key.copy_from_slice(&key_vec);
-            key_vec.zeroize();
             return Ok(key);
         }
-        key_vec.zeroize();
     }
 
     let key_file = storage_dir.join(".storage_key");

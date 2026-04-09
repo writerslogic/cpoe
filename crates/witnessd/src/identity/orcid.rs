@@ -52,12 +52,12 @@ pub fn validate_orcid(orcid: &str) -> bool {
 
 /// Generate a DID from an ORCID iD using the informal `did:orcid` method.
 ///
-/// Returns `did:orcid:<orcid>` if the ORCID is valid, or an empty string if invalid.
-pub fn orcid_to_did(orcid: &str) -> String {
+/// Returns `Some("did:orcid:<orcid>")` if the ORCID is valid, or `None` if invalid.
+pub fn orcid_to_did(orcid: &str) -> Option<String> {
     if validate_orcid(orcid) {
-        format!("did:orcid:{}", orcid)
+        Some(format!("did:orcid:{}", orcid))
     } else {
-        String::new()
+        None
     }
 }
 
@@ -86,10 +86,10 @@ mod tests {
 
         // did:orcid generation.
         let did = orcid_to_did("0000-0002-1694-233X");
-        assert_eq!(did, "did:orcid:0000-0002-1694-233X");
+        assert_eq!(did, Some("did:orcid:0000-0002-1694-233X".to_string()));
 
-        // Invalid ORCID returns empty string.
-        assert_eq!(orcid_to_did("invalid"), "");
+        // Invalid ORCID returns None.
+        assert_eq!(orcid_to_did("invalid"), None);
     }
 
     #[test]
@@ -119,20 +119,19 @@ mod tests {
 
     #[test]
     fn test_orcid_to_did_format() {
-        let did = orcid_to_did("0000-0002-1825-0097");
+        let did = orcid_to_did("0000-0002-1825-0097").unwrap();
         assert!(did.starts_with("did:orcid:"));
         assert_eq!(did, "did:orcid:0000-0002-1825-0097");
 
         // The ORCID string is preserved exactly (including hyphens).
-        let did_x = orcid_to_did("0000-0002-1694-233X");
+        let did_x = orcid_to_did("0000-0002-1694-233X").unwrap();
         assert!(did_x.ends_with("233X"));
 
         // Without hyphens also works.
-        let did_no_hyphens = orcid_to_did("0000000218250097");
+        let did_no_hyphens = orcid_to_did("0000000218250097").unwrap();
         assert_eq!(did_no_hyphens, "did:orcid:0000000218250097");
 
-        // Invalid returns empty, not a malformed DID.
-        let bad = orcid_to_did("not-an-orcid");
-        assert!(bad.is_empty());
+        // Invalid returns None.
+        assert!(orcid_to_did("not-an-orcid").is_none());
     }
 }

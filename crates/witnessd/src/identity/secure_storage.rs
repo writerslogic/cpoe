@@ -608,11 +608,11 @@ impl SecureStorage {
     }
 
     /// Load the fingerprint key from the platform keychain, with caching.
-    pub fn load_fingerprint_key() -> Result<Option<Vec<u8>>> {
+    pub fn load_fingerprint_key() -> Result<Option<Zeroizing<Vec<u8>>>> {
         match FINGERPRINT_KEY_CACHE.lock() {
             Ok(guard) => {
                 if let Some(ref cached) = *guard {
-                    return Ok(Some(cached.as_slice().to_vec()));
+                    return Ok(Some(Zeroizing::new(cached.as_slice().to_vec())));
                 }
             }
             Err(e) => log::error!("Fingerprint key cache poisoned: {e}"),
@@ -623,7 +623,7 @@ impl SecureStorage {
                 Ok(mut guard) => *guard = Some(ProtectedBuf::new(data.to_vec())),
                 Err(e) => log::error!("Fingerprint key cache poisoned: {e}"),
             }
-            Ok(Some(data.to_vec()))
+            Ok(Some(Zeroizing::new(data.to_vec())))
         } else {
             Ok(None)
         }

@@ -133,6 +133,7 @@ pub fn derive_webvh_signing_key(
     master_key: &SigningKey,
     address: &str,
 ) -> Result<SigningKey, Error> {
+    validate_address(address)?;
     let seed = crate::keyhierarchy::hkdf_expand(
         master_key.as_bytes(),
         WEBVH_IDENTITY_DOMAIN.as_bytes(),
@@ -738,14 +739,14 @@ mod tests {
         assert_eq!(sig1, sig2, "Ed25519 signing must be deterministic");
     }
 
-    /// Derive with empty string address should succeed (HKDF handles empty info).
+    /// Derive with empty string address must fail (empty address weakens domain separation).
     #[test]
-    fn derived_key_empty_address() {
+    fn derived_key_empty_address_rejected() {
         let master = test_signing_key();
         let result = derive_webvh_signing_key(&master, "");
         assert!(
-            result.is_ok(),
-            "empty address must not fail HKDF derivation"
+            result.is_err(),
+            "empty address must be rejected to preserve domain separation"
         );
     }
 

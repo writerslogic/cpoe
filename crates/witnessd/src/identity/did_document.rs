@@ -56,8 +56,11 @@ fn encode_multibase_ed25519(public_key: &[u8]) -> String {
 }
 
 /// Derive a `did:key` URI from raw Ed25519 public key bytes (must be 32 bytes).
+///
+/// Returns an empty `did:key:z` with a truncated/padded key if the input is not
+/// exactly 32 bytes. Callers should validate key length before calling.
 pub fn did_key_from_public(public_key: &[u8]) -> String {
-    debug_assert_eq!(public_key.len(), 32, "Ed25519 public key must be 32 bytes");
+    assert_eq!(public_key.len(), 32, "Ed25519 public key must be 32 bytes");
     format!("did:key:{}", encode_multibase_ed25519(public_key))
 }
 
