@@ -495,38 +495,26 @@ impl SecureStorage {
     /// Store the HMAC key in the platform keychain and update the cache.
     pub fn save_hmac_key(key: &[u8]) -> Result<()> {
         Self::save(HMAC_ACCOUNT, key)?;
-        // Update the cache so subsequent load_hmac_key() calls return the new key
-        match HMAC_CACHE.lock() {
-            Ok(mut guard) => *guard = Some(ProtectedBuf::new(key.to_vec())),
-            Err(e) => log::error!("HMAC cache poisoned: {e}"),
-        }
+        *HMAC_CACHE.lock_recover() = Some(ProtectedBuf::new(key.to_vec()));
         Ok(())
     }
 
     /// Reset the HMAC key cache, forcing the next load to read from keychain.
     pub fn reset_hmac_cache() {
-        match HMAC_CACHE.lock() {
-            Ok(mut guard) => *guard = None,
-            Err(e) => log::error!("HMAC cache poisoned: {e}"),
-        }
+        *HMAC_CACHE.lock_recover() = None;
     }
 
     /// Load the HMAC key from the platform keychain, with caching.
     pub fn load_hmac_key() -> Result<Option<Zeroizing<Vec<u8>>>> {
-        match HMAC_CACHE.lock() {
-            Ok(guard) => {
-                if let Some(ref cached) = *guard {
-                    return Ok(Some(Zeroizing::new(cached.as_slice().to_vec())));
-                }
+        {
+            let guard = HMAC_CACHE.lock_recover();
+            if let Some(ref cached) = *guard {
+                return Ok(Some(Zeroizing::new(cached.as_slice().to_vec())));
             }
-            Err(e) => log::error!("HMAC cache poisoned: {e}"),
         }
         let res = Self::load(HMAC_ACCOUNT)?;
         if let Some(data) = res {
-            match HMAC_CACHE.lock() {
-                Ok(mut guard) => *guard = Some(ProtectedBuf::new(data.to_vec())),
-                Err(e) => log::error!("HMAC cache poisoned: {e}"),
-            }
+            *HMAC_CACHE.lock_recover() = Some(ProtectedBuf::new(data.to_vec()));
             Ok(Some(data))
         } else {
             Ok(None)
@@ -609,20 +597,15 @@ impl SecureStorage {
 
     /// Load the fingerprint key from the platform keychain, with caching.
     pub fn load_fingerprint_key() -> Result<Option<Zeroizing<Vec<u8>>>> {
-        match FINGERPRINT_KEY_CACHE.lock() {
-            Ok(guard) => {
-                if let Some(ref cached) = *guard {
-                    return Ok(Some(Zeroizing::new(cached.as_slice().to_vec())));
-                }
+        {
+            let guard = FINGERPRINT_KEY_CACHE.lock_recover();
+            if let Some(ref cached) = *guard {
+                return Ok(Some(Zeroizing::new(cached.as_slice().to_vec())));
             }
-            Err(e) => log::error!("Fingerprint key cache poisoned: {e}"),
         }
         let res = Self::load(FINGERPRINT_KEY_ACCOUNT)?;
         if let Some(data) = res {
-            match FINGERPRINT_KEY_CACHE.lock() {
-                Ok(mut guard) => *guard = Some(ProtectedBuf::new(data.to_vec())),
-                Err(e) => log::error!("Fingerprint key cache poisoned: {e}"),
-            }
+            *FINGERPRINT_KEY_CACHE.lock_recover() = Some(ProtectedBuf::new(data.to_vec()));
             Ok(Some(Zeroizing::new(data.to_vec())))
         } else {
             Ok(None)
@@ -631,9 +614,6 @@ impl SecureStorage {
 
     /// Reset the fingerprint key cache, forcing the next load to read from keychain.
     pub fn reset_fingerprint_key_cache() {
-        match FINGERPRINT_KEY_CACHE.lock() {
-            Ok(mut guard) => *guard = None,
-            Err(e) => log::error!("Fingerprint key cache poisoned: {e}"),
-        }
+        *FINGERPRINT_KEY_CACHE.lock_recover() = None;
     }
 }

@@ -452,6 +452,14 @@ fn validate_did_host(did: &str) -> Result<(), Error> {
         }
     }
 
+    // Reject punycode/IDN labels to prevent homograph attacks that bypass
+    // the blocklist above (e.g. xn--localhot-r97e.com).
+    if host_lower.split('.').any(|label| label.starts_with("xn--")) {
+        return Err(Error::identity(format!(
+            "did:webvh host contains punycode IDN label (homograph risk): {host_lower}"
+        )));
+    }
+
     Ok(())
 }
 
