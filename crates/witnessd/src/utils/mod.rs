@@ -9,6 +9,22 @@ pub mod time;
 pub use stats::{coefficient_of_variation, mean, median, std_dev};
 pub use time::now_ns;
 
+/// Hash a filesystem path (its UTF-8 string representation) with SHA-256.
+pub fn sha256_of_path(path: &std::path::Path) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(path.to_string_lossy().as_bytes()).into()
+}
+
+/// Return an error if any value in `vals` is NaN or infinite.
+pub fn require_all_finite(vals: &[f64], context: &str) -> crate::error::Result<()> {
+    if vals.iter().any(|x| !x.is_finite()) {
+        return Err(crate::error::Error::validation(
+            format!("{context}: contains NaN or infinity")
+        ));
+    }
+    Ok(())
+}
+
 /// Return `fallback` when `v` is NaN or infinite.
 pub fn finite_or(v: f64, fallback: f64) -> f64 {
     if v.is_finite() {

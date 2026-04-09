@@ -11,6 +11,9 @@ use chrono::DateTime;
 use std::sync::OnceLock;
 use zeroize::Zeroize;
 
+const PERCENTILE_IDX_MEDIAN: usize = 2;
+const PERCENTILE_IDX_P95: usize = 4;
+
 struct ForensicCacheEntry {
     event_count: usize,
     profile: crate::forensics::AuthorshipProfile,
@@ -267,11 +270,11 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
         let cv = c.std_dev_iki_ns / c.mean_iki_ns;
         process.iki_cv = if cv.is_finite() { Some(cv) } else { None };
         process.total_keystrokes = Some(c.burst_count as u64 + c.pause_count as u64);
-        if c.percentiles[2] > 0.0 && c.percentiles[2].is_finite() {
-            process.pause_median_sec = Some(c.percentiles[2] / 1_000_000_000.0);
+        if c.percentiles[PERCENTILE_IDX_MEDIAN] > 0.0 && c.percentiles[PERCENTILE_IDX_MEDIAN].is_finite() {
+            process.pause_median_sec = Some(c.percentiles[PERCENTILE_IDX_MEDIAN] / 1_000_000_000.0);
         }
-        if c.percentiles[4] > 0.0 && c.percentiles[4].is_finite() {
-            process.pause_p95_sec = Some(c.percentiles[4] / 1_000_000_000.0);
+        if c.percentiles[PERCENTILE_IDX_P95] > 0.0 && c.percentiles[PERCENTILE_IDX_P95].is_finite() {
+            process.pause_p95_sec = Some(c.percentiles[PERCENTILE_IDX_P95] / 1_000_000_000.0);
         }
     }
     process.revision_intensity = if metrics.primary.monotonic_append_ratio.is_finite() {

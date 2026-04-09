@@ -39,9 +39,7 @@ pub fn analyze_iki_compression(iki_intervals_ns: &[f64]) -> Option<IkiCompressio
     if iki_intervals_ns.len() < MIN_SAMPLES {
         return None;
     }
-    if iki_intervals_ns.iter().any(|x| !x.is_finite()) {
-        return None;
-    }
+    crate::utils::require_all_finite(iki_intervals_ns, "iki_compression").ok()?;
 
     // Quantize to milliseconds and serialize to bytes (little-endian u16, clamped)
     let mut bytes = Vec::with_capacity(iki_intervals_ns.len() * 2);

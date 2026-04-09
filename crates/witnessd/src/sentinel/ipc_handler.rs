@@ -186,7 +186,7 @@ impl SentinelIpcHandler {
         let writersproof_dir = &self.sentinel.config.writersproof_dir;
         let vdf_params = crate::vdf::default_parameters();
 
-        let path_hash = Sha256::digest(path.to_string_lossy().as_bytes());
+        let path_hash = crate::utils::sha256_of_path(&path);
         let doc_id = hex::encode(&path_hash[0..8]);
         let chain_path = writersproof_dir
             .join("chains")
@@ -513,29 +513,19 @@ impl SentinelIpcHandler {
     }
 
     fn handle_process_score(&self, path: PathBuf) -> Result<IpcMessage, String> {
-        /// Minimum events for full residency credit.
-        const MIN_EVENTS_FOR_RESIDENCY: usize = 5;
         /// Maximum edit entropy used for sequence score normalization.
         const SEQUENCE_ENTROPY_CAP: f64 = 3.0;
         /// Weight of entropy component in sequence sub-score.
         const SEQUENCE_ENTROPY_WEIGHT: f64 = 0.5;
         /// Weight of append-ratio component in sequence sub-score.
         const SEQUENCE_APPEND_WEIGHT: f64 = 0.5;
-        /// Residency weight in composite process score.
-        const PROCESS_SCORE_WEIGHT_RESIDENCY: f64 = 0.3;
-        /// Sequence weight in composite process score.
-        const PROCESS_SCORE_WEIGHT_SEQUENCE: f64 = 0.3;
-        /// Behavioral weight in composite process score.
-        const PROCESS_SCORE_WEIGHT_BEHAVIORAL: f64 = 0.4;
-        /// Composite score at or above which the process meets threshold.
-        const PROCESS_SCORE_PASS_THRESHOLD: f64 = 0.9;
 
         let (events, metrics) = self.analyze_file(&path)?;
 
-        let residency = if events.len() >= MIN_EVENTS_FOR_RESIDENCY {
+        let residency = if events.len() >= crate::forensics::MIN_EVENTS_FOR_RESIDENCY {
             1.0
         } else {
-            events.len() as f64 / MIN_EVENTS_FOR_RESIDENCY as f64
+            events.len() as f64 / crate::forensics::MIN_EVENTS_FOR_RESIDENCY as f64
         };
         let edit_entropy = if metrics.primary.edit_entropy.is_finite() {
             metrics.primary.edit_entropy
@@ -555,16 +545,16 @@ impl SentinelIpcHandler {
         } else {
             0.0
         };
-        let composite = PROCESS_SCORE_WEIGHT_RESIDENCY * residency
-            + PROCESS_SCORE_WEIGHT_SEQUENCE * sequence
-            + PROCESS_SCORE_WEIGHT_BEHAVIORAL * behavioral;
+        let composite = crate::forensics::PROCESS_SCORE_WEIGHT_RESIDENCY * residency
+            + crate::forensics::PROCESS_SCORE_WEIGHT_SEQUENCE * sequence
+            + crate::forensics::PROCESS_SCORE_WEIGHT_BEHAVIORAL * behavioral;
 
         Ok(IpcMessage::ProcessScoreResponse {
             residency,
             sequence,
             behavioral,
             composite,
-            meets_threshold: composite >= PROCESS_SCORE_PASS_THRESHOLD,
+            meets_threshold: composite >= crate::forensics::PROCESS_SCORE_PASS_THRESHOLD,
             error: None,
         })
     }

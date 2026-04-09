@@ -55,6 +55,12 @@ impl Default for LabyrinthParams {
     }
 }
 
+pub(crate) struct RqaResult {
+    pub recurrence_rate: f64,
+    pub determinism: f64,
+    pub laminarity: f64,
+}
+
 const MIN_LABYRINTH_DATA_POINTS: usize = 50;
 
 /// Analyze keystroke timing and optional mouse trajectory via Takens' embedding.
@@ -85,8 +91,7 @@ pub fn analyze_labyrinth(
         construct_1d_embedding(&k_norm, dim, delay)
     };
 
-    let (rr, det, entropy) =
-        compute_rqa(&embed, params.recurrence_threshold, params.min_line_length);
+    let rqa = compute_rqa(&embed, params.recurrence_threshold, params.min_line_length);
     let lyapunov = estimate_lyapunov(&embed, delay);
     let corr_dim = estimate_correlation_dimension(&embed);
     let q_index = detect_quantization(&embed);
@@ -94,19 +99,19 @@ pub fn analyze_labyrinth(
     let is_valid = q_index < 0.65
         && lyapunov > 0.002
         && (1.1..4.9).contains(&corr_dim)
-        && det > LabyrinthAnalysis::MIN_DETERMINISM;
+        && rqa.determinism > LabyrinthAnalysis::MIN_DETERMINISM;
 
     Ok(LabyrinthAnalysis {
         embedding_dimension: if has_mouse { embed.dim / 3 } else { embed.dim },
         optimal_delay: delay,
         correlation_dimension: corr_dim,
         betti_numbers: estimate_betti(&embed),
-        recurrence_rate: rr,
-        determinism: det,
+        recurrence_rate: rqa.recurrence_rate,
+        determinism: rqa.determinism,
         is_valid,
         confidence: (keystroke_deltas.len() as f64 / 1000.0).min(1.0),
         lyapunov_exponent: lyapunov,
-        shannon_entropy: entropy,
+        shannon_entropy: rqa.laminarity,
         quantization_index: q_index,
     })
 }
@@ -182,7 +187,7 @@ fn construct_fused_embedding(
 // Recurrence Quantification Analysis
 // ---------------------------------------------------------------------------
 
-fn compute_rqa(embed: &FlatEmbedding, threshold: f64, min_line: usize) -> (f64, f64, f64) {
+fn compute_rqa(embed: &FlatEmbedding, threshold: f64, min_line: usize) -> RqaResult {
     let n = embed.count;
     let theil_window: usize = 10;
     let eps_sq = threshold.powi(2);
@@ -233,7 +238,7 @@ fn compute_rqa(embed: &FlatEmbedding, threshold: f64, min_line: usize) -> (f64, 
         })
         .sum();
 
-    (rr, det, entropy)
+    RqaResult { recurrence_rate: rr, determinism: det, laminarity: entropy }
 }
 
 // ---------------------------------------------------------------------------

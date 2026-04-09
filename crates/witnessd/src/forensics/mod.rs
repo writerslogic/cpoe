@@ -58,5 +58,16 @@ pub use types::*;
 pub use velocity::*;
 pub use writing_mode::{classify_writing_mode, RevisionPattern, WritingMode, WritingModeAnalysis};
 
+/// Minimum event count for full residency credit in process scoring.
+pub(crate) const MIN_EVENTS_FOR_RESIDENCY: usize = 5;
+/// Residency weight in composite process score.
+pub(crate) const PROCESS_SCORE_WEIGHT_RESIDENCY: f64 = 0.3;
+/// Sequence weight in composite process score.
+pub(crate) const PROCESS_SCORE_WEIGHT_SEQUENCE: f64 = 0.3;
+/// Behavioral weight in composite process score.
+pub(crate) const PROCESS_SCORE_WEIGHT_BEHAVIORAL: f64 = 0.4;
+/// Composite score at or above which the process meets threshold.
+pub(crate) const PROCESS_SCORE_PASS_THRESHOLD: f64 = 0.9;
+
 #[cfg(test)]
 mod tests;

@@ -15,11 +15,6 @@ pub(crate) fn calibrated_params() -> Option<Parameters> {
     })
 }
 
-const WEIGHT_RESIDENCY: f64 = 0.3;
-const WEIGHT_SEQUENCE: f64 = 0.3;
-const WEIGHT_BEHAVIORAL: f64 = 0.4;
-const COMPOSITE_PASS_THRESHOLD: f64 = 0.9;
-
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn ffi_compute_process_score(path: String) -> FfiProcessScore {
     let (_path, _store, events) = match crate::ffi::helpers::load_events_for_path(&path) {
@@ -51,10 +46,10 @@ pub fn ffi_compute_process_score(path: String) -> FfiProcessScore {
 
     let profile = crate::forensics::ForensicEngine::evaluate_authorship(&path, &events);
 
-    let residency = if events.len() >= 5 {
+    let residency = if events.len() >= crate::forensics::MIN_EVENTS_FOR_RESIDENCY {
         1.0
     } else {
-        events.len() as f64 / 5.0
+        events.len() as f64 / crate::forensics::MIN_EVENTS_FOR_RESIDENCY as f64
     };
 
     let sequence = (profile.metrics.edit_entropy.min(3.0) / 3.0 * 0.5)
@@ -66,9 +61,10 @@ pub fn ffi_compute_process_score(path: String) -> FfiProcessScore {
         0.3
     };
 
-    let composite =
-        WEIGHT_RESIDENCY * residency + WEIGHT_SEQUENCE * sequence + WEIGHT_BEHAVIORAL * behavioral;
-    let meets_threshold = composite >= COMPOSITE_PASS_THRESHOLD;
+    let composite = crate::forensics::PROCESS_SCORE_WEIGHT_RESIDENCY * residency
+        + crate::forensics::PROCESS_SCORE_WEIGHT_SEQUENCE * sequence
+        + crate::forensics::PROCESS_SCORE_WEIGHT_BEHAVIORAL * behavioral;
+    let meets_threshold = composite >= crate::forensics::PROCESS_SCORE_PASS_THRESHOLD;
 
     FfiProcessScore {
         success: true,

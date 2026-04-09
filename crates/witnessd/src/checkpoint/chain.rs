@@ -2,7 +2,6 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -78,7 +77,7 @@ impl Chain {
 
         let abs_path = fs::canonicalize(document_path.as_ref())?;
         let path_str = abs_path.to_string_lossy().to_string();
-        let path_hash = Sha256::digest(path_str.as_bytes());
+        let path_hash = crate::utils::sha256_of_path(&abs_path);
         let document_id = hex::encode(&path_hash[0..8]);
 
         Ok(Self {
@@ -347,7 +346,7 @@ impl Chain {
         writersproof_dir: impl AsRef<Path>,
     ) -> Result<PathBuf> {
         let abs_path = fs::canonicalize(document_path.as_ref())?;
-        let path_hash = Sha256::digest(abs_path.to_string_lossy().as_bytes());
+        let path_hash = crate::utils::sha256_of_path(&abs_path);
         let doc_id = hex::encode(&path_hash[0..8]);
         let chain_path = writersproof_dir
             .as_ref()
@@ -373,7 +372,7 @@ impl Chain {
 
         let mut chain = Self::new(&document_path, vdf_params)?;
         let abs_path = fs::canonicalize(document_path.as_ref())?;
-        let path_hash = Sha256::digest(abs_path.to_string_lossy().as_bytes());
+        let path_hash = crate::utils::sha256_of_path(&abs_path);
         let doc_id = hex::encode(&path_hash[0..8]);
         chain.storage_path = Some(
             writersproof_dir

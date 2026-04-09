@@ -45,9 +45,7 @@ pub fn analyze_lyapunov(iki_intervals_ns: &[f64]) -> Option<LyapunovAnalysis> {
     if iki_intervals_ns.len() < MIN_DATA_POINTS {
         return None;
     }
-    if iki_intervals_ns.iter().any(|x| !x.is_finite()) {
-        return None;
-    }
+    crate::utils::require_all_finite(iki_intervals_ns, "lyapunov").ok()?;
 
     // Normalize data
     let mean = iki_intervals_ns.iter().sum::<f64>() / iki_intervals_ns.len() as f64;

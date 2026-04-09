@@ -6,6 +6,12 @@ use super::ffi::*;
 use super::permissions::check_accessibility_permissions;
 use super::FocusInfo;
 use crate::platform::FocusMonitor;
+
+pub(crate) struct DocumentInfo {
+    pub doc_path: Option<String>,
+    pub window_title: Option<String>,
+    pub doc_title: Option<String>,
+}
 use anyhow::{anyhow, Result};
 use core_foundation::base::TCFType;
 use core_foundation::string::CFString;
@@ -48,12 +54,12 @@ pub fn get_active_focus() -> Result<FocusInfo> {
         let app_name = nsstring_to_string(name);
         let bundle_id_str = nsstring_to_string(bundle_id);
 
-        let (doc_path, doc_title, window_title) = get_document_info_for_pid(pid);
+        let doc_info = get_document_info_for_pid(pid);
 
         // Fallback: when AXDocument is unavailable (common with Electron editors),
         // infer the document path from the window title + bundle ID.
-        let doc_path = doc_path.or_else(|| {
-            window_title.as_deref().and_then(|title| {
+        let doc_path = doc_info.doc_path.or_else(|| {
+            doc_info.window_title.as_deref().and_then(|title| {
                 crate::sentinel::infer_document_path_from_title_with_bundle(
                     title,
                     Some(&bundle_id_str),
@@ -66,22 +72,22 @@ pub fn get_active_focus() -> Result<FocusInfo> {
             bundle_id: bundle_id_str,
             pid,
             doc_path,
-            doc_title,
-            window_title,
+            doc_title: doc_info.doc_title,
+            window_title: doc_info.window_title,
         })
     }
 }
 
 /// Get document information for a specific process using Accessibility API.
-fn get_document_info_for_pid(pid: i32) -> (Option<String>, Option<String>, Option<String>) {
+fn get_document_info_for_pid(pid: i32) -> DocumentInfo {
     if !check_accessibility_permissions() {
-        return (None, None, None);
+        return DocumentInfo { doc_path: None, window_title: None, doc_title: None };
     }
 
     unsafe {
         let app_element = AXUIElementCreateApplication(pid);
         if app_element.is_null() {
-            return (None, None, None);
+            return DocumentInfo { doc_path: None, window_title: None, doc_title: None };
         }
 
         let mut window_value: CFTypeRef = null_mut();
@@ -94,7 +100,7 @@ fn get_document_info_for_pid(pid: i32) -> (Option<String>, Option<String>, Optio
 
         if result != K_AX_ERROR_SUCCESS || window_value.is_null() {
             CFRelease(app_element);
-            return (None, None, None);
+            return DocumentInfo { doc_path: None, window_title: None, doc_title: None };
         }
 
         let window_element = window_value as *mut std::ffi::c_void;
@@ -110,7 +116,7 @@ fn get_document_info_for_pid(pid: i32) -> (Option<String>, Option<String>, Optio
         CFRelease(window_element);
         CFRelease(app_element);
 
-        (doc_path, doc_title, window_title)
+        DocumentInfo { doc_path, window_title, doc_title }
     }
 }
 
