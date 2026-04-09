@@ -244,7 +244,22 @@ pub fn read_sealed_document_id(path: &Path) -> Result<[u8; 32]> {
     let mut f = fs::File::open(path)?;
     let mut header = [0u8; HEADER_SIZE];
     f.read_exact(&mut header).map_err(|_| Error::checkpoint("sealed file too short for header"))?;
-    validate_sealed_header(&header)?;
+
+    // Validate header magic and version (without requiring full encrypted data)
+    if &header[0..4] != SEALED_MAGIC {
+        return Err(Error::checkpoint("invalid sealed file magic"));
+    }
+    let version = u32::from_le_bytes(
+        header[4..8]
+            .try_into()
+            .map_err(|_| Error::checkpoint("sealed file header truncated"))?,
+    );
+    if version != SEALED_VERSION_V1 && version != SEALED_VERSION {
+        return Err(Error::checkpoint(format!(
+            "unsupported sealed file version: {version}"
+        )));
+    }
+
     let mut doc_id = [0u8; 32];
     doc_id.copy_from_slice(&header[20..52]);
     Ok(doc_id)

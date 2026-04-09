@@ -37,7 +37,7 @@ fn test_declaration_verification() {
         .sign(&signing_key)
         .expect("sign");
 
-    assert!(decl.verify());
+    assert!(decl.verify().is_ok());
 }
 
 #[test]
@@ -49,7 +49,7 @@ fn test_declaration_verification_fails_with_tampered_signature() {
 
     decl.signature[0] ^= 0xFF;
 
-    assert!(!decl.verify());
+    assert!(decl.verify().is_err());
 }
 
 #[test]
@@ -61,7 +61,7 @@ fn test_declaration_verification_fails_with_tampered_title() {
 
     decl.title = "Tampered Title".to_string();
 
-    assert!(!decl.verify());
+    assert!(decl.verify().is_err());
 }
 
 #[test]
@@ -73,7 +73,7 @@ fn test_declaration_verification_fails_with_tampered_statement() {
 
     decl.statement = "Tampered Statement".to_string();
 
-    assert!(!decl.verify());
+    assert!(decl.verify().is_err());
 }
 
 #[test]
@@ -210,7 +210,7 @@ fn test_multiple_modalities() {
         .expect("sign");
 
     assert_eq!(decl.input_modalities.len(), 3);
-    assert!(decl.verify());
+    assert!(decl.verify().is_ok());
 }
 
 #[test]
@@ -274,7 +274,7 @@ fn test_declaration_encode_decode_roundtrip() {
     assert_eq!(decoded.document_hash, original.document_hash);
     assert_eq!(decoded.chain_hash, original.chain_hash);
     assert_eq!(decoded.signature, original.signature);
-    assert!(decoded.verify());
+    assert!(decoded.verify().is_ok());
 }
 
 #[test]
@@ -312,7 +312,7 @@ fn test_invalid_public_key_length() {
 
     decl.author_public_key = vec![0u8; 16];
 
-    assert!(!decl.verify());
+    assert!(decl.verify().is_err());
 }
 
 #[test]
@@ -324,7 +324,7 @@ fn test_invalid_signature_length() {
 
     decl.signature = vec![0u8; 32];
 
-    assert!(!decl.verify());
+    assert!(decl.verify().is_err());
 }
 
 #[test]
@@ -345,7 +345,7 @@ fn test_all_modality_types() {
             .with_statement("Test")
             .sign(&signing_key)
             .expect("sign");
-        assert!(decl.verify());
+        assert!(decl.verify().is_ok());
     }
 }
 
@@ -369,7 +369,7 @@ fn test_all_ai_purposes() {
             .with_statement("Test")
             .sign(&signing_key)
             .expect("sign");
-        assert!(decl.verify());
+        assert!(decl.verify().is_ok());
     }
 }
 
@@ -411,7 +411,7 @@ fn test_all_collaborator_roles() {
             .with_statement("Test")
             .sign(&signing_key)
             .expect("sign");
-        assert!(decl.verify());
+        assert!(decl.verify().is_ok());
     }
 }
 
@@ -424,14 +424,14 @@ fn test_modalities_near_100_percent() {
         .with_statement("Test")
         .sign(&signing_key)
         .expect("sign at 95%");
-    assert!(decl.verify());
+    assert!(decl.verify().is_ok());
 
     let decl = Builder::new([1u8; 32], [2u8; 32], "Test")
         .add_modality(ModalityType::Keyboard, 100.0, None)
         .with_statement("Test")
         .sign(&signing_key)
         .expect("sign at 100%");
-    assert!(decl.verify());
+    assert!(decl.verify().is_ok());
 
     let result = Builder::new([1u8; 32], [2u8; 32], "Test")
         .add_modality(ModalityType::Keyboard, 105.0, None)
@@ -443,7 +443,7 @@ fn test_modalities_near_100_percent() {
 #[test]
 fn test_declaration_jitter_from_samples() {
     let samples = vec![1000u32, 1500, 2000, 1200, 1800];
-    let jitter = DeclarationJitter::from_samples(&samples, 500, false);
+    let jitter = DeclarationJitter::from_samples(&samples, 500, false).expect("from_samples");
 
     assert_eq!(jitter.keystroke_count, 5);
     assert_eq!(jitter.duration_ms, 500);
@@ -455,8 +455,8 @@ fn test_declaration_jitter_from_samples() {
 #[test]
 fn test_declaration_jitter_hash_deterministic() {
     let samples = vec![1000u32, 1500, 2000];
-    let jitter1 = DeclarationJitter::from_samples(&samples, 300, false);
-    let jitter2 = DeclarationJitter::from_samples(&samples, 300, false);
+    let jitter1 = DeclarationJitter::from_samples(&samples, 300, false).expect("from_samples");
+    let jitter2 = DeclarationJitter::from_samples(&samples, 300, false).expect("from_samples");
 
     assert_eq!(jitter1.jitter_hash, jitter2.jitter_hash);
 }
@@ -465,8 +465,8 @@ fn test_declaration_jitter_hash_deterministic() {
 fn test_declaration_jitter_hash_changes_with_samples() {
     let samples1 = vec![1000u32, 1500, 2000];
     let samples2 = vec![1000u32, 1500, 2001];
-    let jitter1 = DeclarationJitter::from_samples(&samples1, 300, false);
-    let jitter2 = DeclarationJitter::from_samples(&samples2, 300, false);
+    let jitter1 = DeclarationJitter::from_samples(&samples1, 300, false).expect("from_samples");
+    let jitter2 = DeclarationJitter::from_samples(&samples2, 300, false).expect("from_samples");
 
     assert_ne!(jitter1.jitter_hash, jitter2.jitter_hash);
 }
@@ -474,7 +474,7 @@ fn test_declaration_jitter_hash_changes_with_samples() {
 #[test]
 fn test_declaration_with_jitter_seal() {
     let signing_key = test_signing_key();
-    let jitter = DeclarationJitter::from_samples(&[1000u32; 10], 1000, true);
+    let jitter = DeclarationJitter::from_samples(&[1000u32; 10], 1000, true).expect("from_samples");
 
     let decl = no_ai_declaration([1u8; 32], [2u8; 32], "Test", "I wrote this.")
         .with_jitter_seal(jitter.clone())
@@ -482,7 +482,7 @@ fn test_declaration_with_jitter_seal() {
         .expect("sign");
 
     assert!(decl.has_jitter_seal());
-    assert!(decl.verify());
+    assert!(decl.verify().is_ok());
 
     let sealed = decl.jitter_sealed.as_ref().unwrap();
     assert_eq!(sealed.keystroke_count, 10);
@@ -492,8 +492,8 @@ fn test_declaration_with_jitter_seal() {
 #[test]
 fn test_declaration_jitter_seal_in_signature() {
     let signing_key = test_signing_key();
-    let jitter1 = DeclarationJitter::from_samples(&[1000u32; 10], 1000, false);
-    let jitter2 = DeclarationJitter::from_samples(&[2000u32; 10], 1000, false);
+    let jitter1 = DeclarationJitter::from_samples(&[1000u32; 10], 1000, false).expect("from_samples");
+    let jitter2 = DeclarationJitter::from_samples(&[2000u32; 10], 1000, false).expect("from_samples");
 
     let decl1 = no_ai_declaration([1u8; 32], [2u8; 32], "Test", "Statement")
         .with_jitter_seal(jitter1)
@@ -511,7 +511,7 @@ fn test_declaration_jitter_seal_in_signature() {
 #[test]
 fn test_declaration_jitter_seal_tampering_detected() {
     let signing_key = test_signing_key();
-    let jitter = DeclarationJitter::from_samples(&[1000u32; 10], 1000, false);
+    let jitter = DeclarationJitter::from_samples(&[1000u32; 10], 1000, false).expect("from_samples");
 
     let mut decl = no_ai_declaration([1u8; 32], [2u8; 32], "Test", "Statement")
         .with_jitter_seal(jitter)
@@ -520,7 +520,7 @@ fn test_declaration_jitter_seal_tampering_detected() {
 
     decl.jitter_sealed.as_mut().unwrap().jitter_hash = [0xFFu8; 32];
 
-    assert!(!decl.verify());
+    assert!(decl.verify().is_err());
 }
 
 #[test]
@@ -532,7 +532,7 @@ fn test_declaration_without_jitter_seal() {
 
     assert!(!decl.has_jitter_seal());
     assert!(decl.jitter_sealed.is_none());
-    assert!(decl.verify());
+    assert!(decl.verify().is_ok());
 }
 
 #[test]
@@ -549,7 +549,7 @@ fn test_declaration_jitter_encode_decode_roundtrip() {
     let decoded = Declaration::decode(&encoded).expect("decode");
 
     assert!(decoded.has_jitter_seal());
-    assert!(decoded.verify());
+    assert!(decoded.verify().is_ok());
 
     let sealed = decoded.jitter_sealed.unwrap();
     assert_eq!(sealed.jitter_hash, [0xABu8; 32]);

@@ -8,6 +8,7 @@ use crate::store::SecureEvent;
 use crate::utils::now_ns;
 use crate::MutexRecover;
 use anyhow::{anyhow, Result};
+use zeroize::Zeroizing;
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use rand::RngCore;
 use std::fs;
@@ -271,15 +272,15 @@ pub(super) fn load_or_create_device_identity(data_dir: &Path) -> Result<([u8; 16
     Ok((device_id, machine_id))
 }
 
-pub(super) fn load_or_create_hmac_key(data_dir: &Path) -> Result<Vec<u8>> {
+pub(super) fn load_or_create_hmac_key(data_dir: &Path) -> Result<Zeroizing<Vec<u8>>> {
     let path = data_dir.join("hmac.key");
 
     if let Ok(Some(key)) = SecureStorage::load_hmac_key() {
-        return Ok(key.to_vec());
+        return Ok(key);
     }
 
     if path.exists() {
-        let key = fs::read(&path)?;
+        let key = Zeroizing::new(fs::read(&path)?);
         if key.len() == 32 {
             if let Err(e) = SecureStorage::save_hmac_key(&key) {
                 log::warn!("Failed to migrate HMAC key to secure storage: {e}");
@@ -309,12 +310,12 @@ pub(super) fn load_or_create_hmac_key(data_dir: &Path) -> Result<Vec<u8>> {
         ));
     }
 
-    let mut key = vec![0u8; 32];
+    let mut key = Zeroizing::new(vec![0u8; 32]);
     rand::rng().fill_bytes(&mut key);
 
     if let Err(e) = SecureStorage::save_hmac_key(&key) {
         log::warn!("Secure storage unavailable ({e}), using file-based storage");
-        fs::write(&path, &key)?;
+        fs::write(&path, key.as_slice())?;
         if let Err(e) = crate::crypto::restrict_permissions(&path, 0o600) {
             log::warn!("Failed to set HMAC key permissions: {}", e);
         }

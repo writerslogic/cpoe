@@ -44,6 +44,7 @@ serde_json = "1.0.135"
 scopeguard = "1"
 async-trait = "0.1"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "query"] }
+url = "2"
 log = "0.4"
 getrandom = "0.2"
 ripemd = "0.1"

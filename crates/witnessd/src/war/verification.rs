@@ -465,7 +465,7 @@ pub fn verify_vdf_proofs(evidence: &Packet) -> CheckResult {
 pub fn verify_declaration(evidence: &Packet) -> CheckResult {
     match &evidence.declaration {
         Some(decl) => {
-            if decl.verify() {
+            if decl.verify().is_ok() {
                 CheckResult {
                     name: "declaration".to_string(),
                     passed: true,

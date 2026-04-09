@@ -33,7 +33,7 @@ use super::HARDWARE_ENTROPY_RATIO_THRESHOLD;
 impl Builder {
     /// Attach a signed author declaration. Fails silently if signature is invalid.
     pub fn with_declaration(mut self, decl: &declaration::Declaration) -> Self {
-        if !decl.verify() {
+        if decl.verify().is_err() {
             self.errors
                 .push("declaration signature invalid".to_string());
             return self;

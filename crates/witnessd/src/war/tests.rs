@@ -192,7 +192,8 @@ fn test_block_with_jitter_seal_is_v1_1() {
     let latest = chain.latest().expect("latest");
     let signing_key = test_signing_key();
 
-    let jitter = declaration::DeclarationJitter::from_samples(&[1000u32; 10], 1000, false);
+    let jitter = declaration::DeclarationJitter::from_samples(&[1000u32; 10], 1000, false)
+        .expect("from_samples");
     let decl =
         declaration::no_ai_declaration(latest.content_hash, latest.hash, "Test", "Statement")
             .with_jitter_seal(jitter)

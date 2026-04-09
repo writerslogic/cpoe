@@ -2,7 +2,7 @@
 
 use rusqlite::Connection;
 use std::path::Path;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 pub mod access_log;
 pub mod baselines;
@@ -24,13 +24,13 @@ pub(crate) const BUSY_TIMEOUT_MS: u32 = 5000;
 /// HMAC-integrity-protected SQLite event store with hash chaining.
 pub struct SecureStore {
     pub(crate) conn: Connection,
-    pub(crate) hmac_key: Vec<u8>,
+    pub(crate) hmac_key: Zeroizing<Vec<u8>>,
     pub(crate) last_hash: [u8; 32],
 }
 
 impl SecureStore {
     /// Open or create a secure store at `path`, initializing schema and verifying integrity.
-    pub fn open<P: AsRef<Path>>(path: P, hmac_key: Vec<u8>) -> anyhow::Result<Self> {
+    pub fn open<P: AsRef<Path>>(path: P, hmac_key: Zeroizing<Vec<u8>>) -> anyhow::Result<Self> {
         if hmac_key.len() != 32 {
             anyhow::bail!("HMAC key must be exactly 32 bytes, got {}", hmac_key.len());
         }
@@ -69,11 +69,6 @@ pub fn open_store_with_signing_key(
     let mut key_bytes = signing_key.to_bytes();
     let hmac_key = crate::crypto::derive_hmac_key(&key_bytes);
     key_bytes.zeroize();
-    SecureStore::open(db_path, hmac_key.to_vec())
+    SecureStore::open(db_path, hmac_key)
 }
 
-impl Drop for SecureStore {
-    fn drop(&mut self) {
-        self.hmac_key.zeroize();
-    }
-}

@@ -385,6 +385,10 @@ fn estimate_betti(embed: &FlatEmbedding) -> [usize; 3] {
     if dists.is_empty() {
         return [1, 0, 0];
     }
+    dists.retain(|d| d.is_finite());
+    if dists.is_empty() {
+        return [1, 0, 0];
+    }
     dists.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let median = dists[dists.len() / 2];
 

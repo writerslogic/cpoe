@@ -76,8 +76,10 @@ pub fn get_active_focus() -> Result<FocusInfo> {
             return Err(anyhow!("No active window"));
         }
 
-        let mut pid = 0;
-        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        let mut pid = 0u32;
+        if GetWindowThreadProcessId(hwnd, Some(&mut pid)) == 0 {
+            pid = 0;
+        }
         let app_path = get_process_path(pid)?;
         let app_name = std::path::Path::new(&app_path)
             .file_name()
@@ -193,16 +195,14 @@ impl KeystrokeMonitor {
                 let mut msg = MSG::default();
                 while GetMessageW(&mut msg, None, 0, 0).into() {}
             });
-            // Wait briefly until the pump thread publishes its thread ID.
-            let mut wait_iters = 0u32;
+            let deadline = std::time::Instant::now();
             while tid.load(Ordering::Acquire) == 0 {
-                std::thread::sleep(std::time::Duration::from_millis(1));
-                wait_iters += 1;
-                if wait_iters >= 5000 {
+                if deadline.elapsed() >= std::time::Duration::from_secs(5) {
                     *GLOBAL_SESSION.lock_recover() = None;
                     MONITOR_ACTIVE.store(false, Ordering::SeqCst);
                     return Err(anyhow!("Pump thread failed to start within 5s").into());
                 }
+                std::thread::sleep(std::time::Duration::from_millis(10));
             }
             Ok(Self {
                 session,
@@ -218,8 +218,9 @@ impl Drop for KeystrokeMonitor {
     fn drop(&mut self) {
         unsafe {
             let _ = UnhookWindowsHookEx(HHOOK(self._hook as *mut _));
-            // Signal the message pump thread to exit and join it.
-            let _ = PostThreadMessageW(self.pump_thread_id, WM_QUIT, WPARAM(0), LPARAM(0));
+            if !PostThreadMessageW(self.pump_thread_id, WM_QUIT, WPARAM(0), LPARAM(0)).as_bool() {
+                log::warn!("PostThreadMessageW failed for KeystrokeMonitor pump thread");
+            }
         }
         if let Some(handle) = self.pump_thread.take() {
             let _ = handle.join();
@@ -357,7 +358,9 @@ impl KeystrokeCapture for WindowsKeystrokeCapture {
         let tid = self.pump_thread_id.load(Ordering::SeqCst);
         if tid != 0 {
             unsafe {
-                let _ = PostThreadMessageW(tid, WM_QUIT, WPARAM(0), LPARAM(0));
+                if !PostThreadMessageW(tid, WM_QUIT, WPARAM(0), LPARAM(0)).as_bool() {
+                    log::warn!("PostThreadMessageW failed for keyboard pump thread {tid}");
+                }
             }
         }
         if let Some(handle) = self.pump_thread.take() {
@@ -541,12 +544,12 @@ impl FocusMonitor for WindowsFocusMonitor {
     }
 }
 
-// Lock ordering: MOUSE_GLOBAL_SENDER, MOUSE_GLOBAL_IDLE_STATS, and
-// MOUSE_LAST_POSITION are locked sequentially (never nested). In the hook
-// callback, MOUSE_LAST_POSITION is scoped and dropped before the others.
 static MOUSE_GLOBAL_SENDER: Mutex<Option<mpsc::Sender<MouseEvent>>> = Mutex::new(None);
 static MOUSE_GLOBAL_IDLE_STATS: Mutex<Option<Arc<RwLock<MouseIdleStats>>>> = Mutex::new(None);
-static MOUSE_LAST_POSITION: Mutex<(f64, f64)> = Mutex::new((0.0, 0.0));
+// H-047: Use atomics instead of Mutex for last mouse position; Relaxed ordering
+// is sufficient since we only need the delta, not exact cross-thread consistency.
+static MOUSE_LAST_X: AtomicI64 = AtomicI64::new(0);
+static MOUSE_LAST_Y: AtomicI64 = AtomicI64::new(0);
 /// Timestamp (ms since epoch) of the last keystroke, used to determine if
 /// typing is active within a 500ms window.
 static MOUSE_LAST_KEYSTROKE_TIME: AtomicI64 = AtomicI64::new(0);
@@ -652,7 +655,9 @@ impl MouseCapture for WindowsMouseCapture {
         let tid = self.pump_thread_id.load(Ordering::SeqCst);
         if tid != 0 {
             unsafe {
-                let _ = PostThreadMessageW(tid, WM_QUIT, WPARAM(0), LPARAM(0));
+                if !PostThreadMessageW(tid, WM_QUIT, WPARAM(0), LPARAM(0)).as_bool() {
+                    log::warn!("PostThreadMessageW failed for mouse pump thread {tid}");
+                }
             }
         }
         if let Some(handle) = self.pump_thread.take() {
@@ -720,11 +725,11 @@ unsafe extern "system" fn mouse_capture_hook(code: i32, wparam: WPARAM, lparam: 
         let y = mouse.pt.y as f64;
 
         let (dx, dy) = {
-            let mut pos = MOUSE_LAST_POSITION.lock_recover();
-            let dx = x - pos.0;
-            let dy = y - pos.1;
-            *pos = (x, y);
-            (dx, dy)
+            let prev_x = f64::from_bits(MOUSE_LAST_X.load(Ordering::Relaxed) as u64);
+            let prev_y = f64::from_bits(MOUSE_LAST_Y.load(Ordering::Relaxed) as u64);
+            MOUSE_LAST_X.store(x.to_bits() as i64, Ordering::Relaxed);
+            MOUSE_LAST_Y.store(y.to_bits() as i64, Ordering::Relaxed);
+            (x - prev_x, y - prev_y)
         };
 
         let event = MouseEvent {
@@ -739,12 +744,13 @@ unsafe extern "system" fn mouse_capture_hook(code: i32, wparam: WPARAM, lparam: 
         };
 
         if event.is_micro_movement() && !kb_active {
-            let idle_stats = match MOUSE_GLOBAL_IDLE_STATS.lock() {
+            let idle_stats = match MOUSE_GLOBAL_IDLE_STATS.try_lock() {
                 Ok(g) => g.clone(),
-                Err(poisoned) => {
+                Err(std::sync::TryLockError::Poisoned(poisoned)) => {
                     log::warn!("MOUSE_GLOBAL_IDLE_STATS mutex poisoned: {}", poisoned);
                     poisoned.into_inner().clone()
                 }
+                Err(std::sync::TryLockError::WouldBlock) => None,
             };
             if let Some(stats) = idle_stats {
                 if let Ok(mut s) = stats.write() {
@@ -753,12 +759,13 @@ unsafe extern "system" fn mouse_capture_hook(code: i32, wparam: WPARAM, lparam: 
             }
         }
 
-        let sender = match MOUSE_GLOBAL_SENDER.lock() {
+        let sender = match MOUSE_GLOBAL_SENDER.try_lock() {
             Ok(g) => g.clone(),
-            Err(poisoned) => {
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => {
                 log::warn!("MOUSE_GLOBAL_SENDER mutex poisoned: {}", poisoned);
                 poisoned.into_inner().clone()
             }
+            Err(std::sync::TryLockError::WouldBlock) => None,
         };
         if let Some(sender) = sender {
             let _ = sender.send(event);

@@ -54,6 +54,14 @@ impl IkiDistribution {
             return Self::default();
         }
 
+        // M-045: filter NaN/inf before any statistical computation or sort
+        let mut intervals = intervals.to_vec();
+        intervals.retain(|x| x.is_finite());
+        if intervals.is_empty() {
+            return Self::default();
+        }
+        let intervals = intervals.as_slice();
+
         let n = intervals.len() as f64;
         let mean = intervals.iter().sum::<f64>() / n;
         let variance = if n > 1.0 {
@@ -63,8 +71,24 @@ impl IkiDistribution {
         };
         let std_dev = if variance > 0.0 { variance.sqrt() } else { 0.0 };
 
-        let skewness = stats::skewness(intervals, mean, std_dev);
-        let kurtosis = stats::kurtosis(intervals, mean, std_dev);
+        let skewness = {
+            let s = stats::skewness(intervals, mean, std_dev);
+            if s.is_finite() {
+                s
+            } else {
+                log::warn!("IkiDistribution::from_intervals: skewness is non-finite, substituting 0.0");
+                0.0
+            }
+        };
+        let kurtosis = {
+            let k = stats::kurtosis(intervals, mean, std_dev);
+            if k.is_finite() {
+                k
+            } else {
+                log::warn!("IkiDistribution::from_intervals: kurtosis is non-finite, substituting 0.0");
+                0.0
+            }
+        };
 
         // O(n) percentile selection via select_nth_unstable
         let percentiles = {
@@ -123,6 +147,11 @@ impl WeightedDistribution for IkiDistribution {
         let mean_sim = 1.0 - (self.mean - other.mean).abs() / (self.mean + other.mean + 1.0);
         let std_sim =
             1.0 - (self.std_dev - other.std_dev).abs() / (self.std_dev + other.std_dev + 1.0);
+
+        // H-062: guard against NaN propagation into the weighted sum
+        if !hist_sim.is_finite() || !mean_sim.is_finite() || !std_sim.is_finite() {
+            return 0.5; // inconclusive
+        }
 
         (hist_sim * 0.6 + mean_sim * 0.2 + std_sim * 0.2).clamp(0.0, 1.0)
     }

@@ -4,8 +4,8 @@ use super::*;
 use crate::DateTimeNanosExt;
 use tempfile::TempDir;
 
-fn test_hmac_key() -> Vec<u8> {
-    vec![0x42u8; 32]
+fn test_hmac_key() -> zeroize::Zeroizing<Vec<u8>> {
+    zeroize::Zeroizing::new(vec![0x42u8; 32])
 }
 
 fn create_test_event(file_path: &str, content_hash: [u8; 32]) -> SecureEvent {
@@ -196,7 +196,7 @@ fn test_wrong_hmac_key_fails_verification() {
         store.add_secure_event(&mut event).expect("insert event");
     }
 
-    let wrong_key = vec![0xFFu8; 32];
+    let wrong_key = zeroize::Zeroizing::new(vec![0xFFu8; 32]);
     let result = SecureStore::open(&db_path, wrong_key);
     assert!(result.is_err());
 }

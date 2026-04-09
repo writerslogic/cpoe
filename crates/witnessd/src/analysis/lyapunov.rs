@@ -190,6 +190,9 @@ fn linear_regression(y: &[f64]) -> (f64, f64) {
     }
 
     let slope = (n * sum_xy - sum_x * sum_y) / denom;
+    if !slope.is_finite() {
+        return (0.0, sum_y / n);
+    }
     let intercept = (sum_y - slope * sum_x) / n;
     (slope, intercept)
 }

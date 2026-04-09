@@ -52,11 +52,14 @@ impl AppraisalPolicy {
                     .sum();
                 weighted_sum / total_weight
             }
-            TrustComputation::MinimumOfFactors => self
-                .factors
-                .iter()
-                .map(|f| f.normalized_score)
-                .fold(f32::INFINITY, f32::min),
+            TrustComputation::MinimumOfFactors => {
+                let min = self
+                    .factors
+                    .iter()
+                    .map(|f| f.normalized_score)
+                    .fold(f32::INFINITY, f32::min);
+                if min.is_finite() { min } else { 0.0 }
+            }
             TrustComputation::GeometricMean => {
                 if self.factors.is_empty() {
                     return 0.0;
@@ -69,7 +72,7 @@ impl AppraisalPolicy {
                 product.powf(1.0 / self.factors.len() as f32)
             }
             TrustComputation::CustomFormula => {
-                // Fallback to weighted average; real custom formulas are external
+                log::warn!("CustomFormula not implemented; falling back to WeightedAverage");
                 let total_weight: f32 = self.factors.iter().map(|f| f.weight).sum();
                 if total_weight == 0.0 {
                     return 0.0;
@@ -81,6 +84,25 @@ impl AppraisalPolicy {
                     / total_weight
             }
         }
+    }
+
+    /// Validate that all factor-name references in thresholds exist in the factors list.
+    pub fn validate(&self) -> Result<(), String> {
+        use super::types::ThresholdType;
+        for t in &self.thresholds {
+            match t.threshold_type {
+                ThresholdType::MinimumFactor | ThresholdType::RequiredFactor => {
+                    if !self.factors.iter().any(|f| f.factor_name == t.threshold_name) {
+                        return Err(format!(
+                            "threshold '{}' references unknown factor name",
+                            t.threshold_name
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
     }
 
     /// Return `true` if all thresholds are met.
@@ -96,6 +118,9 @@ impl AppraisalPolicy {
     /// Score all factors against `metrics` and evaluate thresholds.
     /// Returns a new policy instance with populated scores.
     pub fn evaluate(&self, metrics: &EvidenceMetrics) -> Self {
+        if let Err(e) = self.validate() {
+            log::error!("TrustPolicy validation failed: {}", e);
+        }
         let mut policy = self.clone();
 
         for factor in &mut policy.factors {

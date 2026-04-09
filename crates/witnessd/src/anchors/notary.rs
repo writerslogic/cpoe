@@ -13,12 +13,23 @@ pub struct NotaryProvider {
 
 impl NotaryProvider {
     /// Create a provider with the given endpoint and optional API key.
-    pub fn new(endpoint: String, api_key: Option<String>) -> Self {
-        Self {
+    pub fn new(endpoint: String, api_key: Option<String>) -> Result<Self, AnchorError> {
+        let parsed = url::Url::parse(&endpoint)
+            .map_err(|e| AnchorError::Unavailable(format!("invalid endpoint URL: {e}")))?;
+        if parsed.scheme() != "https" {
+            return Err(AnchorError::Unavailable(
+                "notary endpoint must use HTTPS".into(),
+            ));
+        }
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|e| AnchorError::Network(format!("client init: {e}")))?;
+        Ok(Self {
             endpoint,
             api_key,
-            client: reqwest::Client::new(),
-        }
+            client,
+        })
     }
 
     /// Create from `NOTARY_ENDPOINT` and optional `NOTARY_API_KEY` env vars.
@@ -26,7 +37,7 @@ impl NotaryProvider {
         let endpoint = std::env::var("NOTARY_ENDPOINT")
             .map_err(|_| AnchorError::Unavailable("NOTARY_ENDPOINT not set".into()))?;
         let api_key = std::env::var("NOTARY_API_KEY").ok();
-        Ok(Self::new(endpoint, api_key))
+        Self::new(endpoint, api_key)
     }
 
     async fn post_json(
@@ -34,11 +45,19 @@ impl NotaryProvider {
         path: &str,
         body: serde_json::Value,
     ) -> Result<serde_json::Value, AnchorError> {
-        let url = format!(
-            "{}/{}",
-            self.endpoint.trim_end_matches('/'),
-            path.trim_start_matches('/')
-        );
+        let base = url::Url::parse(&self.endpoint)
+            .map_err(|e| AnchorError::Unavailable(format!("invalid endpoint URL: {e}")))?;
+        let base = if base.path().ends_with('/') {
+            base
+        } else {
+            let mut s = base.to_string();
+            s.push('/');
+            url::Url::parse(&s)
+                .map_err(|e| AnchorError::Unavailable(format!("invalid endpoint URL: {e}")))?
+        };
+        let url = base
+            .join(path.trim_start_matches('/'))
+            .map_err(|e| AnchorError::Unavailable(format!("invalid path: {e}")))?;
         let mut req = self.client.post(url).json(&body);
         if let Some(ref key) = self.api_key {
             req = req.bearer_auth(key);
@@ -55,6 +74,13 @@ impl NotaryProvider {
                     "response Content-Length exceeds 10 MB limit".into(),
                 ));
             }
+        }
+
+        let status = response.status();
+        if !status.is_success() {
+            return Err(AnchorError::Network(format!(
+                "notary request failed: HTTP {status}"
+            )));
         }
 
         let bytes = response
@@ -96,7 +122,13 @@ impl AnchorProvider for NotaryProvider {
             .post_json("submit", serde_json::json!({"hash": hex::encode(hash)}))
             .await?;
 
-        let id = response.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        let id = response
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or_else(|| {
+                log::warn!("notary response missing 'id' field");
+                ""
+            });
         let proof_data = match response.get("proof").and_then(|v| v.as_str()) {
             Some(s) => base64::engine::general_purpose::STANDARD
                 .decode(s)

@@ -13,28 +13,27 @@ use super::types::{AiExtent, Declaration, DeclarationJitter, DeclarationSummary}
 
 impl Declaration {
     /// Verify the Ed25519 signature against the signing payload.
-    pub fn verify(&self) -> bool {
-        if self.author_public_key.len() != 32 || self.signature.len() != 64 {
-            return false;
+    pub fn verify(&self) -> Result<(), String> {
+        let pk_len = self.author_public_key.len();
+        if pk_len != 32 {
+            return Err(format!("invalid public key length: expected 32, got {pk_len}"));
+        }
+        let sig_len = self.signature.len();
+        if sig_len != 64 {
+            return Err(format!("invalid signature length: expected 64, got {sig_len}"));
         }
 
-        let pubkey_bytes: [u8; 32] = match self.author_public_key.as_slice().try_into() {
-            Ok(bytes) => bytes,
-            Err(_) => return false,
-        };
-        let sig_bytes: [u8; 64] = match self.signature.as_slice().try_into() {
-            Ok(bytes) => bytes,
-            Err(_) => return false,
-        };
+        let pubkey_bytes: [u8; 32] = self.author_public_key.as_slice().try_into()
+            .map_err(|_| format!("invalid public key length: expected 32, got {pk_len}"))?;
+        let sig_bytes: [u8; 64] = self.signature.as_slice().try_into()
+            .map_err(|_| format!("invalid signature length: expected 64, got {sig_len}"))?;
 
-        let verifying_key = match VerifyingKey::from_bytes(&pubkey_bytes) {
-            Ok(key) => key,
-            Err(_) => return false,
-        };
+        let verifying_key = VerifyingKey::from_bytes(&pubkey_bytes)
+            .map_err(|_| "public key is not a valid Ed25519 key".to_string())?;
         let signature = Signature::from_bytes(&sig_bytes);
         verifying_key
             .verify(&self.signing_payload(), &signature)
-            .is_ok()
+            .map_err(|_| "signature verification failed".to_string())
     }
 
     /// Return true if any AI tools are declared.
@@ -73,13 +72,14 @@ impl Declaration {
             ai_tools: tools,
             max_ai_extent: ai_extent_str(&self.max_ai_extent()).to_string(),
             collaborators: self.collaborators.len(),
-            signature_valid: self.verify(),
+            signature_valid: self.verify().is_ok(),
         }
     }
 
+    /// Signing payload v3: length-prefixed strings, millis timestamp,
+    /// f64::to_bits for floating-point determinism, None/Some discriminants.
     pub(crate) fn signing_payload(&self) -> Vec<u8> {
         let mut hasher = Sha256::new();
-        // v3: length-prefixed strings, millis timestamp, f64::to_bits, None/Some discriminants
         hasher.update(b"witnessd-declaration-v3");
         hasher.update(self.document_hash);
         hasher.update(self.chain_hash);
@@ -125,6 +125,8 @@ impl Declaration {
 
         // Include jitter seal in signing payload (WAR/1.2)
         // Discriminant ensures None vs Some produce distinct hashes.
+        // None = jitter not attempted OR measurement failed.
+        // Callers should check JitterStatus for disambiguation.
         match &self.jitter_sealed {
             Some(jitter) => {
                 hasher.update([1u8]);
@@ -156,8 +158,15 @@ impl Declaration {
 
 impl DeclarationJitter {
     /// Build from raw jitter timing samples (microseconds).
-    pub fn from_samples(jitter_samples: &[u32], duration_ms: u64, hardware_sealed: bool) -> Self {
+    pub fn from_samples(
+        jitter_samples: &[u32],
+        duration_ms: u64,
+        hardware_sealed: bool,
+    ) -> Result<Self, &'static str> {
         let keystroke_count = jitter_samples.len() as u64;
+        if keystroke_count == 0 {
+            return Err("zero keystroke count");
+        }
 
         let mut hasher = Sha256::new();
         hasher.update(b"witnessd-declaration-jitter-v1");
@@ -169,10 +178,8 @@ impl DeclarationJitter {
 
         let avg_interval_ms = if keystroke_count > 1 {
             duration_ms as f64 / (keystroke_count - 1) as f64
-        } else if keystroke_count == 1 {
-            duration_ms as f64
         } else {
-            0.0
+            duration_ms as f64
         };
 
         // Entropy estimate: sum of clamped log2 of each sample value. This is a
@@ -189,14 +196,14 @@ impl DeclarationJitter {
             })
             .sum();
 
-        Self {
+        Ok(Self {
             jitter_hash,
             keystroke_count,
             duration_ms,
             avg_interval_ms,
             entropy_bits,
             hardware_sealed,
-        }
+        })
     }
 
     /// Create jitter evidence from pre-computed values.

@@ -146,7 +146,7 @@ impl Packet {
         }
 
         if let Some(decl) = &self.declaration {
-            if !decl.verify() {
+            if decl.verify().is_err() {
                 return Err(Error::evidence("declaration signature invalid"));
             }
         }

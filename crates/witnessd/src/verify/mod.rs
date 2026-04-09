@@ -129,7 +129,7 @@ pub fn full_verify(packet: &Packet, opts: &VerifyOptions) -> FullVerificationRes
 
     // Declaration verification
     let declaration_valid = if let Some(decl) = &packet.declaration {
-        if !decl.verify() {
+        if decl.verify().is_err() {
             warnings.push("Declaration signature is invalid".to_string());
             false
         } else {

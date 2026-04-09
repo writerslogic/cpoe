@@ -3,7 +3,6 @@
 use super::*;
 use crate::config::SentinelConfig;
 use crate::crypto::ObfuscatedString;
-use ed25519_dalek::SigningKey;
 use std::collections::HashMap;
 use std::fs;
 use std::sync::{Arc, RwLock};

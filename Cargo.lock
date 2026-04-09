@@ -6512,6 +6512,7 @@ dependencies = [
  "tss-esapi",
  "typeshare",
  "uniffi",
+ "url",
  "urlencoding",
  "uuid",
  "windows 0.59.0",
