@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::declaration::{AiExtent, Declaration};
 use crate::error::{Error, Result};
 use crate::war::ear::EarToken;
+use ed25519_dalek::Signer as _;
 
 /// CAWG assertion label for identity assertions.
 pub const IDENTITY_LABEL: &str = "cawg.identity";
@@ -39,13 +40,13 @@ pub struct CawgIdentityAssertion {
     /// The signer payload containing credential and assertion type.
     pub signer_payload: CawgSignerPayload,
     /// Padding for JUMBF alignment (typically empty).
-    #[serde(with = "serde_bytes_vec", default)]
+    #[serde(with = "serde_bytes", default)]
     pub pad1: Vec<u8>,
     /// COSE signature over the signer payload.
-    #[serde(with = "serde_bytes_vec", default)]
+    #[serde(with = "serde_bytes", default)]
     pub signature: Vec<u8>,
     /// Padding for JUMBF alignment (typically empty).
-    #[serde(with = "serde_bytes_vec", default)]
+    #[serde(with = "serde_bytes", default)]
     pub pad2: Vec<u8>,
 }
 
@@ -134,6 +135,35 @@ pub fn to_cawg_identity(ear: &EarToken, author_did: &str) -> Result<CawgIdentity
         signature: Vec::new(),
         pad2: Vec::new(),
     })
+}
+
+impl CawgIdentityAssertion {
+    /// Sign the signer payload with the given Ed25519 key, populating `self.signature`.
+    pub fn sign(&mut self, signing_key: &ed25519_dalek::SigningKey) -> Result<()> {
+        let payload_bytes = serde_json::to_vec(&self.signer_payload)
+            .map_err(|e| Error::evidence(format!("CAWG payload serialization failed: {e}")))?;
+        let sig = signing_key.sign(&payload_bytes);
+        self.signature = sig.to_bytes().to_vec();
+        Ok(())
+    }
+
+    /// Verify the signature against the provided public key.
+    pub fn verify(&self, verifying_key: &ed25519_dalek::VerifyingKey) -> Result<()> {
+        if self.signature.is_empty() {
+            return Err(Error::evidence("CAWG identity assertion is unsigned"));
+        }
+        let sig_bytes: [u8; 64] = self
+            .signature
+            .as_slice()
+            .try_into()
+            .map_err(|_| Error::evidence("CAWG signature must be 64 bytes"))?;
+        let sig = ed25519_dalek::Signature::from_bytes(&sig_bytes);
+        let payload_bytes = serde_json::to_vec(&self.signer_payload)
+            .map_err(|e| Error::evidence(format!("CAWG payload serialization failed: {e}")))?;
+        verifying_key
+            .verify_strict(&payload_bytes, &sig)
+            .map_err(|e| Error::evidence(format!("CAWG signature verification failed: {e}")))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -229,19 +259,6 @@ pub fn to_cawg_tdm(decl: &Declaration) -> CawgTdmAssertion {
     CawgTdmAssertion {
         label: TDM_LABEL.to_string(),
         entries,
-    }
-}
-
-/// Serde helper for `Vec<u8>` fields that should serialize as byte arrays.
-mod serde_bytes_vec {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    pub fn serialize<S: Serializer>(bytes: &Vec<u8>, s: S) -> Result<S::Ok, S::Error> {
-        bytes.serialize(s)
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Error> {
-        Vec::<u8>::deserialize(d)
     }
 }
 
@@ -499,5 +516,29 @@ mod tests {
             gen_training.permission, "allowed",
             "moderate AI content should allow generative training"
         );
+    }
+
+    #[test]
+    fn test_cawg_identity_sign_verify_roundtrip() {
+        let ear = make_ear();
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        let vk = sk.verifying_key();
+
+        let mut assertion =
+            to_cawg_identity(&ear, "did:key:z6MkSignTest").expect("identity assertion");
+        assert!(assertion.signature.is_empty());
+
+        assertion.sign(&sk).expect("sign");
+        assert!(!assertion.signature.is_empty());
+        assertion.verify(&vk).expect("verify");
+    }
+
+    #[test]
+    fn test_cawg_identity_verify_rejects_unsigned() {
+        let ear = make_ear();
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        let assertion =
+            to_cawg_identity(&ear, "did:key:z6MkNoSig").expect("identity assertion");
+        assert!(assertion.verify(&sk.verifying_key()).is_err());
     }
 }

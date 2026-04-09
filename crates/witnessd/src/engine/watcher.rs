@@ -2,6 +2,7 @@
 
 //! File watcher and event processing logic.
 
+// CONTENT_HASH_MAP_MAX_ENTRIES = 1000, RENAME_WINDOW_NS = 60s in nanoseconds.
 use super::{EngineInner, CONTENT_HASH_MAP_MAX_ENTRIES, RENAME_WINDOW_NS};
 use crate::identity::SecureStorage;
 use crate::store::SecureEvent;
@@ -75,15 +76,6 @@ pub(super) fn resolve_project_path(path: &Path) -> PathBuf {
 }
 
 fn process_file_event(inner: &Arc<EngineInner>, path: &Path) -> Result<()> {
-    // Use symlink_metadata so symlinks are not followed; reject non-regular-files and symlinks.
-    let meta = match std::fs::symlink_metadata(path) {
-        Ok(m) => m,
-        Err(_) => return Ok(()),
-    };
-    if !meta.is_file() || meta.file_type().is_symlink() {
-        return Ok(());
-    }
-
     // Capture the event timestamp before any I/O so it reflects when the OS event arrived.
     let event_timestamp_ns = now_ns();
     if event_timestamp_ns == 0 {
@@ -93,42 +85,53 @@ fn process_file_event(inner: &Arc<EngineInner>, path: &Path) -> Result<()> {
         return Ok(());
     }
 
-    // Open once: get both hash and size from the same file handle to avoid TOCTOU.
-    let (content_hash, file_size_u64) = crate::crypto::hash_file_with_size(path)?;
+    // H-046: Open the file once, verify via the open handle's metadata that it is
+    // a regular file (not a symlink), then hash from the same handle. This closes
+    // the TOCTOU gap between symlink_metadata() and a separate open.
+    let file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return Ok(()),
+    };
+    let meta = file.metadata().map_err(|e| anyhow!("fstat failed: {e}"))?;
+    if !meta.is_file() {
+        return Ok(());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileTypeExt;
+        let ft = meta.file_type();
+        if ft.is_symlink() || ft.is_block_device() || ft.is_char_device() {
+            return Ok(());
+        }
+    }
+
+    let (content_hash, file_size_u64) = crate::crypto::hash_file_handle(file)?;
     let file_size = file_size_u64 as i64;
 
-    // Group events under the project bundle path when inside .scriv/.scrivx
     let resolved_path = resolve_project_path(path);
 
-    // Rename detection: if this content hash was recently seen at a different path
-    // that no longer exists, treat it as a file rename.
+    // H-045: Rename detection with hash_map lock held through the existence check
+    // to close the TOCTOU gap.
     {
         let now = now_ns();
+        let mut hash_map = inner.content_hash_map.lock_recover();
 
-        // Extract candidate rename info under the lock, then drop lock before filesystem I/O.
-        let rename_candidate = {
-            let hash_map = inner.content_hash_map.lock_recover();
-            if let Some((old_path, ts)) = hash_map.get(&content_hash) {
-                let is_different_path = *old_path != resolved_path;
-                let is_recent = (now - ts) < RENAME_WINDOW_NS;
-                if is_different_path && is_recent {
-                    Some(old_path.clone())
-                } else {
-                    None
-                }
+        let rename_candidate = hash_map.get(&content_hash).and_then(|(old_path, ts)| {
+            let is_different = *old_path != resolved_path;
+            let is_recent = (now - ts) < RENAME_WINDOW_NS;
+            if is_different && is_recent {
+                Some(old_path.clone())
             } else {
                 None
             }
-        };
+        });
 
-        if let Some(old_path) = rename_candidate {
-            // Filesystem check outside the lock
+        if let Some(ref old_path) = rename_candidate {
             if !old_path.exists() {
                 let old_str = old_path.to_string_lossy().to_string();
                 let new_str = resolved_path.to_string_lossy().to_string();
-                log::info!("File rename detected: {} -> {}", old_str, new_str);
+                log::info!("File rename detected: {old_str} -> {new_str}");
 
-                // Migrate stored events to the new path
                 match inner
                     .store
                     .lock_recover()
@@ -138,22 +141,16 @@ fn process_file_event(inner: &Arc<EngineInner>, path: &Path) -> Result<()> {
                     Err(e) => log::warn!("Could not migrate file path: {e}"),
                 }
 
-                // Copy file_sizes entry from old path to new path
                 let mut sizes = inner.file_sizes.lock_recover();
-                if let Some(&old_size) = sizes.get(&old_path) {
+                if let Some(&old_size) = sizes.get(old_path) {
                     sizes.insert(resolved_path.clone(), old_size);
-                    sizes.remove(&old_path);
+                    sizes.remove(old_path);
                 }
             }
         }
 
-        // Re-acquire lock for hash map update
-        let mut hash_map = inner.content_hash_map.lock_recover();
-
-        // Record this hash → path mapping
         hash_map.insert(content_hash, (resolved_path.clone(), now));
 
-        // Evict stale entries if the map is too large
         if hash_map.len() > CONTENT_HASH_MAP_MAX_ENTRIES {
             let cutoff = now - RENAME_WINDOW_NS;
             hash_map.retain(|_, (_, ts)| *ts >= cutoff);
@@ -175,33 +172,7 @@ fn process_file_event(inner: &Arc<EngineInner>, path: &Path) -> Result<()> {
         )
     };
 
-    let (forensic_score, is_paste) = {
-        let session = inner.jitter_session.lock_recover();
-        if session.samples.is_empty() {
-            // No keystrokes but file grew significantly → paste or dictation
-            let is_paste = size_delta > 20;
-            (1.0, is_paste)
-        } else {
-            let cadence = crate::forensics::analyze_cadence(&session.samples);
-            let score = crate::forensics::compute_cadence_score(&cadence);
-
-            let keystroke_count = session.samples.len() as i64;
-            // Bytes-per-keystroke ratio: normal typing ≈ 1 byte/key, paste >> 3
-            let avg_bytes_per_key = if keystroke_count > 0 {
-                i64::from(size_delta).max(0) as f64 / keystroke_count as f64
-            } else {
-                0.0
-            };
-            let is_paste = (avg_bytes_per_key > 3.0 && size_delta > 20)
-                || (i64::from(size_delta) > (keystroke_count * 5) && size_delta > 50);
-
-            // Samples accumulate across the full session so every checkpoint
-            // has enough data for meaningful cadence analysis. The session
-            // is cleared on stop/start, not per-checkpoint.
-
-            (score, is_paste)
-        }
-    };
+    let (forensic_score, is_paste) = evaluate_checkpoint_forensics(inner, size_delta);
 
     let mut event = SecureEvent::new(
         resolved_path.to_string_lossy().to_string(),
@@ -224,6 +195,25 @@ fn process_file_event(inner: &Arc<EngineInner>, path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn evaluate_checkpoint_forensics(inner: &Arc<EngineInner>, size_delta: i32) -> (f64, bool) {
+    let session = inner.jitter_session.lock_recover();
+    if session.samples.is_empty() {
+        let is_paste = size_delta > 20;
+        return (1.0, is_paste);
+    }
+    let cadence = crate::forensics::analyze_cadence(&session.samples);
+    let score = crate::forensics::compute_cadence_score(&cadence);
+    let keystroke_count = session.samples.len() as i64;
+    let avg_bytes_per_key = if keystroke_count > 0 {
+        i64::from(size_delta).max(0) as f64 / keystroke_count as f64
+    } else {
+        0.0
+    };
+    let is_paste = (avg_bytes_per_key > 3.0 && size_delta > 20)
+        || (i64::from(size_delta) > (keystroke_count * 5) && size_delta > 50);
+    (score, is_paste)
+}
+
 pub(super) fn load_or_create_device_identity(data_dir: &Path) -> Result<([u8; 16], String)> {
     let path = data_dir.join("device.json");
 
@@ -234,8 +224,14 @@ pub(super) fn load_or_create_device_identity(data_dir: &Path) -> Result<([u8; 16
     if path.exists() {
         let content = fs::read_to_string(&path)?;
         let value: serde_json::Value = serde_json::from_str(&content)?;
-        let device_hex = value["device_id"].as_str().unwrap_or_default();
-        let machine_id = value["machine_id"].as_str().unwrap_or_default().to_string();
+        let device_hex = value["device_id"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow!("device.json missing or empty 'device_id' field"))?;
+        let machine_id = value["machine_id"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_string();
         let decoded = hex::decode(device_hex)?;
         let device_id: [u8; 16] = decoded
             .try_into()

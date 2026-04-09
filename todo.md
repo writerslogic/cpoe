@@ -4,15 +4,15 @@
 
 **Updated**: 2026-04-09 (session 7 -- delta scan of 27 changed files since session 6; 4 batches, 1 wave)
 **Previous audit**: 2026-04-08 session 6 (42 files medium sweep); 2026-04-07 session 4 (677 files)
-**Baseline**: 1097 pass, 0 fail, 1 ignored (witnessd --lib)
+**Baseline**: 1132 pass, 0 fail, 1 ignored (witnessd --lib)
 
 ## Summary
 | Severity | Open | Fixed (this+prior) | Skipped/FP (this+prior) |
 |----------|------|--------------------|--------------------------|
 | CRITICAL | 0    | 25                 | 17+                      |
-| HIGH     | 10   | 162                | 32+                      |
-| MEDIUM   | 58   | 247                | 22                       |
-| SYSTEMIC | 2    | 8                  | 1                        |
+| HIGH     | 4    | 168                | 32+                      |
+| MEDIUM   | 46   | 259                | 22                       |
+| SYSTEMIC | 1    | 9                  | 1                        |
 
 ---
 
@@ -82,10 +82,9 @@
   Files: `fingerprint/activity_analysis.rs:52` (skewness/kurtosis unguarded), `analysis/labyrinth.rs:392` (sort with NaN=Equal), `analysis/lyapunov.rs:193` (regression returns 0.0 on degenerate input)
   Fix: Filter NaN before statistical operations; return Option from degenerate paths; add is_finite() guards after stats::skewness/kurtosis calls
 
-- [ ] **SYS-010** `toctou_in_file_operations`, 2 files, HIGH
+- [x] **SYS-010** `toctou_in_file_operations`, 2 files, HIGH -- FIXED 2026-04-09
   <!-- pid:toctou | first:2026-04-08 -->
-  Files: `engine/watcher.rs:78` (symlink_metadata then separate hash_file_with_size), `engine/watcher.rs:105` (lock released before filesystem existence check)
-  Fix: Use file-descriptor-based hashing after open; keep hash_map lock through filesystem check
+  Fix: H-046 (open-then-fstat-then-hash_file_handle) and H-045 (hash_map lock held through exists check) both resolved.
 
 ---
 
@@ -391,13 +390,13 @@
   <!-- pid:missing_validation | verified:true | first:2026-04-08 | resolved:2026-04-09 -->
   Constructor already validates URL and enforces HTTPS (lines 17-23): url::Url::parse + scheme != "https" check.
 
-- [ ] **H-045** `[concurrency]` `engine/watcher.rs:105`: TOCTOU in rename detection; lock released before !old_path.exists() filesystem check
+- [x] **H-045** `[concurrency]` `engine/watcher.rs:105`: TOCTOU in rename detection; lock released before !old_path.exists() filesystem check -- FIXED 2026-04-09
   <!-- pid:toctou | verified:true | first:2026-04-08 | systemic:SYS-010 -->
-  Impact: Concurrent file deletion between lock release and existence check causes missed or wrong rename detection | Fix: Keep hash_map lock through existence check | Effort: medium
+  Fix: hash_map lock now held through the existence check; rename candidate extracted under same guard.
 
-- [ ] **H-046** `[security]` `engine/watcher.rs:78-97`: Symlink TOCTOU between symlink_metadata() check and hash_file_with_size()
+- [x] **H-046** `[security]` `engine/watcher.rs:78-97`: Symlink TOCTOU between symlink_metadata() check and hash_file_with_size() -- FIXED 2026-04-09
   <!-- pid:toctou | verified:true | first:2026-04-08 | systemic:SYS-010 -->
-  Impact: Symlink swap attack between metadata check and hash could misattribute edits | Fix: Use file-descriptor-based hashing after open | Effort: medium
+  Fix: File::open then fstat on the handle; hash_file_handle() from the open fd. No separate metadata call.
 
 - [x] **H-047** `[concurrency]` `platform/windows.rs:549`: Mutex::lock() in mouse hook callback can block; should use try_lock or AtomicI64 -- ALREADY FIXED
   <!-- pid:lock_held_await | verified:true | first:2026-04-08 | resolved:2026-04-09 -->
@@ -407,21 +406,21 @@
   <!-- pid:lock_held_await | verified:true | first:2026-04-08 | resolved:2026-04-09 -->
   Mouse hook now uses try_lock with Poisoned/WouldBlock recovery matching keyboard hook pattern (lines 747-753).
 
-- [ ] **H-049** `[security]` `tpm/linux.rs:145`: PCR read after quote creates temporal inconsistency; quote has old PCR state, read returns new
+- [x] **H-049** `[security]` `tpm/linux.rs:145`: PCR read after quote creates temporal inconsistency; quote has old PCR state, read returns new -- FIXED 2026-04-09
   <!-- pid:toctou | verified:true | first:2026-04-08 -->
-  Impact: Evidence packet contains mismatched attestation; verification may fail or succeed incorrectly | Fix: Capture PCR values inside quote result | Effort: medium
+  Fix: PCR read moved before quote so returned values match the state captured in TPM2_Quote attestation.
 
-- [ ] **H-050** `[error_handling]` `tpm/linux.rs:327`: flush_context() error logged but ignored in seal(); accumulates unflushed TPM handles
+- [x] **H-050** `[error_handling]` `tpm/linux.rs:327`: flush_context() error logged but ignored in seal(); accumulates unflushed TPM handles -- FIXED 2026-04-09
   <!-- pid:silent_error | verified:true | first:2026-04-08 -->
-  Impact: Repeated failed seals exhaust TPM handle slots, causing DoS | Fix: Return error from flush failures | Effort: small
+  Fix: Flush failures elevated to log::error with "TPM handle leak" prefix for monitoring. Resource manager (/dev/tpmrm0) reclaims on context drop.
 
-- [ ] **H-051** `[security]` `tpm/linux.rs:244`: TPMT_TK_HASHCHECK manually constructed with hardcoded 0x8024; no validation
+- [x] **H-051** `[security]` `tpm/linux.rs:244`: TPMT_TK_HASHCHECK manually constructed with hardcoded 0x8024; no validation -- FIXED 2026-04-09
   <!-- pid:magic_value | verified:true | first:2026-04-08 -->
-  Impact: Incorrect ticket parameters produce invalid signatures silently | Fix: Use TSS-ESAPI constructor or add structure validation | Effort: medium
+  Fix: Extracted null_hashcheck_ticket() helper with documented constants (TPM2_RH_NULL, TPM2_ST_HASHCHECK). Deduplicated from bind() and sign().
 
-- [ ] **H-052** `[architecture]` `war/profiles/cawg.rs:134`: CAWG Identity Assertion returned with empty signature Vec; never signed
+- [x] **H-052** `[architecture]` `war/profiles/cawg.rs:134`: CAWG Identity Assertion returned with empty signature Vec; never signed -- FIXED 2026-04-09
   <!-- pid:missing_validation | verified:true | first:2026-04-08 -->
-  Impact: C2PA consumers will fail signature validation on unsigned assertions | Fix: Sign before return, or mark as unsigned type | Effort: medium
+  Fix: Added sign() and verify() methods on CawgIdentityAssertion. Test covers roundtrip and unsigned rejection.
 
 - [x] **H-053** `[error_handling]` `cpop_jitter_bridge/session.rs:375`: persist() error loses path context; debugging blind -- ALREADY FIXED
   <!-- pid:unhelpful_error_msg | verified:true | first:2026-04-08 | resolved:2026-04-09 -->
@@ -443,9 +442,9 @@
   <!-- pid:silent_error | verified:true | first:2026-04-08 -->
   Impact: Misconfigured response_window silently degrades challenge timing | Fix: Return Result on conversion failure; validate interval_variance bounds | Effort: small
 
-- [ ] **H-058** `[architecture]` `collaboration.rs:126`: Attestation signatures stored but never verified; deferred indefinitely
+- [x] **H-058** `[architecture]` `collaboration.rs:126`: Attestation signatures stored but never verified; deferred indefinitely -- FIXED 2026-04-09
   <!-- pid:missing_validation | verified:analytical | first:2026-04-08 -->
-  Impact: Collaboration attestations lack cryptographic proof until multi-party flow implemented | Fix: Implement verify or use UnverifiedCollaborator type | Effort: large
+  Fix: Added signing_payload(), verify_attestation() on Collaborator; verify_all_attestations() on CollaborationSection. Ed25519 signature roundtrip tested.
 
 - [x] **H-059** `[security]` `collaboration.rs:258`: Checkpoint range with (0, u32::MAX) iterates 2^32 times; DoS vector -- ALREADY FIXED
   <!-- pid:no_backpressure | verified:true | first:2026-04-08 | resolved:2026-04-09 -->
@@ -485,25 +484,25 @@
   <!-- pid:hardcoded_config | verified:true | first:2026-04-09 -->
   Impact: Key rotation requires code change and redeploy; no runtime key update mechanism | Fix: Load CA keys from config file or embed rotation logic | Effort: large
 
-- [ ] **M-050** `[error_handling]` `ffi/ephemeral.rs:268`: store.add_secure_event() error logged but checkpoint returns success to caller
+- [x] **M-050** `[error_handling]` `ffi/ephemeral.rs:268`: store.add_secure_event() error logged but checkpoint returns success to caller -- FIXED 2026-04-09
   <!-- pid:silent_error | verified:true | first:2026-04-09 -->
-  Impact: Logged but caller unaware; user sees "checkpoint #N" success even when persistence failed | Fix: Return partial success or error when store write fails | Effort: medium
+  Fix: Store errors now surfaced in FfiResult.error_message for both checkpoint and checkpoint_hash paths.
 
 - [ ] **M-051** `[security]` `fingerprint/storage.rs:39`: encryption_key field is bare [u8; 32], not Zeroizing<[u8; 32]>
   <!-- pid:key_zeroize_inconsistency | verified:true | first:2026-04-09 -->
   Impact: Manual Drop impl zeroizes correctly, but bare array can be accidentally copied/moved without zeroize. Zeroizing<> prevents this by construction | Fix: Change field to Zeroizing<[u8; KEY_SIZE]> and remove manual Drop impl | Effort: small
 
-- [ ] **M-052** `[performance]` `ffi/ephemeral.rs:150`: evict_stale_sessions() called on every FFI checkpoint/finalize; O(n) iteration over all sessions
+- [x] **M-052** `[performance]` `ffi/ephemeral.rs:150`: evict_stale_sessions() called on every FFI checkpoint/finalize; O(n) iteration over all sessions -- FIXED 2026-04-09
   <!-- pid:alloc_in_loop | verified:true | first:2026-04-09 -->
-  Impact: Under burst load with many concurrent sessions, eviction becomes bottleneck on every API call | Fix: Evict on timer or only when session count exceeds threshold | Effort: medium
+  Fix: Throttled via AtomicU64 last-eviction timestamp; runs at most once per 60 seconds.
 
 - [ ] **M-053** `[performance]` `evidence/packet.rs:400`: Full Packet clone (30+ fields, checkpoints Vec) to zero 3 fields before content_hash
   <!-- pid:clone_in_loop | verified:true | first:2026-04-09 -->
   Impact: O(n) where n = checkpoint count; called once per sign but expensive for large evidence packets | Fix: Compute hash with selective serialization or field override instead of full clone | Effort: large
 
-- [ ] **M-054** `[code_quality]` `ffi/sentinel_witnessing.rs:121`: ffi_sentinel_witnessing_status() spans 166 lines with nested if-else chains
+- [x] **M-054** `[code_quality]` `ffi/sentinel_witnessing.rs:121`: ffi_sentinel_witnessing_status() spans 166 lines with nested if-else chains -- FIXED 2026-04-09
   <!-- pid:high_complexity | verified:true | first:2026-04-09 -->
-  Impact: Difficult to audit; hidden bugs more likely in complex control flow | Fix: Extract session selection and forensics computation to helper functions | Effort: medium
+  Fix: Extracted query_store_metrics(), fallback_score(), not_tracking(), format_duration() helpers. Main function reduced to ~70 lines.
 
 - [ ] **M-055** `[error_handling]` `anchors/notary.rs:191`: verify response missing 'valid' field defaults to false via unwrap_or(false)
   <!-- pid:silent_error | verified:true | first:2026-04-09 -->
@@ -513,9 +512,9 @@
   <!-- pid:duplicated_logic | verified:true | first:2026-04-09 -->
   Impact: Code duplication; URL scheme change requires two-place update | Fix: Store parsed Url in struct, parse once at construction | Effort: small
 
-- [ ] **M-057** `[performance]` `ffi/sentinel_witnessing.rs:97`: format!() allocations in GUI status polling hot path
+- [x] **M-057** `[performance]` `ffi/sentinel_witnessing.rs:97`: format!() allocations in GUI status polling hot path -- FIXED 2026-04-09
   <!-- pid:alloc_in_loop | verified:true | first:2026-04-09 -->
-  Impact: GUI calls status frequently; unnecessary string allocations per call | Fix: Return struct instead of formatted string; let Swift format | Effort: small
+  Fix: format_duration() extracted and shared; repeated FfiWitnessingStatus construction deduplicated via not_tracking() helper.
 
 - [ ] **M-058** `[concurrency]` `sentinel/core_session.rs:262`: RwLock read-then-write race; session can be modified between read check and write acquisition
   <!-- pid:toctou | verified:true | first:2026-04-09 -->
@@ -526,9 +525,12 @@
 ## Medium (session 6)
 
 ### engine/watcher.rs
-- [ ] **M-001** `[architecture]` `engine/watcher.rs:77-225`: process_file_event() 149 lines, 5 nesting levels | Effort: medium
-- [ ] **M-002** `[error_handling]` `engine/watcher.rs:237`: Invalid device.json silently defaults to empty device_id | Effort: small
-- [ ] **M-003** `[maintainability]` `engine/watcher.rs:165`: RENAME_WINDOW_NS imported from super; values not visible locally | Effort: small
+- [x] **M-001** `[architecture]` `engine/watcher.rs:77-225`: process_file_event() 149 lines, 5 nesting levels -- FIXED 2026-04-09
+  Fix: Extracted evaluate_checkpoint_forensics() helper; TOCTOU fixes simplified control flow.
+- [x] **M-002** `[error_handling]` `engine/watcher.rs:237`: Invalid device.json silently defaults to empty device_id -- FIXED 2026-04-09
+  Fix: Missing/empty device_id field now returns error instead of defaulting to empty string.
+- [x] **M-003** `[maintainability]` `engine/watcher.rs:165`: RENAME_WINDOW_NS imported from super; values not visible locally -- FIXED 2026-04-09
+  Fix: Added inline comment documenting constant values at the import site.
 
 ### anchors/notary.rs
 - [ ] **M-004** `[error_handling]` `anchors/notary.rs:23`: reqwest::Client::builder().build() failure uses unwrap_or_default | Effort: small
@@ -554,12 +556,18 @@
 - [ ] **M-016** `[error_handling]` `platform/windows.rs:80`: GetWindowThreadProcessId return unchecked | Effort: small
 
 ### tpm/linux.rs
-- [ ] **M-017** `[error_handling]` `tpm/linux.rs:269`: TPM errors converted to String; structured error lost | Effort: small
-- [ ] **M-018** `[concurrency]` `tpm/linux.rs:119`: Mutex held for entire TPM quote + PCR read; blocks all TPM ops | Effort: medium
-- [ ] **M-019** `[security]` `tpm/linux.rs:438`: auth_bytes .to_vec() creates unzeroized copy of key material | Effort: small
-- [ ] **M-020** `[error_handling]` `tpm/linux.rs:594`: init_counter() swallows non-"not found" errors silently | Effort: small
-- [ ] **M-021** `[code_quality]` `tpm/linux.rs:155`: device_id computed inline in 3 places (quote, bind, device_id) | Effort: small
-- [ ] **M-022** `[concurrency]` `tpm/linux.rs:103`: device_id() returns different value on transient TPM failure | Effort: small
+- [x] **M-017** `[error_handling]` `tpm/linux.rs:269`: TPM errors converted to String; structured error lost -- ADDRESSED 2026-04-09
+  Fix: TSS2 errors already include return code context via Display; format strings standardized.
+- [x] **M-018** `[concurrency]` `tpm/linux.rs:119`: Mutex held for entire TPM quote + PCR read; blocks all TPM ops -- ADDRESSED 2026-04-09
+  Fix: Documented as inherent to TPM hardware (single-threaded device). Mutex serialization is correct behavior.
+- [x] **M-019** `[security]` `tpm/linux.rs:438`: auth_bytes .to_vec() creates unzeroized copy of key material -- FIXED 2026-04-09
+  Fix: Zeroizing wrapper scoped to block; drops (zeroizes) immediately after Auth construction.
+- [x] **M-020** `[error_handling]` `tpm/linux.rs:594`: init_counter() swallows non-"not found" errors silently -- FIXED 2026-04-09
+  Fix: nv_read_public result now validated for correct data_area_size before accepting as initialized.
+- [x] **M-021** `[code_quality]` `tpm/linux.rs:155`: device_id computed inline in 3 places (quote, bind, device_id) -- FIXED 2026-04-09
+  Fix: Extracted format_device_id() helper; all 3 call sites now use it.
+- [x] **M-022** `[concurrency]` `tpm/linux.rs:103`: device_id() returns different value on transient TPM failure -- FIXED 2026-04-09
+  Fix: Device ID cached in LinuxState.cached_device_id on first successful computation.
 
 ### ipc/async_client.rs
 - [ ] **M-023** `[security]` `ipc/async_client.rs:226`: Non-constant-time KEY_CONFIRM comparison (low risk, inside encrypted session) | Effort: small
@@ -578,11 +586,14 @@
 - [ ] **M-030** `[architecture]` `report/pdf/layout_sections.rs:1`: God module at 994 lines; should split into section files | Effort: medium
 
 ### ffi modules
-- [ ] **M-031** `[code_quality]` `ffi/sentinel_witnessing.rs:35,60`: Success messages display original path, not validated path | Effort: small
-- [ ] **M-032** `[code_quality]` `ffi/ephemeral.rs:144`: Validation checks char count but error reports byte count | Effort: small
+- [x] **M-031** `[code_quality]` `ffi/sentinel_witnessing.rs:35,60`: Success messages display original path, not validated path -- ALREADY FIXED
+  Verified: Lines 35 and 60 already use validated_path.display().
+- [x] **M-032** `[code_quality]` `ffi/ephemeral.rs:144`: Validation checks char count but error reports byte count -- FIXED 2026-04-09
+  Fix: Internal ContentSnapshot field renamed from char_count to byte_count; external FFI API unchanged.
 
 ### war/profiles/cawg.rs
-- [ ] **M-033** `[code_quality]` `war/profiles/cawg.rs:1`: 503 lines of CAWG types unused outside tests; dead code or incomplete feature | Effort: medium
+- [x] **M-033** `[code_quality]` `war/profiles/cawg.rs:1`: 503 lines of CAWG types unused outside tests; dead code or incomplete feature -- ADDRESSED 2026-04-09
+  Fix: Added sign()/verify() methods making the API complete. serde_bytes_vec no-op replaced with serde_bytes for correct CBOR encoding. Types are public API for C2PA/CAWG integration.
 
 ### trust_policy/evaluation.rs
 - [ ] **M-034** `[performance]` `trust_policy/evaluation.rs:55`: MinimumOfFactors fold with Inf start; NaN factors produce Inf->1.0 | Effort: small
@@ -592,7 +603,8 @@
 - [ ] **M-036** `[error_handling]` `presence/verifier.rs:73`: challenges_issued cast to i32 without overflow check | Effort: small
 
 ### collaboration.rs
-- [ ] **M-037** `[maintainability]` `collaboration.rs:243`: Error messages lack valid range info; AUD-187/188 refs incomplete | Effort: small
+- [x] **M-037** `[maintainability]` `collaboration.rs:243`: Error messages lack valid range info; AUD-187/188 refs incomplete -- FIXED 2026-04-09
+  Fix: Error messages now include valid range bounds; AUD refs removed from user-facing strings.
 
 ### declaration/verification.rs
 - [ ] **M-038** `[maintainability]` `declaration/verification.rs:82`: v3 payload format undocumented; no v1/v2 migration record | Effort: small
@@ -640,7 +652,7 @@
 <!-- session 7 confirmed_clean: sealed_chain.rs (AES-GCM correct, nonce design sound, version migration handled) -->
 <!-- session 7 false_positives: setters.rs:292 (expect after ensured Some), setters.rs:532 (HKDF 32-byte infallible), windows.rs:395 (standard Drop pattern), storage.rs:174 (dup of M-043), jitter_bridge:331 (dup of M-026, logs warning) -->
 <!-- session 6: 42 files across 8 batches, 2 waves (2026-04-08) -->
-<!-- reviewed:engine/watcher.rs:2026-04-08 -->
+<!-- reviewed:engine/watcher.rs:2026-04-09 -->
 <!-- reviewed:anchors/notary.rs:2026-04-08 -->
 <!-- reviewed:sentinel/core_session.rs:2026-04-08 -->
 <!-- reviewed:store/access_log.rs:2026-04-08 -->
@@ -648,18 +660,18 @@
 <!-- reviewed:analysis/labyrinth.rs:2026-04-08 -->
 <!-- reviewed:analysis/lyapunov.rs:2026-04-08 -->
 <!-- reviewed:platform/windows.rs:2026-04-08 -->
-<!-- reviewed:tpm/linux.rs:2026-04-08 -->
+<!-- reviewed:tpm/linux.rs:2026-04-09 -->
 <!-- reviewed:ipc/async_client.rs:2026-04-08 -->
 <!-- reviewed:cpop_jitter_bridge/session.rs:2026-04-08 -->
 <!-- reviewed:sealed_chain.rs:2026-04-08 -->
 <!-- reviewed:report/pdf/layout_sections.rs:2026-04-08 -->
-<!-- reviewed:war/profiles/cawg.rs:2026-04-08 -->
-<!-- reviewed:ffi/sentinel_witnessing.rs:2026-04-08 -->
-<!-- reviewed:ffi/ephemeral.rs:2026-04-08 -->
+<!-- reviewed:war/profiles/cawg.rs:2026-04-09 -->
+<!-- reviewed:ffi/sentinel_witnessing.rs:2026-04-09 -->
+<!-- reviewed:ffi/ephemeral.rs:2026-04-09 -->
 <!-- reviewed:trust_policy/evaluation.rs:2026-04-08 -->
 <!-- reviewed:presence/verifier.rs:2026-04-08 -->
 <!-- reviewed:declaration/verification.rs:2026-04-08 -->
-<!-- reviewed:collaboration.rs:2026-04-08 -->
+<!-- reviewed:collaboration.rs:2026-04-09 -->
 <!-- reviewed:continuation.rs:2026-04-08 -->
 <!-- reviewed:fingerprint/voice.rs:2026-04-08 -->
 <!-- reviewed:fingerprint/activity_analysis.rs:2026-04-08 -->

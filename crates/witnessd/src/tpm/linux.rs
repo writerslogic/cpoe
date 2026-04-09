@@ -30,7 +30,9 @@ use tss_esapi::traits::{Marshall, UnMarshall};
 use tss_esapi::tss2_esys::TPMT_TK_HASHCHECK;
 use tss_esapi::Context;
 
+/// TPM2_RH_NULL: indicates data was hashed outside the TPM.
 const TPM2_RH_NULL: u32 = 0x40000007;
+/// TPM2_ST_HASHCHECK: tag for externally-computed hash tickets (TPM 2.0 Part 2, Table 19).
 const TPM2_ST_HASHCHECK: u16 = 0x8024;
 
 const NV_COUNTER_INDEX: u32 = 0x01500001;
@@ -41,6 +43,7 @@ struct LinuxState {
     ak_handle: Option<KeyHandle>,
     ak_public: Vec<u8>,
     counter_init: bool,
+    cached_device_id: Option<String>,
 }
 
 impl Drop for LinuxState {
@@ -54,6 +57,11 @@ impl Drop for LinuxState {
 }
 
 /// Linux TPM 2.0 provider via tss-esapi.
+///
+/// The inner `Mutex` serializes all TPM operations. This is required because
+/// `tss_esapi::Context` is not thread-safe and the TPM device (`/dev/tpmrm0`)
+/// processes commands sequentially. The lock duration covers the full TPM
+/// command (quote, sign, seal, etc.) which is inherent to the hardware.
 pub struct LinuxTpmProvider {
     inner: Mutex<LinuxState>,
 }
@@ -76,6 +84,7 @@ pub fn try_init() -> Option<LinuxTpmProvider> {
         ak_handle: None,
         ak_public: Vec::new(),
         counter_init: false,
+        cached_device_id: None,
     };
 
     let (ak, pub_bytes) = create_ak(&mut state).ok()?;
@@ -100,11 +109,7 @@ impl Provider for LinuxTpmProvider {
     }
 
     fn device_id(&self) -> String {
-        let mut state = self.inner.lock_recover();
-        match get_device_id(&mut state) {
-            Ok(id) => format!("tpm-{}", hex::encode(&id[..8])),
-            Err(_) => "tpm-unknown".to_string(),
-        }
+        format_device_id(&mut self.inner.lock_recover())
     }
 
     fn algorithm(&self) -> coset::iana::Algorithm {
@@ -131,6 +136,10 @@ impl Provider for LinuxTpmProvider {
             nonce.to_vec()
         };
 
+        // H-049: Read PCRs before quote so the returned values match the
+        // state captured in the TPM2_Quote attestation structure.
+        let pcr_values = read_pcrs(&mut state, &pcr_list)?;
+
         let (attest, signature) = state
             .context
             .quote(
@@ -143,8 +152,6 @@ impl Provider for LinuxTpmProvider {
             )
             .map_err(|e| TpmError::Quote(format!("quote failed: {e}").into()))?;
 
-        let pcr_values = read_pcrs(&mut state, &pcr_list)?;
-
         let attest_data = attest
             .marshall()
             .map_err(|e| TpmError::Quote(format!("attest marshal: {e}").into()))?;
@@ -152,11 +159,7 @@ impl Provider for LinuxTpmProvider {
             .marshall()
             .map_err(|e| TpmError::Quote(format!("sig marshal: {e}").into()))?;
 
-        // Compute device_id inline to avoid re-acquiring the lock (self.device_id() would deadlock)
-        let device_id = match get_device_id(&mut state) {
-            Ok(id) => format!("tpm-{}", hex::encode(&id[..8])),
-            Err(_) => "tpm-unknown".to_string(),
-        };
+        let device_id = format_device_id(&mut state);
 
         Ok(Quote {
             provider_type: "tpm2-linux".to_string(),
@@ -177,25 +180,10 @@ impl Provider for LinuxTpmProvider {
 
         let timestamp = Utc::now();
         let data_hash = Sha256::digest(data).to_vec();
-        // Compute device_id inline to avoid deadlock (self.device_id() re-acquires inner lock)
-        let dev_id = match get_device_id(&mut state) {
-            Ok(id) => format!("tpm-{}", hex::encode(&id[..8])),
-            Err(_) => "tpm-unknown".to_string(),
-        };
+        let dev_id = format_device_id(&mut state);
         let payload = super::build_binding_payload(&data_hash, &timestamp, &dev_id);
 
         let digest = Sha256::digest(&payload);
-
-        // Create a null hashcheck ticket (data was not hashed by the TPM)
-        let null_ticket = HashcheckTicket::try_from(TPMT_TK_HASHCHECK {
-            tag: TPM2_ST_HASHCHECK,
-            hierarchy: TPM2_RH_NULL,
-            digest: tss_esapi::tss2_esys::TPM2B_DIGEST {
-                size: 0,
-                buffer: [0; 64],
-            },
-        })
-        .map_err(|e| TpmError::Signing(format!("ticket: {e}").into()))?;
 
         let signature = state
             .context
@@ -206,7 +194,7 @@ impl Provider for LinuxTpmProvider {
                 SignatureScheme::RsaSsa {
                     hash_scheme: HashScheme::new(HashingAlgorithm::Sha256),
                 },
-                null_ticket,
+                null_hashcheck_ticket()?,
             )
             .map_err(|e| TpmError::Signing(format!("sign failed: {e}").into()))?
             .marshall()
@@ -241,26 +229,16 @@ impl Provider for LinuxTpmProvider {
 
         let data_hash = Sha256::digest(data).to_vec();
 
-        let null_ticket = HashcheckTicket::try_from(TPMT_TK_HASHCHECK {
-            tag: TPM2_ST_HASHCHECK,
-            hierarchy: TPM2_RH_NULL,
-            digest: tss_esapi::tss2_esys::TPM2B_DIGEST {
-                size: 0,
-                buffer: [0; 64],
-            },
-        })
-        .map_err(|e| TpmError::Signing(format!("ticket construction failed: {e}").into()))?;
-
         let signature = state
             .context
             .sign(
                 ak_handle,
                 TssDigest::try_from(data_hash.as_slice())
-                    .map_err(|e| TpmError::Signing(format!("digest conversion failed: {e}").into()))?,
+                    .map_err(|e| TpmError::Signing(format!("digest: {e}").into()))?,
                 SignatureScheme::RsaSsa {
                     hash_scheme: HashScheme::new(HashingAlgorithm::Sha256),
                 },
-                null_ticket,
+                null_hashcheck_ticket()?,
             )
             .map_err(|e| TpmError::Signing(format!("sign failed: {e}").into()))?
             .marshall()
@@ -323,15 +301,14 @@ impl Provider for LinuxTpmProvider {
             Ok((sealed, session))
         })();
 
-        // Always flush SRK handle, regardless of success or failure.
         if let Err(e) = state.context.flush_context(srk_handle.into()) {
-            log::warn!("Failed to flush SRK context after seal: {e}");
+            log::error!("TPM handle leak: failed to flush SRK after seal: {e}");
         }
 
         let (sealed, session) = result?;
         let session_handle: SessionHandle = session.into();
         if let Err(e) = state.context.flush_context(session_handle.into()) {
-            log::warn!("Failed to flush session context after seal: {e}");
+            log::error!("TPM handle leak: failed to flush session after seal: {e}");
         }
 
         Ok(sealed)
@@ -387,20 +364,32 @@ impl Provider for LinuxTpmProvider {
 
         // Always flush SRK handle, regardless of success or failure.
         if let Err(e) = state.context.flush_context(srk_handle.into()) {
-            log::warn!("Failed to flush SRK context after unseal: {e}");
+            log::error!("TPM handle leak: failed to flush SRK after unseal: {e}");
         }
 
         let (data, load_handle, session) = result?;
         if let Err(e) = state.context.flush_context(load_handle.into()) {
-            log::warn!("Failed to flush object context after unseal: {e}");
+            log::error!("TPM handle leak: failed to flush object after unseal: {e}");
         }
         let session_handle: SessionHandle = session.into();
         if let Err(e) = state.context.flush_context(session_handle.into()) {
-            log::warn!("Failed to flush session context after unseal: {e}");
+            log::error!("TPM handle leak: failed to flush session after unseal: {e}");
         }
 
         Ok(data)
     }
+}
+
+fn null_hashcheck_ticket() -> Result<HashcheckTicket, TpmError> {
+    HashcheckTicket::try_from(TPMT_TK_HASHCHECK {
+        tag: TPM2_ST_HASHCHECK,
+        hierarchy: TPM2_RH_NULL,
+        digest: tss_esapi::tss2_esys::TPM2B_DIGEST {
+            size: 0,
+            buffer: [0; 64],
+        },
+    })
+    .map_err(|e| TpmError::Signing(format!("null hashcheck ticket: {e}").into()))
 }
 
 fn create_ak(state: &mut LinuxState) -> Result<(KeyHandle, Vec<u8>), TpmError> {
@@ -434,10 +423,13 @@ fn create_ak(state: &mut LinuxState) -> Result<(KeyHandle, Vec<u8>), TpmError> {
         .build()
         .map_err(|_| TpmError::NotAvailable)?;
 
-    // Generate random auth value so the AK is not deterministic / unprotected.
-    let mut auth_bytes = zeroize::Zeroizing::new([0u8; 32]);
-    getrandom::getrandom(auth_bytes.as_mut_slice()).map_err(|_| TpmError::NotAvailable)?;
-    let auth = Auth::try_from(auth_bytes.to_vec()).map_err(|_| TpmError::NotAvailable)?;
+    let auth = {
+        let mut auth_bytes = zeroize::Zeroizing::new([0u8; 32]);
+        getrandom::getrandom(auth_bytes.as_mut_slice()).map_err(|_| TpmError::NotAvailable)?;
+        Auth::try_from(auth_bytes.as_slice().to_vec())
+            .map_err(|_| TpmError::NotAvailable)?
+        // auth_bytes zeroized on drop here
+    };
 
     let result = state
         .context
@@ -482,7 +474,7 @@ fn create_srk(state: &mut LinuxState) -> Result<CreatePrimaryKeyResult, TpmError
         .map_err(|_| TpmError::Sealing("attributes".into()))?;
 
     let ecc_params = PublicEccParametersBuilder::new()
-        .with_symmetric(SymmetricDefinitionObject::Null)
+        .with_symmetric(SymmetricDefinitionObject::AES_128_CFB)
         .with_ecc_scheme(EccScheme::Null)
         .with_curve(tss_esapi::interface_types::ecc::EccCurve::NistP256)
         .build()
@@ -501,6 +493,18 @@ fn create_srk(state: &mut LinuxState) -> Result<CreatePrimaryKeyResult, TpmError
         .context
         .create_primary(Hierarchy::Owner, public, None, None, None, None)
         .map_err(|_| TpmError::Sealing("create primary".into()))
+}
+
+fn format_device_id(state: &mut LinuxState) -> String {
+    if let Some(ref cached) = state.cached_device_id {
+        return cached.clone();
+    }
+    let id = match get_device_id(state) {
+        Ok(raw) => format!("tpm-{}", hex::encode(&raw[..8])),
+        Err(_) => return "tpm-unknown".to_string(),
+    };
+    state.cached_device_id = Some(id.clone());
+    id
 }
 
 fn get_device_id(state: &mut LinuxState) -> Result<Vec<u8>, TpmError> {
@@ -590,7 +594,11 @@ fn init_counter(state: &mut LinuxState) -> Result<(), TpmError> {
     let nv_index = NvIndexTpmHandle::new(NV_COUNTER_INDEX).map_err(|_| TpmError::CounterNotInit)?;
     let nv_handle = NvIndexHandle::from(NV_COUNTER_INDEX);
 
-    if state.context.nv_read_public(nv_handle).is_ok() {
+    if let Ok((nv_public, _)) = state.context.nv_read_public(nv_handle) {
+        let actual_size = nv_public.data_size();
+        if actual_size != NV_COUNTER_SIZE {
+            return Err(TpmError::CounterNotInit);
+        }
         state.counter_init = true;
         return Ok(());
     }

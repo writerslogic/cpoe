@@ -62,6 +62,21 @@ pub fn ffi_sentinel_stop_witnessing(path: String) -> FfiResult {
     }
 }
 
+fn format_duration(total_secs: i64) -> String {
+    if total_secs >= 3600 {
+        format!(
+            "{}h {}m {}s",
+            total_secs / 3600,
+            (total_secs % 3600) / 60,
+            total_secs % 60
+        )
+    } else if total_secs >= 60 {
+        format!("{}m {}s", total_secs / 60, total_secs % 60)
+    } else {
+        format!("{}s", total_secs)
+    }
+}
+
 /// Get current sentinel status.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn ffi_sentinel_status() -> FfiSentinelStatus {
@@ -92,19 +107,6 @@ pub fn ffi_sentinel_status() -> FfiSentinelStatus {
         .iter()
         .map(|s| s.total_focus_duration().as_millis() as i64)
         .sum();
-    let total_secs = total_focus_ms / 1000;
-    let focus_duration = if total_secs >= 3600 {
-        format!(
-            "{}h {}m {}s",
-            total_secs / 3600,
-            (total_secs % 3600) / 60,
-            total_secs % 60
-        )
-    } else if total_secs >= 60 {
-        format!("{}m {}s", total_secs / 60, total_secs % 60)
-    } else {
-        format!("{}s", total_secs)
-    };
 
     FfiSentinelStatus {
         running: sentinel.is_running(),
@@ -112,7 +114,102 @@ pub fn ffi_sentinel_status() -> FfiSentinelStatus {
         tracked_files: tracked,
         uptime_secs: summary.duration_secs,
         keystroke_count: summary.keystroke_count,
-        focus_duration,
+        focus_duration: format_duration(total_focus_ms / 1000),
+    }
+}
+
+/// Fallback score from cadence when store is unavailable or has insufficient data.
+fn fallback_score(cadence_score: f64, focus_penalty: f64) -> f64 {
+    if cadence_score > 0.0 {
+        (cadence_score - focus_penalty).clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+struct StoreMetrics {
+    event_count: u64,
+    forensic_score: f64,
+    paste_chars: i64,
+    error: Option<String>,
+}
+
+fn query_store_metrics(
+    path: &str,
+    cadence_score: f64,
+    focus_penalty: f64,
+) -> StoreMetrics {
+    const MIN_MEANINGFUL_SCORE: f64 = 0.01;
+
+    let store = match crate::ffi::helpers::open_store() {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!("failed to open store for witnessing status: {e}");
+            return StoreMetrics {
+                event_count: 0,
+                forensic_score: fallback_score(cadence_score, focus_penalty),
+                paste_chars: 0,
+                error: Some(format!("store unavailable: {e}")),
+            };
+        }
+    };
+
+    let events = match store.get_events_for_file(path) {
+        Ok(e) => e,
+        Err(e) => {
+            log::warn!("failed to load events for {path}: {e}");
+            return StoreMetrics {
+                event_count: 0,
+                forensic_score: fallback_score(cadence_score, focus_penalty),
+                paste_chars: 0,
+                error: Some(format!("event query failed: {e}")),
+            };
+        }
+    };
+
+    let count = events.len() as u64;
+    let store_score = if events.len() >= 2 {
+        let profile =
+            crate::forensics::ForensicEngine::evaluate_authorship(path, &events);
+        profile.metrics.edit_entropy / crate::ffi::helpers::ENTROPY_NORMALIZATION_FACTOR
+    } else {
+        0.0
+    };
+
+    let score = if store_score >= MIN_MEANINGFUL_SCORE {
+        (store_score - focus_penalty).clamp(0.0, 1.0)
+    } else {
+        fallback_score(cadence_score, focus_penalty)
+    };
+
+    let paste_chars = events
+        .last()
+        .filter(|e| e.is_paste)
+        .map(|e| e.size_delta as i64)
+        .unwrap_or(0);
+
+    StoreMetrics {
+        event_count: count,
+        forensic_score: score,
+        paste_chars,
+        error: None,
+    }
+}
+
+fn not_tracking(capture_active: bool) -> FfiWitnessingStatus {
+    FfiWitnessingStatus {
+        is_tracking: false,
+        document_path: None,
+        keystroke_count: 0,
+        elapsed_secs: 0.0,
+        change_count: 0,
+        save_count: 0,
+        event_count: 0,
+        forensic_score: 0.0,
+        last_paste_chars: 0,
+        event_confidence: 1.0,
+        keystroke_capture_active: capture_active,
+        error_message: None,
     }
 }
 
@@ -122,22 +219,7 @@ pub fn ffi_sentinel_witnessing_status() -> FfiWitnessingStatus {
     let sentinel_opt = get_sentinel();
     let sentinel = match sentinel_opt.as_ref() {
         Some(s) => s,
-        None => {
-            return FfiWitnessingStatus {
-                is_tracking: false,
-                document_path: None,
-                keystroke_count: 0,
-                elapsed_secs: 0.0,
-                change_count: 0,
-                save_count: 0,
-                event_count: 0,
-                forensic_score: 0.0,
-                last_paste_chars: 0,
-                event_confidence: 1.0,
-                keystroke_capture_active: false,
-                error_message: None,
-            };
-        }
+        None => return not_tracking(false),
     };
 
     let capture_active = sentinel.is_keystroke_capture_active();
@@ -178,20 +260,7 @@ pub fn ffi_sentinel_witnessing_status() -> FfiWitnessingStatus {
         }
         None => {
             crate::sentinel::trace!("[STATUS] no session found");
-            return FfiWitnessingStatus {
-                is_tracking: false,
-                document_path: None,
-                keystroke_count: 0,
-                elapsed_secs: 0.0,
-                change_count: 0,
-                save_count: 0,
-                event_count: 0,
-                forensic_score: 0.0,
-                last_paste_chars: 0,
-                event_confidence: 1.0,
-                keystroke_capture_active: capture_active,
-                error_message: None,
-            };
+            return not_tracking(capture_active);
         }
     };
 
@@ -209,78 +278,23 @@ pub fn ffi_sentinel_witnessing_status() -> FfiWitnessingStatus {
         .unwrap_or_default()
         .as_secs_f64();
 
-    // Check for host-reported paste (from NSPasteboard monitoring).
-    // take_last_paste_chars atomically reads and clears the value.
     let host_paste_chars = sentinel.take_last_paste_chars();
 
-    // Per-document jitter cadence score (available before checkpoints exist).
     let doc_samples = sentinel.document_jitter_samples(&session.path);
     let cadence_score = crate::forensics::cadence_score_from_samples(&doc_samples);
 
-    // Focus-switching penalties from per-document focus records.
     let focus = crate::forensics::analysis::analyze_focus_patterns(
         &session.focus_switches,
         session.total_focus_ms,
     );
     let focus_penalty = crate::forensics::compute_focus_penalty(&focus);
 
-    let (event_count, forensic_score, store_paste_chars, store_error) =
-        match crate::ffi::helpers::open_store() {
-            Ok(store) => match store.get_events_for_file(&session.path) {
-                Ok(events) => {
-                    let count = events.len() as u64;
-                    let store_score = if events.len() >= 2 {
-                        let profile =
-                            crate::forensics::ForensicEngine::evaluate_authorship(
-                                &session.path,
-                                &events,
-                            );
-                        profile.metrics.edit_entropy
-                            / crate::ffi::helpers::ENTROPY_NORMALIZATION_FACTOR
-                    } else {
-                        0.0
-                    };
-                    const MIN_MEANINGFUL_SCORE: f64 = 0.01;
-                    let score = if store_score >= MIN_MEANINGFUL_SCORE {
-                        (store_score - focus_penalty).clamp(0.0, 1.0)
-                    } else if cadence_score > 0.0 {
-                        (cadence_score - focus_penalty).clamp(0.0, 1.0)
-                    } else {
-                        0.0
-                    };
-                    let paste = events
-                        .last()
-                        .filter(|e| e.is_paste)
-                        .map(|e| e.size_delta as i64)
-                        .unwrap_or(0);
-                    (count, score, paste, None)
-                }
-                Err(e) => {
-                    log::warn!("failed to load events for {}: {e}", session.path);
-                    let score = if cadence_score > 0.0 {
-                        (cadence_score - focus_penalty).clamp(0.0, 1.0)
-                    } else {
-                        0.0
-                    };
-                    (0, score, 0, Some(format!("event query failed: {e}")))
-                }
-            },
-            Err(e) => {
-                log::warn!("failed to open store for witnessing status: {e}");
-                let score = if cadence_score > 0.0 {
-                    (cadence_score - focus_penalty).clamp(0.0, 1.0)
-                } else {
-                    0.0
-                };
-                (0, score, 0, Some(format!("store unavailable: {e}")))
-            }
-        };
+    let metrics = query_store_metrics(&session.path, cadence_score, focus_penalty);
 
-    // Prefer host-reported paste (real-time) over store-derived (checkpoint-time)
     let last_paste_chars = if host_paste_chars > 0 {
         host_paste_chars
     } else {
-        store_paste_chars
+        metrics.paste_chars
     };
 
     FfiWitnessingStatus {
@@ -290,11 +304,11 @@ pub fn ffi_sentinel_witnessing_status() -> FfiWitnessingStatus {
         elapsed_secs,
         change_count: u64::from(session.change_count),
         save_count: u64::from(session.save_count),
-        event_count,
-        forensic_score,
+        event_count: metrics.event_count,
+        forensic_score: metrics.forensic_score,
         last_paste_chars,
         event_confidence: session.average_event_confidence(),
         keystroke_capture_active: capture_active,
-        error_message: store_error,
+        error_message: metrics.error,
     }
 }

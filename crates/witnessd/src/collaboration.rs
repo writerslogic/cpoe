@@ -119,11 +119,8 @@ pub struct Collaborator {
     /// Inclusive (start, end) checkpoint ranges authored
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checkpoint_ranges: Option<Vec<(u32, u32)>>,
-    /// Signature over this collaborator's attestation.
-    ///
-    /// **Note:** Verification of this signature is deferred until a multi-party
-    /// attestation verification flow is implemented. Currently stored but not
-    /// cryptographically validated on deserialization.
+    /// Ed25519 signature (hex-encoded, 64 bytes) over [`signing_payload()`].
+    /// Verify with [`verify_attestation()`] before trusting this collaborator's claims.
     pub attestation_signature: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contribution_summary: Option<ContributionSummary>,
@@ -240,18 +237,17 @@ impl CollaborationSection {
         for participant in &self.participants {
             if let Some(ref ranges) = participant.checkpoint_ranges {
                 for (start, end) in ranges {
-                    // AUD-187: Reject inverted ranges instead of silently ignoring them
                     if start > end {
                         return Err(format!(
-                            "invalid checkpoint range ({}, {}): start must not exceed end (valid range 0..{})",
-                            start, end, total_checkpoints
+                            "invalid checkpoint range ({start}, {end}): \
+                             start must not exceed end (valid: 0..{total_checkpoints})"
                         ));
                     }
-                    // AUD-188: Reject out-of-bounds ranges
                     if *end >= total_checkpoints {
                         return Err(format!(
-                            "invalid checkpoint range ({}, {}): end must be less than {} checkpoints",
-                            start, end, total_checkpoints
+                            "checkpoint range ({start}, {end}) out of bounds: \
+                             end must be < {total_checkpoints} (valid: 0..{})",
+                            total_checkpoints.saturating_sub(1)
                         ));
                     }
                     let clamped_end = *end;
@@ -279,6 +275,21 @@ impl CollaborationSection {
                 uncovered
             ))
         }
+    }
+
+    /// Verify every participant's attestation signature.
+    /// Returns `Ok(())` if all pass, or the first failure.
+    pub fn verify_all_attestations(&self) -> Result<(), String> {
+        for (i, p) in self.participants.iter().enumerate() {
+            p.verify_attestation().map_err(|e| {
+                format!(
+                    "participant {} ({:?}) attestation invalid: {e}",
+                    i,
+                    p.display_name.as_deref().unwrap_or(&p.public_key)
+                )
+            })?;
+        }
+        Ok(())
     }
 
     /// Return the number of participants.
@@ -321,8 +332,15 @@ impl Collaborator {
         self
     }
 
-    /// Append an active time interval.
+    /// Append an active time interval. If `start > end`, the values are swapped
+    /// with a warning log so builder chains are not broken by caller mistakes.
     pub fn add_active_period(mut self, start: DateTime<Utc>, end: DateTime<Utc>) -> Self {
+        let (start, end) = if start > end {
+            log::warn!("add_active_period called with start > end; swapping");
+            (end, start)
+        } else {
+            (start, end)
+        };
         self.active_periods.push(TimeInterval { start, end });
         self
     }
@@ -337,6 +355,47 @@ impl Collaborator {
     pub fn with_summary(mut self, summary: ContributionSummary) -> Self {
         self.contribution_summary = Some(summary);
         self
+    }
+
+    /// Canonical bytes used as the Ed25519 signing input.
+    /// Deterministic JSON of all fields except `attestation_signature`.
+    pub fn signing_payload(&self) -> Vec<u8> {
+        let payload = serde_json::json!({
+            "public_key": self.public_key,
+            "role": self.role,
+            "display_name": self.display_name,
+            "identifier": self.identifier,
+            "active_periods": self.active_periods,
+            "checkpoint_ranges": self.checkpoint_ranges,
+            "contribution_summary": self.contribution_summary,
+        });
+        serde_json::to_vec(&payload).expect("collaborator payload serialization is infallible")
+    }
+
+    /// Verify the attestation signature against the embedded public key.
+    /// Both `public_key` and `attestation_signature` must be hex-encoded.
+    pub fn verify_attestation(&self) -> Result<(), String> {
+        let pub_bytes = hex::decode(&self.public_key)
+            .map_err(|e| format!("invalid public key hex: {e}"))?;
+        let vk = ed25519_dalek::VerifyingKey::from_bytes(
+            pub_bytes
+                .as_slice()
+                .try_into()
+                .map_err(|_| format!("public key must be 32 bytes, got {}", pub_bytes.len()))?,
+        )
+        .map_err(|e| format!("invalid Ed25519 public key: {e}"))?;
+
+        let sig_bytes = hex::decode(&self.attestation_signature)
+            .map_err(|e| format!("invalid signature hex: {e}"))?;
+        let sig = ed25519_dalek::Signature::from_bytes(
+            sig_bytes
+                .as_slice()
+                .try_into()
+                .map_err(|_| format!("signature must be 64 bytes, got {}", sig_bytes.len()))?,
+        );
+
+        vk.verify_strict(&self.signing_payload(), &sig)
+            .map_err(|e| format!("attestation verification failed: {e}"))
     }
 }
 
@@ -418,6 +477,46 @@ mod tests {
 
         let editors = section.participants_by_role(CollaboratorRole::Editor);
         assert_eq!(editors.len(), 2);
+    }
+
+    #[test]
+    fn test_attestation_roundtrip() {
+        use ed25519_dalek::{Signer, SigningKey};
+        let signing_key = SigningKey::from_bytes(&[42u8; 32]);
+        let pub_hex = hex::encode(signing_key.verifying_key().as_bytes());
+
+        let mut collab = Collaborator::new(
+            pub_hex,
+            CollaboratorRole::CoAuthor,
+            String::new(), // placeholder; overwritten below
+        )
+        .with_name("Alice")
+        .with_checkpoint_ranges(vec![(0, 5)]);
+
+        let payload = collab.signing_payload();
+        let sig = signing_key.sign(&payload);
+        collab.attestation_signature = hex::encode(sig.to_bytes());
+
+        assert!(collab.verify_attestation().is_ok());
+    }
+
+    #[test]
+    fn test_attestation_bad_signature() {
+        let collab = Collaborator::new(
+            hex::encode([1u8; 32]),
+            CollaboratorRole::CoAuthor,
+            hex::encode([0u8; 64]), // wrong signature
+        );
+        assert!(collab.verify_attestation().is_err());
+    }
+
+    #[test]
+    fn test_active_period_swap() {
+        let early = Utc::now() - chrono::Duration::hours(1);
+        let late = Utc::now();
+        let collab = Collaborator::new("k".into(), CollaboratorRole::Editor, "s".into())
+            .add_active_period(late, early); // inverted
+        assert!(collab.active_periods[0].start <= collab.active_periods[0].end);
     }
 
     #[test]

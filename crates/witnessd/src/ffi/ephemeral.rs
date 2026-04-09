@@ -69,12 +69,16 @@ struct EphemeralSession {
 struct ContentSnapshot {
     timestamp_ns: i64,
     content_hash: [u8; 32],
-    char_count: u64,
+    byte_count: u64,
     _size_delta: i32,
     message: Option<String>,
 }
 
 static EPHEMERAL_SESSIONS: OnceLock<DashMap<String, EphemeralSession>> = OnceLock::new();
+static LAST_EVICTION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Minimum interval between eviction sweeps (seconds).
+const EVICTION_INTERVAL_SECS: u64 = 60;
 
 fn sessions() -> &'static DashMap<String, EphemeralSession> {
     EPHEMERAL_SESSIONS.get_or_init(DashMap::new)
@@ -121,7 +125,18 @@ fn generate_session_id(label: &str) -> Result<String, String> {
 }
 
 /// Evict sessions that have been idle longer than `SESSION_TIMEOUT`.
+/// Throttled to run at most once per `EVICTION_INTERVAL_SECS`.
 fn evict_stale_sessions() {
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let last = LAST_EVICTION.load(std::sync::atomic::Ordering::Relaxed);
+    if now_secs.saturating_sub(last) < EVICTION_INTERVAL_SECS {
+        return;
+    }
+    LAST_EVICTION.store(now_secs, std::sync::atomic::Ordering::Relaxed);
+
     let now = Instant::now();
     sessions().retain(|id, session| {
         let stale = now.duration_since(session.last_activity) > SESSION_TIMEOUT;
@@ -225,14 +240,14 @@ pub fn ffi_ephemeral_checkpoint(session_id: String, content: String, message: St
     }
 
     let content_hash: [u8; 32] = Sha256::digest(content.as_bytes()).into();
-    let char_count = content.len() as u64;
-    let prev_chars = entry
+    let byte_count = content.len() as u64;
+    let prev_bytes = entry
         .content_snapshots
         .last()
-        .map(|s| s.char_count)
+        .map(|s| s.byte_count)
         .unwrap_or(0);
     let size_delta =
-        (char_count as i64 - prev_chars as i64).clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+        (byte_count as i64 - prev_bytes as i64).clamp(i32::MIN as i64, i32::MAX as i64) as i32;
 
     let context_note = if message.is_empty() {
         None
@@ -240,15 +255,20 @@ pub fn ffi_ephemeral_checkpoint(session_id: String, content: String, message: St
         Some(message)
     };
 
+    let snapshot_msg = context_note.clone();
     entry.content_snapshots.push(ContentSnapshot {
         timestamp_ns: now_ns(),
         content_hash,
-        char_count,
+        byte_count,
         _size_delta: size_delta,
         message: context_note,
     });
     entry.checkpoint_count += 1;
     entry.last_checkpoint_at = Some(Instant::now());
+    let checkpoint_num = entry.checkpoint_count;
+
+    // Drop DashMap guard before disk I/O to avoid blocking other sessions.
+    drop(entry);
 
     let ephemeral_path = format!("ephemeral://{session_id}");
     let persist_error = match open_store() {
@@ -256,11 +276,8 @@ pub fn ffi_ephemeral_checkpoint(session_id: String, content: String, message: St
             let mut event = crate::store::SecureEvent::new(
                 ephemeral_path,
                 content_hash,
-                char_count as i64,
-                entry
-                    .content_snapshots
-                    .last()
-                    .and_then(|s| s.message.clone()),
+                byte_count as i64,
+                snapshot_msg,
             );
             event.device_id = device_identity().0;
             event.machine_id = device_identity().1.clone();
@@ -279,12 +296,15 @@ pub fn ffi_ephemeral_checkpoint(session_id: String, content: String, message: St
         }
     };
 
-    entry.last_activity = Instant::now();
-    flush_session_state(&session_id, &entry);
+    // Re-acquire briefly to update activity timestamp and flush state.
+    if let Some(mut entry) = sessions().get_mut(&session_id) {
+        entry.last_activity = Instant::now();
+        flush_session_state(&session_id, &entry);
+    }
 
     let msg = format!(
         "Ephemeral checkpoint #{}: {}",
-        entry.checkpoint_count,
+        checkpoint_num,
         hex::encode(&content_hash[..8])
     );
     FfiResult {
@@ -447,7 +467,7 @@ pub fn ffi_ephemeral_status(session_id: String) -> FfiEphemeralStatusResult {
 pub fn ffi_ephemeral_checkpoint_hash(
     session_id: String,
     content_hash_hex: String,
-    char_count: u64,
+    byte_count: u64,
     size_delta: i32,
     message: String,
     commitment: Option<String>,
@@ -495,7 +515,7 @@ pub fn ffi_ephemeral_checkpoint_hash(
     entry.content_snapshots.push(ContentSnapshot {
         timestamp_ns: now_ns(),
         content_hash,
-        char_count,
+        byte_count: char_count,
         _size_delta: size_delta,
         message: context_note,
     });
@@ -503,32 +523,46 @@ pub fn ffi_ephemeral_checkpoint_hash(
     entry.last_checkpoint_at = Some(Instant::now());
 
     let ephemeral_path = format!("ephemeral://{session_id}");
-    if let Ok(mut store) = open_store() {
-        let mut event = crate::store::SecureEvent::new(
-            ephemeral_path,
-            content_hash,
-            char_count as i64,
-            entry
-                .content_snapshots
-                .last()
-                .and_then(|s| s.message.clone()),
-        );
-        event.device_id = device_identity().0;
-        event.machine_id = device_identity().1.clone();
-        event.size_delta = size_delta;
-        event.context_type = Some("ephemeral".to_string());
-        if let Err(e) = store.add_secure_event(&mut event) {
-            log::error!("Failed to persist checkpoint: {e}");
+    let persist_error = match open_store() {
+        Ok(mut store) => {
+            let mut event = crate::store::SecureEvent::new(
+                ephemeral_path,
+                content_hash,
+                char_count as i64,
+                entry
+                    .content_snapshots
+                    .last()
+                    .and_then(|s| s.message.clone()),
+            );
+            event.device_id = device_identity().0;
+            event.machine_id = device_identity().1.clone();
+            event.size_delta = size_delta;
+            event.context_type = Some("ephemeral".to_string());
+            if let Err(e) = store.add_secure_event(&mut event) {
+                log::error!("Failed to persist checkpoint_hash: {e}");
+                Some(format!("persist failed: {e}"))
+            } else {
+                None
+            }
         }
-    }
+        Err(e) => {
+            log::error!("Failed to open store for ephemeral checkpoint_hash: {e}");
+            Some(format!("store unavailable: {e}"))
+        }
+    };
 
     flush_session_state(&session_id, &entry);
 
-    FfiResult::ok(format!(
+    let msg = format!(
         "Ephemeral checkpoint #{}: {}",
         entry.checkpoint_count,
         &content_hash_hex[..16]
-    ))
+    );
+    FfiResult {
+        success: true,
+        message: Some(msg),
+        error_message: persist_error,
+    }
 }
 
 /// Set the canary seed for an ephemeral session (derived during NMH handshake).
@@ -605,7 +639,7 @@ fn build_war_block(
         .map(|s| crate::evidence::EphemeralSnapshot {
             timestamp_ns: s.timestamp_ns,
             content_hash: s.content_hash,
-            char_count: s.char_count,
+            char_count: s.byte_count,
             message: s.message.clone(),
         })
         .collect();
