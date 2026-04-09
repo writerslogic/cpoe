@@ -110,17 +110,29 @@ impl ContinuationSection {
         vdf_time: f64,
         entropy_bits: f64,
     ) {
-        self.cumulative_summary.total_checkpoints = self
-            .cumulative_summary
-            .total_checkpoints
-            .saturating_add(checkpoints);
-        self.cumulative_summary.total_chars =
-            self.cumulative_summary.total_chars.saturating_add(chars);
+        // Detect truncation *before* saturation to report how many were lost
+        if let Some(new_checkpoints) = self.cumulative_summary.total_checkpoints.checked_add(checkpoints) {
+            self.cumulative_summary.total_checkpoints = new_checkpoints;
+        } else {
+            let lost = checkpoints.saturating_sub(
+                u64::MAX.saturating_sub(self.cumulative_summary.total_checkpoints)
+            );
+            log::warn!("checkpoint stats truncated: {} checkpoints lost, capping at u64::MAX", lost);
+            self.cumulative_summary.total_checkpoints = u64::MAX;
+        }
+
+        if let Some(new_chars) = self.cumulative_summary.total_chars.checked_add(chars) {
+            self.cumulative_summary.total_chars = new_chars;
+        } else {
+            let lost = chars.saturating_sub(
+                u64::MAX.saturating_sub(self.cumulative_summary.total_chars)
+            );
+            log::warn!("char stats truncated: {} chars lost, capping at u64::MAX", lost);
+            self.cumulative_summary.total_chars = u64::MAX;
+        }
+
         self.cumulative_summary.total_vdf_time_seconds += vdf_time;
         self.cumulative_summary.total_entropy_bits += entropy_bits;
-        if self.cumulative_summary.total_checkpoints == u64::MAX {
-            log::warn!("continuation stats saturated at u64::MAX");
-        }
     }
 
     /// Attach a series-binding signature.
