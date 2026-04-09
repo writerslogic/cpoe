@@ -137,42 +137,37 @@ impl Sentinel {
         // Wal::open requires a [u8; 32] session key derived from this ID.
         let mut session_id_bytes = [0u8; 32];
         let hex_str = &session.session_id[..64.min(session.session_id.len())];
-        if hex::decode_to_slice(hex_str, &mut session_id_bytes).is_ok() {
-            if let Some(ref signing_key) = key {
-                // Copy key bytes for Wal::open (which takes SigningKey by value)
-                // and zeroize the intermediate copy. SigningKey::from_bytes produces
-                // a value whose Drop impl zeroizes internal state.
-                let mut key_bytes = signing_key.to_bytes();
-                let wal_key = SigningKey::from_bytes(&key_bytes);
-                key_bytes.zeroize();
-                match Wal::open(&wal_path, session_id_bytes, wal_key) {
-                    Ok(wal) => {
-                        let payload = create_session_start_payload(&session);
-                        if let Err(e) = wal.append(EntryType::SessionStart, payload) {
-                            log::warn!(
-                                "WAL append failed for session {}: {}",
-                                session.session_id,
-                                e
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        log::error!(
-                            "WAL::open() failed for session {}: {}; session continues without persistent proof",
+        if let Err(e) = hex::decode_to_slice(hex_str, &mut session_id_bytes) {
+            log::warn!("session_id hex decode failed: {e}; WAL may not be created");
+        } else if let Some(ref signing_key) = key {
+            // Copy key bytes for Wal::open (which takes SigningKey by value)
+            // and zeroize the intermediate copy. SigningKey::from_bytes produces
+            // a value whose Drop impl zeroizes internal state.
+            let mut key_bytes = signing_key.to_bytes();
+            let wal_key = SigningKey::from_bytes(&key_bytes);
+            key_bytes.zeroize();
+            match Wal::open(&wal_path, session_id_bytes, wal_key) {
+                Ok(wal) => {
+                    let payload = create_session_start_payload(&session);
+                    if let Err(e) = wal.append(EntryType::SessionStart, payload) {
+                        log::warn!(
+                            "WAL append failed for session {}: {}",
                             session.session_id,
                             e
                         );
                     }
                 }
-            } else {
-                log::warn!(
-                    "Signing key not initialized, skipping WAL for session {}",
-                    session.session_id
-                );
+                Err(e) => {
+                    log::error!(
+                        "WAL::open() failed for session {}: {}; session continues without persistent proof",
+                        session.session_id,
+                        e
+                    );
+                }
             }
         } else {
             log::warn!(
-                "Invalid session ID hex '{}', skipping WAL",
+                "Signing key not initialized, skipping WAL for session {}",
                 session.session_id
             );
         }
@@ -235,7 +230,10 @@ impl Sentinel {
                 return false;
             }
         };
-        let file_size = i64::try_from(raw_size).unwrap_or(i64::MAX);
+        let file_size = i64::try_from(raw_size).unwrap_or_else(|_| {
+            log::warn!("file size {} exceeds i64::MAX", raw_size);
+            i64::MAX
+        });
 
         if !self.running.load(std::sync::atomic::Ordering::SeqCst) {
             return false;
@@ -404,7 +402,7 @@ impl Sentinel {
         let mut key_bytes = signing_key_local.to_bytes();
         let hmac_key = crate::crypto::derive_hmac_key(&key_bytes);
         key_bytes.zeroize();
-        let store = crate::store::SecureStore::open(&db_path, hmac_key.to_vec())?;
+        let store = crate::store::SecureStore::open(&db_path, hmac_key)?;
 
         let mut current_digest =
             if let Some((cbor, _)) = store.get_baseline_digest(&identity_fingerprint)? {

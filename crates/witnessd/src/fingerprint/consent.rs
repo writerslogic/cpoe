@@ -187,7 +187,12 @@ impl ConsentManager {
         }
 
         let json = serde_json::to_string_pretty(&self.record)?;
-        fs::write(&self.consent_file, json)?;
+        let tmp_path = self.consent_file.with_extension("json.tmp");
+        fs::write(&tmp_path, json)?;
+        let f = std::fs::File::open(&tmp_path)?;
+        f.sync_all()?;
+        drop(f);
+        fs::rename(&tmp_path, &self.consent_file)?;
         Ok(())
     }
 

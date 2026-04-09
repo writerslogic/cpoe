@@ -32,7 +32,7 @@ pub fn ffi_sentinel_start_witnessing(path: String) -> FfiResult {
     };
 
     match sentinel.start_witnessing(&validated_path) {
-        Ok(()) => FfiResult::ok(format!("Now witnessing: {path}")),
+        Ok(()) => FfiResult::ok(format!("Now witnessing: {}", validated_path.display())),
         Err((_code, msg)) => FfiResult::err(msg),
     }
 }
@@ -57,7 +57,7 @@ pub fn ffi_sentinel_stop_witnessing(path: String) -> FfiResult {
     };
 
     match sentinel.stop_witnessing(&validated_path) {
-        Ok(()) => FfiResult::ok(format!("Stopped witnessing: {path}")),
+        Ok(()) => FfiResult::ok(format!("Stopped witnessing: {}", validated_path.display())),
         Err((_code, msg)) => FfiResult::err(msg),
     }
 }

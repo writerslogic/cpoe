@@ -6,7 +6,7 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use subtle::ConstantTimeEq;
-use zeroize::Zeroize;
+use zeroize::Zeroizing;
 
 /// HMAC-SHA256 type alias for access log entry integrity tags.
 type HmacSha256 = Hmac<Sha256>;
@@ -96,7 +96,7 @@ pub struct AccessLogEntry {
 /// entry fields, making the audit trail tamper-detectable.
 pub struct AccessLog {
     conn: Connection,
-    hmac_key: Vec<u8>,
+    hmac_key: Zeroizing<Vec<u8>>,
 }
 
 impl AccessLog {
@@ -104,7 +104,7 @@ impl AccessLog {
     ///
     /// `hmac_key` must be exactly 32 bytes; it is used to compute per-entry
     /// HMAC-SHA256 integrity tags. Use the same key as [`SecureStore`].
-    pub fn open<P: AsRef<std::path::Path>>(path: P, hmac_key: Vec<u8>) -> anyhow::Result<Self> {
+    pub fn open<P: AsRef<std::path::Path>>(path: P, hmac_key: Zeroizing<Vec<u8>>) -> anyhow::Result<Self> {
         if hmac_key.len() != 32 {
             anyhow::bail!("HMAC key must be exactly 32 bytes, got {}", hmac_key.len());
         }
@@ -153,7 +153,7 @@ impl AccessLog {
     /// Open an in-memory access log (useful for tests).
     #[cfg(test)]
     pub fn open_in_memory() -> anyhow::Result<Self> {
-        Self::open(":memory:", vec![0xAA; 32])
+        Self::open(":memory:", Zeroizing::new(vec![0xAA; 32]))
     }
 
     /// Record an access event with HMAC integrity protection.
@@ -348,11 +348,6 @@ impl AccessLog {
     }
 }
 
-impl Drop for AccessLog {
-    fn drop(&mut self) {
-        self.hmac_key.zeroize();
-    }
-}
 
 /// Compute HMAC-SHA256 over access log entry fields with domain separation.
 fn compute_access_entry_hmac(
@@ -599,7 +594,7 @@ mod tests {
 
     #[test]
     fn test_access_log_rejects_bad_key_length() {
-        let result = AccessLog::open(":memory:", vec![0xAA; 16]);
+        let result = AccessLog::open(":memory:", Zeroizing::new(vec![0xAA; 16]));
         let msg = result.err().expect("should fail").to_string();
         assert!(msg.contains("32 bytes"));
     }

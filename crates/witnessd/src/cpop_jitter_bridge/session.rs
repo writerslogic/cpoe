@@ -328,12 +328,21 @@ impl HybridJitterSession {
             seen.insert(sample.document_hash);
         }
 
+        let total = i32::try_from(self.samples.len()).unwrap_or_else(|_| {
+            log::warn!("sample count {} exceeds i32::MAX", self.samples.len());
+            i32::MAX
+        });
+        let unique = i32::try_from(seen.len()).unwrap_or_else(|_| {
+            log::warn!("unique_doc_hashes count {} exceeds i32::MAX", seen.len());
+            i32::MAX
+        });
+
         Statistics {
             total_keystrokes: self.keystroke_count,
-            total_samples: i32::try_from(self.samples.len()).unwrap_or(i32::MAX),
+            total_samples: total,
             duration,
             keystrokes_per_min,
-            unique_doc_hashes: i32::try_from(seen.len()).unwrap_or(i32::MAX),
+            unique_doc_hashes: unique,
             chain_valid: self
                 .chain_valid_cache
                 .unwrap_or_else(|| self.verify_chain().is_ok()),
@@ -372,8 +381,9 @@ impl HybridJitterSession {
         let mut tmp = tempfile::NamedTempFile::new_in(parent)
             .map_err(|e| format!("failed to create temp file: {e}"))?;
         tmp.write_all(&bytes).map_err(|e| e.to_string())?;
+        tmp.as_file().sync_all().map_err(|e| format!("failed to sync temp file: {e}"))?;
         tmp.persist(path.as_ref())
-            .map_err(|e| format!("failed to persist session file: {e}"))?;
+            .map_err(|e| format!("failed to persist session file to {}: {}", path.as_ref().display(), e.error))?;
         Ok(())
     }
 

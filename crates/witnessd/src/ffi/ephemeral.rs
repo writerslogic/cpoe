@@ -136,7 +136,7 @@ fn evict_stale_sessions() {
 /// Start a new ephemeral witnessing session.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn ffi_start_ephemeral_session(context_label: String) -> FfiEphemeralSessionResult {
-    if context_label.chars().count() > MAX_CONTEXT_LABEL_LEN {
+    if context_label.len() > MAX_CONTEXT_LABEL_LEN {
         return FfiEphemeralSessionResult {
             success: false,
             session_id: String::new(),

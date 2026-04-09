@@ -126,8 +126,9 @@ impl FingerprintStorage {
     /// Encrypt and persist a profile, updating the in-memory index.
     pub fn save(&mut self, fingerprint: &AuthorFingerprint) -> Result<()> {
         let path = self.profile_path(&fingerprint.id);
-        let plaintext = serde_json::to_vec(fingerprint)?;
+        let mut plaintext = serde_json::to_vec(fingerprint)?;
         let ciphertext = self.encrypt(&plaintext)?;
+        plaintext.zeroize();
         fs::write(&path, &ciphertext)?;
 
         let mtime = fs::metadata(&path)
@@ -159,8 +160,9 @@ impl FingerprintStorage {
         }
 
         let ciphertext = fs::read(&path)?;
-        let plaintext = self.decrypt(&ciphertext)?;
+        let mut plaintext = self.decrypt(&ciphertext)?;
         let fingerprint: AuthorFingerprint = serde_json::from_slice(&plaintext)?;
+        plaintext.zeroize();
 
         Ok(fingerprint)
     }

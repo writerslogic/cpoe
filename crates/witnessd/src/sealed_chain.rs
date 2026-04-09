@@ -152,6 +152,31 @@ pub fn save_sealed(
     Ok(())
 }
 
+/// Validate sealed file header: magic bytes, version, and return version + remaining data.
+fn validate_sealed_header(data: &[u8]) -> Result<(u32, &[u8])> {
+    if data.len() < HEADER_SIZE + 16 {
+        // Minimum: header + 16-byte GCM tag
+        return Err(Error::checkpoint("sealed file too short"));
+    }
+
+    if &data[0..4] != SEALED_MAGIC {
+        return Err(Error::checkpoint("invalid sealed file magic"));
+    }
+
+    let version = u32::from_le_bytes(
+        data[4..8]
+            .try_into()
+            .map_err(|_| Error::checkpoint("sealed file header truncated"))?,
+    );
+    if version != SEALED_VERSION_V1 && version != SEALED_VERSION {
+        return Err(Error::checkpoint(format!(
+            "unsupported sealed file version: {version}"
+        )));
+    }
+
+    Ok((version, &data[HEADER_SIZE..]))
+}
+
 /// Load a chain from a sealed (encrypted) file.
 ///
 /// Reads the document_id from the header, decrypts the chain JSON,
@@ -172,25 +197,7 @@ pub fn load_sealed_verified(
 ) -> Result<Chain> {
     let data = fs::read(path)?;
 
-    if data.len() < HEADER_SIZE + 16 {
-        // Minimum: header + 16-byte GCM tag
-        return Err(Error::checkpoint("sealed file too short"));
-    }
-
-    if &data[0..4] != SEALED_MAGIC {
-        return Err(Error::checkpoint("invalid sealed file magic"));
-    }
-
-    let version = u32::from_le_bytes(
-        data[4..8]
-            .try_into()
-            .map_err(|_| Error::checkpoint("sealed file header truncated"))?,
-    );
-    if version != SEALED_VERSION_V1 && version != SEALED_VERSION {
-        return Err(Error::checkpoint(format!(
-            "unsupported sealed file version: {version}"
-        )));
-    }
+    let (_version, _) = validate_sealed_header(&data)?;
 
     let nonce_bytes = &data[8..20];
     let header_doc_id = &data[20..52];
@@ -237,13 +244,7 @@ pub fn read_sealed_document_id(path: &Path) -> Result<[u8; 32]> {
     let mut f = fs::File::open(path)?;
     let mut header = [0u8; HEADER_SIZE];
     f.read_exact(&mut header).map_err(|_| Error::checkpoint("sealed file too short for header"))?;
-    if &header[0..4] != SEALED_MAGIC {
-        return Err(Error::checkpoint("invalid sealed file magic"));
-    }
-    let version = u32::from_le_bytes(header[4..8].try_into().unwrap());
-    if version != SEALED_VERSION_V1 && version != SEALED_VERSION {
-        return Err(Error::checkpoint(format!("unsupported sealed file version: {version}")));
-    }
+    validate_sealed_header(&header)?;
     let mut doc_id = [0u8; 32];
     doc_id.copy_from_slice(&header[20..52]);
     Ok(doc_id)

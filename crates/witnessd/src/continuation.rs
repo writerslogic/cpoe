@@ -118,6 +118,9 @@ impl ContinuationSection {
             self.cumulative_summary.total_chars.saturating_add(chars);
         self.cumulative_summary.total_vdf_time_seconds += vdf_time;
         self.cumulative_summary.total_entropy_bits += entropy_bits;
+        if self.cumulative_summary.total_checkpoints == u64::MAX {
+            log::warn!("continuation stats saturated at u64::MAX");
+        }
     }
 
     /// Attach a series-binding signature.
@@ -168,7 +171,7 @@ impl ContinuationSection {
     pub fn generate_vdf_context(&self, content_hash: &[u8]) -> Vec<u8> {
         // Capacity: worst case prev_hash ~64 bytes + 4 prefix + content_hash ~32 + 4 prefix
         //           + series_id 16 + sequence 4 = ~124 bytes
-        let mut context = Vec::with_capacity(128);
+        let mut context = Vec::with_capacity(256);
 
         if let Some(ref prev_hash) = self.prev_packet_chain_hash {
             let bytes = prev_hash.as_bytes();

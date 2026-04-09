@@ -243,14 +243,14 @@ impl CollaborationSection {
                     // AUD-187: Reject inverted ranges instead of silently ignoring them
                     if start > end {
                         return Err(format!(
-                            "invalid checkpoint range ({}, {}): start exceeds end",
-                            start, end
+                            "invalid checkpoint range ({}, {}): start must not exceed end (valid range 0..{})",
+                            start, end, total_checkpoints
                         ));
                     }
                     // AUD-188: Reject out-of-bounds ranges
                     if *end >= total_checkpoints {
                         return Err(format!(
-                            "checkpoint range ({}, {}) exceeds total {}",
+                            "invalid checkpoint range ({}, {}): end must be less than {} checkpoints",
                             start, end, total_checkpoints
                         ));
                     }
