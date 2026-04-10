@@ -22,6 +22,20 @@ const PROFILE_EXTENSION: &str = ".profile";
 const NONCE_SIZE: usize = 12;
 const KEY_SIZE: usize = 32;
 
+fn build_profile_path(storage_dir: &Path, id: &ProfileId) -> PathBuf {
+    let safe_id: String = id
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    storage_dir.join(format!("{}{}", safe_id, PROFILE_EXTENSION))
+}
+
 /// Index metadata for a stored profile (avoids full decryption).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredProfile {
@@ -87,18 +101,11 @@ impl FingerprintStorage {
             }
         }
 
-        let stale_ids: Vec<ProfileId> = self
-            .profile_index
-            .iter()
-            .filter(|(_, profile)| {
-                let path = self.profile_path_for_id(&profile.id);
-                !current_paths.contains_key(&path)
-            })
-            .map(|(id, _)| id.clone())
-            .collect();
-        for id in &stale_ids {
-            self.profile_index.remove(id);
-        }
+        let storage_dir = &self.storage_dir;
+        self.profile_index.retain(|_, profile| {
+            let path = build_profile_path(storage_dir, &profile.id);
+            current_paths.contains_key(&path)
+        });
         self.file_mtimes
             .retain(|path, _| current_paths.contains_key(path));
 
@@ -238,18 +245,7 @@ impl FingerprintStorage {
 
     /// Sanitize `id` to prevent path traversal, then return file path.
     fn profile_path(&self, id: &ProfileId) -> PathBuf {
-        let safe_id: String = id
-            .chars()
-            .map(|c| {
-                if c.is_alphanumeric() || c == '-' || c == '_' {
-                    c
-                } else {
-                    '_'
-                }
-            })
-            .collect();
-        self.storage_dir
-            .join(format!("{}{}", safe_id, PROFILE_EXTENSION))
+        build_profile_path(&self.storage_dir, id)
     }
 
     /// Encrypt with random nonce. Output: `nonce || ciphertext`.
