@@ -563,30 +563,22 @@ fn load_signing_key() -> Result<SigningKey, String> {
     }
     let mut secret = zeroize::Zeroizing::new([0u8; 32]);
     secret.copy_from_slice(&key_data[..32]);
-    let signing_key = SigningKey::from_bytes(&secret);
-
-    // Integrity check: verify the loaded key can produce a valid signature.
-    // Catches file corruption or truncation that the length check alone misses.
-    use ed25519_dalek::{Signer, Verifier};
-    let test_sig = signing_key.sign(b"witnessd-key-integrity-v1");
-    signing_key
-        .verifying_key()
-        .verify(b"witnessd-key-integrity-v1", &test_sig)
-        .map_err(|_| "signing key integrity check failed".to_string())?;
-
-    Ok(signing_key)
+    Ok(SigningKey::from_bytes(&secret))
 }
 
 /// Decode a multibase+multicodec Ed25519 public key string to raw 32-byte key.
+/// Handles base58btc ('z') and base16 ('f'/'F') encodings.
 /// Returns `None` if the encoding is unrecognized or the multicodec prefix doesn't match.
 fn decode_multibase_ed25519(multibase: &str) -> Option<[u8; 32]> {
-    // Multibase 'z' prefix = base58btc
     let decoded = if let Some(rest) = multibase.strip_prefix('z') {
         bs58::decode(rest).into_vec().ok()?
+    } else if let Some(rest) = multibase.strip_prefix('f') {
+        hex::decode(rest).ok()?
+    } else if let Some(rest) = multibase.strip_prefix('F') {
+        hex::decode(rest).ok()?
     } else {
         return None;
     };
-    // Strip Ed25519 multicodec prefix [0xed, 0x01], remainder must be 32 bytes
     if decoded.len() != 34 || decoded[0] != 0xed || decoded[1] != 0x01 {
         return None;
     }
