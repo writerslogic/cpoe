@@ -534,7 +534,7 @@ pub fn analyze_focus_patterns(
 
         let is_browser_short = BROWSER_BUNDLE_IDS
             .iter()
-            .any(|b| bid_lower == b.to_lowercase())
+            .any(|b| bid_lower.eq_ignore_ascii_case(b))
             && away_sec > 0.0
             && away_sec < BROWSER_SHORT_AWAY_SEC;
 

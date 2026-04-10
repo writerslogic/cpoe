@@ -369,11 +369,8 @@ impl SentinelConfig {
     /// bundle IDs are conventionally lowercase but not enforced; Windows app
     /// names vary in casing).
     pub fn is_app_allowed(&self, bundle_id: &str, app_name: &str) -> bool {
-        let bid = bundle_id.to_lowercase();
-        let aname = app_name.to_lowercase();
         for blocked in &self.blocked_apps {
-            let b = blocked.to_lowercase();
-            if b == bid || b == aname {
+            if blocked.eq_ignore_ascii_case(bundle_id) || blocked.eq_ignore_ascii_case(app_name) {
                 return false;
             }
         }
@@ -381,8 +378,7 @@ impl SentinelConfig {
             return self.track_unknown_apps;
         }
         for allowed in &self.allowed_apps {
-            let a = allowed.to_lowercase();
-            if a == bid || a == aname {
+            if allowed.eq_ignore_ascii_case(bundle_id) || allowed.eq_ignore_ascii_case(app_name) {
                 return true;
             }
         }

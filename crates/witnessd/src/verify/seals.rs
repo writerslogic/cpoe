@@ -274,12 +274,12 @@ pub(super) fn verify_key_provenance(
     if let Some(ref pubkey) = packet.signing_public_key {
         if let Some(ref kh) = packet.key_hierarchy {
             // The packet signing key should match one of the ratchet keys
-            let pubkey_hex = hex::encode(pubkey).to_lowercase();
+            let pubkey_hex = hex::encode(pubkey);
             let found = kh
                 .ratchet_public_keys
                 .iter()
-                .any(|k| k.to_lowercase() == pubkey_hex)
-                || kh.session_public_key.to_lowercase() == pubkey_hex;
+                .any(|k| k.eq_ignore_ascii_case(&pubkey_hex))
+                || kh.session_public_key.eq_ignore_ascii_case(&pubkey_hex);
             if !found {
                 warnings
                     .push("Packet signing key does not match any key in the hierarchy".to_string());

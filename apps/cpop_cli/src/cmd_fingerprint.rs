@@ -309,9 +309,8 @@ pub(crate) fn cmd_fingerprint(action: FingerprintAction, out: &OutputMode) -> Re
                 let stdin = io::stdin();
                 let mut response = String::new();
                 stdin.lock().read_line(&mut response)?;
-                let response = response.trim().to_lowercase();
 
-                if response != "yes" && response != "y" {
+                if crate::util::parse_yes_no(&response) != Some(true) {
                     if !out.quiet {
                         println!("Cancelled.");
                     }

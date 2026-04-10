@@ -312,9 +312,8 @@ pub(crate) fn cmd_config(action: ConfigAction) -> Result<()> {
                 let stdin = io::stdin();
                 let mut response = String::new();
                 stdin.lock().read_line(&mut response)?;
-                let response = response.trim().to_lowercase();
 
-                if response != "yes" && response != "y" {
+                if crate::util::parse_yes_no(&response) != Some(true) {
                     println!("Cancelled.");
                     return Ok(());
                 }
@@ -348,9 +347,8 @@ fn prompt_voice_consent(
 
     let mut response = String::new();
     io::stdin().lock().read_line(&mut response)?;
-    let response = response.trim().to_lowercase();
 
-    if response == "yes" || response == "y" {
+    if crate::util::parse_yes_no(&response) == Some(true) {
         consent_manager
             .grant_consent()
             .map_err(|e| anyhow!("record consent: {}", e))?;

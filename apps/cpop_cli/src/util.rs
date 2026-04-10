@@ -295,6 +295,19 @@ pub fn load_api_key(dir: &Path) -> Result<String> {
         .map_err(|_| anyhow!("No WritersProof API key found at: {}", key_path.display()))
 }
 
+/// Parse user input as a yes/no response.
+///
+/// Trims whitespace and converts to lowercase, then matches against yes/no words.
+/// Returns `Some(true)` for "y" or "yes", `Some(false)` for "n" or "no",
+/// and `None` for anything else.
+pub fn parse_yes_no(input: &str) -> Option<bool> {
+    match input.trim().to_lowercase().as_str() {
+        "y" | "yes" => Some(true),
+        "n" | "no" => Some(false),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

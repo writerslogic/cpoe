@@ -395,7 +395,7 @@ fn collect_declaration(
 
     let mut input = String::new();
     reader.read_line(&mut input)?;
-    let used_ai = input.trim().to_lowercase().starts_with('y');
+    let used_ai = crate::util::parse_yes_no(&input) == Some(true);
 
     println!();
     println!(

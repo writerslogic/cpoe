@@ -30,12 +30,10 @@ pub fn ask_confirmation(prompt: &str, default: bool) -> Result<bool> {
 
     let mut input = String::new();
     io::stdin().read_line(&mut input)?;
-    let input = input.trim().to_lowercase();
 
-    if input.is_empty() {
-        Ok(default)
-    } else {
-        Ok(input.starts_with('y'))
+    match crate::util::parse_yes_no(&input) {
+        Some(response) => Ok(response),
+        None => Ok(default),
     }
 }
 
