@@ -330,12 +330,12 @@ impl WritersProofClient {
         Self::json_response::<BeaconResponse>(resp).await
     }
 
-    /// Validate that a session ID is a 64-character hex string.
-    fn validate_session_id(session_id: &str) -> Result<()> {
-        if session_id.len() != 64 || !session_id.chars().all(|c| c.is_ascii_hexdigit()) {
+    /// Validate that a string is a 64-character hex value (session ID or SHA-256 hash).
+    fn validate_hex64(value: &str, field: &str) -> Result<()> {
+        if value.len() != 64 || !value.chars().all(|c| c.is_ascii_hexdigit()) {
             return Err(Error::crypto(format!(
-                "invalid session_id: must be 64-char hex, got: {}",
-                &session_id[..session_id.len().min(32)]
+                "invalid {field}: must be 64-char hex, got: {}",
+                &value[..value.len().min(32)]
             )));
         }
         Ok(())
@@ -343,7 +343,8 @@ impl WritersProofClient {
 
     /// Start a tracking session on the server with an initial hash.
     pub async fn start_session(&self, session_id: &str, initial_hash: &str) -> Result<()> {
-        Self::validate_session_id(session_id)?;
+        Self::validate_hex64(session_id, "session_id")?;
+        Self::validate_hex64(initial_hash, "initial_hash")?;
         let url = format!("{}/v1/sessions/{}", self.base_url, session_id);
         let req = serde_json::json!({
             "action": "start",
@@ -354,7 +355,8 @@ impl WritersProofClient {
 
     /// Update the server with the current document hash for real-time comparison.
     pub async fn update_session_hash(&self, session_id: &str, current_hash: &str) -> Result<()> {
-        Self::validate_session_id(session_id)?;
+        Self::validate_hex64(session_id, "session_id")?;
+        Self::validate_hex64(current_hash, "current_hash")?;
         let url = format!("{}/v1/sessions/{}", self.base_url, session_id);
         let req = serde_json::json!({
             "action": "update",
@@ -365,7 +367,8 @@ impl WritersProofClient {
 
     /// Signal the end of tracking and request the server to wipe the session hashes.
     pub async fn end_session(&self, session_id: &str, final_hash: &str) -> Result<()> {
-        Self::validate_session_id(session_id)?;
+        Self::validate_hex64(session_id, "session_id")?;
+        Self::validate_hex64(final_hash, "final_hash")?;
         let url = format!("{}/v1/sessions/{}", self.base_url, session_id);
         let req = serde_json::json!({
             "action": "end",
@@ -401,7 +404,7 @@ impl WritersProofClient {
     /// Returns a 30-second TTL nonce that must be bound into the next
     /// checkpoint hash to prove the checkpoint was built in real time.
     pub async fn request_challenge(&self, session_id: &str) -> Result<ChallengeResponse> {
-        Self::validate_session_id(session_id)?;
+        Self::validate_hex64(session_id, "session_id")?;
         let url = format!("{}/v1/sessions/{}/challenge", self.base_url, session_id);
         let mut req = self.client.post(&url);
         if let Some(ref jwt) = self.jwt {
@@ -440,13 +443,8 @@ impl WritersProofClient {
     ///
     /// A `PulseResponse` containing the fresh nonce, its ID, and TTL.
     pub async fn pulse(&self, session_id: &str, current_hash: &str) -> Result<PulseResponse> {
-        Self::validate_session_id(session_id)?;
-        if current_hash.len() != 64 || !current_hash.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Err(Error::crypto(format!(
-                "invalid current_hash: must be 64-char hex SHA-256, got: {}",
-                &current_hash[..current_hash.len().min(32)]
-            )));
-        }
+        Self::validate_hex64(session_id, "session_id")?;
+        Self::validate_hex64(current_hash, "current_hash")?;
 
         let url = format!("{}/v1/sessions/{}/pulse", self.base_url, session_id);
         let body = PulseRequest {
@@ -518,7 +516,7 @@ impl WritersProofClient {
         nonce_id: &str,
         checkpoint_hash: &str,
     ) -> Result<()> {
-        Self::validate_session_id(session_id)?;
+        Self::validate_hex64(session_id, "session_id")?;
         let url = format!("{}/v1/sessions/{}/confirm", self.base_url, session_id);
         let body = ConfirmNonceRequest {
             nonce_id: nonce_id.to_string(),

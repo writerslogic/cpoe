@@ -143,12 +143,18 @@ pub fn cosine_similarity(a: &[f64], b: &[f64]) -> f64 {
 }
 
 /// Relative similarity: 1.0 when both zero, else `1 - |a-b|/(|a|+|b|+ε)`.
+///
+/// Returns 0.0 for NaN/infinite inputs. Output is always in [0.0, 1.0].
 pub fn relative_similarity(a: f64, b: f64) -> f64 {
     if a == 0.0 && b == 0.0 {
-        1.0
+        return 1.0;
+    }
+    let denom = a.abs() + b.abs() + 0.001;
+    let r = 1.0 - (a - b).abs() / denom;
+    if r.is_finite() {
+        r.clamp(0.0, 1.0)
     } else {
-        let denom = a.abs() + b.abs() + 0.001;
-        (1.0 - (a - b).abs() / denom).clamp(0.0, 1.0)
+        0.0
     }
 }
 
