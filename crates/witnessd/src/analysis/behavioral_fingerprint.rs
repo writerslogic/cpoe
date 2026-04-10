@@ -80,7 +80,7 @@ impl BehavioralFingerprint {
             return Self::default();
         }
 
-        let (mean, std) = stats::mean_and_std_dev(&intervals);
+        let (mean, std) = stats::mean_and_sample_std_dev(&intervals);
 
         let skewness = stats::skewness(&intervals, mean, std);
         let kurtosis = stats::kurtosis(&intervals, mean, std);
@@ -216,7 +216,7 @@ impl BehavioralFingerprint {
 
         let mut flags = Vec::new();
 
-        let (mean, std) = stats::mean_and_std_dev(&intervals);
+        let (mean, std) = stats::mean_and_sample_std_dev(&intervals);
 
         if mean > 0.0 {
             let cv = std / mean;

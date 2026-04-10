@@ -538,8 +538,9 @@
 - [x] **H-068** `[correctness]` `analysis/stats.rs:146-152`: relative_similarity incorrect for negative inputs; no output clamp -- FIXED 2026-04-09
   <!-- first:2026-04-09 -->
   <!-- fix: denominator changed from a+b to a.abs()+b.abs(); added .clamp(0.0, 1.0) -->
-- [ ] **M-060** `[api_contract]` `analysis/stats.rs:22` vs `utils/stats.rs:18`: Two mean_and_std_dev with different semantics (sample vs population) | Effort: medium
+- [x] **M-060** `[api_contract]` `analysis/stats.rs:22` vs `utils/stats.rs:18`: Two mean_and_std_dev with different semantics (sample vs population) -- FIXED 2026-04-09
   <!-- first:2026-04-09 -->
+  <!-- fix: renamed analysis/stats version to mean_and_sample_std_dev; updated 2 call sites in behavioral_fingerprint.rs -->
 
 ### ipc/server_windows.rs
 - [x] **H-069** `[security]` `ipc/server_windows.rs:103`: Alignment UB in TOKEN_USER pointer cast from Vec<u8> -- FIXED 2026-04-09
@@ -609,7 +610,8 @@
   <!-- fix: replaced `!=` with `subtle::ConstantTimeEq::ct_eq()` matching server-side pattern in crypto.rs -->
 - [-] **M-024** `[concurrency]` `ipc/async_client.rs:86-89`: Stream/session Options can become inconsistent across .await -- FALSE POSITIVE 2026-04-09
   <!-- connect() is atomic from caller's perspective; &mut self prevents concurrent access; no observable inconsistent state -->
-- [ ] **M-025** `[error_handling]` `ipc/async_client.rs:299-316`: Timeout during send leaves partial data; no recovery guidance | Effort: small
+- [x] **M-025** `[error_handling]` `ipc/async_client.rs:299-316`: Timeout during send leaves partial data; no recovery guidance -- FIXED 2026-04-09
+  <!-- fix: send_message and recv_message now poison (drop) the stream on timeout; caller must reconnect -->
 
 ### cpop_jitter_bridge/session.rs
 - [ ] **M-026** `[error_handling]` `cpop_jitter_bridge/session.rs:333-336`: try_from().unwrap_or(i32::MAX) silent truncation | Effort: small

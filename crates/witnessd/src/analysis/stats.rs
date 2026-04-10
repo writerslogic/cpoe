@@ -15,11 +15,13 @@ pub fn safe_div(a: f64, b: f64, fallback: f64) -> f64 {
     }
 }
 
-/// Single-pass mean and sample standard deviation.
+/// Single-pass mean and sample standard deviation (Bessel-corrected, divides by n-1).
 ///
 /// Returns `(0.0, 0.0)` for empty input and `(mean, 0.0)` for `data.len() < 2`
 /// (sample std dev is undefined with fewer than two observations).
-pub fn mean_and_std_dev(data: &[f64]) -> (f64, f64) {
+///
+/// For population std dev (divides by n), use `crate::utils::stats::mean_and_std_dev`.
+pub fn mean_and_sample_std_dev(data: &[f64]) -> (f64, f64) {
     let n = data.len() as f64;
     if n < 1.0 {
         return (0.0, 0.0);

@@ -269,6 +269,10 @@ impl AsyncIpcClient {
     /// Messages are serialized using JSON with a 4-byte little-endian length prefix and
     /// encrypted with ChaCha20-Poly1305. A secure session must be established via
     /// `connect()` before calling this method; plaintext sends are never permitted.
+    ///
+    /// On timeout, the connection is poisoned (dropped) because a partial write
+    /// leaves the framing protocol in an unrecoverable state. The caller must
+    /// reconnect after a `Timeout` error.
     pub async fn send_message(
         &mut self,
         msg: &IpcMessage,
@@ -302,7 +306,7 @@ impl AsyncIpcClient {
         }
 
         let len = payload.len() as u32;
-        tokio::time::timeout(IO_TIMEOUT, async {
+        let result = tokio::time::timeout(IO_TIMEOUT, async {
             stream
                 .write_all(&len.to_le_bytes())
                 .await
@@ -317,14 +321,28 @@ impl AsyncIpcClient {
                 .map_err(AsyncIpcClientError::SendFailed)?;
             Ok(())
         })
-        .await
-        .map_err(|_| AsyncIpcClientError::Timeout(IO_TIMEOUT))?
+        .await;
+
+        match result {
+            Ok(inner) => inner,
+            Err(_) => {
+                // Timeout during write may have left a partial frame on the wire.
+                // The stream is now in an indeterminate state; drop it to prevent
+                // the caller from sending further messages on a corrupted channel.
+                self.stream = None;
+                self.secure_session = None;
+                Err(AsyncIpcClientError::Timeout(IO_TIMEOUT))
+            }
+        }
     }
 
     /// Receive an IPC message from the daemon
     ///
     /// Reads a 4-byte little-endian length prefix followed by the encrypted payload.
     /// A secure session must be established via `connect()` before calling this method.
+    ///
+    /// On timeout, the connection is poisoned (dropped) because a partial read
+    /// leaves the framing protocol desynchronized. The caller must reconnect.
     pub async fn recv_message(&mut self) -> std::result::Result<IpcMessage, AsyncIpcClientError> {
         use tokio::io::AsyncReadExt;
 
@@ -333,7 +351,7 @@ impl AsyncIpcClient {
             .as_mut()
             .ok_or(AsyncIpcClientError::NotConnected)?;
 
-        let buffer = tokio::time::timeout(IO_TIMEOUT, async {
+        let result = tokio::time::timeout(IO_TIMEOUT, async {
             let mut len_buf = [0u8; 4];
             match stream.read_exact(&mut len_buf).await {
                 Ok(_) => {}
@@ -357,8 +375,16 @@ impl AsyncIpcClient {
 
             Ok(buffer)
         })
-        .await
-        .map_err(|_| AsyncIpcClientError::Timeout(IO_TIMEOUT))??;
+        .await;
+
+        let buffer = match result {
+            Ok(inner) => inner?,
+            Err(_) => {
+                self.stream = None;
+                self.secure_session = None;
+                return Err(AsyncIpcClientError::Timeout(IO_TIMEOUT));
+            }
+        };
 
         // Require an active encrypted session; plaintext receives are never permitted.
         let session = self
