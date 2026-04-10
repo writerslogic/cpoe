@@ -27,11 +27,8 @@ static SEED_CACHE: Mutex<Option<ProtectedBuf>> = Mutex::new(None);
 static HMAC_CACHE: Mutex<Option<ProtectedBuf>> = Mutex::new(None);
 /// Mutex instead of OnceLock so the cache can be invalidated after delete.
 static FINGERPRINT_KEY_CACHE: Mutex<Option<ProtectedBuf>> = Mutex::new(None);
-/// Accepted risk: mnemonic stays in memory for the process lifetime. It is needed
-/// for the entire session (identity re-derivation, recovery prompts) and the
-/// process already handles sensitive key material, so the incremental exposure
-/// from keeping this cached is negligible.
-static MNEMONIC_CACHE: OnceLock<Zeroizing<String>> = OnceLock::new();
+/// Mutex instead of OnceLock so the cache can be invalidated after re-generation.
+static MNEMONIC_CACHE: Mutex<Option<Zeroizing<String>>> = Mutex::new(None);
 /// Accepted risk: machine_id (String) is not zeroized. It is a non-secret device
 /// identifier, so the residual exposure does not warrant switching to Mutex.
 static IDENTITY_CACHE: OnceLock<([u8; 16], String)> = OnceLock::new();
@@ -523,24 +520,34 @@ impl SecureStorage {
 
     /// Store the mnemonic phrase in the platform keychain.
     pub fn save_mnemonic(phrase: &str) -> Result<()> {
-        Self::save(MNEMONIC_ACCOUNT, phrase.as_bytes())
+        Self::save(MNEMONIC_ACCOUNT, phrase.as_bytes())?;
+        *MNEMONIC_CACHE.lock_recover() = Some(Zeroizing::new(phrase.to_string()));
+        Ok(())
     }
 
     /// Load the mnemonic phrase from the platform keychain, with caching.
     /// Returns `Zeroizing<String>` so callers zeroize the mnemonic when done.
     pub fn load_mnemonic() -> Result<Option<Zeroizing<String>>> {
-        if let Some(cached) = MNEMONIC_CACHE.get() {
-            return Ok(Some(Zeroizing::new(cached.as_str().to_owned())));
+        {
+            let guard = MNEMONIC_CACHE.lock_recover();
+            if let Some(ref cached) = *guard {
+                return Ok(Some(Zeroizing::new(cached.as_str().to_owned())));
+            }
         }
         let bytes = Self::load(MNEMONIC_ACCOUNT)?;
         if let Some(b) = bytes {
             let s = String::from_utf8(b.to_vec())
                 .map_err(|e| anyhow!("Invalid UTF-8 in mnemonic: {}", e))?;
-            let _ = MNEMONIC_CACHE.set(Zeroizing::new(s.clone()));
+            *MNEMONIC_CACHE.lock_recover() = Some(Zeroizing::new(s.clone()));
             Ok(Some(Zeroizing::new(s)))
         } else {
             Ok(None)
         }
+    }
+
+    /// Reset the mnemonic cache, forcing the next load to read from keychain.
+    pub fn reset_mnemonic_cache() {
+        *MNEMONIC_CACHE.lock_recover() = None;
     }
 
     /// Store the device ID and machine ID in the platform keychain.

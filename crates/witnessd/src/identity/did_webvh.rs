@@ -494,8 +494,6 @@ pub async fn resolve_and_verify_key(
         .get_did_document()
         .map_err(|e| Error::identity(format!("failed to get DID document: {e}")))?;
 
-    let expected_multibase = encode_multibase_ed25519(expected_pubkey);
-
     let methods = match doc["verificationMethod"].as_array() {
         Some(arr) => arr,
         None => return Ok(false),
@@ -503,8 +501,10 @@ pub async fn resolve_and_verify_key(
 
     for method in methods {
         if let Some(key_mb) = method["publicKeyMultibase"].as_str() {
-            if key_mb == expected_multibase {
-                return Ok(true);
+            if let Some(remote_pubkey) = decode_multibase_ed25519(key_mb) {
+                if remote_pubkey == expected_pubkey {
+                    return Ok(true);
+                }
             }
         }
     }
@@ -564,8 +564,35 @@ fn load_signing_key() -> Result<SigningKey, String> {
     let mut secret = zeroize::Zeroizing::new([0u8; 32]);
     secret.copy_from_slice(&key_data[..32]);
     let signing_key = SigningKey::from_bytes(&secret);
-    // Zeroizing<[u8;32]> handles zeroize on drop
+
+    // Integrity check: verify the loaded key can produce a valid signature.
+    // Catches file corruption or truncation that the length check alone misses.
+    use ed25519_dalek::{Signer, Verifier};
+    let test_sig = signing_key.sign(b"witnessd-key-integrity-v1");
+    signing_key
+        .verifying_key()
+        .verify(b"witnessd-key-integrity-v1", &test_sig)
+        .map_err(|_| "signing key integrity check failed".to_string())?;
+
     Ok(signing_key)
+}
+
+/// Decode a multibase+multicodec Ed25519 public key string to raw 32-byte key.
+/// Returns `None` if the encoding is unrecognized or the multicodec prefix doesn't match.
+fn decode_multibase_ed25519(multibase: &str) -> Option<[u8; 32]> {
+    // Multibase 'z' prefix = base58btc
+    let decoded = if let Some(rest) = multibase.strip_prefix('z') {
+        bs58::decode(rest).into_vec().ok()?
+    } else {
+        return None;
+    };
+    // Strip Ed25519 multicodec prefix [0xed, 0x01], remainder must be 32 bytes
+    if decoded.len() != 34 || decoded[0] != 0xed || decoded[1] != 0x01 {
+        return None;
+    }
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&decoded[2..]);
+    Some(key)
 }
 
 fn encode_multibase_ed25519(public_key: &[u8]) -> String {
