@@ -195,7 +195,7 @@ impl Block {
             };
 
         ForensicDetails {
-            version: self.version.as_str().to_string(),
+            version: self.version.as_str().to_owned(),
             author: self.author.clone(),
             document_id: hex::encode(self.document_id),
             timestamp: self.timestamp,

@@ -174,7 +174,7 @@ pub fn to_verifiable_credential(
             id: author_did.to_string(),
             subject_type: "Author".to_string(),
             process_attestation: ProcessAttestation {
-                status: appr.ear_status.as_str().to_string(),
+                status: appr.ear_status.as_str().to_owned(),
                 trust_vector: tv_vc,
                 document_ref,
                 chain_duration,

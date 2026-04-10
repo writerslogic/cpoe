@@ -156,7 +156,7 @@ impl SoftwarePUF {
                 .output()
                 .ok()?;
             if output.status.success() {
-                let id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                let id = String::from_utf8_lossy(&output.stdout).trim().to_owned();
                 if !id.is_empty() {
                     return Some(id);
                 }
@@ -165,7 +165,7 @@ impl SoftwarePUF {
         #[cfg(target_os = "linux")]
         {
             if let Ok(id) = fs::read_to_string("/etc/machine-id") {
-                let id = id.trim().to_string();
+                let id = id.trim().to_owned();
                 if !id.is_empty() {
                     return Some(id);
                 }
@@ -179,7 +179,7 @@ impl SoftwarePUF {
                 .ok()?;
             if output.status.success() {
                 for line in String::from_utf8_lossy(&output.stdout).lines().skip(1) {
-                    let id = line.trim().to_string();
+                    let id = line.trim().to_owned();
                     if !id.is_empty() {
                         return Some(id);
                     }

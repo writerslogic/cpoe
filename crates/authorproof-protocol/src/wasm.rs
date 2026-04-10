@@ -33,7 +33,7 @@ impl VerificationResult {
     fn error(verdict: ForensicVerdict, message: String) -> Self {
         Self {
             is_valid: false,
-            forensic_verdict: verdict.as_str().to_string(),
+            forensic_verdict: verdict.as_str().to_owned(),
             checkpoint_count: 0,
             chain_duration_secs: 0,
             coefficient_of_variation: 0.0,
@@ -134,7 +134,7 @@ pub fn verify_cpop_evidence(evidence_bytes: &[u8], public_key_bytes: &[u8]) -> V
 
             VerificationResult {
                 is_valid: analysis.verdict.is_verified(),
-                forensic_verdict: analysis.verdict.as_str().to_string(),
+                forensic_verdict: analysis.verdict.as_str().to_owned(),
                 // Saturates to u32::MAX for WASM compatibility; real packets won't exceed this.
                 checkpoint_count: u32::try_from(analysis.checkpoint_count).unwrap_or(u32::MAX),
                 chain_duration_secs: analysis.chain_duration_secs,

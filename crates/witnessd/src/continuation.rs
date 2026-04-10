@@ -9,7 +9,36 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use uuid::Uuid;
+
+/// Comprehensive error type for Continuation logic.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContinuationError {
+    SequenceOverflow,
+    PacketsInSeriesOverflow,
+    MissingPrevChainHash,
+    UnexpectedPrevChainHash,
+    PacketCountMismatch { expected: u32, found: u32 },
+}
+
+impl fmt::Display for ContinuationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SequenceOverflow => write!(f, "packet_sequence overflow: u32::MAX reached"),
+            Self::PacketsInSeriesOverflow => write!(f, "packets_in_series overflow: u32::MAX reached"),
+            Self::MissingPrevChainHash => write!(f, "Non-first packet must have prev_packet_chain_hash"),
+            Self::UnexpectedPrevChainHash => write!(f, "First packet (sequence 0) must not have prev_packet_chain_hash"),
+            Self::PacketCountMismatch { expected, found } => write!(
+                f,
+                "packets_in_series ({}) does not match sequence + 1 ({})",
+                found, expected
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ContinuationError {}
 
 /// Running totals across an Evidence series.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,14 +104,15 @@ impl ContinuationSection {
         prev_chain_hash: String,
         prev_packet_id: Uuid,
         prev_summary: &ContinuationSummary,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, ContinuationError> {
         let next_sequence = prev_sequence
             .checked_add(1)
-            .ok_or_else(|| "packet_sequence overflow: u32::MAX reached".to_string())?;
+            .ok_or(ContinuationError::SequenceOverflow)?;
+            
         let next_packets = prev_summary
             .packets_in_series
             .checked_add(1)
-            .ok_or_else(|| "packets_in_series overflow: u32::MAX reached".to_string())?;
+            .ok_or(ContinuationError::PacketsInSeriesOverflow)?;
 
         Ok(Self {
             series_id: prev_series_id,
@@ -148,26 +178,25 @@ impl ContinuationSection {
 
     /// Validate chain integrity: checks `prev_packet_chain_hash` presence
     /// and `packets_in_series` consistency.
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), ContinuationError> {
         if self.packet_sequence > 0 {
             if self.prev_packet_chain_hash.is_none() {
-                return Err("Non-first packet must have prev_packet_chain_hash".to_string());
+                return Err(ContinuationError::MissingPrevChainHash);
             }
         } else if self.prev_packet_chain_hash.is_some() {
-            return Err(
-                "First packet (sequence 0) must not have prev_packet_chain_hash".to_string(),
-            );
+            return Err(ContinuationError::UnexpectedPrevChainHash);
         }
 
         let expected = self
             .packet_sequence
             .checked_add(1)
-            .ok_or_else(|| "packet_sequence overflow: u32::MAX reached".to_string())?;
+            .ok_or(ContinuationError::SequenceOverflow)?;
+            
         if self.cumulative_summary.packets_in_series != expected {
-            return Err(format!(
-                "packets_in_series ({}) does not match sequence + 1 ({})",
-                self.cumulative_summary.packets_in_series, expected
-            ));
+            return Err(ContinuationError::PacketCountMismatch {
+                expected,
+                found: self.cumulative_summary.packets_in_series,
+            });
         }
 
         Ok(())
@@ -247,15 +276,14 @@ mod tests {
             Uuid::new_v4(),
             &first.cumulative_summary,
         );
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("overflow"));
+        assert!(matches!(result, Err(ContinuationError::SequenceOverflow)));
     }
 
     #[test]
     fn test_invalid_first_packet() {
         let mut section = ContinuationSection::new_series();
         section.prev_packet_chain_hash = Some("should_not_exist".to_string());
-        assert!(section.validate().is_err());
+        assert!(matches!(section.validate(), Err(ContinuationError::UnexpectedPrevChainHash)));
     }
 
     #[test]
@@ -276,7 +304,7 @@ mod tests {
             },
             series_binding_signature: None,
         };
-        assert!(section.validate().is_err());
+        assert!(matches!(section.validate(), Err(ContinuationError::MissingPrevChainHash)));
     }
 
     #[test]

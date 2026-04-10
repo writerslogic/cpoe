@@ -318,7 +318,7 @@ pub fn standards_compliance_report(
             eat_profile: ear.eat_profile.clone(),
             ear_status: ear
                 .pop_appraisal()
-                .map(|a| a.ear_status.as_str().to_string())
+                .map(|a| a.ear_status.as_str().to_owned())
                 .unwrap_or_else(|| "unknown".to_string()),
             has_trust_vector: ear
                 .pop_appraisal()

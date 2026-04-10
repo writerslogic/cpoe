@@ -98,7 +98,7 @@ fn get_x11_focus() -> Result<FocusInfo> {
         .reply()?;
 
     let window_title = if !name_reply.value.is_empty() {
-        Some(String::from_utf8_lossy(&name_reply.value).to_string())
+        Some(String::from_utf8_lossy(&name_reply.value).to_owned())
     } else {
         None
     };

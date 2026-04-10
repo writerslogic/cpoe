@@ -67,7 +67,7 @@ impl TransportCalibrator {
         let now_ms = ts.max(0) as u64;
 
         Some(TransportCalibration {
-            transport: transport.as_str().to_string(),
+            transport: transport.as_str().to_owned(),
             baseline_latency_us: baseline,
             latency_variance_us: variance.max(0.0).round() as u64,
             calibrated_at_ms: now_ms,

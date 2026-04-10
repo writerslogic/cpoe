@@ -99,7 +99,7 @@ pub fn to_c2pa_assertion(ear: &EarToken) -> Result<C2paAssertion> {
         label: ASSERTION_LABEL.to_string(),
         data: C2paAssertionData {
             ear_profile: ear.eat_profile.clone(),
-            status: appr.ear_status.as_str().to_string(),
+            status: appr.ear_status.as_str().to_owned(),
             trustworthiness_vector: tv_json,
             seal: seal_json,
             evidence_ref,

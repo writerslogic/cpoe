@@ -105,7 +105,7 @@ pub fn to_cawg_identity(ear: &EarToken, author_did: &str) -> Result<CawgIdentity
         },
         CawgIdentityClaim {
             claim_type: "attestation_status".to_string(),
-            value: appr.ear_status.as_str().to_string(),
+            value: appr.ear_status.as_str().to_owned(),
         },
     ];
 

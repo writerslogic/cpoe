@@ -434,7 +434,7 @@ impl From<&HidDeviceInfo> for InputDeviceInfo {
             product_id: u16::try_from(hid.product_id).unwrap_or(0),
             product_name: hid.product_name.clone(),
             serial_number: hid.serial_number.clone(),
-            connection_type: transport.as_str().to_string(),
+            connection_type: transport.as_str().to_owned(),
             fingerprint: hid.fingerprint(),
         }
     }

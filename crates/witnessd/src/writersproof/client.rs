@@ -431,7 +431,7 @@ impl WritersProofClient {
     pub async fn pulse(&self, session_id: &Hex64, current_hash: &Hex64) -> Result<PulseResponse> {
         let url = format!("{}/v1/sessions/{}/pulse", self.base_url, session_id);
         let body = PulseRequest {
-            current_hash: current_hash.as_str().to_string(),
+            current_hash: current_hash.as_str().to_owned(),
         };
         let mut req = self.client.post(&url).json(&body);
         if let Some(ref jwt) = self.jwt {
@@ -502,7 +502,7 @@ impl WritersProofClient {
         let url = format!("{}/v1/sessions/{}/confirm", self.base_url, session_id);
         let body = ConfirmNonceRequest {
             nonce_id: nonce_id.to_string(),
-            checkpoint_hash: checkpoint_hash.as_str().to_string(),
+            checkpoint_hash: checkpoint_hash.as_str().to_owned(),
         };
         let mut req = self.client.post(&url).json(&body);
         if let Some(ref jwt) = self.jwt {
