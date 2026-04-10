@@ -47,7 +47,7 @@ impl OpenTimestampsProvider {
     /// Create a provider using the default public calendar servers.
     pub fn new() -> Result<Self, AnchorError> {
         Ok(Self {
-            calendar_urls: OTS_CALENDAR_URLS.iter().map(|s| s.to_string()).collect(),
+            calendar_urls: OTS_CALENDAR_URLS.iter().copied().map(String::from).collect(),
             client: super::http::build_http_client(None)?,
             header_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
         })

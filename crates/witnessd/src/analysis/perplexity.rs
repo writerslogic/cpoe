@@ -46,10 +46,10 @@ impl PerplexityModel {
                 } else {
                     let mut char_map = HashMap::new();
                     char_map.insert(next_char, 1);
-                    self.counts.insert(context.to_string(), char_map);
+                    self.counts.insert(context.to_owned(), char_map);
                 }
             } else {
-                let key = context.to_string();
+                let key = context.to_owned();
                 self.totals.insert(key.clone(), 1);
                 let mut char_map = HashMap::new();
                 char_map.insert(next_char, 1);
