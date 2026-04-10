@@ -1,17 +1,17 @@
 # CPOP Project Audit -- Consolidated Findings
 
-<!-- suggest | Updated: 2026-04-09 | Domain: code | Languages: rust | Files: 27 delta + 677 prior | Issues: 340 -->
+<!-- suggest | Updated: 2026-04-09 | Domain: code | Languages: rust | Files: 27 delta + 677 prior + 14 audit-file | Issues: 354 -->
 
-**Updated**: 2026-04-09 (session 7 -- delta scan of 27 changed files since session 6; 4 batches, 1 wave)
-**Previous audit**: 2026-04-08 session 6 (42 files medium sweep); 2026-04-07 session 4 (677 files)
+**Updated**: 2026-04-09 (audit-file pass on 14 IPC/client/stats/comparison files; 10 fixed, 2 FP, 1 open)
+**Previous audit**: 2026-04-09 session 7 (delta scan); 2026-04-08 session 6; 2026-04-07 session 4
 **Baseline**: 1132 pass, 0 fail, 1 ignored (witnessd --lib)
 
 ## Summary
 | Severity | Open | Fixed (this+prior) | Skipped/FP (this+prior) |
 |----------|------|--------------------|--------------------------|
 | CRITICAL | 0    | 25                 | 17+                      |
-| HIGH     | 4    | 168                | 32+                      |
-| MEDIUM   | 46   | 259                | 22                       |
+| HIGH     | 0    | 173                | 32+                      |
+| MEDIUM   | 45   | 265                | 24                       |
 | SYSTEMIC | 1    | 9                  | 1                        |
 
 ---
@@ -520,6 +520,41 @@
   <!-- pid:toctou | verified:true | first:2026-04-09 -->
   Impact: Concurrent checkpoint commits could corrupt session state | Fix: Combine check and modify into single write lock scope, or use CAS pattern | Effort: medium
 
+## Audit-file session (2026-04-09)
+
+### writersproof/client.rs
+- [x] **H-066** `[security]` `writersproof/client.rs:332-508`: 5 session endpoints missing session_id validation (path injection) -- FIXED 2026-04-09
+  <!-- pid:missing_validation | first:2026-04-09 -->
+  <!-- fix: extracted validate_session_id() from pulse(); added to start_session, update_session_hash, end_session, request_challenge, confirm_nonce -->
+- [x] **M-059** `[resource]` `writersproof/client.rs:248`: get_crl uses .bytes().await buffering up to 50MB before size check -- FIXED 2026-04-09
+  <!-- fix: replaced with chunked streaming matching get_certificate pattern -->
+
+### forensics/comparison.rs
+- [x] **H-067** `[correctness]` `forensics/comparison.rs:88-93`: NaN propagation from non-interval dimensions poisons similarity score -- FIXED 2026-04-09
+  <!-- pid:nan_inf_unguarded | first:2026-04-09 -->
+  <!-- fix: all 5 dimensions now use guarded() helper; NaN dimensions excluded from weighted sum -->
+
+### analysis/stats.rs
+- [x] **H-068** `[correctness]` `analysis/stats.rs:146-152`: relative_similarity incorrect for negative inputs; no output clamp -- FIXED 2026-04-09
+  <!-- first:2026-04-09 -->
+  <!-- fix: denominator changed from a+b to a.abs()+b.abs(); added .clamp(0.0, 1.0) -->
+- [ ] **M-060** `[api_contract]` `analysis/stats.rs:22` vs `utils/stats.rs:18`: Two mean_and_std_dev with different semantics (sample vs population) | Effort: medium
+  <!-- first:2026-04-09 -->
+
+### ipc/server_windows.rs
+- [x] **H-069** `[security]` `ipc/server_windows.rs:103`: Alignment UB in TOKEN_USER pointer cast from Vec<u8> -- FIXED 2026-04-09
+  <!-- first:2026-04-09 -->
+  <!-- fix: alloc_zeroed with align_of::<TOKEN_USER>(); scopeguard dealloc; unsafe fn narrowed to targeted blocks -->
+- [x] **H-070** `[resource]` `ipc/server_windows.rs:124-134`: SID string leak on panic (LocalFree not RAII) -- FIXED 2026-04-09
+  <!-- first:2026-04-09 -->
+  <!-- fix: LocalAllocGuard RAII wrapper ensures cleanup on all paths including panics -->
+- [x] **M-061** `[security]` `ipc/server_windows.rs:53`: PID 0 (System Idle Process) not rejected after GetNamedPipeClientProcessId -- FIXED 2026-04-09
+- [x] **M-062** `[correctness]` `ipc/server_windows.rs:92`: Zero-size allocation if GetTokenInformation sizing call fails -- FIXED 2026-04-09
+
+### ipc/messages.rs
+- [x] **M-063** `[data_integrity]` `ipc/messages.rs:364`: CreateFileCheckpoint message field length unbounded (inconsistent with SystemAlert) -- FIXED 2026-04-09
+  <!-- fix: added message.len() > MAX_ALERT_MESSAGE check -->
+
 ---
 
 ## Medium (session 6)
@@ -570,8 +605,10 @@
   Fix: Device ID cached in LinuxState.cached_device_id on first successful computation.
 
 ### ipc/async_client.rs
-- [ ] **M-023** `[security]` `ipc/async_client.rs:226`: Non-constant-time KEY_CONFIRM comparison (low risk, inside encrypted session) | Effort: small
-- [ ] **M-024** `[concurrency]` `ipc/async_client.rs:86-89`: Stream/session Options can become inconsistent across .await | Effort: medium
+- [x] **M-023** `[security]` `ipc/async_client.rs:226`: Non-constant-time KEY_CONFIRM comparison (low risk, inside encrypted session) -- FIXED 2026-04-09
+  <!-- fix: replaced `!=` with `subtle::ConstantTimeEq::ct_eq()` matching server-side pattern in crypto.rs -->
+- [-] **M-024** `[concurrency]` `ipc/async_client.rs:86-89`: Stream/session Options can become inconsistent across .await -- FALSE POSITIVE 2026-04-09
+  <!-- connect() is atomic from caller's perspective; &mut self prevents concurrent access; no observable inconsistent state -->
 - [ ] **M-025** `[error_handling]` `ipc/async_client.rs:299-316`: Timeout during send leaves partial data; no recovery guidance | Effort: small
 
 ### cpop_jitter_bridge/session.rs
@@ -1223,13 +1260,13 @@
   <!-- pid:fire_and_forget | first:2026-04-08 -->
   Impact: `Task(priority: .utility) { ... }` for checkpoint writes is fire-and-forget. App termination before the task completes silently abandons the checkpoint. | Fix: Store the task handle and await it during shutdown, or track completion via the existing checkpoint state machine. | Effort: medium
 
-- [ ] **M-105** `[security]` `crates/witnessd/src/writersproof/client.rs:196`: `Content-Length` pre-check in `get_certificate` is spoofable
+- [-] **M-105** `[security]` `crates/witnessd/src/writersproof/client.rs:196`: `Content-Length` pre-check in `get_certificate` is spoofable -- FALSE POSITIVE 2026-04-09
   <!-- pid:missing_validation | first:2026-04-08 -->
-  Impact: A malicious server can omit or lie about `Content-Length`; the full body is buffered before the post-read size check, allowing unbounded memory consumption. | Fix: Use a streaming reader with a hard byte cap that aborts at `MAX_CERT_SIZE` before buffering completes. | Effort: medium
+  <!-- get_certificate already uses chunked streaming with per-chunk size check (lines 201-214); Content-Length pre-check is optimization only, actual bytes are guarded -->
 
-- [ ] **M-106** `[error_handling]` `crates/witnessd/src/writersproof/client.rs:243`: `get_crl` missing `Content-Length` pre-check (inconsistent with `get_certificate`)
+- [x] **M-106** `[error_handling]` `crates/witnessd/src/writersproof/client.rs:243`: `get_crl` missing `Content-Length` pre-check (inconsistent with `get_certificate`) -- FIXED 2026-04-09
   <!-- pid:missing_validation | first:2026-04-08 -->
-  Impact: `get_crl` calls `.bytes()` directly with only a 50MB post-read guard; a large response exhausts memory before the check fires. | Fix: Add `Content-Length` pre-check matching `get_certificate`; define `MAX_CRL_SIZE` as a named constant. | Effort: small
+  <!-- fix: replaced .bytes().await with chunked streaming matching get_certificate pattern; Content-Length pre-check retained as optimization -->
 
 - [ ] **M-107** `[security]` `crates/witnessd/src/ffi/helpers.rs:130`: `std::mem::take` on `Zeroizing<Vec<u8>>` bypasses zeroize-on-drop
   <!-- pid:key_zeroize_inconsistency | first:2026-04-08 -->
