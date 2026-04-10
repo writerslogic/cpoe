@@ -1296,18 +1296,19 @@ pub(super) fn write_verifiable_credential(html: &mut String, r: &WarReport) -> f
                 96 => ("Contraindicated", "#b71c1c"),
                 _ => ("None", "#999"),
             };
-            let display_key = key
-                .replace("_", " ")
-                .split(' ')
-                .map(|w| {
-                    let mut c = w.chars();
-                    match c.next() {
-                        Some(f) => f.to_uppercase().to_string() + c.as_str(),
-                        None => String::new(),
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join(" ");
+            let mut display_key = String::with_capacity(key.len());
+            let mut capitalize_next = true;
+            for ch in key.chars() {
+                if ch == '_' || ch == ' ' {
+                    display_key.push(' ');
+                    capitalize_next = true;
+                } else if capitalize_next {
+                    display_key.extend(ch.to_uppercase());
+                    capitalize_next = false;
+                } else {
+                    display_key.push(ch);
+                }
+            }
             write!(
                 html,
                 r#"<div class="metric-card"><div class="metric-label">{}</div><div class="metric-value" style="color:{}">{}</div></div>"#,

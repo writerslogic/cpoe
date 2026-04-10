@@ -132,10 +132,16 @@ pub fn draw_microtext(
     let available = page_width_mm - 2.0 * margin;
     let repeats = (available / repeat_width).ceil() as usize;
 
-    let full_text: String = std::iter::repeat(text)
-        .take(repeats.max(1))
-        .collect::<Vec<_>>()
-        .join(" · ");
+    let repeats = repeats.max(1);
+    const SEPARATOR: &str = " · ";
+    let mut full_text =
+        String::with_capacity(text.len() * repeats + SEPARATOR.len() * repeats.saturating_sub(1));
+    for i in 0..repeats {
+        if i > 0 {
+            full_text.push_str(SEPARATOR);
+        }
+        full_text.push_str(text);
+    }
 
     // Truncate to fit
     let max_chars = (available / 0.5) as usize;
