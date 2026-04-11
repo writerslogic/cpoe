@@ -12,5 +12,4 @@ mod types;
 
 pub use html::render_html;
 pub use pdf::render_pdf;
-// render_pdf now returns Result<Vec<u8>, String>
 pub use types::*;

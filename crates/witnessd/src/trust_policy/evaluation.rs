@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 use super::types::{AppraisalPolicy, EvidenceMetrics, FactorType, ThresholdType, TrustComputation};
+use crate::error::{Error, Result};
 
 /// CoV below this is suspiciously regular (robotic).
 const COV_LOW_THRESHOLD: f32 = 0.1;
@@ -87,16 +88,15 @@ impl AppraisalPolicy {
     }
 
     /// Validate that all factor-name references in thresholds exist in the factors list.
-    pub fn validate(&self) -> Result<(), String> {
-        use super::types::ThresholdType;
+    pub fn validate(&self) -> Result<()> {
         for t in &self.thresholds {
             match t.threshold_type {
                 ThresholdType::MinimumFactor | ThresholdType::RequiredFactor => {
                     if !self.factors.iter().any(|f| f.factor_name == t.threshold_name) {
-                        return Err(format!(
+                        return Err(Error::validation(format!(
                             "threshold '{}' references unknown factor name",
                             t.threshold_name
-                        ));
+                        )));
                     }
                 }
                 _ => {}
@@ -117,10 +117,8 @@ impl AppraisalPolicy {
 
     /// Score all factors against `metrics` and evaluate thresholds.
     /// Returns a new policy instance with populated scores.
-    pub fn evaluate(&self, metrics: &EvidenceMetrics) -> Self {
-        if let Err(e) = self.validate() {
-            log::error!("TrustPolicy validation failed: {}", e);
-        }
+    pub fn evaluate(&self, metrics: &EvidenceMetrics) -> Result<Self> {
+        self.validate()?;
         let mut policy = self.clone();
 
         for factor in &mut policy.factors {
@@ -234,6 +232,6 @@ impl AppraisalPolicy {
             }
         }
 
-        policy
+        Ok(policy)
     }
 }

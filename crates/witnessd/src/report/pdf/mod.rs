@@ -32,7 +32,7 @@ use std::io::BufWriter;
 ///
 /// Returns an error if font loading or PDF serialization fails (should not happen
 /// with built-in fonts under normal conditions).
-pub fn render_pdf(report: &WarReport, security_seed: Option<&[u8; 64]>) -> Result<Vec<u8>, String> {
+pub fn render_pdf(report: &WarReport, security_seed: Option<&[u8; 64]>) -> crate::error::Result<Vec<u8>> {
     let version = env!("CARGO_PKG_VERSION");
     let doc_hash_short = report
         .document_hash
@@ -156,7 +156,7 @@ pub fn render_pdf(report: &WarReport, security_seed: Option<&[u8; 64]>) -> Resul
 ///
 /// Re-parses the serialized PDF, adds the embedded file entry to the
 /// catalog's /Names dictionary, and re-serializes.
-fn embed_vc_attachment(pdf_bytes: Vec<u8>, vc_json: &[u8]) -> Result<Vec<u8>, String> {
+fn embed_vc_attachment(pdf_bytes: Vec<u8>, vc_json: &[u8]) -> crate::error::Result<Vec<u8>> {
     use printpdf::lopdf::{self, Dictionary as LoDict, Object, Stream, StringFormat};
 
     let mut doc = lopdf::Document::load_mem(&pdf_bytes)

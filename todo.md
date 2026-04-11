@@ -404,7 +404,7 @@ reason = "blocks reactor; use verify_async from async fn"
 
 - **Model:** Opus | **Scope:** errors | **Leverage:** CRITICAL
 - **Files:** `crates/witnessd/src/trust_policy/evaluation.rs:79`, `crates/witnessd/src/fingerprint/manager.rs:80`, report, rfc_conversion modules
-- **Severity:** HIGH | **Status:** open
+- **Severity:** HIGH | **Status:** partially fixed 2026-04-11 (trust_policy and report/pdf converted to crate::error::Error; fingerprint already uses anyhow; ~100 hits remain in other modules)
 - **Priority:** 18/240 | **Estimated time:** 16h
 - **Description:** Library functions return non-Result types, log on failure, lose error context. ~109 grep hits on `Result<_, String>` across crate.
 - **Root cause:** Early API design with stringly-typed errors; no unified error type.
@@ -424,7 +424,7 @@ reason = "blocks reactor; use verify_async from async fn"
 
 - **Model:** Sonnet | **Scope:** errors
 - **File:** `crates/witnessd/src/evidence/rfc_conversion.rs` (not `rfc_conversions.rs`)
-- **Severity:** HIGH | **Leverage:** HIGH | **Status:** open
+- **Severity:** HIGH | **Leverage:** HIGH | **Status:** fixed 2026-04-11 (TryFrom replaces From; empty/malformed final_hash returns Err; VDF decode failures propagated; 3 tests added)
 - **Priority:** 19/240 | **Estimated time:** 4h
 - **Description:** `From<&Packet> for rfc::PacketRfc` is infallible, emits zero-defaults ("en-US", zero hashes) on missing fields. Forensically dangerous: produces valid-looking output from corrupt input.
 - **Root cause:** Infallible trait and silent defaults instead of errors.

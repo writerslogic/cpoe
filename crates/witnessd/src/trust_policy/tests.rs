@@ -136,7 +136,7 @@ fn test_evaluate_basic_policy() {
         checkpoint_count: 10,
     };
 
-    let evaluated = policy.evaluate(&metrics);
+    let evaluated = policy.evaluate(&metrics).unwrap();
     let score = evaluated.compute_score();
     assert!(score > 0.5, "Expected score > 0.5, got {}", score);
 
@@ -156,7 +156,7 @@ fn test_evaluate_broken_chain() {
         ..Default::default()
     };
 
-    let evaluated = policy.evaluate(&metrics);
+    let evaluated = policy.evaluate(&metrics).unwrap();
     let chain = evaluated
         .factors
         .iter()
@@ -188,13 +188,13 @@ fn test_evaluate_threshold_checking() {
         ..Default::default()
     };
 
-    let evaluated = policy.evaluate(&metrics);
+    let evaluated = policy.evaluate(&metrics).unwrap();
     assert!(evaluated.check_thresholds());
 
     let metrics_bad = EvidenceMetrics {
         chain_verified: false,
         ..Default::default()
     };
-    let evaluated_bad = policy.evaluate(&metrics_bad);
+    let evaluated_bad = policy.evaluate(&metrics_bad).unwrap();
     assert!(!evaluated_bad.check_thresholds());
 }
