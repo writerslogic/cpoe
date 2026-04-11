@@ -298,7 +298,7 @@ seed.copy_from_slice(&data[..32]);
 
 - **Model:** Haiku | **Scope:** performance
 - **Files:** `crates/witnessd/src/utils/stats.rs` (helper already exists), call sites in `crates/witnessd/src/forensics/`
-- **Severity:** MEDIUM | **Leverage:** MEDIUM | **Status:** open
+- **Severity:** MEDIUM | **Leverage:** MEDIUM | **Status:** fixed 2026-04-11 (consolidated 5 two-pass variance sites, 1168 tests green)
 - **Priority:** 13/240 | **Estimated time:** 1.5h
 - **Description:** Forensic analyzers compute variance with repeated passes over events. Single-pass Welford helper already exists in utils/stats.rs but not used consistently.
 - **Root cause:** Multiple implementations instead of consolidation.

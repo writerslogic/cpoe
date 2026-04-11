@@ -3,7 +3,7 @@
 //! Advanced forensic metrics: CLC, repair locality, and fatigue trajectory.
 
 use crate::jitter::SimpleJitterSample;
-use crate::utils::stats::{coefficient_of_variation, mean, std_dev};
+use crate::utils::stats::{coefficient_of_variation, mean, mean_and_variance, std_dev};
 use super::types::{ClcMetrics, RepairLocalityMetrics, FatigueTrajectoryMetrics};
 
 /// Minimum samples for CLC analysis.
@@ -124,11 +124,12 @@ fn compute_iki_surprisal_correlation(ikis: &[f64], surprisals: &[f64]) -> f64 {
     let iki_sample = &ikis[..min_len];
     let surp_sample = &surprisals[..min_len];
 
-    let iki_mean = mean(iki_sample);
-    let surp_mean = mean(surp_sample);
+    let (iki_mean, iki_var_norm) = mean_and_variance(iki_sample);
+    let (surp_mean, surp_var_norm) = mean_and_variance(surp_sample);
 
-    let iki_var = iki_sample.iter().map(|x| (x - iki_mean).powi(2)).sum::<f64>();
-    let surp_var = surp_sample.iter().map(|x| (x - surp_mean).powi(2)).sum::<f64>();
+    // Convert normalized variance to sum of squared deviations for correlation formula
+    let iki_var = iki_var_norm * iki_sample.len() as f64;
+    let surp_var = surp_var_norm * surp_sample.len() as f64;
 
     if !iki_var.is_finite() || !surp_var.is_finite() || iki_var <= 0.0 || surp_var <= 0.0 {
         return 0.0;

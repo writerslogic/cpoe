@@ -3,7 +3,7 @@
 //! Keystroke cadence analysis.
 
 use crate::jitter::SimpleJitterSample;
-use crate::utils::stats::{coefficient_of_variation, mean, median, std_dev};
+use crate::utils::stats::{coefficient_of_variation, mean, mean_and_std_dev, median, std_dev};
 
 use super::types::{CadenceMetrics, ROBOTIC_CV_THRESHOLD};
 
@@ -137,16 +137,10 @@ pub fn analyze_cadence(samples: &[SimpleJitterSample]) -> CadenceMetrics {
         .filter_map(|s| s.dwell_time_ns.map(|d| d as f64))
         .collect();
     if dwell_times.len() >= 5 {
-        let mean = dwell_times.iter().sum::<f64>() / dwell_times.len() as f64;
+        let (mean, std) = mean_and_std_dev(&dwell_times);
         metrics.mean_dwell_ns = mean;
         if mean > f64::EPSILON {
-            let var = dwell_times.iter().map(|d| (d - mean).powi(2)).sum::<f64>()
-                / dwell_times.len() as f64;
-            metrics.dwell_cv = if var.is_finite() {
-                crate::utils::finite_or(var.sqrt() / mean, 0.0)
-            } else {
-                0.0
-            };
+            metrics.dwell_cv = crate::utils::finite_or(std / mean, 0.0);
         }
     }
 
@@ -156,16 +150,10 @@ pub fn analyze_cadence(samples: &[SimpleJitterSample]) -> CadenceMetrics {
         .filter_map(|s| s.flight_time_ns.map(|f| f as f64))
         .collect();
     if flight_times.len() >= 5 {
-        let mean = flight_times.iter().sum::<f64>() / flight_times.len() as f64;
+        let (mean, std) = mean_and_std_dev(&flight_times);
         metrics.mean_flight_ns = mean;
         if mean > f64::EPSILON {
-            let var = flight_times.iter().map(|f| (f - mean).powi(2)).sum::<f64>()
-                / flight_times.len() as f64;
-            metrics.flight_cv = if var.is_finite() {
-                crate::utils::finite_or(var.sqrt() / mean, 0.0)
-            } else {
-                0.0
-            };
+            metrics.flight_cv = crate::utils::finite_or(std / mean, 0.0);
         }
     }
 

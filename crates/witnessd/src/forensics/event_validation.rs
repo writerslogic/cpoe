@@ -9,6 +9,7 @@
 use std::collections::VecDeque;
 
 use crate::utils::finite_or;
+use crate::utils::stats::mean_and_std_dev;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -122,17 +123,12 @@ pub fn compute_cv(values: &[i64]) -> f64 {
     if values.is_empty() {
         return f64::MAX;
     }
-    let n = values.len() as f64;
-    let mean = values.iter().copied().sum::<i64>() as f64 / n;
+    let f64_values: Vec<f64> = values.iter().map(|&v| v as f64).collect();
+    let (mean, std) = mean_and_std_dev(&f64_values);
     if mean.abs() < f64::EPSILON {
         return f64::MAX;
     }
-    let variance = values
-        .iter()
-        .map(|&v| (v as f64 - mean).powi(2))
-        .sum::<f64>()
-        / n;
-    finite_or(variance.sqrt() / mean, 0.0)
+    finite_or(std / mean, 0.0)
 }
 
 /// Shannon entropy (bits) of the keycode distribution in the window.

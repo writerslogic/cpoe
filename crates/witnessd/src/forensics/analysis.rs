@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 use crate::analysis::BehavioralFingerprint;
 use crate::jitter::SimpleJitterSample;
+use crate::utils::stats::mean_and_std_dev;
 
 use super::assessment::{
     apply_focus_penalties, compute_assessment_score, detect_anomalies, determine_assessment,
@@ -599,14 +600,9 @@ fn detect_reading_pattern(switches: &[FocusSwitchRecord]) -> bool {
     // durations is very low, the pattern is mechanically regular (stronger
     // transcription signal than just frequency).
     let regular_interval = if short_durations.len() >= READING_PATTERN_MIN_REPEATS {
-        let mean = short_durations.iter().sum::<f64>() / short_durations.len() as f64;
+        let (mean, std) = mean_and_std_dev(&short_durations);
         if mean > 0.0 {
-            let var = short_durations
-                .iter()
-                .map(|d| (d - mean).powi(2))
-                .sum::<f64>()
-                / short_durations.len() as f64;
-            let cv = var.max(0.0).sqrt() / mean;
+            let cv = std / mean;
             cv < 0.3 // Very regular intervals
         } else {
             false
