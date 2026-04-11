@@ -45,6 +45,8 @@ from datetime import date
 from pathlib import Path
 from typing import Optional
 
+Record = tuple[str, str, Path]
+
 # ---------------------------------------------------------------------------
 # config
 
@@ -90,6 +92,7 @@ class Job:
     proc: subprocess.Popen
     log_path: Path
     started: float
+    term_sent_at: Optional[float] = None
     locks: list[str] = field(default_factory=list)  # md5 of each file (or "__exclusive__")
 
 
@@ -231,22 +234,24 @@ def log(msg: str) -> None:
     logger.info(msg)
 
 
-def task_status_word(task_id: str) -> str:
+def all_task_statuses() -> dict[str, str]:
+    """Return {task_id: first_status_word} by reading todo.md exactly once."""
+    statuses: dict[str, str] = {}
+    current_id: Optional[str] = None
     try:
         with TODO_FILE.open() as fh:
-            in_task = False
             for raw in fh:
                 m = TASK_HEADER_RE.match(raw)
                 if m:
-                    in_task = m.group(1) == task_id
+                    current_id = m.group(1)
                     continue
-                if in_task:
+                if current_id and current_id not in statuses:
                     sm = STATUS_RE.search(raw)
                     if sm:
-                        return sm.group(1).lower()
-    except OSError:
-        pass
-    return "unknown"
+                        statuses[current_id] = sm.group(1).lower()
+    except OSError as e:
+        raise RuntimeError(f"todo.md unreadable: {e}") from e
+    return statuses
 
 
 def md5_of(path: str) -> str:
@@ -329,10 +334,6 @@ def list_open_tasks() -> list[Task]:
             )
         )
     return tasks
-
-
-def is_still_open(task_id: str) -> bool:
-    return any(t.id == task_id for t in list_open_tasks())
 
 
 # ---------------------------------------------------------------------------
@@ -465,7 +466,6 @@ Otherwise exit non-zero — the runner will reap and move on.
 
 def spawn(task: Task, locks: list[str]) -> Job:
     log_path = LOG_DIR / f"{task.id}.log"
-    log_fh = log_path.open("w")
     prompt = build_prompt(task.id)
 
     cmd = [
@@ -475,14 +475,15 @@ def spawn(task: Task, locks: list[str]) -> Job:
         "--permission-mode", "acceptEdits",
     ]
 
-    proc = subprocess.Popen(
-        cmd,
-        stdin=subprocess.PIPE,
-        stdout=log_fh,
-        stderr=subprocess.STDOUT,
-        cwd=str(REPO_ROOT),
-        start_new_session=True,
-    )
+    with log_path.open("w") as log_fh:
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+            cwd=str(REPO_ROOT),
+            start_new_session=True,
+        )
     assert proc.stdin is not None
     proc.stdin.write(prompt.encode())
     proc.stdin.close()
@@ -493,35 +494,46 @@ def spawn(task: Task, locks: list[str]) -> Job:
     return Job(task=task, proc=proc, log_path=log_path, started=time.time(), locks=locks)
 
 
-def reap(jobs: list[Job]) -> list[Job]:
-    """Return the list of still-running jobs; log+release finished ones."""
+TERM_GRACE_SECS = 30
+
+
+def reap(jobs: list[Job], statuses: dict[str, str]) -> tuple[list[Job], list[Record]]:
+    """Return (still-running jobs, records for jobs that exited this pass)."""
     still: list[Job] = []
+    records: list[Record] = []
+    now = time.time()
     for job in jobs:
         rc = job.proc.poll()
-        elapsed = int(time.time() - job.started)
+        elapsed = now - job.started
 
         if rc is None:
-            if elapsed > TASK_TIMEOUT:
-                log(f"   ⏱ timeout {job.task.id} after {elapsed}s, sending TERM")
+            if job.term_sent_at is not None and (now - job.term_sent_at) > TERM_GRACE_SECS:
+                log(f"   ☠ force-kill {job.task.id} (TERM ignored after {TERM_GRACE_SECS}s)")
+                try:
+                    os.killpg(os.getpgid(job.proc.pid), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            elif job.term_sent_at is None and elapsed > TASK_TIMEOUT:
+                log(f"   ⏱ timeout {job.task.id} after {int(elapsed)}s, sending TERM")
                 try:
                     os.killpg(os.getpgid(job.proc.pid), signal.SIGTERM)
                 except ProcessLookupError:
                     pass
-                still.append(job)
-                continue
+                job.term_sent_at = now
             still.append(job)
             continue
 
         release(job.locks)
-        status_word = task_status_word(job.task.id)
+        status_word = statuses.get(job.task.id, "unknown")
         if rc == 0 and status_word in ProgressRenderer.OUTCOMES:
             outcome = status_word
         else:
             outcome = "failed"
-        log(f"   ✓ reap {job.task.id} rc={rc} elapsed={elapsed}s status={status_word} log={job.log_path}")
+        log(f"   ✓ reap {job.task.id} rc={rc} elapsed={int(elapsed)}s status={status_word} log={job.log_path}")
         if TRACKER is not None:
             TRACKER.on_complete(job.task.id, outcome)
-    return still
+        records.append((job.task.id, outcome, job.log_path))
+    return still, records
 
 
 def kill_all(jobs: list[Job]) -> None:
@@ -577,6 +589,27 @@ def run_final_gate() -> int:
         return 3
     log("✓ final gate green")
     return 0
+
+
+# ---------------------------------------------------------------------------
+# summary
+
+def print_summary(records: list[Record], elapsed: float) -> None:
+    counts = {o: 0 for o in ProgressRenderer.OUTCOMES}
+    for _, outcome, _ in records:
+        if outcome in counts:
+            counts[outcome] += 1
+    log("=" * 60)
+    log(
+        f"Summary ({ProgressRenderer._fmt_time(elapsed)}): "
+        f"fixed={counts['fixed']}  rejected={counts['rejected']}  "
+        f"blocked={counts['blocked']}  failed={counts['failed']}"
+    )
+    non_ok = [r for r in records if r[1] != "fixed"]
+    if non_ok:
+        log("Tasks needing review:")
+        for tid, outcome, lp in non_ok:
+            log(f"  {tid:<14} {outcome:<9} → {lp}")
 
 
 # ---------------------------------------------------------------------------
@@ -640,58 +673,77 @@ def main() -> int:
 
     queue: list[Task] = list(tasks)
     jobs: list[Job] = []
-    done_count = 0
+    spawned_count = 0
     deadlock_passes = 0
+    records: list[Record] = []
+    shutdown_flag = {"requested": False}
+    start_time = time.monotonic()
 
     def shutdown(*_args: object) -> None:
-        log("signal received — killing workers")
-        kill_all(jobs)
-        sys.exit(130)
+        shutdown_flag["requested"] = True
 
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
 
-    while queue or jobs:
-        # Drop any queued tasks that were closed as a side effect.
-        queue = [t for t in queue if is_still_open(t.id)]
-
-        # Try to fill the worker pool.
-        spawned = 0
-        remaining: list[Task] = []
-        for t in queue:
-            if len(jobs) >= parallel:
-                remaining.append(t)
-                continue
-            locks = try_lock(t)
-            if locks is None:
-                remaining.append(t)
-                continue
-            jobs.append(spawn(t, locks))
-            spawned += 1
-            done_count += 1
-            if args.max_tasks and done_count >= args.max_tasks:
-                remaining = []
+    try:
+        while (queue or jobs) and not shutdown_flag["requested"]:
+            try:
+                statuses = all_task_statuses()
+            except RuntimeError as e:
+                log(f"✗ {e}")
                 break
-        queue = remaining
 
-        if jobs:
-            time.sleep(POLL_INTERVAL)
-            jobs = reap(jobs)
-            deadlock_passes = 0
-        elif queue and spawned == 0:
-            deadlock_passes += 1
-            if deadlock_passes > 3:
-                log(f"✗ deadlock: {len(queue)} queued, 0 running, 0 spawnable")
-                break
-            time.sleep(POLL_INTERVAL)
+            queue = [t for t in queue if statuses.get(t.id) == "open"]
+
+            spawned = 0
+            remaining: list[Task] = []
+            for t in queue:
+                if len(jobs) >= parallel:
+                    remaining.append(t)
+                    continue
+                if args.max_tasks and spawned_count >= args.max_tasks:
+                    remaining = []
+                    break
+                locks = try_lock(t)
+                if locks is None:
+                    remaining.append(t)
+                    continue
+                try:
+                    jobs.append(spawn(t, locks))
+                except FileNotFoundError:
+                    release(locks)
+                    log(f"✗ claude binary not found: {CLAUDE_BIN}; set CLAUDE_BIN env var")
+                    return 1
+                spawned += 1
+                spawned_count += 1
+            queue = remaining
+
+            if jobs:
+                time.sleep(POLL_INTERVAL)
+                jobs, new_records = reap(jobs, statuses)
+                records.extend(new_records)
+                deadlock_passes = 0
+            elif queue and spawned == 0:
+                deadlock_passes += 1
+                if deadlock_passes == 1:
+                    log(f"[schedule] waiting on lock conflicts ({len(queue)} queued, 0 running)")
+                if deadlock_passes > 3:
+                    log(f"✗ deadlock: {len(queue)} queued, 0 running, 0 spawnable")
+                    break
+                time.sleep(POLL_INTERVAL)
+    finally:
+        if shutdown_flag["requested"]:
+            log("signal received — killing workers")
+            kill_all(jobs)
+        print_summary(records, time.monotonic() - start_time)
+
+    if shutdown_flag["requested"]:
+        return 130
 
     if args.skip_final:
-        log(f"done: processed={done_count}")
         return 0
 
-    final_rc = run_final_gate()
-    log(f"done: processed={done_count} final_rc={final_rc}")
-    return final_rc
+    return run_final_gate()
 
 
 if __name__ == "__main__":
