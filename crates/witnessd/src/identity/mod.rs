@@ -16,4 +16,4 @@ pub mod did_webvh;
 
 pub use did_document::did_key_from_public;
 pub use mnemonic::MnemonicHandler;
-pub use secure_storage::SecureStorage;
+pub use secure_storage::{InMemoryBackend, KeychainBackend, SecureStorage};
