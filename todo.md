@@ -616,7 +616,7 @@ pub enum SecureChannelSendError {
 
 - **Model:** Sonnet | **Scope:** performance
 - **Files:** `crates/witnessd/src/forensics/` (loop-based analyzers), `crates/witnessd/src/ffi/` (polling loops), `crates/witnessd/src/report/` (rendering loops)
-- **Severity:** MEDIUM | **Leverage:** MEDIUM | **Status:** open
+- **Severity:** MEDIUM | **Leverage:** MEDIUM | **Status:** fixed 2026-04-11 (detect_sessions now returns Vec<&[EventData]> borrowing into SortedEvents; compute_session_stats hot path no longer clones N events per analysis pass)
 - **Priority:** 28/240 | **Estimated time:** 6h
 - **Description:** 9-16 instances of .clone() called repeatedly in loops or hot paths. At 1KB per clone × 100 iterations = 100KB per second; on moderate dataset (1000 events) = 100MB+ temporary allocation per analysis pass.
 - **Root cause:** Lazy allocation pattern; no optimization for loop performance.
@@ -675,7 +675,7 @@ pub enum SecureChannelSendError {
 
 - **Model:** Sonnet | **Scope:** resource management
 - **Files:** `crates/witnessd/src/tpm/linux.rs:327`, `crates/witnessd/src/wal/operations.rs`, `crates/witnessd/src/store/`, `crates/witnessd/src/ipc/`
-- **Severity:** MEDIUM | **Leverage:** MEDIUM | **Status:** open
+- **Severity:** MEDIUM | **Leverage:** MEDIUM | **Status:** fixed 2026-04-11 (tpm/linux.rs seal/unseal/fingerprint no longer leak session/load handles when mid-closure ops fail; wal compact removes .wal.new tempfile on write or rename failure)
 - **Priority:** 31/240 | **Estimated time:** 4h
 - **Description:** 5 instances where file handles, TPM handles, or database connections not properly released on all code paths. H-050: TPM flush_context() error logged but ignored; accumulates unflushed handles. Risk: handle exhaustion, leaked file descriptors.
 - **Root cause:** Manual cleanup instead of RAII; error paths miss cleanup.
