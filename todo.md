@@ -225,7 +225,7 @@ seed.copy_from_slice(&data[..32]);
 
 - **Model:** Sonnet | **Scope:** idiomatic
 - **Files:** `crates/witnessd/src/utils/`, `crates/authorproof-protocol/src/rfc/`
-- **Severity:** HIGH | **Leverage:** MEDIUM | **Status:** open
+- **Severity:** HIGH | **Leverage:** MEDIUM | **Status:** fixed 2026-04-10 (added hex_decode_16/32/64 to utils/mod.rs; 8 edge-case tests; rfc/serde_helpers already consolidated)
 - **Priority:** 9/240 | **Estimated time:** 3h
 - **Description:** Repeated hex decoding patterns with manual length validation. No single point of validation.
 - **Root cause:** Reinventing the wheel instead of using hex crate helpers.

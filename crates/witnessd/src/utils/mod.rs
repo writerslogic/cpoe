@@ -51,6 +51,53 @@ pub fn short_hex_id(hash: &[u8]) -> String {
     hex::encode(&hash[..hash.len().min(8)])
 }
 
+/// Decode a hex string and validate it decodes to exactly `N` bytes.
+///
+/// Returns `Err` on any of: invalid hex chars, odd-length input, wrong decoded length.
+fn hex_decode_exact<const N: usize>(s: &str) -> crate::error::Result<[u8; N]> {
+    let bytes = hex::decode(s).map_err(|e| crate::error::Error::validation(e.to_string()))?;
+    let len = bytes.len();
+    bytes
+        .try_into()
+        .map_err(|_| crate::error::Error::validation(format!("expected {N} bytes, got {len}")))
+}
+
+/// Decode a hex string to a fixed 16-byte array.
+pub fn hex_decode_16(s: &str) -> crate::error::Result<[u8; 16]> {
+    hex_decode_exact::<16>(s)
+}
+
+/// Decode a hex string to a fixed 32-byte array.
+pub fn hex_decode_32(s: &str) -> crate::error::Result<[u8; 32]> {
+    hex_decode_exact::<32>(s)
+}
+
+/// Decode a hex string to a fixed 64-byte array.
+pub fn hex_decode_64(s: &str) -> crate::error::Result<[u8; 64]> {
+    hex_decode_exact::<64>(s)
+}
+
+/// Convert a byte slice to a fixed 16-byte array.
+///
+/// Returns `Err` if `slice` is not exactly 16 bytes.
+pub fn to_array_16(slice: &[u8]) -> Result<[u8; 16], std::array::TryFromSliceError> {
+    slice.try_into()
+}
+
+/// Convert a byte slice to a fixed 32-byte array.
+///
+/// Returns `Err` if `slice` is not exactly 32 bytes.
+pub fn to_array_32(slice: &[u8]) -> Result<[u8; 32], std::array::TryFromSliceError> {
+    slice.try_into()
+}
+
+/// Convert a byte slice to a fixed 64-byte array.
+///
+/// Returns `Err` if `slice` is not exactly 64 bytes.
+pub fn to_array_64(slice: &[u8]) -> Result<[u8; 64], std::array::TryFromSliceError> {
+    slice.try_into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -99,5 +146,73 @@ mod tests {
     fn short_hex_id_empty_input() {
         let hash: [u8; 0] = [];
         assert_eq!(short_hex_id(&hash), "");
+    }
+
+    #[test]
+    fn to_array_32_exact_length() {
+        let v = vec![0xabu8; 32];
+        let arr = to_array_32(&v).unwrap();
+        assert_eq!(arr, [0xabu8; 32]);
+    }
+
+    #[test]
+    fn to_array_32_wrong_length() {
+        assert!(to_array_32(&[0u8; 31]).is_err());
+        assert!(to_array_32(&[0u8; 33]).is_err());
+        assert!(to_array_32(&[]).is_err());
+    }
+
+    #[test]
+    fn to_array_16_exact_length() {
+        let v = vec![0x01u8; 16];
+        let arr = to_array_16(&v).unwrap();
+        assert_eq!(arr, [0x01u8; 16]);
+    }
+
+    #[test]
+    fn to_array_64_exact_length() {
+        let v = vec![0xffu8; 64];
+        let arr = to_array_64(&v).unwrap();
+        assert_eq!(arr, [0xffu8; 64]);
+    }
+
+    #[test]
+    fn hex_decode_32_ok() {
+        let hex = "ab".repeat(32);
+        let arr = hex_decode_32(&hex).unwrap();
+        assert_eq!(arr, [0xab; 32]);
+    }
+
+    #[test]
+    fn hex_decode_32_wrong_length() {
+        assert!(hex_decode_32(&"ab".repeat(16)).is_err());
+        assert!(hex_decode_32(&"ab".repeat(33)).is_err());
+    }
+
+    #[test]
+    fn hex_decode_32_odd_length() {
+        assert!(hex_decode_32("abc").is_err());
+    }
+
+    #[test]
+    fn hex_decode_32_invalid_chars() {
+        assert!(hex_decode_32(&"zz".repeat(32)).is_err());
+    }
+
+    #[test]
+    fn hex_decode_32_empty_string() {
+        assert!(hex_decode_32("").is_err());
+    }
+
+    #[test]
+    fn hex_decode_16_ok() {
+        let arr = hex_decode_16(&"ff".repeat(16)).unwrap();
+        assert_eq!(arr, [0xff; 16]);
+    }
+
+    #[test]
+    fn hex_decode_64_ok() {
+        let arr = hex_decode_64(&"01".repeat(64)).unwrap();
+        assert_eq!(arr, [0x01; 64]);
     }
 }
