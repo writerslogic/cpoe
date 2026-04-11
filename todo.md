@@ -1088,7 +1088,7 @@ pub enum SecureChannelSendError {
   <!-- pid:silent_error | verified:true | first:2026-04-09 -->
   Fix: Store errors now surfaced in FfiResult.error_message for both checkpoint and checkpoint_hash paths.
 
-- [ ] **M-051** `[security]` `fingerprint/storage.rs:39`: encryption_key field is bare [u8; 32], not Zeroizing<[u8; 32]> | **Model:** Haiku
+- [x] **M-051** `[security]` `fingerprint/storage.rs:39`: encryption_key field is bare [u8; 32], not Zeroizing<[u8; 32]> -- FIXED 2026-04-11
   <!-- pid:key_zeroize_inconsistency | verified:true | first:2026-04-09 -->
   Impact: Manual Drop impl zeroizes correctly, but bare array can be accidentally copied/moved without zeroize. Zeroizing<> prevents this by construction | Fix: Change field to Zeroizing<[u8; KEY_SIZE]> and remove manual Drop impl
 
@@ -1116,7 +1116,7 @@ pub enum SecureChannelSendError {
   <!-- pid:alloc_in_loop | verified:true | first:2026-04-09 -->
   Fix: format_duration() extracted and shared; repeated FfiWitnessingStatus construction deduplicated via not_tracking() helper.
 
-- [ ] **M-058** `[concurrency]` `sentinel/core_session.rs:262`: RwLock read-then-write race; session can be modified between read check and write acquisition | **Model:** Sonnet
+- [x] **M-058** `[concurrency]` `sentinel/core_session.rs:262`: RwLock read-then-write race -- FIXED 2026-04-11 (atomic check-and-claim at top; rollback last_checkpoint_keystrokes on store write error)
   <!-- pid:toctou | verified:true | first:2026-04-09 -->
   Impact: Concurrent checkpoint commits could corrupt session state | Fix: Combine check and modify into single write lock scope, or use CAS pattern
 
@@ -1173,7 +1173,7 @@ pub enum SecureChannelSendError {
 - [ ] **M-005** `[error_handling]` `anchors/notary.rs:109`: Response "id" field defaults to empty string on missing | **Model:** Haiku
 
 ### sentinel/core_session.rs
-- [ ] **M-006** `[error_handling]` `sentinel/core_session.rs:140`: hex::decode_to_slice() result discarded; session may lack WAL | **Model:** Haiku
+- [x] **M-006** `[error_handling]` `sentinel/core_session.rs:140`: hex::decode_to_slice() discarded -- FIXED 2026-04-11 (fallback to SHA-256(session_id) so WAL is always created for non-hex session IDs)
 - [ ] **M-007** `[error_handling]` `sentinel/core_session.rs:238`: i64::try_from(raw_size).unwrap_or(i64::MAX) silent cap | **Model:** Haiku
 
 ### analysis modules
@@ -1215,7 +1215,7 @@ pub enum SecureChannelSendError {
 
 ### cpop_jitter_bridge/session.rs
 - [ ] **M-026** `[error_handling]` `cpop_jitter_bridge/session.rs:333-336`: try_from().unwrap_or(i32::MAX) silent truncation | **Model:** Haiku
-- [ ] **M-027** `[error_handling]` `cpop_jitter_bridge/session.rs:369-376`: tempfile not synced before persist | **Model:** Haiku
+- [x] **M-027** `[error_handling]` `cpop_jitter_bridge/session.rs:369-376`: tempfile not synced before persist -- FIXED (sync_all is already called at session.rs:384)
 - [ ] **M-028** `[performance]` `cpop_jitter_bridge/session.rs:326-329`: HashSet rebuilt on every export; not cached | **Model:** Sonnet
 
 ### sealed_chain.rs
@@ -1254,12 +1254,12 @@ pub enum SecureChannelSendError {
 - [ ] **M-041** `[maintainability]` `continuation.rs:305`: saturating_add silently caps at u64::MAX with no audit trail | **Model:** Haiku
 
 ### fingerprint modules
-- [ ] **M-042** `[security]` `fingerprint/storage.rs:127-151`: Biometric plaintext not zeroized after encryption | **Model:** Haiku
-- [ ] **M-043** `[security]` `fingerprint/storage.rs:154-166`: Biometric plaintext not zeroized after deserialization | **Model:** Haiku
+- [x] **M-042** `[security]` `fingerprint/storage.rs:127-151`: plaintext not zeroized on encrypt error path -- FIXED 2026-04-11 (wrap in Zeroizing at construction)
+- [x] **M-043** `[security]` `fingerprint/storage.rs:154-166`: plaintext not zeroized on deserialize error path -- FIXED 2026-04-11 (wrap decrypt output in Zeroizing; load_metadata path also fixed)
 - [ ] **M-044** `[performance]` `fingerprint/activity_collection.rs:59-84`: Hurst exponent recomputed per call; not cached | **Model:** Sonnet
 - [ ] **M-045** `[code_quality]` `fingerprint/activity_analysis.rs:75-82`: partial_cmp unwrap_or(Equal) in percentile selection | **Model:** Haiku
 - [ ] **M-046** `[code_quality]` `fingerprint/comparison.rs:114-118`: Similarity weights hardcoded (0.6/0.4) | **Model:** Haiku
-- [ ] **M-047** `[security]` `fingerprint/voice.rs:372-379`: Unicode normalization missing in keystroke MinHash | **Model:** Sonnet
+- [ ] **M-047** `[security]` `fingerprint/voice.rs:372-379`: Unicode normalization missing in keystroke MinHash -- DEFERRED 2026-04-11 (requires unicode-normalization dep; revisit after license/deny.toml review)
 - [ ] **M-048** `[maintainability]` `fingerprint/comparison.rs:85-140`: compare_fingerprints() 55 lines; could extract sub-functions | **Model:** Sonnet
 
 ---
@@ -1824,7 +1824,7 @@ pub enum SecureChannelSendError {
 
 ### High
 
-- [ ] **H-044** `[error_handling]` `crates/witnessd/src/ffi/beacon.rs:155`: Anchor failure silently yields `success: true` beacon result | **Model:** Haiku
+- [x] **H-044** `[error_handling]` `ffi/beacon.rs:155`: anchor failure silently yields success: true -- FIXED (success field now mirrors anchor_id.is_some(); error_message populated when anchor fails)
   <!-- pid:silent_error | first:2026-04-08 -->
   Impact: `anchor_res` error is logged at `warn!` then discarded; `FfiBeaconResult.success = true` is returned even when the WritersProof anchor call failed. Swift caller returns `CommandResult(success: true)` to the user -- they believe evidence is anchored when it is not. | Fix: If `anchor_res` is `Err`, either set `error_message` in the result or return `success: false`; distinguish "beacon fetched but not anchored" from "beacon fetched and anchored".
 
@@ -1832,7 +1832,7 @@ pub enum SecureChannelSendError {
   <!-- pid:toctou | first:2026-04-08 -->
   Impact: `sessionIndex` is captured via `firstIndex(where:)` before `await engine.commit()`; a concurrent `refreshStatus()` can add, remove, or reorder `sessions` during the await. After the await, `sessions[idx]` may access the wrong session or crash out-of-bounds. | Fix: After the await, re-query by path: `if let idx = sessions.firstIndex(where: { $0.documentPath == doc })`.
 
-- [ ] **H-046** `[security]` `crates/witnessd/src/ffi/writersproof_ffi.rs:82`: JWT token transiently in non-Zeroized heap during anchor call | **Model:** Haiku
+- [ ] **H-046** `[security]` `crates/witnessd/src/ffi/writersproof_ffi.rs:82`: JWT token transiently in non-Zeroized heap during anchor call -- DEFERRED 2026-04-11 (not actionable: reqwest bearer_auth internally copies into HeaderValue outside our control; witnessd side already uses Zeroizing<String>)
   <!-- pid:key_zeroize_inconsistency | first:2026-04-08 -->
   Impact: `(*api_key).clone()` dereferences the `Zeroizing<String>` wrapper and clones a bare `String`. That allocation is not Zeroized until `with_jwt` re-wraps it one frame later -- same pattern in `beacon.rs:115`. Defeats the zeroize guarantee. | Fix: Change `with_jwt` to accept `Zeroizing<String>` directly; pass `api_key` (consumed) rather than `(*api_key).clone()`.
 
@@ -1870,6 +1870,6 @@ pub enum SecureChannelSendError {
   <!-- pid:missing_validation | first:2026-04-08 -->
   <!-- fix: replaced .bytes().await with chunked streaming matching get_certificate pattern; Content-Length pre-check retained as optimization -->
 
-- [ ] **M-107** `[security]` `crates/witnessd/src/ffi/helpers.rs:130`: `std::mem::take` on `Zeroizing<Vec<u8>>` bypasses zeroize-on-drop | **Model:** Haiku
+- [x] **M-107** `[security]` `ffi/sentinel.rs:110`: std::mem::take on Zeroizing<Vec<u8>> -- FIXED 2026-04-11 (changed set_hmac_key to accept Zeroizing<Vec<u8>>; callers pass the wrapper directly)
   <!-- pid:key_zeroize_inconsistency | first:2026-04-08 -->
   Impact: `mem::take` moves the inner `Vec` out of the `Zeroizing` wrapper; the wrapper's drop now zeroizes an empty allocation. The actual HMAC key bytes are only zeroized if `SecureStore` explicitly does so. | Fix: Pass the key by reference if `SecureStore::open` accepts `&[u8]`; otherwise manually call `.zeroize()` after the key has been consumed.
