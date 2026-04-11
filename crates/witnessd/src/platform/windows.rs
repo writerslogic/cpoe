@@ -97,8 +97,8 @@ pub fn get_active_focus() -> Result<FocusInfo> {
         };
 
         Ok(FocusInfo {
-            app_name,
-            bundle_id: app_path.clone(),
+            app_name: app_name.clone(),
+            bundle_id: app_name,
             pid: pid as i32,
             doc_path: extract_doc_path_from_title(window_title.as_deref()),
             doc_title: window_title.clone(),
@@ -355,16 +355,23 @@ impl KeystrokeCapture for WindowsKeystrokeCapture {
         *GLOBAL_STATS.lock_recover() = None;
 
         // Post WM_QUIT to unblock GetMessageW in the pump thread, then join it.
+        // If the post fails the thread cannot be safely joined (it would block
+        // forever inside GetMessageW), so detach instead of hanging stop().
         let tid = self.pump_thread_id.load(Ordering::SeqCst);
-        if tid != 0 {
-            unsafe {
-                if !PostThreadMessageW(tid, WM_QUIT, WPARAM(0), LPARAM(0)).as_bool() {
-                    log::warn!("PostThreadMessageW failed for keyboard pump thread {tid}");
-                }
-            }
+        let posted = if tid != 0 {
+            unsafe { PostThreadMessageW(tid, WM_QUIT, WPARAM(0), LPARAM(0)).as_bool() }
+        } else {
+            false
+        };
+        if !posted {
+            log::warn!("PostThreadMessageW failed for keyboard pump thread {tid}; detaching");
         }
         if let Some(handle) = self.pump_thread.take() {
-            let _ = handle.join();
+            if posted {
+                let _ = handle.join();
+            } else {
+                drop(handle);
+            }
         }
 
         self.sender = None;
