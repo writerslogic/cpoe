@@ -92,29 +92,32 @@ pub fn count_sessions_sorted(sorted_events: &[EventData], gap_threshold_sec: f64
     count
 }
 
-/// Split events into sessions using `gap_threshold_sec`.
-pub fn detect_sessions(sorted: SortedEvents<'_>, gap_threshold_sec: f64) -> Vec<Vec<EventData>> {
+/// Split events into session slices using `gap_threshold_sec`.
+///
+/// Returns borrowed slices into `sorted` so callers can iterate session
+/// contents without cloning. A session is a maximal run of events whose
+/// consecutive inter-event deltas are all `<= gap_threshold_sec`.
+pub fn detect_sessions<'a>(
+    sorted: SortedEvents<'a>,
+    gap_threshold_sec: f64,
+) -> Vec<&'a [EventData]> {
     if sorted.is_empty() {
         return Vec::new();
     }
 
-    let mut split_at: Vec<usize> = Vec::new();
-    for i in 1..sorted.len() {
-        let delta_ns = sorted[i]
+    let slice: &'a [EventData] = sorted.as_slice();
+    let mut sessions: Vec<&'a [EventData]> = Vec::new();
+    let mut start = 0usize;
+    for i in 1..slice.len() {
+        let delta_ns = slice[i]
             .timestamp_ns
-            .saturating_sub(sorted[i - 1].timestamp_ns);
+            .saturating_sub(slice[i - 1].timestamp_ns);
         if delta_ns as f64 / 1e9 > gap_threshold_sec {
-            split_at.push(i);
+            sessions.push(&slice[start..i]);
+            start = i;
         }
     }
-
-    let mut sessions = Vec::with_capacity(split_at.len() + 1);
-    let mut rest = sorted.to_vec();
-    for &idx in split_at.iter().rev() {
-        sessions.push(rest.split_off(idx));
-    }
-    sessions.push(rest);
-    sessions.reverse();
+    sessions.push(&slice[start..]);
     sessions
 }
 

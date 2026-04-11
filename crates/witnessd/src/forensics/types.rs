@@ -110,6 +110,11 @@ impl<'a> SortedEvents<'a> {
         );
         Self(events)
     }
+
+    /// Return the underlying slice with its original `'a` lifetime.
+    pub fn as_slice(self) -> &'a [EventData] {
+        self.0
+    }
 }
 
 impl<'a> std::ops::Deref for SortedEvents<'a> {
