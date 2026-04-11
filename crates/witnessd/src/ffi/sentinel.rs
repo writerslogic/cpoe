@@ -106,8 +106,8 @@ pub fn ffi_sentinel_start() -> FfiResult {
                 return FfiResult::err(format!("Failed to create sentinel: {e}"));
             }
         };
-        if let Some(mut key) = load_hmac_key() {
-            s.set_hmac_key(std::mem::take(&mut *key));
+        if let Some(key) = load_hmac_key() {
+            s.set_hmac_key(key);
         }
         // Store in the global before starting
         if let Ok(mut guard) = SENTINEL.lock() {

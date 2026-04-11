@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime};
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::interval;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 /// Sentinel source PID for events pre-verified by CGEventTap.
 ///
@@ -322,31 +322,31 @@ impl Sentinel {
     }
 
     /// Set the signing key from raw HMAC key bytes (must be exactly 32 bytes).
-    pub fn set_hmac_key(&self, mut key: Vec<u8>) {
-        if key.len() == 32 {
-            if key.iter().all(|&b| b == 0) {
-                log::warn!("Rejected all-zero HMAC key — likely uninitialized");
-                key.zeroize();
+    ///
+    /// Takes `Zeroizing<Vec<u8>>` so the key buffer is zeroed on drop even if
+    /// this function panics or returns early before the explicit zeroize calls.
+    pub fn set_hmac_key(&self, key: Zeroizing<Vec<u8>>) {
+        if key.len() != 32 {
+            log::warn!("HMAC key length {} is not 32 bytes, ignoring", key.len());
+            return;
+        }
+        if key.iter().all(|&b| b == 0) {
+            log::warn!("Rejected all-zero HMAC key — likely uninitialized");
+            return;
+        }
+        let mut bytes: [u8; 32] = match key.as_slice().try_into() {
+            Ok(b) => b,
+            Err(_) => {
+                log::error!("HMAC key must be exactly 32 bytes");
                 return;
             }
-            let mut bytes: [u8; 32] = match key.as_slice().try_into() {
-                Ok(b) => b,
-                Err(_) => {
-                    log::error!("HMAC key must be exactly 32 bytes");
-                    return;
-                }
-            };
-            key.zeroize(); // Zeroize the original Vec heap allocation
-            let mut seed_copy = bytes;
-            let signing_key = SigningKey::from_bytes(&bytes);
-            self.signing_key.write_recover().set_key(signing_key);
-            bytes.zeroize();
-            self.update_mouse_stego_seed_from(&seed_copy);
-            seed_copy.zeroize();
-        } else {
-            log::warn!("HMAC key length {} is not 32 bytes, ignoring", key.len());
-            key.zeroize();
-        }
+        };
+        let mut seed_copy = bytes;
+        let signing_key = SigningKey::from_bytes(&bytes);
+        self.signing_key.write_recover().set_key(signing_key);
+        bytes.zeroize();
+        self.update_mouse_stego_seed_from(&seed_copy);
+        seed_copy.zeroize();
     }
 
     /// Start the sentinel event loop (focus, keystroke, mouse monitoring).

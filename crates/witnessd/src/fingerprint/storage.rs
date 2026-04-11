@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::identity::SecureStorage;
 
@@ -52,7 +52,7 @@ pub struct StoredProfile {
 /// Encrypted on-disk profile store. Key material is zeroized on drop.
 pub struct FingerprintStorage {
     storage_dir: PathBuf,
-    encryption_key: [u8; KEY_SIZE],
+    encryption_key: Zeroizing<[u8; KEY_SIZE]>,
     profile_index: HashMap<ProfileId, StoredProfile>,
     /// Tracks mtime per profile file path so refresh_index can skip unchanged files.
     file_mtimes: HashMap<PathBuf, SystemTime>,
@@ -63,7 +63,7 @@ impl FingerprintStorage {
     pub fn new(storage_dir: &Path) -> Result<Self> {
         fs::create_dir_all(storage_dir)?;
 
-        let encryption_key = load_or_create_fingerprint_key(storage_dir)?;
+        let encryption_key = Zeroizing::new(load_or_create_fingerprint_key(storage_dir)?);
 
         let mut storage = Self {
             storage_dir: storage_dir.to_path_buf(),
@@ -128,9 +128,8 @@ impl FingerprintStorage {
     /// Encrypt and persist a profile, updating the in-memory index.
     pub fn save(&mut self, fingerprint: &AuthorFingerprint) -> Result<()> {
         let path = self.profile_path(&fingerprint.id);
-        let mut plaintext = serde_json::to_vec(fingerprint)?;
+        let plaintext = Zeroizing::new(serde_json::to_vec(fingerprint)?);
         let ciphertext = self.encrypt(&plaintext)?;
-        plaintext.zeroize();
         fs::write(&path, &ciphertext)?;
 
         let mtime = fs::metadata(&path)
@@ -162,9 +161,8 @@ impl FingerprintStorage {
         }
 
         let ciphertext = fs::read(&path)?;
-        let mut plaintext = self.decrypt(&ciphertext)?;
+        let plaintext = Zeroizing::new(self.decrypt(&ciphertext)?);
         let fingerprint: AuthorFingerprint = serde_json::from_slice(&plaintext)?;
-        plaintext.zeroize();
 
         Ok(fingerprint)
     }
@@ -172,7 +170,7 @@ impl FingerprintStorage {
     /// Extract metadata from an encrypted profile file.
     fn load_metadata(&self, path: &Path) -> Result<StoredProfile> {
         let ciphertext = fs::read(path)?;
-        let plaintext = self.decrypt(&ciphertext)?;
+        let plaintext = Zeroizing::new(self.decrypt(&ciphertext)?);
         let fingerprint: AuthorFingerprint = serde_json::from_slice(&plaintext)?;
 
         Ok(StoredProfile {
@@ -245,7 +243,7 @@ impl FingerprintStorage {
 
     /// Encrypt with random nonce. Output: `nonce || ciphertext`.
     fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>> {
-        let cipher = ChaCha20Poly1305::new_from_slice(&self.encryption_key)
+        let cipher = ChaCha20Poly1305::new_from_slice(self.encryption_key.as_slice())
             .map_err(|e| anyhow!("Failed to create cipher: {}", e))?;
 
         let mut nonce_bytes = [0u8; NONCE_SIZE];
@@ -270,7 +268,7 @@ impl FingerprintStorage {
             return Err(anyhow!("Invalid encrypted data: too short"));
         }
 
-        let cipher = ChaCha20Poly1305::new_from_slice(&self.encryption_key)
+        let cipher = ChaCha20Poly1305::new_from_slice(self.encryption_key.as_slice())
             .map_err(|e| anyhow!("Failed to create cipher: {}", e))?;
 
         let nonce = Nonce::from_slice(&data[..NONCE_SIZE]);

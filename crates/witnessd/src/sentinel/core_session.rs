@@ -133,13 +133,19 @@ impl Sentinel {
             .config
             .wal_dir
             .join(format!("{}.wal", session.session_id));
-        // Session IDs are 32 random bytes hex-encoded (64 hex chars -> 32 bytes).
-        // Wal::open requires a [u8; 32] session key derived from this ID.
+        // Session IDs are normally 32 random bytes hex-encoded (64 hex chars -> 32 bytes).
+        // Non-hex IDs (e.g. synthesized ones with a `rfc-` prefix) fall back to a
+        // deterministic SHA-256 digest of the ID string so the WAL is always created.
         let mut session_id_bytes = [0u8; 32];
         let hex_str = &session.session_id[..64.min(session.session_id.len())];
-        if let Err(e) = hex::decode_to_slice(hex_str, &mut session_id_bytes) {
-            log::warn!("session_id hex decode failed: {e}; WAL may not be created");
-        } else if let Some(ref signing_key) = key {
+        if hex::decode_to_slice(hex_str, &mut session_id_bytes).is_err() {
+            log::warn!(
+                "session_id not hex-encoded; falling back to SHA-256(session_id) for WAL key"
+            );
+            let digest = sha2::Sha256::digest(session.session_id.as_bytes());
+            session_id_bytes.copy_from_slice(&digest);
+        }
+        if let Some(ref signing_key) = key {
             // Copy key bytes for Wal::open (which takes SigningKey by value)
             // and zeroize the intermediate copy. SigningKey::from_bytes produces
             // a value whose Drop impl zeroizes internal state.
@@ -202,15 +208,21 @@ impl Sentinel {
         if !self.running.load(std::sync::atomic::Ordering::SeqCst) {
             return false;
         }
-        let needs_checkpoint = {
-            let sessions = self.sessions.read_recover();
-            sessions
-                .get(path)
-                .is_some_and(|s| s.keystroke_count > s.last_checkpoint_keystrokes)
+        // Atomically check-and-claim the checkpoint slot so a concurrent
+        // caller for the same path cannot start a duplicate commit during
+        // the hash/store window. On failure below we roll the count back.
+        let (claimed_count, prior_count) = {
+            let mut sessions = self.sessions.write_recover();
+            let Some(s) = sessions.get_mut(path) else {
+                return false;
+            };
+            if s.keystroke_count <= s.last_checkpoint_keystrokes {
+                return false;
+            }
+            let prior = s.last_checkpoint_keystrokes;
+            s.last_checkpoint_keystrokes = s.keystroke_count;
+            (s.keystroke_count, prior)
         };
-        if !needs_checkpoint {
-            return false;
-        }
 
         // Skip shadow:// paths; they have no real file to hash.
         if path.starts_with("shadow://") {
@@ -257,11 +269,9 @@ impl Sentinel {
         match store.add_secure_event_with_signer(&mut event, sk.as_ref()) {
             Ok(_) => {
                 log::info!("Auto-checkpoint committed for {path}");
-                // Update last_checkpoint_keystrokes so the timer doesn't re-commit
-                let mut sessions = self.sessions.write_recover();
-                if let Some(session) = sessions.get_mut(path) {
-                    session.last_checkpoint_keystrokes = session.keystroke_count;
-                    if let Some(ref tpm) = self.tpm_provider {
+                if let Some(ref tpm) = self.tpm_provider {
+                    let mut sessions = self.sessions.write_recover();
+                    if let Some(session) = sessions.get_mut(path) {
                         try_hw_cosign(
                             session,
                             tpm.as_ref(),
@@ -275,6 +285,14 @@ impl Sentinel {
             }
             Err(e) => {
                 log::warn!("Auto-checkpoint store write failed for {path}: {e}");
+                // Roll back the claim so the next tick can retry, but only if no
+                // other commit has advanced the counter past ours in the meantime.
+                let mut sessions = self.sessions.write_recover();
+                if let Some(session) = sessions.get_mut(path) {
+                    if session.last_checkpoint_keystrokes == claimed_count {
+                        session.last_checkpoint_keystrokes = prior_count;
+                    }
+                }
                 false
             }
         }

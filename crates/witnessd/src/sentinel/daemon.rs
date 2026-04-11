@@ -425,7 +425,7 @@ async fn setup_daemon(writerslogic_dir: &Path) -> Result<DaemonSetup> {
     let sentinel = Arc::new(Sentinel::new(config)?);
 
     if let Ok(Some(hmac_key)) = crate::identity::SecureStorage::load_hmac_key() {
-        sentinel.set_hmac_key(hmac_key.to_vec());
+        sentinel.set_hmac_key(hmac_key);
     }
 
     // If start fails, clean up the PID file.
