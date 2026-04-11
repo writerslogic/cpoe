@@ -523,7 +523,7 @@ reason = "blocks reactor; use verify_async from async fn"
 
 - **Model:** Sonnet | **Scope:** errors | **Leverage:** CRITICAL
 - **Files:** `crates/witnessd/src/ipc/secure_channel.rs:71,84,98,122,128,145,160`, sentinel IPC sites
-- **Severity:** HIGH | **Status:** open
+- **Severity:** HIGH | **Status:** fixed 2026-04-11 (SecureChannelSendError/RecvError enums replace dummy EncryptedMessage error constructions; recv logs WARN on Decryption)
 - **Priority:** 24/240 | **Estimated time:** 5h
 - **Description:** `SecureSender::send` returns `Result<(), SendError<EncryptedMessage>>`. Errors construct fake `{ nonce: [0; 12], ciphertext: vec![] }`. Erases distinctions, fabricates invalid crypto. Security-relevant.
 - **Root cause:** Generic SendError forces dummy construction; no typed error variants.

@@ -7,7 +7,7 @@ use chacha20poly1305::{
     ChaCha20Poly1305, Key, Nonce,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver, RecvError, SendError, Sender};
+use std::sync::mpsc::{self, Receiver, RecvError, Sender};
 use zeroize::{Zeroize, Zeroizing};
 
 /// Max nonce counter value before we refuse to encrypt. ChaCha20-Poly1305
@@ -20,6 +20,38 @@ const NONCE_COUNTER_MAX: u64 = u64::MAX - 1;
 /// Prevents a malicious or buggy sender from causing unbounded allocation.
 /// Uses the same cap as IPC wire frames.
 const MAX_SECURE_CHANNEL_PAYLOAD: usize = super::messages::MAX_MESSAGE_SIZE;
+
+/// Typed error for [`SecureSender::send`].
+#[derive(Debug, thiserror::Error)]
+pub enum SecureChannelSendError {
+    #[error("serialization failed: {0}")]
+    Serialization(#[from] bincode::error::EncodeError),
+    #[error("AEAD encryption failed")]
+    Encryption,
+    #[error("nonce counter exhausted; channel must be re-keyed")]
+    NonceExhausted,
+    #[error("channel closed")]
+    Channel,
+}
+
+/// Typed error for [`SecureReceiver::recv`].
+#[derive(Debug, thiserror::Error)]
+pub enum SecureChannelRecvError {
+    #[error("AEAD decryption failed")]
+    Decryption,
+    #[error("payload exceeds maximum size ({MAX_SECURE_CHANNEL_PAYLOAD} bytes)")]
+    PayloadTooLarge,
+    #[error("deserialization failed: {0}")]
+    Deserialization(#[from] bincode::error::DecodeError),
+    #[error("channel closed")]
+    Channel,
+}
+
+impl From<RecvError> for SecureChannelRecvError {
+    fn from(_: RecvError) -> Self {
+        SecureChannelRecvError::Channel
+    }
+}
 
 /// Factory for creating matched sender/receiver pairs with ChaCha20-Poly1305 encryption.
 #[derive(Debug)]
@@ -96,24 +128,17 @@ impl<T> std::fmt::Debug for SecureSender<T> {
 
 impl<T: serde::Serialize> SecureSender<T> {
     /// Serialize, encrypt, and send a value through the channel.
-    pub fn send(&self, value: T) -> Result<(), SendError<EncryptedMessage>> {
+    pub fn send(&self, value: T) -> Result<(), SecureChannelSendError> {
         let plaintext = Zeroizing::new(
-            bincode::serde::encode_to_vec(&value, bincode::config::standard()).map_err(|_| {
-                SendError(EncryptedMessage {
-                    nonce: [0; 12],
-                    ciphertext: vec![],
-                })
-            })?,
+            bincode::serde::encode_to_vec(&value, bincode::config::standard())
+                .map_err(SecureChannelSendError::Serialization)?,
         );
 
         // Reserve a nonce slot via compare_exchange; only commit after successful encrypt.
         let counter = loop {
             let current = self.nonce_counter.load(Ordering::SeqCst);
             if current >= NONCE_COUNTER_MAX {
-                return Err(SendError(EncryptedMessage {
-                    nonce: [0; 12],
-                    ciphertext: vec![],
-                }));
+                return Err(SecureChannelSendError::NonceExhausted);
             }
             match self.nonce_counter.compare_exchange(
                 current,
@@ -133,17 +158,14 @@ impl<T: serde::Serialize> SecureSender<T> {
         let ciphertext = self
             .cipher
             .encrypt(nonce, plaintext.as_ref())
-            .map_err(|_| {
-                SendError(EncryptedMessage {
-                    nonce: [0; 12],
-                    ciphertext: vec![],
-                })
-            })?;
+            .map_err(|_| SecureChannelSendError::Encryption)?;
 
-        self.tx.send(EncryptedMessage {
-            nonce: nonce_bytes,
-            ciphertext,
-        })
+        self.tx
+            .send(EncryptedMessage {
+                nonce: nonce_bytes,
+                ciphertext,
+            })
+            .map_err(|_| SecureChannelSendError::Channel)
     }
 }
 
@@ -164,25 +186,31 @@ impl<T> std::fmt::Debug for SecureReceiver<T> {
 
 impl<T: serde::de::DeserializeOwned> SecureReceiver<T> {
     /// Block until a message arrives, then decrypt and deserialize it.
-    pub fn recv(&self) -> Result<T, RecvError> {
-        let msg = self.rx.recv()?;
+    pub fn recv(&self) -> Result<T, SecureChannelRecvError> {
+        let msg = self.rx.recv().map_err(SecureChannelRecvError::from)?;
         let nonce = Nonce::from_slice(&msg.nonce);
 
         let mut plaintext = self
             .cipher
             .decrypt(nonce, msg.ciphertext.as_ref())
-            .map_err(|_| RecvError)?;
+            .map_err(|_| {
+                log::warn!("secure channel: AEAD decryption failed (possible tampering or key mismatch)");
+                SecureChannelRecvError::Decryption
+            })?;
 
         if plaintext.len() > MAX_SECURE_CHANNEL_PAYLOAD {
             plaintext.zeroize();
-            return Err(RecvError);
+            return Err(SecureChannelRecvError::PayloadTooLarge);
         }
 
         let (value, _): (T, usize) = bincode::serde::decode_from_slice(
             &plaintext,
             bincode::config::standard().with_limit::<{ super::messages::MAX_MESSAGE_SIZE }>(),
         )
-        .map_err(|_| RecvError)?;
+        .map_err(|e| {
+            plaintext.zeroize();
+            SecureChannelRecvError::Deserialization(e)
+        })?;
 
         plaintext.zeroize();
 
