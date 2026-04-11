@@ -599,7 +599,7 @@ fn verify_db(file_path: &PathBuf, key: Option<PathBuf>, out: &OutputMode) -> Res
     }
     let hmac_key = derive_hmac_key(&key_data[..32]);
 
-    match SecureStore::open(file_path, hmac_key.to_vec()) {
+    match SecureStore::open(file_path, hmac_key) {
         Ok(_) => {
             if out.json {
                 println!(

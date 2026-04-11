@@ -83,7 +83,7 @@ pub(crate) fn cmd_status(out: &OutputMode) -> Result<()> {
         };
 
         if let Some(hmac_key) = hmac_key {
-            match SecureStore::open(&db_path, (*hmac_key).clone()) {
+            match SecureStore::open(&db_path, hmac_key.clone()) {
                 Ok(store) => {
                     let files = store.list_files().unwrap_or_else(|e| {
                         eprintln!("Warning: list_files: {}", e);

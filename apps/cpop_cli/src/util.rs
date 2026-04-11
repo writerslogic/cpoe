@@ -110,10 +110,7 @@ pub fn open_secure_store() -> Result<SecureStore> {
     let db_path = dir.join("events.db");
 
     if let Ok(Some(hmac_key)) = witnessd::identity::SecureStorage::load_hmac_key() {
-        // Clone out of Zeroizing: SecureStore::open takes Vec<u8> by value,
-        // so the inner vec must be copied. The Zeroizing wrapper still zeroes
-        // its copy on drop; SecureStore owns and zeroes the other.
-        return SecureStore::open(&db_path, hmac_key.to_vec())
+        return SecureStore::open(&db_path, hmac_key)
             .map_err(|e| anyhow!("Database error: {}", e));
     }
 
@@ -124,7 +121,7 @@ pub fn open_secure_store() -> Result<SecureStore> {
         eprintln!("Warning: HMAC key migration: {}", e);
     }
 
-    SecureStore::open(&db_path, hmac_key.to_vec()).map_err(|e| anyhow!("Database error: {}", e))
+    SecureStore::open(&db_path, hmac_key).map_err(|e| anyhow!("Database error: {}", e))
 }
 
 pub fn get_device_id() -> Result<[u8; 16]> {
