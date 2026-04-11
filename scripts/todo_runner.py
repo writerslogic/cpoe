@@ -94,6 +94,120 @@ class Job:
 
 
 # ---------------------------------------------------------------------------
+# progress tracking (pattern adapted from ~/.claude/scripts/audit.py)
+
+
+class ProgressRenderer:
+    OUTCOMES = ["fixed", "rejected", "blocked", "failed"]
+
+    def __init__(self, total: int, concurrency: int = 1, width: int = 40):
+        self.total = total
+        self.concurrency = max(1, concurrency)
+        self.done = 0
+        self.outcomes = {o: 0 for o in self.OUTCOMES}
+        self.running: list[tuple[str, str, float]] = []
+        self.start = time.monotonic()
+        self.completion_times: list[float] = []
+        self.width = width
+        self._printed_lines = 0
+        self._enabled = sys.stderr.isatty()
+
+    @staticmethod
+    def _fmt_time(secs: Optional[float]) -> str:
+        if secs is None:
+            return "--:--"
+        secs = max(0, int(secs))
+        h, rem = divmod(secs, 3600)
+        m, s = divmod(rem, 60)
+        if h:
+            return f"{h}h{m:02d}m{s:02d}s"
+        return f"{m:02d}m{s:02d}s"
+
+    def _eta_seconds(self) -> Optional[float]:
+        remaining = self.total - self.done
+        if remaining <= 0 and self.done > 0:
+            return 0.0
+        measured = len(self.completion_times)
+        warmup = min(2, self.concurrency)
+        if measured < warmup + 1:
+            return None
+        span = max(1e-6, time.monotonic() - self.completion_times[0])
+        rate = (measured - 1) / span if measured > 1 else measured / span
+        if rate <= 0:
+            return None
+        return remaining / rate
+
+    def _lines(self) -> list[str]:
+        elapsed = time.monotonic() - self.start
+        eta = self._eta_seconds()
+        pct = self.done / self.total if self.total else 1.0
+        filled = int(self.width * pct)
+        bar = "\u2588" * filled + "\u2591" * (self.width - filled)
+        running_count = len(self.running)
+        pending = self.total - self.done - running_count
+        outcome_counts = "  ".join(f"{o}: {self.outcomes[o]}" for o in self.OUTCOMES)
+        header = [
+            "TODO RUNNER",
+            outcome_counts,
+            f"TOTAL: {self.total}  DONE: {self.done}  RUNNING: {running_count}  PENDING: {pending}",
+            f"{bar} {self._fmt_time(elapsed)} / ETA {self._fmt_time(eta)}",
+        ]
+        for task_id, model, started in self.running:
+            header.append(f"  \u25b6 {task_id:<14} {model:<7} {self._fmt_time(time.monotonic() - started)}")
+        return header
+
+    def clear(self) -> None:
+        if not self._enabled or self._printed_lines == 0:
+            return
+        out = sys.stderr
+        out.write(f"\033[{self._printed_lines}F")
+        for _ in range(self._printed_lines):
+            out.write("\033[2K\n")
+        out.write(f"\033[{self._printed_lines}F")
+        out.flush()
+        self._printed_lines = 0
+
+    def render(self) -> None:
+        if not self._enabled:
+            return
+        lines = self._lines()
+        out = sys.stderr
+        if self._printed_lines:
+            out.write(f"\033[{self._printed_lines}F")
+            for _ in range(self._printed_lines):
+                out.write("\033[2K\n")
+            out.write(f"\033[{self._printed_lines}F")
+        for line in lines:
+            out.write(line + "\n")
+        out.flush()
+        self._printed_lines = len(lines)
+
+    def on_spawn(self, task_id: str, model: str) -> None:
+        self.running.append((task_id, model, time.monotonic()))
+        self.render()
+
+    def on_complete(self, task_id: str, outcome: str) -> None:
+        self.done += 1
+        self.completion_times.append(time.monotonic())
+        if outcome in self.outcomes:
+            self.outcomes[outcome] += 1
+        self.running = [r for r in self.running if r[0] != task_id]
+        self.render()
+
+
+TRACKER: Optional[ProgressRenderer] = None
+
+
+class TrackerAwareHandler(logging.StreamHandler):
+    def emit(self, record: logging.LogRecord) -> None:
+        if TRACKER is not None:
+            TRACKER.clear()
+        super().emit(record)
+        if TRACKER is not None:
+            TRACKER.render()
+
+
+# ---------------------------------------------------------------------------
 # helpers
 
 logger = logging.getLogger("todo_runner")
@@ -101,7 +215,7 @@ logger = logging.getLogger("todo_runner")
 
 def _configure_logging() -> None:
     fmt = logging.Formatter("[%(asctime)s] %(message)s", datefmt="%H:%M:%S")
-    stream = logging.StreamHandler(sys.stdout)
+    stream = TrackerAwareHandler(sys.stderr)
     stream.setFormatter(fmt)
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     fileh = logging.FileHandler(STATE_LOG)
@@ -110,10 +224,29 @@ def _configure_logging() -> None:
     logger.addHandler(stream)
     logger.addHandler(fileh)
     logger.setLevel(logging.INFO)
+    logger.propagate = False
 
 
 def log(msg: str) -> None:
     logger.info(msg)
+
+
+def task_status_word(task_id: str) -> str:
+    try:
+        with TODO_FILE.open() as fh:
+            in_task = False
+            for raw in fh:
+                m = TASK_HEADER_RE.match(raw)
+                if m:
+                    in_task = m.group(1) == task_id
+                    continue
+                if in_task:
+                    sm = STATUS_RE.search(raw)
+                    if sm:
+                        return sm.group(1).lower()
+    except OSError:
+        pass
+    return "unknown"
 
 
 def md5_of(path: str) -> str:
@@ -355,6 +488,8 @@ def spawn(task: Task, locks: list[str]) -> Job:
     proc.stdin.close()
 
     log(f"▶ spawn {task.id} pid={proc.pid} model={task.model} exclusive={int(task.exclusive)} files={len(task.files) or 'all'}")
+    if TRACKER is not None:
+        TRACKER.on_spawn(task.id, task.model)
     return Job(task=task, proc=proc, log_path=log_path, started=time.time(), locks=locks)
 
 
@@ -378,8 +513,14 @@ def reap(jobs: list[Job]) -> list[Job]:
             continue
 
         release(job.locks)
-        open_flag = "yes" if is_still_open(job.task.id) else "no"
-        log(f"   ✓ reap {job.task.id} rc={rc} elapsed={elapsed}s still_open={open_flag} log={job.log_path}")
+        status_word = task_status_word(job.task.id)
+        if rc == 0 and status_word in ProgressRenderer.OUTCOMES:
+            outcome = status_word
+        else:
+            outcome = "failed"
+        log(f"   ✓ reap {job.task.id} rc={rc} elapsed={elapsed}s status={status_word} log={job.log_path}")
+        if TRACKER is not None:
+            TRACKER.on_complete(job.task.id, outcome)
     return still
 
 
@@ -492,6 +633,10 @@ def main() -> int:
             log("✗ baseline red; aborting")
             return 1
         log("✓ baseline green")
+
+    global TRACKER
+    TRACKER = ProgressRenderer(total=len(tasks), concurrency=parallel)
+    TRACKER.render()
 
     queue: list[Task] = list(tasks)
     jobs: list[Job] = []
