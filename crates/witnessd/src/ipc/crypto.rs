@@ -221,25 +221,39 @@ impl Drop for SecureSession {
     }
 }
 
-/// Per-connection rate limiter. The `operations` map is keyed by a small, fixed
-/// set of category strings defined in `RateLimitConfig::max_ops` (~8 entries),
-/// so the HashMap is bounded in practice and does not require periodic cleanup.
-/// If dynamic keys are ever introduced, add an eviction pass in `check()`.
+/// Rate-limit category for IPC operations. Replaces stringly-typed keys to
+/// eliminate per-check allocations in the hot path.
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub(crate) enum IpcOperation {
+    Export,
+    Verify,
+    Forensics,
+    ProcessScore,
+    Checkpoint,
+    Witnessing,
+    General,
+}
+
+/// Per-connection rate limiter. The `operations` map holds one entry per
+/// `IpcOperation` variant (~7 entries max), so the HashMap is bounded and
+/// does not require periodic cleanup.
 pub(crate) struct RateLimiter {
-    operations: HashMap<String, (u32, Instant)>,
+    operations: HashMap<IpcOperation, (u32, Instant)>,
     window_secs: u64,
 }
 
 pub(crate) struct RateLimitConfig;
 
 impl RateLimitConfig {
-    pub(crate) fn max_ops(category: &str) -> u32 {
-        match category {
-            "heartbeat" | "status" => 120,
-            "witnessing" => 30,
-            "verify" | "export" | "forensics" | "process_score" => 10,
-            "checkpoint" => 20,
-            _ => 60,
+    pub(crate) fn max_ops(operation: IpcOperation) -> u32 {
+        match operation {
+            IpcOperation::Witnessing => 30,
+            IpcOperation::Verify
+            | IpcOperation::Export
+            | IpcOperation::Forensics
+            | IpcOperation::ProcessScore => 10,
+            IpcOperation::Checkpoint => 20,
+            IpcOperation::General => 60,
         }
     }
 }
@@ -252,11 +266,11 @@ impl RateLimiter {
         }
     }
 
-    pub(crate) fn check(&mut self, operation: &str) -> bool {
+    pub(crate) fn check(&mut self, operation: IpcOperation) -> bool {
         let now = Instant::now();
         let max_ops = RateLimitConfig::max_ops(operation);
 
-        if let Some(entry) = self.operations.get_mut(operation) {
+        if let Some(entry) = self.operations.get_mut(&operation) {
             if now.duration_since(entry.1).as_secs() >= self.window_secs {
                 *entry = (1, now);
                 return true;
@@ -267,7 +281,7 @@ impl RateLimiter {
             return false;
         }
 
-        self.operations.insert(operation.to_string(), (1, now));
+        self.operations.insert(operation, (1, now));
         true
     }
 }
@@ -382,15 +396,17 @@ pub(crate) async fn send_encrypted<S: tokio::io::AsyncWrite + Unpin>(
 }
 
 /// Map an IPC message to its rate-limit category for per-category throttling.
-pub(crate) fn rate_limit_key(msg: &IpcMessage) -> &'static str {
+pub(crate) fn rate_limit_key(msg: &IpcMessage) -> IpcOperation {
     match msg {
-        IpcMessage::ExportFile { .. } | IpcMessage::ExportWithNonce { .. } => "export",
-        IpcMessage::VerifyFile { .. } | IpcMessage::VerifyWithNonce { .. } => "verify",
-        IpcMessage::GetFileForensics { .. } => "forensics",
-        IpcMessage::ComputeProcessScore { .. } => "process_score",
-        IpcMessage::CreateFileCheckpoint { .. } => "checkpoint",
-        IpcMessage::StartWitnessing { .. } | IpcMessage::StopWitnessing { .. } => "witnessing",
-        _ => "general",
+        IpcMessage::ExportFile { .. } | IpcMessage::ExportWithNonce { .. } => IpcOperation::Export,
+        IpcMessage::VerifyFile { .. } | IpcMessage::VerifyWithNonce { .. } => IpcOperation::Verify,
+        IpcMessage::GetFileForensics { .. } => IpcOperation::Forensics,
+        IpcMessage::ComputeProcessScore { .. } => IpcOperation::ProcessScore,
+        IpcMessage::CreateFileCheckpoint { .. } => IpcOperation::Checkpoint,
+        IpcMessage::StartWitnessing { .. } | IpcMessage::StopWitnessing { .. } => {
+            IpcOperation::Witnessing
+        }
+        _ => IpcOperation::General,
     }
 }
 

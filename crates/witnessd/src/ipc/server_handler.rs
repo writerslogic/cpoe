@@ -247,14 +247,14 @@ pub(super) async fn handle_connection_inner<
                 };
                 if !allowed {
                     log::warn!(
-                        "IPC: rate limit exceeded for '{}' on {} (limit: {}/60s)",
+                        "IPC: rate limit exceeded for '{:?}' on {} (limit: {}/60s)",
                         key,
                         transport_label,
                         RateLimitConfig::max_ops(key)
                     );
                     let error_response = IpcMessage::Error {
                         code: IpcErrorCode::RateLimited,
-                        message: format!("Rate limit exceeded for operation: {}", key),
+                        message: format!("Rate limit exceeded for operation: {:?}", key),
                     };
                     // Best-effort error response; client may have disconnected
                     if let Ok(response_bytes) = encode_message_json(&error_response) {

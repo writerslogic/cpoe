@@ -108,7 +108,7 @@ seed.copy_from_slice(&data[..32]);
 
 - **Model:** Sonnet | **Scope:** idiomatic
 - **File:** `crates/witnessd/src/keyhierarchy/types.rs:13,24,46`
-- **Severity:** HIGH | **Leverage:** HIGH | **Status:** open
+- **Severity:** HIGH | **Leverage:** HIGH | **Status:** fixed 2026-04-10 (4 public key Vec<u8> fields changed to [u8; 32] with serde_array_32; all call sites updated; 1156 tests pass)
 - **Priority:** 3/240 | **Estimated time:** 4h
 - **Description:** `MasterIdentity`, `SessionCertificate`, `CheckpointSignature` structs store Ed25519 keys as `Vec<u8>` despite fixed lengths (32 bytes public, 64 bytes signature).
 - **Root cause:** Legacy code before [u8; N] convention adoption.
@@ -148,7 +148,7 @@ seed.copy_from_slice(&data[..32]);
 
 - **Model:** Sonnet | **Scope:** memory
 - **Files:** `crates/witnessd/src/ipc/crypto.rs:234`, `crates/witnessd/src/ipc/server_handler.rs` (multiple call sites)
-- **Severity:** HIGH | **Leverage:** HIGH | **Status:** open
+- **Severity:** HIGH | **Leverage:** HIGH | **Status:** fixed 2026-04-10 (IpcOperation enum; RateLimiter keyed by enum; rate_limit_key returns IpcOperation; 1157 tests pass)
 - **Priority:** 5/240 | **Estimated time:** 3h
 - **Description:** Operation identifiers stored as `&str`/`String` keys in HashMaps. Fixed set of ~8 values. Every rate-limit check and log allocates.
 - **Root cause:** String-based enums instead of Rust enums.
