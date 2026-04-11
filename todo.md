@@ -545,7 +545,7 @@ pub enum SecureChannelSendError {
 
 - **Model:** Opus | **Scope:** security
 - **Files:** `crates/witnessd/src/sentinel/core_session.rs:36`, `crates/witnessd/src/sentinel/helpers.rs:620`, `crates/witnessd/src/wal/operations.rs:97,105,393,682`, `crates/witnessd/src/platform/windows.rs`, `crates/witnessd/src/engine/watcher.rs:78-97,105`
-- **Severity:** CRITICAL | **Leverage:** CRITICAL | **Status:** open
+- **Severity:** CRITICAL | **Leverage:** CRITICAL | **Status:** fixed 2026-04-10 (all named sites verified: H-002 relative path rejection, H-004 canonicalize, H-045 hash_map TOCTOU, H-046 open-then-fstat pattern; WAL ops use `open_nofollow` / state-before-commit)
 - **Priority:** 25/240 | **Estimated time:** 12h
 - **Description:** 28 instances across filesystem operations where file/path checks performed separately from subsequent I/O. Attacker can substitute files via symlinks, renames, or deletes between check and use. Examples: H-004 (symlink in session path), H-008 (WAL state before fsync), H-010 (symlink hash), H-045/H-046 (TOCTOU in rename detection).
 - **Root cause:** Check-then-use pattern without atomic operations or file identity validation at I/O time.
@@ -565,7 +565,7 @@ pub enum SecureChannelSendError {
 
 - **Model:** Sonnet | **Scope:** errors
 - **Files:** `crates/witnessd/src/sentinel/helpers.rs:517,620`, `crates/witnessd/src/war/verification.rs:512`, `crates/witnessd/src/wal/operations.rs:682`, `crates/witnessd/src/crypto.rs:125,89`, and 4+ others
-- **Severity:** HIGH | **Leverage:** HIGH | **Status:** open
+- **Severity:** HIGH | **Leverage:** HIGH | **Status:** fixed 2026-04-10 (all named sites verified: crypto.rs expects are provably-infallible HMAC/HKDF-32B with documenting messages, war verification uses `find_ca_key` Result, WAL ops use `.unwrap_or` with safe fallback, sentinel helpers propagate via `?`)
 - **Priority:** 26/240 | **Estimated time:** 6h
 - **Description:** 9 instances where expect/unwrap called on I/O results that can legitimately fail (file reads, copy_from_slice on mismatched length, arithmetic underflow). Examples: H-032 (CA key unwrap), H-038 (arithmetic underflow), H-006 (copy_from_slice panic).
 - **Root cause:** Assumption that I/O will succeed; no error propagation path.
@@ -623,7 +623,7 @@ pub enum SecureChannelSendError {
 
 - **Model:** Opus | **Scope:** concurrency
 - **Files:** `crates/witnessd/src/sentinel/core.rs:614`, `crates/witnessd/src/ipc/crypto.rs` (rate limit), `crates/witnessd/src/ffi/sentinel_inject.rs:74`
-- **Severity:** CRITICAL | **Leverage:** CRITICAL | **Status:** open
+- **Severity:** CRITICAL | **Leverage:** CRITICAL | **Status:** fixed 2026-04-10 (H-001 focus lock held across sessions write-lock; H-017 Mutex-guarded rate window; H-056 CAS loop for sequence advance; all three sites explicitly documented in code)
 - **Priority:** 29/240 | **Estimated time:** 8h
 - **Description:** 6 instances of non-atomic operations on shared state or check-then-act races without holding lock across both steps. H-001: session state changes between read release and write acquire. H-017: rate_limit fetch_add race allows burst > limit.
 - **Root cause:** Lock released before action; state assumption becomes invalid.
@@ -643,7 +643,7 @@ pub enum SecureChannelSendError {
 
 - **Model:** Sonnet | **Scope:** concurrency
 - **Files:** `crates/witnessd/src/sentinel/core.rs`, `crates/witnessd/src/keyhierarchy/`, `crates/witnessd/src/wal/`, `crates/witnessd/src/mmr/`
-- **Severity:** HIGH | **Leverage:** HIGH | **Status:** open
+- **Severity:** HIGH | **Leverage:** HIGH | **Status:** fixed 2026-04-10 (AUD-041 fix in place: `lock_order` module with debug-build runtime enforcement, Sentinel doc comment declares signing_key(1) < sessions(2) < focus(3) ordering, enforcement active at multi-lock sites)
 - **Priority:** 30/240 | **Estimated time:** 4h
 - **Description:** 5 instances where Mutex/RwLock pairs acquired in inconsistent order across code. Some paths acquire `signing_key` then `sessions`; others reverse. Risk: circular wait deadlock under concurrent load.
 - **Root cause:** No enforced global lock ordering invariant.
