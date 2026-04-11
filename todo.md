@@ -16,6 +16,19 @@ Execute by criticality and dependency order:
 
 **Model key:** Haiku (simple fixes), Sonnet (medium complexity), Opus (large scope/refactoring)
 
+## Autonomous runner (`scripts/todo_runner.py`)
+
+The runner parses this file and spawns parallel headless Claude agents, one per open task, picking `haiku|sonnet|opus` from each task's `**Model:**` line. Task format requirements:
+
+- **Header:** `### ID: title` (e.g. `### SYS-042:`). Runner matches `CRITICAL-N`, `SYS-N`, `C-N`, `H-N`, `M-N`, `L-N`.
+- **Model line:** `- **Model:** Haiku|Sonnet|Opus` — must appear before the Status line. Case-insensitive. Defaults to `sonnet` if missing.
+- **Files line:** `- **Files:** \`path/one\`, \`path/two\`, \`path/three\`` — every path MUST be wrapped in backticks. Line-number suffixes like `:12,34` or `:100-120` are stripped automatically.
+- **Status line:** `- **Status:** open` — authoritative state. Runner ignores tasks whose first Status line is not exactly `open`.
+- **Exclusive scope:** a task runs alone (blocking the whole tree) iff its Files list (a) contains any trailing `/` (whole-directory scope), (b) contains a `*` glob, (c) has words like `multiple`, `entire`, `widespread`, `project-wide`, `broader`, `many`, `40+`, `across` in the raw line, or (d) has no backtick-wrapped paths at all. Otherwise tasks with disjoint file sets run in parallel.
+- **Completion contract:** agents must rewrite the Status line (to `fixed YYYY-MM-DD (reason)`, `rejected ...`, or `blocked ...`) and commit. Rerunning the runner is idempotent — already-closed tasks are skipped automatically.
+
+Usage: `scripts/todo_runner.py --dry-run` (preview), `scripts/todo_runner.py` (drain), `--only ID`, `--filter REGEX`, `--parallel N`, `--max N`.
+
 ---
 
 ## CRITICAL Issues (Priority Order)

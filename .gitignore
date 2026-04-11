@@ -53,6 +53,10 @@ vendor/
 # Scratchpad
 .scratchpad/
 
+# todo-runner state
+.todo-runner/
+scripts/__pycache__/
+
 # Supabase (deployment config — keep private)
 supabase/
 todo.md
