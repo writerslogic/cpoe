@@ -279,7 +279,7 @@ seed.copy_from_slice(&data[..32]);
 
 - **Model:** Haiku | **Scope:** performance
 - **Files:** `crates/witnessd/src/mmr/mmr.rs:139`, `crates/witnessd/src/anchors/mod.rs:113`, `crates/witnessd/src/ipc/crypto.rs:234`
-- **Severity:** MEDIUM | **Leverage:** MEDIUM | **Status:** open
+- **Severity:** MEDIUM | **Leverage:** MEDIUM | **Status:** fixed 2026-04-10 (encapsulated provider lookup via get_provider_by_type; ipc/crypto already optimal)
 - **Priority:** 12/240 | **Estimated time:** 2h
 - **Description:** `iter().find()` or `Vec::contains` over constant slices. ~8 values or fewer each.
 - **Root cause:** Habit of linear search; no consideration of set size.

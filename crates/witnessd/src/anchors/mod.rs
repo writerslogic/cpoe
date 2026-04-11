@@ -81,6 +81,14 @@ impl AnchorManager {
         self.providers.push(provider);
     }
 
+    /// Find a provider by its type using fast match-based lookup (max 3 providers).
+    fn get_provider_by_type(&self, provider_type: ProviderType) -> Option<ProviderHandle> {
+        self.providers
+            .iter()
+            .find(|p| p.provider_type() == provider_type)
+            .cloned()
+    }
+
     /// Create a manager pre-loaded with all providers available from environment.
     pub fn with_default_providers() -> Self {
         let mut manager = Self::new(AnchorManagerConfig::default());
@@ -136,11 +144,7 @@ impl AnchorManager {
                 continue;
             }
 
-            if let Some(provider) = self
-                .providers
-                .iter()
-                .find(|p| p.provider_type() == proof.provider)
-            {
+            if let Some(provider) = self.get_provider_by_type(proof.provider) {
                 match provider.check_status(proof).await {
                     Ok(updated) => *proof = updated,
                     Err(e) => log::warn!("Status check failed: {e}"),
@@ -172,11 +176,7 @@ impl AnchorManager {
             if proof.anchored_hash != anchor.hash {
                 return Err(AnchorError::HashMismatch);
             }
-            if let Some(provider) = self
-                .providers
-                .iter()
-                .find(|p| p.provider_type() == proof.provider)
-            {
+            if let Some(provider) = self.get_provider_by_type(proof.provider) {
                 if provider.verify(proof).await? {
                     return Ok(true);
                 }
