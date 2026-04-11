@@ -1,10 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
+// File-level `use` so the inner `mod tests { }` can reference sibling
+// modules via `super::` regardless of whether this file is compiled from
+// the cpop binary (where `native_messaging_host` is a module) or from the
+// writerslogic-native-messaging-host binary (where mod.rs is the crate root).
+#[cfg(test)]
+use super::{handlers, jitter, protocol, types};
+
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
 
-    use crate::native_messaging_host::{
+    use super::{
         handlers::compute_commitment,
         jitter::{compute_jitter_stats, MAX_BATCH_SIZE, MAX_JITTER_BATCHES_PER_WINDOW},
         protocol::{
@@ -503,7 +510,7 @@ mod tests {
 
     #[test]
     fn test_nmh_request_type_name_all_variants() {
-        use crate::native_messaging_host::protocol::request_type_name;
+        use super::protocol::request_type_name;
 
         assert_eq!(
             request_type_name(&Request::Ping {
@@ -666,7 +673,7 @@ mod tests {
             "max batches per window must be positive"
         );
         // JITTER_REFILL_PER_MS is integer milli-tokens, so check > 0 as u64
-        use crate::native_messaging_host::jitter::JITTER_REFILL_PER_MS;
+        use super::jitter::JITTER_REFILL_PER_MS;
         assert!(JITTER_REFILL_PER_MS > 0, "refill rate must be positive");
     }
 
