@@ -8,13 +8,13 @@ use crate::MutexRecover;
 use authorproof_protocol::baseline::SessionBehavioralSummary;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// Ring-buffer accumulator for building fingerprints from streaming samples.
 pub struct ActivityFingerprintAccumulator {
     samples: VecDeque<SimpleJitterSample>,
     max_samples: usize,
-    cached_fingerprint: Mutex<ActivityFingerprint>,
+    cached_fingerprint: Mutex<Arc<ActivityFingerprint>>,
     dirty: AtomicBool,
 }
 
@@ -88,7 +88,7 @@ impl ActivityFingerprintAccumulator {
         Self {
             samples: VecDeque::with_capacity(max_samples),
             max_samples,
-            cached_fingerprint: Mutex::new(ActivityFingerprint::default()),
+            cached_fingerprint: Mutex::new(Arc::new(ActivityFingerprint::default())),
             dirty: AtomicBool::new(false),
         }
     }
@@ -103,14 +103,14 @@ impl ActivityFingerprintAccumulator {
     }
 
     /// Recompute fingerprint from buffered samples if dirty, caching the result.
-    pub fn current_fingerprint(&self) -> ActivityFingerprint {
+    pub fn current_fingerprint(&self) -> Arc<ActivityFingerprint> {
         let mut cached = self.cached_fingerprint.lock_recover();
         if self.dirty.load(Ordering::Relaxed) || cached.sample_count == 0 {
             let samples: Vec<_> = self.samples.iter().cloned().collect();
-            *cached = ActivityFingerprint::from_samples(&samples);
+            *cached = Arc::new(ActivityFingerprint::from_samples(&samples));
             self.dirty.store(false, Ordering::Relaxed);
         }
-        cached.clone()
+        Arc::clone(&*cached)
     }
 
     /// Snapshot of the current sample buffer for forensic analysis.
@@ -126,7 +126,7 @@ impl ActivityFingerprintAccumulator {
     /// Clear all samples and reset the cached fingerprint.
     pub fn reset(&mut self) {
         self.samples.clear();
-        *self.cached_fingerprint.lock_recover() = ActivityFingerprint::default();
+        *self.cached_fingerprint.lock_recover() = Arc::new(ActivityFingerprint::default());
         self.dirty.store(false, Ordering::Relaxed);
     }
 }

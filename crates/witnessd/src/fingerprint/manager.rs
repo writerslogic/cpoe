@@ -10,6 +10,7 @@ use crate::fingerprint::voice::{VoiceCollector, VoiceFingerprint};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::sync::Arc;
 
 pub struct FingerprintManager {
     pub(crate) config: FingerprintConfig,
@@ -124,7 +125,7 @@ impl FingerprintManager {
         }
     }
 
-    pub fn current_activity_fingerprint(&self) -> ActivityFingerprint {
+    pub fn current_activity_fingerprint(&self) -> Arc<ActivityFingerprint> {
         self.activity_accumulator.current_fingerprint()
     }
 
@@ -137,9 +138,9 @@ impl FingerprintManager {
     pub fn current_author_fingerprint(&self) -> AuthorFingerprint {
         let activity = self.current_activity_fingerprint();
         let mut fingerprint = if let Some(ref id) = self.current_profile_id {
-            AuthorFingerprint::with_id(id.clone(), activity)
+            AuthorFingerprint::with_id(id.clone(), (*activity).clone())
         } else {
-            AuthorFingerprint::new(activity)
+            AuthorFingerprint::new((*activity).clone())
         };
 
         if let Some(voice) = self.current_voice_fingerprint() {
@@ -190,7 +191,7 @@ impl FingerprintManager {
 
     #[cfg(feature = "cpop_jitter")]
     pub fn current_author_fingerprint_with_phys_ratio(&self, phys_ratio: f64) -> AuthorFingerprint {
-        let mut activity = self.current_activity_fingerprint();
+        let mut activity = (*self.current_activity_fingerprint()).clone();
         activity.set_phys_ratio(phys_ratio);
 
         let mut fingerprint = if let Some(ref id) = self.current_profile_id {

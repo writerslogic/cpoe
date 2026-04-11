@@ -245,7 +245,7 @@ impl Sentinel {
     }
 
     /// Return a snapshot of the current activity fingerprint.
-    pub fn current_activity_fingerprint(&self) -> crate::fingerprint::ActivityFingerprint {
+    pub fn current_activity_fingerprint(&self) -> Arc<crate::fingerprint::ActivityFingerprint> {
         self.activity_accumulator
             .read_recover()
             .current_fingerprint()

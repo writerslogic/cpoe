@@ -316,7 +316,7 @@ seed.copy_from_slice(&data[..32]);
 
 - **Model:** Sonnet | **Scope:** memory
 - **Files:** `crates/witnessd/src/fingerprint/manager.rs`, `crates/witnessd/src/identity/keychain.rs`, analysis modules
-- **Severity:** HIGH | **Leverage:** HIGH | **Status:** open
+- **Severity:** HIGH | **Leverage:** HIGH | **Status:** fixed 2026-04-11 (ActivityFingerprintAccumulator cache changed to Arc; current_fingerprint returns Arc)
 - **Priority:** 14/240 | **Estimated time:** 5h
 - **Description:** Getter functions return owned clone of read-only data (e.g., `fn get_profile(&self) -> Profile` where callers only read). Clone is wasteful.
 - **Root cause:** Ownership-safety habit; not considering borrowing or shared pointers.
@@ -335,7 +335,7 @@ seed.copy_from_slice(&data[..32]);
 
 - **Model:** Opus | **Scope:** async | **Leverage:** HIGH
 - **Files:** `crates/witnessd/src/wal/operations.rs`, `crates/witnessd/src/wal/types.rs:167`, `crates/witnessd/src/mmr/mmr.rs:9`, `crates/witnessd/src/sentinel/shadow.rs:155`
-- **Severity:** HIGH | **Status:** open
+- **Severity:** HIGH | **Status:** fixed 2026-04-11 (snapshot-and-release in WAL verify, MMR read paths, shadow delete/migrate/cleanup)
 - **Priority:** 15/240 | **Estimated time:** 10h
 - **Description:** Mutex/RwLock guards held across multi-step I/O (fdatasync, fs::rename, store loops). All readers/writers block on entire I/O duration instead of just critical section.
 - **Root cause:** Lock acquired too early; not released before I/O.
@@ -354,7 +354,7 @@ seed.copy_from_slice(&data[..32]);
 
 - **Model:** Sonnet | **Scope:** async
 - **Files:** `crates/witnessd/src/vdf/proof.rs` (compute, verify methods), `apps/cpop_cli/src/cmd_commit.rs:83`
-- **Severity:** HIGH | **Leverage:** CRITICAL | **Status:** open
+- **Severity:** HIGH | **Leverage:** CRITICAL | **Status:** fixed 2026-04-11 (added compute_async/verify_async via spawn_blocking; cmd_commit made async; both async callers await it)
 - **Priority:** 16/240 | **Estimated time:** 4h
 - **Description:** VDF and hash-chain loops are CPU-bound (seconds) with no enforcement against being called from Tokio task. Fixing one call site leaves others exposed. Callers live in cpop_cli, not witnessd; wrappers in witnessd, config in cpop_cli.
 - **Root cause:** No async wrappers; sync functions directly called from async code.
