@@ -97,6 +97,8 @@ pub(crate) struct Session {
     /// Token bucket in milli-batches (1 batch = 1000 units; refill at 10 batches/sec = 10 units/ms).
     pub(crate) bucket_millitokens: u64,
     pub(crate) last_refill: std::time::Instant,
+    /// Running hash of accumulated jitter intervals, bound to checkpoint signatures.
+    pub(crate) jitter_hash: [u8; 32],
     /// Device Ed25519 signing key for checkpoint signatures. ZeroizeOnDrop via ed25519-dalek.
     pub(crate) signing_key: Option<SigningKey>,
 }

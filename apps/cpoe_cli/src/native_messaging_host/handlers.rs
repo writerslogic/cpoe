@@ -182,6 +182,7 @@ pub(crate) fn handle_start_session(document_url: String, document_title: String)
         last_checkpoint_ts: now_ns,
         bucket_millitokens: JITTER_TOKEN_MAX,
         last_refill: Instant::now(),
+        jitter_hash: [0u8; 32],
         signing_key,
     });
 
@@ -336,13 +337,14 @@ pub(crate) fn handle_checkpoint(
     );
 
     let signature = session.signing_key.as_ref().map(|sk| {
-        let mut payload = Vec::with_capacity(128);
+        let mut payload = Vec::with_capacity(160);
         payload.extend_from_slice(b"cpoe-checkpoint-sig-v1");
         payload.extend_from_slice(session.id.as_bytes());
         payload.extend_from_slice(&session.expected_ordinal.to_le_bytes());
         payload.extend_from_slice(content_hash.as_bytes());
         payload.extend_from_slice(&new_commitment);
         payload.extend_from_slice(&now_ns.to_le_bytes());
+        payload.extend_from_slice(&session.jitter_hash);
         hex::encode(sk.sign(&payload).to_bytes())
     });
 
@@ -525,6 +527,16 @@ pub(crate) fn handle_inject_jitter(intervals: Vec<u64>) -> Response {
             accepted - stored,
             accepted
         );
+    }
+
+    // Update running jitter hash: H(prev_jitter_hash || intervals)
+    if stored > 0 {
+        let mut jh = Sha256::new();
+        jh.update(session.jitter_hash);
+        for interval in &valid[..stored] {
+            jh.update(interval.to_le_bytes());
+        }
+        session.jitter_hash = jh.finalize().into();
     }
 
     if !session.jitter_intervals.is_empty() {
