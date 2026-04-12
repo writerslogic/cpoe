@@ -380,6 +380,21 @@ pub(crate) fn handle_checkpoint(
 }
 
 fn load_device_signing_key() -> Option<ed25519_dalek::SigningKey> {
+    use zeroize::Zeroize;
+
+    // Prefer platform keychain (macOS Keychain, Linux keyring) over flat file.
+    // SecureStorage keys are not extractable via filesystem access.
+    if let Ok(Some(data)) = cpoe::identity::SecureStorage::load_signing_key() {
+        if data.len() == 32 {
+            let mut seed = [0u8; 32];
+            seed.copy_from_slice(&data);
+            let key = ed25519_dalek::SigningKey::from_bytes(&seed);
+            seed.zeroize();
+            return Some(key);
+        }
+    }
+
+    // Fall back to flat file for legacy installs; migrate to keychain on success.
     let dir = if let Ok(d) = std::env::var("CPOE_DATA_DIR") {
         std::path::PathBuf::from(d)
     } else {
@@ -387,7 +402,6 @@ fn load_device_signing_key() -> Option<ed25519_dalek::SigningKey> {
     };
     let key_path = dir.join("signing_key");
     let mut key_data = std::fs::read(&key_path).ok()?;
-    use zeroize::Zeroize;
     if key_data.len() != 32 && key_data.len() != 64 {
         key_data.zeroize();
         return None;
@@ -395,6 +409,12 @@ fn load_device_signing_key() -> Option<ed25519_dalek::SigningKey> {
     let mut seed = [0u8; 32];
     seed.copy_from_slice(&key_data[..32]);
     key_data.zeroize();
+
+    // Migrate to keychain so the flat file can eventually be removed
+    if let Err(e) = cpoe::identity::SecureStorage::save_signing_key(&seed) {
+        eprintln!("Warning: signing key keychain migration failed: {e}");
+    }
+
     let key = ed25519_dalek::SigningKey::from_bytes(&seed);
     seed.zeroize();
     Some(key)
@@ -446,24 +466,38 @@ pub(crate) fn handle_stop_session() -> Response {
         );
     }
 
-    let _ = std::fs::File::open(&session.evidence_path).and_then(|f| f.sync_all());
-
     let signature = session.signing_key.as_ref().map(|sk| {
-        let mut payload = Vec::with_capacity(96);
+        // Hash the entire evidence file before appending the seal.
+        // This makes any modification (including stripping signature lines) detectable.
+        let file_hash = std::fs::read(&session.evidence_path)
+            .map(|data| {
+                let mut h = Sha256::new();
+                h.update(&data);
+                let result: [u8; 32] = h.finalize().into();
+                result
+            })
+            .unwrap_or([0u8; 32]);
+
+        let mut payload = Vec::with_capacity(128);
         payload.extend_from_slice(b"cpoe-session-end-v1");
         payload.extend_from_slice(session.id.as_bytes());
         payload.extend_from_slice(&session.checkpoint_count.to_le_bytes());
         payload.extend_from_slice(&session.prev_commitment);
         payload.extend_from_slice(&session.jitter_hash);
+        payload.extend_from_slice(&file_hash);
         let sig_hex = hex::encode(sk.sign(&payload).to_bytes());
+        let pubkey_hex = hex::encode(sk.verifying_key().as_bytes());
         let seal_line = format!(
-            "<!-- session-end-sig: {} checkpoints: {} -->\n",
-            sig_hex, session.checkpoint_count
+            "<!-- session-seal: {} pubkey: {} file_hash: {} checkpoints: {} -->\n",
+            sig_hex, pubkey_hex, hex::encode(file_hash), session.checkpoint_count
         );
         let _ = std::fs::OpenOptions::new()
             .append(true)
             .open(&session.evidence_path)
-            .and_then(|mut f| f.write_all(seal_line.as_bytes()));
+            .and_then(|mut f| {
+                f.write_all(seal_line.as_bytes())?;
+                f.sync_all()
+            });
         sig_hex
     });
 

@@ -16,6 +16,7 @@ const SERVICE_NAME: &str = "com.writerslogic.identity";
 const SEED_ACCOUNT: &str = "default_seed";
 const HMAC_ACCOUNT: &str = "hmac_key";
 const MNEMONIC_ACCOUNT: &str = "mnemonic_phrase";
+const SIGNING_KEY_ACCOUNT: &str = "signing_key";
 const DEVICE_ID_ACCOUNT: &str = "device_id";
 const MACHINE_ID_ACCOUNT: &str = "machine_id";
 const FINGERPRINT_KEY_ACCOUNT: &str = "fingerprint_key";
@@ -304,6 +305,16 @@ impl SecureStorage {
         } else {
             Ok(None)
         }
+    }
+
+    /// Store the Ed25519 signing key seed (32 bytes) in the platform keychain.
+    pub fn save_signing_key(seed: &[u8]) -> Result<()> {
+        Self::save(SIGNING_KEY_ACCOUNT, seed)
+    }
+
+    /// Load the Ed25519 signing key seed from the platform keychain.
+    pub fn load_signing_key() -> Result<Option<Zeroizing<Vec<u8>>>> {
+        Self::load(SIGNING_KEY_ACCOUNT)
     }
 
     /// Store the mnemonic phrase in the platform keychain.
