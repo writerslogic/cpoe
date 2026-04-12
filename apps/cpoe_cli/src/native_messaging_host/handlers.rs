@@ -410,9 +410,11 @@ fn load_device_signing_key() -> Option<ed25519_dalek::SigningKey> {
     seed.copy_from_slice(&key_data[..32]);
     key_data.zeroize();
 
-    // Migrate to keychain so the flat file can eventually be removed
-    if let Err(e) = cpoe::identity::SecureStorage::save_signing_key(&seed) {
-        eprintln!("Warning: signing key keychain migration failed: {e}");
+    // Migrate to keychain and remove the flat file
+    if cpoe::identity::SecureStorage::save_signing_key(&seed).is_ok()
+        && !cpoe::identity::SecureStorage::is_keychain_disabled()
+    {
+        let _ = std::fs::remove_file(&key_path);
     }
 
     let key = ed25519_dalek::SigningKey::from_bytes(&seed);

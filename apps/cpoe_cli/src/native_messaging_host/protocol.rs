@@ -21,6 +21,9 @@ pub(crate) const ALLOWED_DOMAINS: &[&str] = &[
 /// Return request type name without PII (document URLs/titles).
 pub(crate) fn request_type_name(req: &Request) -> &'static str {
     match req {
+        Request::Hello { .. } => "Hello",
+        Request::KeyConfirm { .. } => "KeyConfirm",
+        Request::Encrypted { .. } => "Encrypted",
         Request::StartSession { .. } => "StartSession",
         Request::Checkpoint { .. } => "Checkpoint",
         Request::StopSession => "StopSession",

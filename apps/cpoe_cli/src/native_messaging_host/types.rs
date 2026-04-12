@@ -8,6 +8,18 @@ use zeroize::Zeroize;
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum Request {
+    Hello {
+        #[serde(default)]
+        #[allow(dead_code)]
+        protocol_version: Option<u8>,
+        client_pubkey: String,
+    },
+    KeyConfirm {
+        token: String,
+    },
+    Encrypted {
+        payload: String,
+    },
     StartSession {
         document_url: String,
         document_title: String,
@@ -39,6 +51,14 @@ pub(crate) enum Request {
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum Response {
+    HelloAccept {
+        server_pubkey: String,
+        confirm: String,
+    },
+    KeyConfirmed {},
+    Encrypted {
+        payload: String,
+    },
     SessionStarted {
         session_id: String,
         message: String,

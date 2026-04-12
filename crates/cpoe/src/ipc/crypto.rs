@@ -36,19 +36,19 @@ pub(crate) const SECURE_PROTOCOL_VERSION_MIN: u8 = 1;
 pub(crate) const SECURE_PROTOCOL_VERSION_MAX: u8 = 1;
 
 /// Uncompressed P-256 public key: 0x04 prefix + 32-byte X + 32-byte Y.
-pub(crate) const P256_PUBLIC_KEY_SIZE: usize = 65;
+pub const P256_PUBLIC_KEY_SIZE: usize = 65;
 
-pub(crate) const IPC_HKDF_SALT: &[u8] = b"cpoe-ipc-v1";
+pub const IPC_HKDF_SALT: &[u8] = b"cpoe-ipc-v1";
 
 /// Timeout for the ECDH handshake phase.
 pub(crate) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Key confirmation token encrypted by both sides to verify key agreement.
-pub(crate) const KEY_CONFIRM_PLAINTEXT: &[u8] = b"cpoe-key-confirm-ok";
+pub const KEY_CONFIRM_PLAINTEXT: &[u8] = b"cpoe-key-confirm-ok";
 
 /// Per-connection AES-256-GCM session with sequence-based replay protection.
 /// Key material is zeroized on drop.
-pub(crate) struct SecureSession {
+pub struct SecureSession {
     cipher: Aes256Gcm,
     /// Server uses odd (1,3,5...), client uses even (0,2,4...).
     tx_sequence: AtomicU64,
@@ -71,7 +71,7 @@ fn construct_nonce(prefix: &[u8; 4], seq: u64) -> [u8; 12] {
 impl SecureSession {
     /// Derive a session from a P-256 ECDH shared secret.
     /// Pubkeys are included in HKDF info to prevent MITM relay attacks.
-    pub(crate) fn from_shared_secret(
+    pub fn from_shared_secret(
         shared_secret: &[u8],
         client_pubkey: &[u8],
         server_pubkey: &[u8],
@@ -120,7 +120,7 @@ impl SecureSession {
     }
 
     /// Encrypt a payload. Returns [8-byte seq][12-byte nonce][ciphertext+tag].
-    pub(crate) fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>> {
+    pub fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>> {
         // H-056: guard against sequence overflow with CAS loop to eliminate
         // the race between load and fetch_add.
         let seq = loop {
@@ -160,7 +160,7 @@ impl SecureSession {
     /// Sequence mismatch returns a `SequenceDesync` error that callers may
     /// treat as non-fatal (skip the message, let the client retry).
     /// Other failures (tampered ciphertext, wrong key) remain fatal.
-    pub(crate) fn decrypt(&self, data: &[u8]) -> Result<Vec<u8>> {
+    pub fn decrypt(&self, data: &[u8]) -> Result<Vec<u8>> {
         if data.len() < 36 {
             return Err(anyhow!("Encrypted message too short: {} bytes", data.len()));
         }
@@ -441,5 +441,11 @@ pub(crate) fn decode_for_protocol(bytes: &[u8], protocol: WireProtocol) -> Resul
     match protocol {
         WireProtocol::Bincode => decode_message(bytes),
         WireProtocol::Json | WireProtocol::SecureJson => decode_message_json(bytes),
+    }
+}
+
+impl std::fmt::Debug for SecureSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SecureSession").finish_non_exhaustive()
     }
 }

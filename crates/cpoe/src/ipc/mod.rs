@@ -6,7 +6,7 @@ pub mod secure_channel;
 pub mod unix_socket;
 
 mod async_client;
-pub(crate) mod crypto;
+pub mod crypto;
 pub(crate) mod messages;
 mod server;
 mod server_handler;
