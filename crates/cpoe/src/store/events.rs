@@ -95,10 +95,10 @@ impl SecureStore {
                 e.hw_cosign_signature.as_deref(),
                 e.hw_cosign_pubkey.as_deref(),
                 e.hw_cosign_salt_commitment.as_deref(),
-                e.hw_cosign_chain_index.map(|c| c as i64),
+                e.hw_cosign_chain_index.map(|c| i64::try_from(c).unwrap_or(i64::MAX)),
                 e.hw_cosign_entangled_hash.as_deref(),
                 e.hw_cosign_entropy_digest.as_deref(),
-                e.hw_cosign_entropy_bytes.map(|v| v as i64)
+                e.hw_cosign_entropy_bytes.map(|v| i64::try_from(v).unwrap_or(i64::MAX))
             ],
         )?;
 
@@ -285,10 +285,10 @@ impl SecureStore {
             hw_cosign_signature: row.get(23)?,
             hw_cosign_pubkey: row.get(24)?,
             hw_cosign_salt_commitment: row.get(25)?,
-            hw_cosign_chain_index: row.get::<_, Option<i64>>(26)?.map(|v| v as u64),
+            hw_cosign_chain_index: row.get::<_, Option<i64>>(26)?.map(|v| u64::try_from(v).unwrap_or(0)),
             hw_cosign_entangled_hash: row.get(27)?,
             hw_cosign_entropy_digest: row.get(28)?,
-            hw_cosign_entropy_bytes: row.get::<_, Option<i64>>(29)?.map(|v| v as u64),
+            hw_cosign_entropy_bytes: row.get::<_, Option<i64>>(29)?.map(|v| u64::try_from(v).unwrap_or(0)),
         })
     }
 
