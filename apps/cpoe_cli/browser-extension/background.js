@@ -37,6 +37,7 @@ let callbackId = 0;
 // Anti-forgery commitment chain state
 let sessionNonce = null;
 let prevCommitment = null;
+let genesisReady = null; // Promise that resolves when genesis commitment is set
 let checkpointOrdinal = COMMITMENT_CHAIN_INITIAL_ORDINAL;
 
 function connectToNativeHost() {
@@ -129,14 +130,9 @@ function handleNativeMessage(message) {
       if (message.session_nonce) {
         sessionNonce = message.session_nonce;
         checkpointOrdinal = COMMITMENT_CHAIN_INITIAL_ORDINAL;
-        // Derive deterministic genesis commitment so the first checkpoint
-        // has a valid prev_commitment instead of null.
-        computeGenesisCommitment(message.session_nonce)
+        genesisReady = computeGenesisCommitment(message.session_nonce)
           .then((genesis) => { prevCommitment = genesis; })
-          .catch((err) => {
-            console.error("Failed to compute genesis commitment:", err);
-            prevCommitment = null;
-          });
+          .catch(() => { prevCommitment = null; });
       }
       updateBadge("\u2713", "#2ecc71");
       broadcastToPopup({ type: "session_update", ...message });
@@ -160,6 +156,7 @@ function handleNativeMessage(message) {
       // Clear commitment chain state
       sessionNonce = null;
       prevCommitment = null;
+      genesisReady = null;
       checkpointOrdinal = COMMITMENT_CHAIN_INITIAL_ORDINAL;
       updateBadge("", "#95a5a6");
       stopCheckpointTimer();
@@ -268,23 +265,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         };
         // Increment ordinal at send time, not on server response
         checkpointOrdinal++;
-        // Compute commitment if we have the chain state
-        if (prevCommitment && sessionNonce) {
-          computeCommitment(prevCommitment, message.contentHash, ordinal, sessionNonce)
-            .then((commitment) => {
-              checkpointMsg.commitment = commitment;
-              sendNativeMessage(checkpointMsg);
-              sendResponse({ ok: true });
-            })
-            .catch((err) => {
-              // Do NOT send checkpoint without a valid commitment — skip it
-              console.error("Commitment computation failed, skipping checkpoint:", err);
-              sendResponse({ ok: false, error: "Commitment failed" });
-            });
-        } else {
+        // Wait for genesis commitment before sending any checkpoint (H-038)
+        const ready = genesisReady || Promise.resolve();
+        ready.then(() => {
+          if (prevCommitment && sessionNonce) {
+            return computeCommitment(prevCommitment, message.contentHash, ordinal, sessionNonce)
+              .then((commitment) => {
+                checkpointMsg.commitment = commitment;
+                sendNativeMessage(checkpointMsg);
+                sendResponse({ ok: true });
+              });
+          }
           sendNativeMessage(checkpointMsg);
           sendResponse({ ok: true });
-        }
+        }).catch(() => {
+          sendResponse({ ok: false, error: "Commitment failed" });
+        });
       }
       // M-132/M-070: return true keeps the channel open for async sendResponse
       return true;
