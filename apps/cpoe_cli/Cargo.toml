@@ -13,7 +13,7 @@ categories = ["command-line-utilities"]
 rust-version = "1.75.0"
 homepage = "https://github.com/writerslogic/cpoe"
 documentation = "https://github.com/writerslogic/cpoe/tree/main/apps/cpoe_cli"
-exclude = ["tests/", "browser-extension/"]
+exclude = ["tests/"]
 
 [[bin]]
 name = "cpoe"

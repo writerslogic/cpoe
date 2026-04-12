@@ -7,7 +7,7 @@
 //! - Writes 4-byte LE length-prefixed JSON to stdout
 //! - Translates browser extension messages to cpoe_engine FFI calls
 //!
-//! Install manifests are in `browser-extension/native-manifests/`.
+//! Install manifests are in `../../apps/cpoe_browser_extension/native-manifests/`.
 
 mod handlers;
 mod jitter;
