@@ -65,10 +65,10 @@ impl MnemonicHandler {
     }
 
     /// Extract raw entropy bytes from a BIP-39 mnemonic phrase.
-    pub fn phrase_to_entropy(phrase: &str) -> Result<Vec<u8>> {
+    pub fn phrase_to_entropy(phrase: &str) -> Result<Zeroizing<Vec<u8>>> {
         let mnemonic = Mnemonic::parse_in(Language::English, phrase)
             .map_err(|_| anyhow!("Invalid mnemonic"))?;
-        Ok(mnemonic.to_entropy())
+        Ok(Zeroizing::new(mnemonic.to_entropy()))
     }
 
     /// Convert raw entropy bytes into a BIP-39 mnemonic phrase, zeroized on drop.
@@ -176,7 +176,7 @@ mod tests {
         let entropy = [42u8; 16];
         let phrase = MnemonicHandler::entropy_to_phrase(&entropy).unwrap();
         let recovered_entropy = MnemonicHandler::phrase_to_entropy(&phrase).unwrap();
-        assert_eq!(recovered_entropy, entropy);
+        assert_eq!(recovered_entropy.as_slice(), &entropy);
     }
 
     #[test]

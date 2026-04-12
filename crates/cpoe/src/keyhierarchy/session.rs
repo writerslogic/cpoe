@@ -369,7 +369,7 @@ impl Session {
         }
 
         let challenge = sha2::Sha256::digest(b"cpoe-ratchet-recovery-v2");
-        let response = puf.get_response(&challenge)?;
+        let response = Zeroizing::new(puf.get_response(&challenge)?);
         let key = hkdf_expand(&response, b"ratchet-recovery-key-v2", &[])?;
 
         self.export_count += 1;

@@ -279,13 +279,12 @@ pub fn compute_with_algorithm(
     }
     restore_thread_priority(prev_priority);
 
-    let merkle_root = build_merkle_root(&leaves, params.iterations);
+    let tree = build_merkle_tree(&leaves, params.iterations);
+    let merkle_root = if tree.len() > 1 { tree[1] } else { [0u8; 32] };
 
     let challenge = fiat_shamir_challenge(&merkle_root, &input, &params, proof_algorithm)?;
 
     let indices = select_indices(&challenge, params.iterations, sample_count);
-
-    let tree = build_merkle_tree(&leaves, params.iterations);
     let sampled_proofs = indices
         .iter()
         .map(|&idx| {
@@ -552,6 +551,7 @@ fn padding_value(steps: u64) -> [u8; 32] {
     h.finalize().into()
 }
 
+#[cfg(test)]
 fn build_merkle_root(leaves: &[[u8; 32]], steps: u64) -> [u8; 32] {
     if leaves.is_empty() {
         return [0u8; 32];

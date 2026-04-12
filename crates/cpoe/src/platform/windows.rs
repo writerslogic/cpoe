@@ -112,9 +112,12 @@ pub fn get_active_focus() -> Result<FocusInfo> {
 fn get_process_path(pid: u32) -> Result<String> {
     // SAFETY: OpenProcess with PROCESS_QUERY_LIMITED_INFORMATION is a safe query-only call.
     // path buffer is stack-allocated with known size; QueryFullProcessImageNameW writes at
-    // most `size` u16 elements.
+    // most `size` u16 elements. Handle is closed via scopeguard on all exit paths.
     unsafe {
         let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid)?;
+        let _guard = scopeguard::guard(handle, |h| {
+            let _ = windows::Win32::Foundation::CloseHandle(h);
+        });
         let mut path = [0u16; 1024];
         let mut size = path.len() as u32;
         QueryFullProcessImageNameW(

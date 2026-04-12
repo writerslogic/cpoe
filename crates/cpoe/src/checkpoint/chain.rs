@@ -532,7 +532,7 @@ impl Chain {
         let swf_seed = if ordinal == 0 {
             let doc_ref = DocumentRef {
                 content_hash: HashValue::try_sha256(content_hash.to_vec())
-                    .expect("content_hash is 32 bytes"),
+                    .map_err(Error::crypto)?,
                 filename: std::path::Path::new(&self.metadata.document_path)
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string()),

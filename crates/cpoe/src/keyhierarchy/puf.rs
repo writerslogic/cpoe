@@ -232,7 +232,7 @@ impl SoftwarePUF {
         }
 
         let seed = if entropy.len() == 32 {
-            entropy
+            entropy.to_vec()
         } else {
             Sha256::digest(&entropy).to_vec()
         };

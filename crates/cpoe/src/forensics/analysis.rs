@@ -52,7 +52,7 @@ fn split_into_windows(text: &str, window_chars: usize) -> Vec<String> {
     let chars: Vec<char> = text.chars().collect();
     let mut windows = Vec::new();
 
-    for i in (0..chars.len()).step_by(window_chars / 2) {
+    for i in (0..chars.len()).step_by((window_chars / 2).max(1)) {
         let end = (i + window_chars).min(chars.len());
         let window: String = chars[i..end].iter().collect();
         if !window.is_empty() {

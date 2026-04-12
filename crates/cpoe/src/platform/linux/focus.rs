@@ -84,7 +84,7 @@ fn get_x11_focus() -> Result<FocusInfo> {
         )?
         .reply()?;
 
-    if reply.value.is_empty() {
+    if reply.value.len() < 4 {
         return Err(anyhow!("No active window"));
     }
 
@@ -108,7 +108,7 @@ fn get_x11_focus() -> Result<FocusInfo> {
         .get_property(false, window_id, pid_atom, AtomEnum::CARDINAL, 0, 1)?
         .reply()?;
 
-    let pid = if !pid_reply.value.is_empty() {
+    let pid = if pid_reply.value.len() >= 4 {
         i32::from_ne_bytes(pid_reply.value[0..4].try_into()?)
     } else {
         0

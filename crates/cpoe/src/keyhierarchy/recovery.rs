@@ -76,7 +76,7 @@ fn recover_ratchet_v2_aead(
     let ciphertext = &data[13..];
 
     let challenge = Sha256::digest(b"cpoe-ratchet-recovery-v2");
-    let response = puf.get_response(&challenge)?;
+    let response = Zeroizing::new(puf.get_response(&challenge)?);
     let key = hkdf_expand(&response, b"ratchet-recovery-key-v2", &[])?;
 
     let cipher = ChaCha20Poly1305::new_from_slice(key.as_ref())
@@ -151,7 +151,7 @@ fn recover_session_with_new_ratchet(
     }
 
     let challenge = Sha256::digest(b"cpoe-ratchet-continuation-v1");
-    let response = puf.get_response(&challenge)?;
+    let response = Zeroizing::new(puf.get_response(&challenge)?);
 
     let mut last_hash = [0u8; 32];
     if let Some(last) = recovery.signatures.last() {

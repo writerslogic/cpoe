@@ -115,6 +115,9 @@ impl VdfProof {
 
     /// Calculate the minimum wall-clock time this proof represents.
     pub fn min_elapsed_time(&self, params: Parameters) -> Duration {
+        if params.iterations_per_second == 0 {
+            return Duration::ZERO;
+        }
         let seconds = self.iterations as f64 / params.iterations_per_second as f64;
         Duration::from_secs_f64(seconds)
     }
