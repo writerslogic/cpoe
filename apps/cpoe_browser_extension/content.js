@@ -20,6 +20,7 @@
   const SITE_OVERLEAF = "overleaf";
   const SITE_MEDIUM = "medium";
   const SITE_NOTION = "notion";
+  const SITE_GENERIC = "generic";
 
   // M-135: Valid actions accepted from the background script
   const VALID_CONTENT_ACTIONS = [
@@ -44,21 +45,40 @@
     return `witnessing_${window.location.origin}${window.location.pathname}`;
   }
 
+  // Domains that get site-specific editor detection logic
+  const KNOWN_SITES = {
+    "docs.google.com": { id: SITE_GOOGLE_DOCS, pathPrefix: "/document/" },
+    "www.overleaf.com": { id: SITE_OVERLEAF, pathPrefix: "/project/" },
+    "medium.com": { id: SITE_MEDIUM },
+    "notion.so": { id: SITE_NOTION },
+    "www.notion.so": { id: SITE_NOTION },
+  };
+
+  // Domains that use the generic contenteditable/textarea detector
+  const GENERIC_DOMAINS = [
+    "www.craft.do", "coda.io", "app.clickup.com", "app.nuclino.com",
+    "stackedit.io", "hackmd.io", "hemingwayapp.com", "quillbot.com",
+    "prosemirror.net", "pad.riseup.net", "write.as",
+    "wordpress.com", "ghost.io", "substack.com",
+  ];
+
   function detectSite() {
     const hostname = window.location.hostname;
     const pathname = window.location.pathname;
 
-    if (hostname === "docs.google.com" && pathname.startsWith("/document/")) {
-      return SITE_GOOGLE_DOCS;
+    // Check known sites with specific editor logic
+    const known = KNOWN_SITES[hostname];
+    if (known) {
+      if (!known.pathPrefix || pathname.startsWith(known.pathPrefix)) {
+        return known.id;
+      }
     }
-    if (hostname === "www.overleaf.com" && pathname.startsWith("/project/")) {
-      return SITE_OVERLEAF;
-    }
-    if (hostname === "medium.com") {
-      return SITE_MEDIUM;
-    }
-    if (hostname.includes("notion.so")) {
-      return SITE_NOTION;
+
+    // Check generic domains (exact or subdomain match)
+    for (const domain of GENERIC_DOMAINS) {
+      if (hostname === domain || hostname.endsWith("." + domain)) {
+        return SITE_GENERIC;
+      }
     }
 
     return null;
@@ -133,8 +153,14 @@
         );
         break;
 
+      case SITE_GENERIC:
       default:
-        elements = document.querySelectorAll('[contenteditable="true"]');
+        // Generic: find any contenteditable, CodeMirror, Monaco, or textarea
+        elements = document.querySelectorAll(
+          '[contenteditable="true"], .cm-content, .monaco-editor textarea, ' +
+          '.ProseMirror, .ql-editor, .trix-content, textarea.editor, ' +
+          'textarea[name="content"], textarea[name="body"]'
+        );
     }
 
     if (elements && elements.length > 0) {

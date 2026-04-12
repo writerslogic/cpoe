@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CPoE Settings</title>
+  <title>WritersProof Settings</title>
   <link rel="stylesheet" href="options.css">
 </head>
 <body>
   <div class="container">
-    <h1>CPoE Settings</h1>
+    <h1>WritersProof Settings</h1>
 
     <section class="setting-group">
       <h2>General</h2>
@@ -54,20 +54,18 @@
 
     <section class="setting-group">
       <h2>Supported Sites</h2>
-      <div class="site-list">
-        <label class="site-toggle">
-          <input type="checkbox" checked data-site="google-docs"> Google Docs
-        </label>
-        <label class="site-toggle">
-          <input type="checkbox" checked data-site="overleaf"> Overleaf
-        </label>
-        <label class="site-toggle">
-          <input type="checkbox" checked data-site="medium"> Medium
-        </label>
-        <label class="site-toggle">
-          <input type="checkbox" checked data-site="notion"> Notion
-        </label>
+      <p class="setting-description">Enable or disable witnessing on built-in supported editors.</p>
+      <div class="site-list" id="site-list"></div>
+    </section>
+
+    <section class="setting-group">
+      <h2>Custom Domains</h2>
+      <p class="setting-description">Add your own domains for web editors not in the built-in list. WritersProof will inject its content script on any page matching these domains.</p>
+      <div class="custom-domains-input-row">
+        <input type="text" id="custom-domain-input" placeholder="e.g. docs.example.com" spellcheck="false">
+        <button id="btn-add-domain" class="btn btn-secondary">Add</button>
       </div>
+      <div id="custom-domains-list" class="custom-domains-list"></div>
     </section>
 
     <div class="actions">

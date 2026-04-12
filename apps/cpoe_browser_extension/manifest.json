@@ -7,6 +7,7 @@
   "permissions": [
     "nativeMessaging",
     "activeTab",
+    "scripting",
     "storage"
   ],
   "host_permissions": [
@@ -14,11 +15,25 @@
     "https://www.overleaf.com/*",
     "https://medium.com/*",
     "https://notion.so/*",
-    "https://www.notion.so/*"
+    "https://www.notion.so/*",
+    "https://www.craft.do/*",
+    "https://coda.io/*",
+    "https://app.clickup.com/*",
+    "https://app.nuclino.com/*",
+    "https://stackedit.io/*",
+    "https://hackmd.io/*",
+    "https://hemingwayapp.com/*",
+    "https://quillbot.com/*",
+    "https://prosemirror.net/*",
+    "https://*.etherpad.org/*",
+    "https://pad.riseup.net/*",
+    "https://write.as/*",
+    "https://wordpress.com/*",
+    "https://*.wordpress.com/*",
+    "https://*.ghost.io/*",
+    "https://substack.com/*",
+    "https://*.substack.com/*"
   ],
-  "background": {
-    "service_worker": "background.js"
-  },
   "content_scripts": [
     {
       "matches": [
@@ -27,12 +42,30 @@
         "https://medium.com/p/*",
         "https://medium.com/new-story*",
         "https://notion.so/*",
-        "https://www.notion.so/*"
+        "https://www.notion.so/*",
+        "https://www.craft.do/*",
+        "https://coda.io/d/*",
+        "https://app.clickup.com/*/docs/*",
+        "https://app.nuclino.com/*",
+        "https://stackedit.io/app*",
+        "https://hackmd.io/*",
+        "https://hemingwayapp.com/*",
+        "https://quillbot.com/*",
+        "https://*.etherpad.org/p/*",
+        "https://pad.riseup.net/p/*",
+        "https://write.as/*",
+        "https://wordpress.com/post/*",
+        "https://*.wordpress.com/wp-admin/post*",
+        "https://*.ghost.io/ghost/*",
+        "https://*.substack.com/publish/post/*"
       ],
       "js": ["content.js"],
       "run_at": "document_idle"
     }
   ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "action": {
     "default_popup": "popup.html",
     "default_icon": {

@@ -149,3 +149,64 @@ select {
   font-size: 13px;
   color: #66bb6a;
 }
+
+.btn-secondary {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.btn-secondary:hover {
+  background: var(--border);
+}
+
+.custom-domains-input-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.custom-domains-input-row input[type="text"] {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.custom-domains-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.custom-domain-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 13px;
+}
+
+.custom-domain-name {
+  font-family: monospace;
+}
+
+.btn-remove {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.btn-remove:hover {
+  color: #ef5350;
+}
