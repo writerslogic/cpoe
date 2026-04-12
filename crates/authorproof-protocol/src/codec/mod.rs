@@ -22,8 +22,8 @@ pub const CBOR_TAG_CPOE: u64 = 1129336645;
 pub const CBOR_TAG_CWAR: u64 = 1129791826;
 
 /// CBOR semantic tag for Compact Evidence Reference.
-/// Tag value: 1129336657 (0x43504F51 = "CPOQ")
-pub const CBOR_TAG_COMPACT_REF: u64 = 1129336657;
+/// Tag value: 1129336658 (0x43504F52 = "CPoR")
+pub const CBOR_TAG_CPOR: u64 = 1129336658;
 
 /// IANA Private Enterprise Number for WritersLogic Inc.
 pub const IANA_PEN: u32 = 65074;

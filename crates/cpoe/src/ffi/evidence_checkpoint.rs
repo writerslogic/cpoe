@@ -172,7 +172,7 @@ mod tests {
 
         let compact = ffi_get_compact_ref(path_str);
         assert!(
-            compact.starts_with("pop-ref:writerslogic:"),
+            compact.starts_with("cpoe-ref:writerslogic:"),
             "expected compact ref prefix, got: {compact}"
         );
     }

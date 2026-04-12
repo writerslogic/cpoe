@@ -616,10 +616,10 @@ fn test_compact_ref_format() {
 
     let compact = cpoe_engine::ffi::evidence_export::ffi_get_compact_ref(doc);
     assert!(
-        compact.starts_with("pop-ref:writerslogic:"),
-        "compact ref should start with 'pop-ref:writerslogic:', got: {compact}"
+        compact.starts_with("cpoe-ref:writerslogic:"),
+        "compact ref should start with 'cpoe-ref:writerslogic:', got: {compact}"
     );
-    // Format: pop-ref:writerslogic:<hash_prefix>:<count>
+    // Format: cpoe-ref:writerslogic:<hash_prefix>:<count>
     let parts: Vec<&str> = compact.split(':').collect();
     assert_eq!(
         parts.len(),

@@ -10,7 +10,7 @@
 use serde::{de::DeserializeOwned, Serialize};
 use std::io::{Read, Write};
 
-use super::{CodecError, Result, CBOR_TAG_COMPACT_REF, CBOR_TAG_CPOE, CBOR_TAG_CWAR};
+use super::{CodecError, Result, CBOR_TAG_CPOR, CBOR_TAG_CPOE, CBOR_TAG_CWAR};
 
 /// Maximum CBOR payload size (16 MiB). Rejects inputs larger than this
 /// before deserialization to prevent OOM from malicious payloads.
@@ -279,7 +279,7 @@ pub fn encode_cwar<T: Serialize>(value: &T) -> Result<Vec<u8>> {
 
 /// Encode with compact evidence reference semantic tag.
 pub fn encode_compact_ref<T: Serialize>(value: &T) -> Result<Vec<u8>> {
-    encode_tagged(value, CBOR_TAG_COMPACT_REF)
+    encode_tagged(value, CBOR_TAG_CPOR)
 }
 
 /// Wrap a serialized value in a CBOR semantic tag.
@@ -398,7 +398,7 @@ pub fn decode_cwar<T: DeserializeOwned>(data: &[u8]) -> Result<T> {
 
 /// Decode a compact evidence reference.
 pub fn decode_compact_ref<T: DeserializeOwned>(data: &[u8]) -> Result<T> {
-    decode_tagged(data, CBOR_TAG_COMPACT_REF)
+    decode_tagged(data, CBOR_TAG_CPOR)
 }
 
 /// Check whether CBOR data carries the expected semantic tag.
@@ -597,8 +597,8 @@ mod tests {
         };
 
         let encoded = encode_compact_ref(&packet).unwrap();
-        assert!(has_tag(&encoded, CBOR_TAG_COMPACT_REF));
-        assert_eq!(extract_tag(&encoded), Some(CBOR_TAG_COMPACT_REF));
+        assert!(has_tag(&encoded, CBOR_TAG_CPOR));
+        assert_eq!(extract_tag(&encoded), Some(CBOR_TAG_CPOR));
 
         let decoded: TestPacket = decode_compact_ref(&encoded).unwrap();
         assert_eq!(packet, decoded);

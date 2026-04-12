@@ -420,7 +420,7 @@ pub fn ffi_ephemeral_finalize(
         };
 
         let compact_ref = format!(
-            "pop-ref:writerslogic:{}:{}",
+            "cpoe-ref:writerslogic:{}:{}",
             &final_hash_hex[..final_hash_hex.len().min(12)],
             checkpoint_count
         );

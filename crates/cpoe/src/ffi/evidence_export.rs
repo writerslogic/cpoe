@@ -391,7 +391,7 @@ pub fn ffi_get_compact_ref(path: String) -> String {
     let hash_hex = hex::encode(last_event.event_hash);
 
     format!(
-        "pop-ref:writerslogic:{}:{}",
+        "cpoe-ref:writerslogic:{}:{}",
         &hash_hex[..hash_hex.len().min(12)],
         events.len()
     )

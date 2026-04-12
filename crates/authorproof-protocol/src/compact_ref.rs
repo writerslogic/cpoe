@@ -112,7 +112,7 @@ impl CompactEvidenceRef {
         Ok(payload.to_string().into_bytes())
     }
 
-    /// Encode as `pop-ref:<base64url>` URI.
+    /// Encode as `cpoe-ref:<base64url>` URI.
     ///
     /// Determinism: `serde_json::to_vec` serializes struct fields in
     /// declaration order, producing a stable byte representation.
@@ -121,13 +121,13 @@ impl CompactEvidenceRef {
         let json = serde_json::to_vec(self)?;
         let encoded =
             base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, &json);
-        Ok(format!("pop-ref:{}", encoded))
+        Ok(format!("cpoe-ref:{}", encoded))
     }
 
-    /// Decode from `pop-ref:<base64url>` URI.
+    /// Decode from `cpoe-ref:<base64url>` URI.
     pub fn from_base64_uri(uri: &str) -> Result<Self, CompactRefError> {
         let encoded = uri
-            .strip_prefix("pop-ref:")
+            .strip_prefix("cpoe-ref:")
             .ok_or(CompactRefError::InvalidPrefix)?;
 
         let json =
@@ -168,7 +168,7 @@ impl CompactEvidenceRef {
 /// Compact reference decoding/verification errors.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompactRefError {
-    /// URI does not start with `pop-ref:`.
+    /// URI does not start with `cpoe-ref:`.
     InvalidPrefix,
     /// Base64 decoding failed.
     InvalidBase64,
@@ -185,7 +185,7 @@ pub enum CompactRefError {
 impl std::fmt::Display for CompactRefError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::InvalidPrefix => write!(f, "URI must start with 'pop-ref:'"),
+            Self::InvalidPrefix => write!(f, "URI must start with 'cpoe-ref:'"),
             Self::InvalidBase64 => write!(f, "Invalid base64 encoding"),
             Self::InvalidJson => write!(f, "Invalid JSON structure"),
             Self::InvalidSignature => write!(f, "Signature verification failed"),
@@ -230,7 +230,7 @@ mod tests {
     fn test_base64_roundtrip() {
         let original = sample_ref();
         let encoded = original.to_base64_uri().unwrap();
-        assert!(encoded.starts_with("pop-ref:"));
+        assert!(encoded.starts_with("cpoe-ref:"));
 
         let decoded = CompactEvidenceRef::from_base64_uri(&encoded).unwrap();
         assert_eq!(decoded.packet_id, original.packet_id);

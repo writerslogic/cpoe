@@ -31,7 +31,7 @@ pub fn generate_qr_png(data: &str) -> Option<Vec<u8>> {
 /// Format the compact reference for QR embedding.
 ///
 /// Format: `cpoe:verify:1:<compact-ref>:<pubkey-fingerprint>`
-/// Example: `cpoe:verify:1:pop-ref:writerslogic:7f83b165:14:ed25519:9b2f7a3c`
+/// Example: `cpoe:verify:1:cpoe-ref:writerslogic:7f83b165:14:ed25519:9b2f7a3c`
 #[allow(dead_code)]
 pub fn format_qr_data(compact_ref: &str, pubkey_fingerprint: &str) -> String {
     format!("cpoe:verify:1:{}:{}", compact_ref, pubkey_fingerprint)

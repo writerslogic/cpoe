@@ -9,7 +9,7 @@ use authorproof_protocol::codec::cbor::{
     decode_cpoe, decode_cwar, encode_compact_ref, encode_cpoe, encode_cwar, extract_tag, has_tag,
 };
 use authorproof_protocol::codec::{
-    decode_evidence, encode_evidence, CBOR_TAG_COMPACT_REF, CBOR_TAG_CPOE, CBOR_TAG_CWAR,
+    decode_evidence, encode_evidence, CBOR_TAG_CPOR, CBOR_TAG_CPOE, CBOR_TAG_CWAR,
 };
 use authorproof_protocol::compact_ref::{CompactEvidenceRef, CompactRefError, CompactSummary};
 use authorproof_protocol::crypto::hash_sha256;
@@ -314,7 +314,7 @@ fn test_compact_ref_generation() {
 
     // Test base64 URI format
     let uri = compact.to_base64_uri().unwrap();
-    assert!(uri.starts_with("pop-ref:"));
+    assert!(uri.starts_with("cpoe-ref:"));
 
     // Roundtrip
     let decoded = CompactEvidenceRef::from_base64_uri(&uri).unwrap();
@@ -367,8 +367,8 @@ fn test_codec_cbor_tag_preservation() {
 
     // Compact ref tag
     let compact_encoded = encode_compact_ref(&packet).unwrap();
-    assert!(has_tag(&compact_encoded, CBOR_TAG_COMPACT_REF));
-    assert_eq!(extract_tag(&compact_encoded), Some(CBOR_TAG_COMPACT_REF));
+    assert!(has_tag(&compact_encoded, CBOR_TAG_CPOR));
+    assert_eq!(extract_tag(&compact_encoded), Some(CBOR_TAG_CPOR));
 
     // Cross-tag decode should fail
     let wrong_tag_result: std::result::Result<EvidencePacket, _> = decode_cwar(&cpoe_encoded);
@@ -497,7 +497,7 @@ fn test_compact_ref_invalid_prefix() {
 #[test]
 fn test_compact_ref_invalid_base64() {
     assert_eq!(
-        CompactEvidenceRef::from_base64_uri("pop-ref:!!!invalid!!!").unwrap_err(),
+        CompactEvidenceRef::from_base64_uri("cpoe-ref:!!!invalid!!!").unwrap_err(),
         CompactRefError::InvalidBase64
     );
 }
@@ -510,7 +510,7 @@ fn test_compact_ref_invalid_json() {
         b"not json",
     );
     assert_eq!(
-        CompactEvidenceRef::from_base64_uri(&format!("pop-ref:{}", encoded)).unwrap_err(),
+        CompactEvidenceRef::from_base64_uri(&format!("cpoe-ref:{}", encoded)).unwrap_err(),
         CompactRefError::InvalidJson
     );
 }
