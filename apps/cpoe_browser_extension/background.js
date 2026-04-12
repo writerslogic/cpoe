@@ -1,9 +1,15 @@
 /**
  * CPoE Browser Extension — Background Service Worker
  *
- * Manages the native messaging connection to writerslogic-native-messaging-host
- * and coordinates between content scripts and the native host.
+ * Operates in two modes:
+ *   "native"     — desktop app installed; full evidence with VDF + hardware attestation
+ *   "standalone" — no desktop app; lightweight in-browser hash chain via IndexedDB
+ *
+ * The mode is detected on startup by probing the native messaging host.
+ * Users can install the desktop app later to upgrade their evidence quality.
  */
+
+importScripts("standalone.js");
 
 const NATIVE_HOST_NAME = "com.writerslogic.witnessd";
 const CHECKPOINT_INTERVAL_MS = 30_000; // 30 seconds default
@@ -16,7 +22,7 @@ const CONTENT_ACTIONS = [
   "start_witnessing", "stop_witnessing", "content_changed", "keystroke_jitter"
 ];
 const VALID_ACTIONS = [
-  ...CONTENT_ACTIONS, "get_status", "popup_connect"
+  ...CONTENT_ACTIONS, "get_status", "popup_connect", "export_evidence"
 ];
 
 /**
@@ -34,12 +40,52 @@ let checkpointTimer = null;
 let pendingCallbacks = new Map();
 let callbackId = 0;
 
-// Anti-forgery commitment chain state
+// Operating mode: "native" | "standalone" | "detecting"
+let operatingMode = "detecting";
+let standaloneSessionId = null;
+
+// Anti-forgery commitment chain state (native mode only)
 let sessionNonce = null;
 let prevCommitment = null;
 let genesisReady = null;
 let checkpointOrdinal = COMMITMENT_CHAIN_INITIAL_ORDINAL;
 let devicePublicKey = null;
+
+/**
+ * Probe for the native messaging host on startup.
+ * If it responds within 2s, use native mode. Otherwise standalone.
+ */
+function detectNativeHost() {
+  operatingMode = "detecting";
+  try {
+    const probe = chrome.runtime.connectNative(NATIVE_HOST_NAME);
+    const timeout = setTimeout(() => {
+      probe.disconnect();
+      operatingMode = "standalone";
+      updateBadge("S", "#f39c12");
+    }, 2000);
+
+    probe.onMessage.addListener(() => {
+      clearTimeout(timeout);
+      probe.disconnect();
+      operatingMode = "native";
+      updateBadge("", "#2ecc71");
+    });
+
+    probe.onDisconnect.addListener(() => {
+      clearTimeout(timeout);
+      if (operatingMode === "detecting") {
+        operatingMode = "standalone";
+        updateBadge("S", "#f39c12");
+      }
+    });
+
+    probe.postMessage({ type: "ping" });
+  } catch (_) {
+    operatingMode = "standalone";
+    updateBadge("S", "#f39c12");
+  }
+}
 
 function connectToNativeHost() {
   if (nativePort || isConnecting) {
@@ -187,12 +233,27 @@ function handleNativeMessage(message) {
   }
 }
 
-// Allowed URL patterns for content script messages (must match manifest.json)
+// Allowed URL patterns for content script messages (must match manifest.json host_permissions)
 const ALLOWED_ORIGINS = [
   /^https:\/\/docs\.google\.com\//,
   /^https:\/\/(www\.)?overleaf\.com\//,
   /^https:\/\/medium\.com\//,
   /^https:\/\/(www\.)?notion\.so\//,
+  /^https:\/\/(www\.)?craft\.do\//,
+  /^https:\/\/coda\.io\//,
+  /^https:\/\/app\.clickup\.com\//,
+  /^https:\/\/app\.nuclino\.com\//,
+  /^https:\/\/stackedit\.io\//,
+  /^https:\/\/hackmd\.io\//,
+  /^https:\/\/hemingwayapp\.com\//,
+  /^https:\/\/quillbot\.com\//,
+  /^https:\/\/prosemirror\.net\//,
+  /^https:\/\/[^/]*\.?etherpad\.org\//,
+  /^https:\/\/pad\.riseup\.net\//,
+  /^https:\/\/write\.as\//,
+  /^https:\/\/[^/]*\.?wordpress\.com\//,
+  /^https:\/\/[^/]*\.?ghost\.io\//,
+  /^https:\/\/[^/]*\.?substack\.com\//,
 ];
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -225,10 +286,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
   }
 
+  // --- Standalone mode: route through in-browser engine ---
+  if (operatingMode === "standalone") {
+    handleStandaloneAction(message, sender, sendResponse);
+    return true;
+  }
+
+  // --- Native mode: route through native messaging host ---
   switch (message.action) {
     case "start_witnessing":
       {
-        // M-080: Validate URL before forwarding to native host
         const url = message.url;
         if (typeof url !== "string" || !ALLOWED_ORIGINS.some((re) => re.test(url))) {
           sendResponse({ ok: false, error: "Invalid document URL" });
@@ -243,7 +310,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         });
         activeTabId = sender.tab?.id;
         startCheckpointTimer();
-        sendResponse({ ok: true });
+        sendResponse({ ok: true, mode: "native" });
       }
       break;
 
@@ -251,13 +318,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendNativeMessage({ type: "stop_session" });
       activeTabId = null;
       stopCheckpointTimer();
-      sendResponse({ ok: true });
+      sendResponse({ ok: true, mode: "native" });
       break;
 
     case "content_changed":
       {
-        // M-132: Return true (below) to keep the message channel open for the
-        // async commitment computation, then call sendResponse when done.
         const ordinal = checkpointOrdinal;
         const checkpointMsg = {
           type: "checkpoint",
@@ -266,9 +331,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           delta: message.delta,
           ordinal,
         };
-        // Increment ordinal at send time, not on server response
         checkpointOrdinal++;
-        // Wait for genesis commitment before sending any checkpoint (H-038)
         const ready = genesisReady || Promise.resolve();
         ready.then(() => {
           if (prevCommitment && sessionNonce) {
@@ -276,16 +339,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               .then((commitment) => {
                 checkpointMsg.commitment = commitment;
                 sendNativeMessage(checkpointMsg);
-                sendResponse({ ok: true });
+                sendResponse({ ok: true, mode: "native" });
               });
           }
           sendNativeMessage(checkpointMsg);
-          sendResponse({ ok: true });
+          sendResponse({ ok: true, mode: "native" });
         }).catch(() => {
           sendResponse({ ok: false, error: "Commitment failed" });
         });
       }
-      // M-132/M-070: return true keeps the channel open for async sendResponse
       return true;
 
     case "keystroke_jitter":
@@ -298,12 +360,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case "get_status":
       sendNativeMessage({ type: "get_status" });
-      sendResponse({ ok: true, connected: isConnected });
+      sendResponse({ ok: true, connected: isConnected, mode: "native" });
       break;
 
     case "popup_connect":
       sendNativeMessage({ type: "get_status" });
-      sendResponse({ ok: true, connected: isConnected });
+      sendResponse({ ok: true, connected: isConnected, mode: "native" });
+      break;
+
+    case "export_evidence":
+      sendResponse({ ok: false, error: "Export not available in native mode; use the desktop app" });
       break;
 
     default:
@@ -414,19 +480,115 @@ function bytesToHex(bytes) {
   return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
+/**
+ * Handle actions in standalone mode via the in-browser evidence engine.
+ */
+async function handleStandaloneAction(message, sender, sendResponse) {
+  switch (message.action) {
+    case "start_witnessing":
+      {
+        const result = await standaloneStartSession(
+          message.url || sender.tab?.url || "",
+          message.title || ""
+        );
+        standaloneSessionId = result.session_id;
+        activeTabId = sender.tab?.id;
+        startCheckpointTimer();
+        updateBadge("\u2713", "#f39c12");
+        broadcastToPopup({ type: "session_update", ...result, active: true });
+        sendResponse({ ok: true, mode: "standalone", session_id: result.session_id });
+      }
+      break;
+
+    case "stop_witnessing":
+      {
+        const result = await standaloneStopSession(standaloneSessionId);
+        activeTabId = null;
+        standaloneSessionId = null;
+        stopCheckpointTimer();
+        updateBadge("S", "#f39c12");
+        broadcastToPopup({ type: "session_update", active: false, ...result });
+        sendResponse({ ok: true, mode: "standalone" });
+      }
+      break;
+
+    case "content_changed":
+      {
+        if (!standaloneSessionId) {
+          sendResponse({ ok: false, error: "No active standalone session" });
+          break;
+        }
+        const result = await standaloneCheckpoint(
+          standaloneSessionId,
+          message.contentHash,
+          message.charCount,
+          message.delta
+        );
+        if (result.type === "error") {
+          sendResponse({ ok: false, error: result.message });
+        } else {
+          updateBadge(String(result.checkpoint_count), "#f39c12");
+          broadcastToPopup({ type: "checkpoint_update", ...result });
+          sendResponse({ ok: true, mode: "standalone" });
+        }
+      }
+      break;
+
+    case "keystroke_jitter":
+      sendResponse({ ok: true, mode: "standalone" });
+      break;
+
+    case "get_status":
+    case "popup_connect":
+      {
+        const status = await standaloneGetStatus(standaloneSessionId);
+        broadcastToPopup({ type: "status_update", ...status });
+        sendResponse({ ok: true, mode: "standalone", connected: false, ...status });
+      }
+      break;
+
+    case "export_evidence":
+      {
+        if (!message.sessionId && !standaloneSessionId) {
+          sendResponse({ ok: false, error: "No session to export" });
+          break;
+        }
+        const evidence = await standaloneExportEvidence(
+          message.sessionId || standaloneSessionId
+        );
+        if (evidence) {
+          sendResponse({ ok: true, mode: "standalone", evidence });
+        } else {
+          sendResponse({ ok: false, error: "Session not found" });
+        }
+      }
+      break;
+
+    default:
+      sendResponse({ ok: false, error: "Unknown action" });
+  }
+}
+
 chrome.runtime.onInstalled.addListener(() => {
-  console.log("CPoE extension installed");
-  updateBadge("", "#95a5a6");
+  detectNativeHost();
 });
+
+// Re-detect on service worker wake (MV3 can terminate and restart)
+detectNativeHost();
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (tabId === activeTabId) {
-    sendNativeMessage({ type: "stop_session" });
+    if (operatingMode === "native") {
+      sendNativeMessage({ type: "stop_session" });
+    } else if (standaloneSessionId) {
+      standaloneStopSession(standaloneSessionId);
+    }
     activeTabId = null;
+    standaloneSessionId = null;
     sessionNonce = null;
     prevCommitment = null;
     checkpointOrdinal = COMMITMENT_CHAIN_INITIAL_ORDINAL;
     stopCheckpointTimer();
-    updateBadge("", "#95a5a6");
+    updateBadge(operatingMode === "standalone" ? "S" : "", "#95a5a6");
   }
 });

@@ -3,6 +3,7 @@
  */
 
 const elements = {
+  modeBadge: document.getElementById("mode-badge"),
   connectionBadge: document.getElementById("connection-badge"),
   noSession: document.getElementById("no-session"),
   activeSession: document.getElementById("active-session"),
@@ -20,10 +21,19 @@ const elements = {
 };
 
 function updateUI(state) {
-  if (state.connected) {
+  // Show operating mode
+  if (state.mode === "standalone") {
+    elements.modeBadge.textContent = "Standalone";
+    elements.modeBadge.className = "badge standalone";
+    elements.connectionBadge.textContent = "Browser-only";
+    elements.connectionBadge.className = "badge connected";
+  } else if (state.connected) {
+    elements.modeBadge.textContent = "Desktop";
+    elements.modeBadge.className = "badge connected";
     elements.connectionBadge.textContent = "Connected";
     elements.connectionBadge.className = "badge connected";
   } else {
+    elements.modeBadge.textContent = "";
     elements.connectionBadge.textContent = "Disconnected";
     elements.connectionBadge.className = "badge disconnected";
   }
