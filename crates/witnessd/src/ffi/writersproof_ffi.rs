@@ -94,8 +94,9 @@ pub fn ffi_anchor_to_writers_proof(document_path: String) -> FfiResult {
         }
     };
 
-    let client = match crate::writersproof::WritersProofClient::new(crate::writersproof::client::DEFAULT_API_URL)
-    {
+    let client = match crate::writersproof::WritersProofClient::new(
+        crate::writersproof::client::DEFAULT_API_URL,
+    ) {
         Ok(c) => c.with_jwt(api_key),
         Err(e) => {
             return FfiResult::err(format!("Failed to create API client: {e}"));

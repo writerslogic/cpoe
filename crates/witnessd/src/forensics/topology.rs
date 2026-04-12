@@ -25,32 +25,52 @@ pub fn compute_primary_metrics(
     }
 
     let mut pm = PrimaryMetrics {
-        monotonic_append_ratio: crate::utils::Probability::clamp(monotonic_append_ratio(&all_regions, DEFAULT_APPEND_THRESHOLD)),
+        monotonic_append_ratio: crate::utils::Probability::clamp(monotonic_append_ratio(
+            &all_regions,
+            DEFAULT_APPEND_THRESHOLD,
+        )),
         edit_entropy: edit_entropy(&all_regions, DEFAULT_HISTOGRAM_BINS),
         median_interval: median_interval(sorted),
-        positive_negative_ratio: crate::utils::Probability::clamp(positive_negative_ratio(&all_regions)),
+        positive_negative_ratio: crate::utils::Probability::clamp(positive_negative_ratio(
+            &all_regions,
+        )),
         deletion_clustering: deletion_clustering_coef(&all_regions),
     };
 
     // Sanitize non-finite values and log when clamping occurs.
     if !pm.monotonic_append_ratio.is_finite() {
-        log::warn!("topology: monotonic_append_ratio non-finite ({}), using 0.0", pm.monotonic_append_ratio.get());
+        log::warn!(
+            "topology: monotonic_append_ratio non-finite ({}), using 0.0",
+            pm.monotonic_append_ratio.get()
+        );
         pm.monotonic_append_ratio = crate::utils::Probability::ZERO;
     }
     if !pm.edit_entropy.is_finite() {
-        log::warn!("topology: edit_entropy non-finite ({}), using 0.0", pm.edit_entropy);
+        log::warn!(
+            "topology: edit_entropy non-finite ({}), using 0.0",
+            pm.edit_entropy
+        );
         pm.edit_entropy = 0.0;
     }
     if !pm.median_interval.is_finite() {
-        log::warn!("topology: median_interval non-finite ({}), using 0.0", pm.median_interval);
+        log::warn!(
+            "topology: median_interval non-finite ({}), using 0.0",
+            pm.median_interval
+        );
         pm.median_interval = 0.0;
     }
     if !pm.positive_negative_ratio.is_finite() {
-        log::warn!("topology: positive_negative_ratio non-finite ({}), using 0.5", pm.positive_negative_ratio.get());
+        log::warn!(
+            "topology: positive_negative_ratio non-finite ({}), using 0.5",
+            pm.positive_negative_ratio.get()
+        );
         pm.positive_negative_ratio = crate::utils::Probability::clamp(0.5);
     }
     if !pm.deletion_clustering.is_finite() {
-        log::warn!("topology: deletion_clustering non-finite ({}), using 0.0", pm.deletion_clustering);
+        log::warn!(
+            "topology: deletion_clustering non-finite ({}), using 0.0",
+            pm.deletion_clustering
+        );
         pm.deletion_clustering = 0.0;
     }
 

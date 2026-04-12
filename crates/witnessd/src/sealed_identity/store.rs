@@ -392,7 +392,10 @@ impl SealedIdentityStore {
         }
         let data = serde_json::to_vec_pretty(&blob_with_hmac)
             .map_err(|e| SealedIdentityError::Serialization(e.to_string()))?;
-        let parent = self.store_path.parent().unwrap_or(std::path::Path::new("."));
+        let parent = self
+            .store_path
+            .parent()
+            .unwrap_or(std::path::Path::new("."));
         let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
         std::io::Write::write_all(&mut tmp, &data)?;
         tmp.as_file().sync_all()?;
@@ -522,6 +525,7 @@ impl SealedIdentityStore {
 
 impl std::fmt::Debug for SealedIdentityStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SealedIdentityStore").finish_non_exhaustive()
+        f.debug_struct("SealedIdentityStore")
+            .finish_non_exhaustive()
     }
 }

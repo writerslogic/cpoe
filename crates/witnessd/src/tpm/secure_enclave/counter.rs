@@ -82,7 +82,10 @@ pub(super) fn save_counter(state: &SecureEnclaveState) {
     buf.extend_from_slice(&hmac);
 
     // Atomic write: write to temp, fsync, rename to avoid partial writes on crash.
-    let parent = state.counter_file.parent().unwrap_or(std::path::Path::new("."));
+    let parent = state
+        .counter_file
+        .parent()
+        .unwrap_or(std::path::Path::new("."));
     let write_result = (|| -> std::io::Result<()> {
         use std::io::Write;
         let mut tmp = tempfile::NamedTempFile::new_in(parent)?;

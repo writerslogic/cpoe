@@ -335,7 +335,8 @@ impl Session {
             .map_err(|e| Error::validation(e.to_string()))?;
         std::io::Write::write_all(&mut tmp, &bytes)
             .map_err(|e| Error::validation(e.to_string()))?;
-        tmp.as_file().sync_all()
+        tmp.as_file()
+            .sync_all()
             .map_err(|e| Error::validation(e.to_string()))?;
         crate::crypto::restrict_permissions(tmp.path(), 0o600)
             .map_err(|e| Error::validation(e.to_string()))?;

@@ -105,7 +105,10 @@ impl AccessLog {
     ///
     /// `hmac_key` must be exactly 32 bytes; it is used to compute per-entry
     /// HMAC-SHA256 integrity tags. Use the same key as [`SecureStore`].
-    pub fn open<P: AsRef<std::path::Path>>(path: P, hmac_key: Zeroizing<Vec<u8>>) -> anyhow::Result<Self> {
+    pub fn open<P: AsRef<std::path::Path>>(
+        path: P,
+        hmac_key: Zeroizing<Vec<u8>>,
+    ) -> anyhow::Result<Self> {
         if hmac_key.len() != 32 {
             anyhow::bail!("HMAC key must be exactly 32 bytes, got {}", hmac_key.len());
         }
@@ -348,7 +351,6 @@ impl AccessLog {
         Ok(true)
     }
 }
-
 
 /// Compute HMAC-SHA256 over access log entry fields with domain separation.
 fn compute_access_entry_hmac(

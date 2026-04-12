@@ -84,7 +84,7 @@ pub fn analyze_lyapunov(iki_intervals_ns: &[f64]) -> Result<LyapunovAnalysis, Ly
             required: MIN_DATA_POINTS,
         });
     }
-    
+
     if crate::utils::require_all_finite(iki_intervals_ns, "lyapunov").is_err() {
         return Err(LyapunovError::NonFiniteValues);
     }
@@ -110,7 +110,7 @@ pub fn analyze_lyapunov(iki_intervals_ns: &[f64]) -> Result<LyapunovAnalysis, Ly
     let embed_len = normalized
         .len()
         .saturating_sub((EMBED_DIM - 1) * EMBED_DELAY);
-        
+
     if embed_len < 20 {
         return Err(LyapunovError::InsufficientEmbeddingLength {
             found: embed_len,
@@ -125,9 +125,7 @@ pub fn analyze_lyapunov(iki_intervals_ns: &[f64]) -> Result<LyapunovAnalysis, Ly
         }
     }
 
-    let get_point = |idx: usize| -> &[f64] {
-        &embedding[idx * EMBED_DIM..(idx + 1) * EMBED_DIM]
-    };
+    let get_point = |idx: usize| -> &[f64] { &embedding[idx * EMBED_DIM..(idx + 1) * EMBED_DIM] };
 
     let min_sep = MEAN_PERIOD_MULTIPLIER;
     let max_iter = embed_len / 4;

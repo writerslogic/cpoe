@@ -144,7 +144,8 @@ impl Provider for LinuxTpmProvider {
             .context
             .quote(
                 ak_handle,
-                Data::try_from(qualifying).map_err(|e| TpmError::Quote(format!("bad nonce: {e}").into()))?,
+                Data::try_from(qualifying)
+                    .map_err(|e| TpmError::Quote(format!("bad nonce: {e}").into()))?,
                 SignatureScheme::RsaSsa {
                     hash_scheme: HashScheme::new(HashingAlgorithm::Sha256),
                 },
@@ -437,8 +438,7 @@ fn create_ak(state: &mut LinuxState) -> Result<(KeyHandle, Vec<u8>), TpmError> {
     let auth = {
         let mut auth_bytes = zeroize::Zeroizing::new([0u8; 32]);
         getrandom::getrandom(auth_bytes.as_mut_slice()).map_err(|_| TpmError::NotAvailable)?;
-        Auth::try_from(auth_bytes.as_slice().to_vec())
-            .map_err(|_| TpmError::NotAvailable)?
+        Auth::try_from(auth_bytes.as_slice().to_vec()).map_err(|_| TpmError::NotAvailable)?
         // auth_bytes zeroized on drop here
     };
 

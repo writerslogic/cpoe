@@ -9,8 +9,8 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 use std::cmp::Ordering;
+use uuid::Uuid;
 
 use crate::serde_utils::hex_bytes_32;
 pub const PROVENANCE_SCHEMA_VERSION: u32 = 1;
@@ -51,19 +51,19 @@ pub enum DerivationExtent {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ProvenanceLink {
     pub parent_packet_id: Uuid,
-    
+
     #[serde(with = "hex_bytes_32")]
     pub parent_chain_hash: [u8; 32],
-    
+
     pub derivation_type: DerivationType,
     pub derivation_timestamp: DateTime<Utc>,
-    
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relationship_description: Option<String>,
-    
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inherited_checkpoints: Option<Vec<u32>>,
-    
+
     #[serde(
         default,
         serialize_with = "crate::serde_utils::serialize_optional_signature",
@@ -76,7 +76,8 @@ pub struct ProvenanceLink {
 /// Ordered for deterministic canonicalization: Sorts by parent UUID.
 impl Ord for ProvenanceLink {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.parent_packet_id.cmp(&other.parent_packet_id)
+        self.parent_packet_id
+            .cmp(&other.parent_packet_id)
             .then(self.parent_chain_hash.cmp(&other.parent_chain_hash))
     }
 }
@@ -139,12 +140,18 @@ impl ProvenanceSection {
             return Err("Claims provided without associated parent links.");
         }
 
-        let has_merge = self.parent_links.iter().any(|l| l.derivation_type == DerivationType::Merge);
+        let has_merge = self
+            .parent_links
+            .iter()
+            .any(|l| l.derivation_type == DerivationType::Merge);
         if has_merge && self.parent_links.len() < 2 {
             return Err("Derivation marked as 'Merge' but only one parent link provided.");
         }
 
-        let has_cont = self.parent_links.iter().any(|l| l.derivation_type == DerivationType::Continuation);
+        let has_cont = self
+            .parent_links
+            .iter()
+            .any(|l| l.derivation_type == DerivationType::Continuation);
         if has_cont && self.parent_links.len() > 1 {
             return Err("Lineage ambiguity: 'Continuation' cannot span multiple parent UUIDs.");
         }
@@ -175,7 +182,7 @@ impl ProvenanceLink {
             cross_attestation: None,
         }
     }
-    
+
     pub fn with_attestation(mut self, sig: [u8; 64]) -> Self {
         self.cross_attestation = Some(sig);
         self
@@ -207,11 +214,13 @@ mod tests {
     fn test_canonicalization_stability() {
         let id_a = Uuid::from_u128(1);
         let id_b = Uuid::from_u128(2);
-        
+
         let link_a = ProvenanceLink::new(id_a, [0x11; 32], DerivationType::Fork);
         let link_b = ProvenanceLink::new(id_b, [0x22; 32], DerivationType::Fork);
 
-        let mut section_1 = ProvenanceSection::new().add_link(link_a.clone()).add_link(link_b.clone());
+        let mut section_1 = ProvenanceSection::new()
+            .add_link(link_a.clone())
+            .add_link(link_b.clone());
         let mut section_2 = ProvenanceSection::new().add_link(link_b).add_link(link_a);
 
         section_1.canonicalize();
@@ -225,14 +234,18 @@ mod tests {
 
     #[test]
     fn test_semantic_validation_gates() {
-        let mut section = ProvenanceSection::new().add_link(
-            ProvenanceLink::new(Uuid::new_v4(), [0u8; 32], DerivationType::Merge)
-        );
+        let mut section = ProvenanceSection::new().add_link(ProvenanceLink::new(
+            Uuid::new_v4(),
+            [0u8; 32],
+            DerivationType::Merge,
+        ));
         assert!(section.validate().is_err());
 
-        section.parent_links.push(
-            ProvenanceLink::new(Uuid::new_v4(), [1u8; 32], DerivationType::Merge)
-        );
+        section.parent_links.push(ProvenanceLink::new(
+            Uuid::new_v4(),
+            [1u8; 32],
+            DerivationType::Merge,
+        ));
         assert!(section.validate().is_ok());
     }
 
@@ -251,7 +264,10 @@ mod tests {
         let json = serde_json::to_string(&section).unwrap();
         let restored: ProvenanceSection = serde_json::from_str(&json).unwrap();
         assert_eq!(section.parent_links.len(), restored.parent_links.len());
-        assert_eq!(section.derivation_claims.len(), restored.derivation_claims.len());
+        assert_eq!(
+            section.derivation_claims.len(),
+            restored.derivation_claims.len()
+        );
         assert_eq!(
             section.parent_links[0].parent_chain_hash,
             restored.parent_links[0].parent_chain_hash

@@ -26,9 +26,16 @@ impl fmt::Display for ContinuationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::SequenceOverflow => write!(f, "packet_sequence overflow: u32::MAX reached"),
-            Self::PacketsInSeriesOverflow => write!(f, "packets_in_series overflow: u32::MAX reached"),
-            Self::MissingPrevChainHash => write!(f, "Non-first packet must have prev_packet_chain_hash"),
-            Self::UnexpectedPrevChainHash => write!(f, "First packet (sequence 0) must not have prev_packet_chain_hash"),
+            Self::PacketsInSeriesOverflow => {
+                write!(f, "packets_in_series overflow: u32::MAX reached")
+            }
+            Self::MissingPrevChainHash => {
+                write!(f, "Non-first packet must have prev_packet_chain_hash")
+            }
+            Self::UnexpectedPrevChainHash => write!(
+                f,
+                "First packet (sequence 0) must not have prev_packet_chain_hash"
+            ),
             Self::PacketCountMismatch { expected, found } => write!(
                 f,
                 "packets_in_series ({}) does not match sequence + 1 ({})",
@@ -108,7 +115,7 @@ impl ContinuationSection {
         let next_sequence = prev_sequence
             .checked_add(1)
             .ok_or(ContinuationError::SequenceOverflow)?;
-            
+
         let next_packets = prev_summary
             .packets_in_series
             .checked_add(1)
@@ -141,23 +148,31 @@ impl ContinuationSection {
         entropy_bits: f64,
     ) {
         // Detect truncation *before* saturation to report how many were lost
-        if let Some(new_checkpoints) = self.cumulative_summary.total_checkpoints.checked_add(checkpoints) {
+        if let Some(new_checkpoints) = self
+            .cumulative_summary
+            .total_checkpoints
+            .checked_add(checkpoints)
+        {
             self.cumulative_summary.total_checkpoints = new_checkpoints;
         } else {
-            let lost = checkpoints.saturating_sub(
-                u64::MAX.saturating_sub(self.cumulative_summary.total_checkpoints)
+            let lost = checkpoints
+                .saturating_sub(u64::MAX.saturating_sub(self.cumulative_summary.total_checkpoints));
+            log::warn!(
+                "checkpoint stats truncated: {} checkpoints lost, capping at u64::MAX",
+                lost
             );
-            log::warn!("checkpoint stats truncated: {} checkpoints lost, capping at u64::MAX", lost);
             self.cumulative_summary.total_checkpoints = u64::MAX;
         }
 
         if let Some(new_chars) = self.cumulative_summary.total_chars.checked_add(chars) {
             self.cumulative_summary.total_chars = new_chars;
         } else {
-            let lost = chars.saturating_sub(
-                u64::MAX.saturating_sub(self.cumulative_summary.total_chars)
+            let lost =
+                chars.saturating_sub(u64::MAX.saturating_sub(self.cumulative_summary.total_chars));
+            log::warn!(
+                "char stats truncated: {} chars lost, capping at u64::MAX",
+                lost
             );
-            log::warn!("char stats truncated: {} chars lost, capping at u64::MAX", lost);
             self.cumulative_summary.total_chars = u64::MAX;
         }
 
@@ -191,7 +206,7 @@ impl ContinuationSection {
             .packet_sequence
             .checked_add(1)
             .ok_or(ContinuationError::SequenceOverflow)?;
-            
+
         if self.cumulative_summary.packets_in_series != expected {
             return Err(ContinuationError::PacketCountMismatch {
                 expected,
@@ -283,7 +298,10 @@ mod tests {
     fn test_invalid_first_packet() {
         let mut section = ContinuationSection::new_series();
         section.prev_packet_chain_hash = Some("should_not_exist".to_string());
-        assert!(matches!(section.validate(), Err(ContinuationError::UnexpectedPrevChainHash)));
+        assert!(matches!(
+            section.validate(),
+            Err(ContinuationError::UnexpectedPrevChainHash)
+        ));
     }
 
     #[test]
@@ -304,7 +322,10 @@ mod tests {
             },
             series_binding_signature: None,
         };
-        assert!(matches!(section.validate(), Err(ContinuationError::MissingPrevChainHash)));
+        assert!(matches!(
+            section.validate(),
+            Err(ContinuationError::MissingPrevChainHash)
+        ));
     }
 
     #[test]

@@ -40,9 +40,7 @@ pub struct X509Signer(pub SigningKey);
 
 impl std::fmt::Debug for X509Signer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("X509Signer")
-            .field(&"[REDACTED]")
-            .finish()
+        f.debug_tuple("X509Signer").field(&"[REDACTED]").finish()
     }
 }
 

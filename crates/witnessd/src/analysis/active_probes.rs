@@ -96,7 +96,7 @@ pub fn analyze_galton_invariant(
     }
 
     let threshold = baseline_interval_ms * PERTURBATION_THRESHOLD_FRACTION;
-    
+
     // Identify perturbations using an iterator chain
     let perturbations: Vec<(usize, f64)> = samples
         .iter()
@@ -200,7 +200,7 @@ fn estimate_decay_rate(deviations: &[f64]) -> f64 {
 
     // Exponential decay fit: ln(y/y0) = -α * t
     let y0 = deviations[0].abs().max(MIN_DEVIATION_FLOOR);
-    
+
     let mut sum_rate = 0.0;
     let mut count = 0;
 

@@ -2,9 +2,9 @@
 
 //! Advanced forensic metrics: CLC, repair locality, and fatigue trajectory.
 
+use super::types::{ClcMetrics, FatigueTrajectoryMetrics, RepairLocalityMetrics};
 use crate::jitter::SimpleJitterSample;
 use crate::utils::stats::{coefficient_of_variation, mean, mean_and_variance, std_dev};
-use super::types::{ClcMetrics, RepairLocalityMetrics, FatigueTrajectoryMetrics};
 
 /// Minimum samples for CLC analysis.
 const MIN_CLC_SAMPLES: usize = 50;
@@ -111,7 +111,9 @@ fn is_common_english_word(word: &str) -> bool {
     word.len() >= 3
         && word.len() <= 10
         && word.chars().all(|c| c.is_alphabetic())
-        && word.chars().any(|c| matches!(c, 'a' | 'e' | 'i' | 'o' | 'u' | 'y'))
+        && word
+            .chars()
+            .any(|c| matches!(c, 'a' | 'e' | 'i' | 'o' | 'u' | 'y'))
 }
 
 /// Compute Pearson correlation between IKI samples and surprisal values.
@@ -223,7 +225,9 @@ pub fn analyze_repair_locality(
 ///
 /// Transcriptive/synthetic typing shows flat or monotonic patterns.
 /// We fit a piecewise linear model and compute residuals.
-pub fn analyze_fatigue_trajectory(samples: &[SimpleJitterSample]) -> Option<FatigueTrajectoryMetrics> {
+pub fn analyze_fatigue_trajectory(
+    samples: &[SimpleJitterSample],
+) -> Option<FatigueTrajectoryMetrics> {
     if samples.len() < MIN_FATIGUE_SAMPLES {
         return None;
     }
@@ -384,7 +388,10 @@ mod tests {
     fn test_word_surprisal_rare() {
         // "xyzq" fails is_common_english_word because it lacks vowels
         let surp = word_surprisal("xyzq");
-        assert_eq!(surp, 7.0, "rare word without vowels should have high surprisal");
+        assert_eq!(
+            surp, 7.0,
+            "rare word without vowels should have high surprisal"
+        );
     }
 
     #[test]
@@ -502,6 +509,9 @@ mod tests {
         let ikis = vec![100.0, 110.0, f64::NAN, 120.0, 130.0];
         let surprisals = vec![2.0, 2.5, 3.0, 3.5, 4.0];
         let corr = compute_iki_surprisal_correlation(&ikis, &surprisals);
-        assert_eq!(corr, 0.0, "correlation with NaN input should return 0.0, not NaN");
+        assert_eq!(
+            corr, 0.0,
+            "correlation with NaN input should return 0.0, not NaN"
+        );
     }
 }

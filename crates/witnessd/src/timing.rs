@@ -7,7 +7,7 @@
 //! entangled with the authorship process.
 
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize, Serializer, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -61,10 +61,16 @@ impl Default for Config {
 
 mod duration_serde {
     use super::*;
-    pub fn serialize<S>(d: &Duration, s: S) -> Result<S::Ok, S::Error> where S: Serializer {
+    pub fn serialize<S>(d: &Duration, s: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
         s.serialize_f64(d.as_secs_f64())
     }
-    pub fn deserialize<'de, D>(d: D) -> Result<Duration, D::Error> where D: Deserializer<'de> {
+    pub fn deserialize<'de, D>(d: D) -> Result<Duration, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
         let f = f64::deserialize(d)?;
         Ok(Duration::from_secs_f64(f))
     }
@@ -203,7 +209,9 @@ impl CheckpointTrigger {
         current_doc_size: i64,
     ) -> Option<TriggerReason> {
         // 1. Time interval (always active)
-        if now.duration_since(self.last_checkpoint).as_secs_f64() >= self.config.max_time_interval_secs {
+        if now.duration_since(self.last_checkpoint).as_secs_f64()
+            >= self.config.max_time_interval_secs
+        {
             return Some(TriggerReason::MaxTimeInterval);
         }
 
@@ -227,7 +235,9 @@ impl CheckpointTrigger {
             }
 
             // Document delta
-            if (current_doc_size - self.last_checkpoint_size).abs() >= self.config.size_delta_threshold {
+            if (current_doc_size - self.last_checkpoint_size).abs()
+                >= self.config.size_delta_threshold
+            {
                 return Some(TriggerReason::SizeDelta);
             }
         }

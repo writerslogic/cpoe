@@ -141,8 +141,8 @@ pub fn compute_hurst_rs(data: &[f64]) -> Result<HurstAnalysis, HurstError> {
         return Err(HurstError::InsufficientWindows);
     }
 
-    let (slope, _intercept, r_squared, std_error) =
-        linear_regression(&log_n_vec, &log_rs_vec).map_err(|e| HurstError::RegressionFailed(e.to_string()))?;
+    let (slope, _intercept, r_squared, std_error) = linear_regression(&log_n_vec, &log_rs_vec)
+        .map_err(|e| HurstError::RegressionFailed(e.to_string()))?;
 
     if !slope.is_finite() || !r_squared.is_finite() || !std_error.is_finite() {
         return Err(HurstError::RegressionProducedNaN);
@@ -229,7 +229,7 @@ pub fn compute_hurst_dfa(data: &[f64]) -> Result<HurstAnalysis, HurstError> {
     if !mean.is_finite() {
         return Err(HurstError::NonFiniteValues);
     }
-    
+
     let mut profile = Vec::with_capacity(n);
     let mut cumsum = 0.0;
     for &x in data {
@@ -257,8 +257,8 @@ pub fn compute_hurst_dfa(data: &[f64]) -> Result<HurstAnalysis, HurstError> {
         return Err(HurstError::InsufficientScales);
     }
 
-    let (slope, _intercept, r_squared, std_error) =
-        linear_regression(&log_scales, &log_fluct).map_err(|e| HurstError::RegressionFailed(e.to_string()))?;
+    let (slope, _intercept, r_squared, std_error) = linear_regression(&log_scales, &log_fluct)
+        .map_err(|e| HurstError::RegressionFailed(e.to_string()))?;
 
     if !slope.is_finite() || !r_squared.is_finite() || !std_error.is_finite() {
         return Err(HurstError::RegressionProducedNaN);
@@ -309,7 +309,7 @@ fn detrend_variance(segment: &[f64]) -> f64 {
         return 0.0;
     }
 
-    // Use mathematical identity for the mean of indices [0, 1, ..., n-1] 
+    // Use mathematical identity for the mean of indices [0, 1, ..., n-1]
     // to completely avoid O(N) allocation of an x-axis vector.
     let x_mean = (n - 1) as f64 / 2.0;
     let y_mean: f64 = segment.iter().sum::<f64>() / n as f64;

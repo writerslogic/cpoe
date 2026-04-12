@@ -7,8 +7,8 @@ use std::collections::HashMap;
 
 use crate::analysis::BehavioralFingerprint;
 use crate::jitter::SimpleJitterSample;
-use crate::utils::Probability;
 use crate::utils::stats::mean_and_std_dev;
+use crate::utils::Probability;
 
 use super::assessment::{
     apply_focus_penalties, compute_assessment_score, detect_anomalies, determine_assessment,
@@ -231,8 +231,9 @@ pub fn analyze_forensics_ext_with_focus(
             }
         }
 
-        metrics.biological_cadence_score =
-            Probability::clamp(crate::physics::biological::BiologicalCadence::analyze(samples));
+        metrics.biological_cadence_score = Probability::clamp(
+            crate::physics::biological::BiologicalCadence::analyze(samples),
+        );
 
         let fingerprint = BehavioralFingerprint::from_samples(samples);
         metrics.behavioral = Some(fingerprint);
@@ -314,7 +315,8 @@ pub fn analyze_forensics_ext_with_focus(
             Vec::new()
         };
         if !content_windows.is_empty() {
-            if let Some(clc) = super::advanced_metrics::compute_clc_metrics(&content_windows, samples)
+            if let Some(clc) =
+                super::advanced_metrics::compute_clc_metrics(&content_windows, samples)
             {
                 metrics.cadence.clc_surprisal_score = Some(clc.mean_surprisal_bpw);
                 metrics.clc_metrics = Some(clc);
@@ -322,10 +324,7 @@ pub fn analyze_forensics_ext_with_focus(
         }
 
         // Repair locality tracking
-        let file_sizes: Vec<i64> = events
-            .iter()
-            .map(|e| e.file_size)
-            .collect();
+        let file_sizes: Vec<i64> = events.iter().map(|e| e.file_size).collect();
         if let Some(repair) = super::advanced_metrics::analyze_repair_locality(samples, &file_sizes)
         {
             metrics.cadence.repair_locality_mean_offset = Some(repair.mean_offset_chars);

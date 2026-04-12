@@ -19,17 +19,22 @@ pub mod snr;
 pub(crate) mod stats;
 
 pub use active_probes::{
-    analyze_galton_invariant, analyze_reflex_gate, ActiveProbeError, ActiveProbeResults, GaltonInvariantResult,
-    ProbeSample, ReflexGateResult,
+    analyze_galton_invariant, analyze_reflex_gate, ActiveProbeError, ActiveProbeResults,
+    GaltonInvariantResult, ProbeSample, ReflexGateResult,
 };
 pub use behavioral_fingerprint::{BehavioralFingerprint, ForgeryAnalysis, ForgeryFlag};
 pub use error_topology::{
-    analyze_error_topology, ErrorDistribution, ErrorTopology, ErrorTopologyError, EventType, TopologyEvent,
+    analyze_error_topology, ErrorDistribution, ErrorTopology, ErrorTopologyError, EventType,
+    TopologyEvent,
 };
-pub use hurst::{compute_hurst_dfa, compute_hurst_rs, HurstAnalysis, HurstError, HurstInterpretation};
+pub use hurst::{
+    compute_hurst_dfa, compute_hurst_rs, HurstAnalysis, HurstError, HurstInterpretation,
+};
 pub use iki_compression::{analyze_iki_compression, IkiCompressionAnalysis, IkiCompressionError};
 pub use labyrinth::{analyze_labyrinth, LabyrinthAnalysis, LabyrinthError, LabyrinthParams};
 pub use lyapunov::{analyze_lyapunov, LyapunovAnalysis, LyapunovError};
 pub use perplexity::PerplexityModel;
-pub use pink_noise::{analyze_pink_noise, generate_pink_noise, NoiseType, PinkNoiseAnalysis, PinkNoiseError};
+pub use pink_noise::{
+    analyze_pink_noise, generate_pink_noise, NoiseType, PinkNoiseAnalysis, PinkNoiseError,
+};
 pub use snr::{analyze_snr, SnrAnalysis, SnrError};

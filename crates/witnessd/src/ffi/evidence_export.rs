@@ -322,9 +322,7 @@ pub fn ffi_export_evidence(path: String, tier: String, output: String) -> FfiRes
                     };
                     FfiResult::ok(format!("Exported {} to {}", label, output_path.display()))
                 }
-                Err(e) => {
-                    FfiResult::err(format!("Failed to write output: {}", e))
-                }
+                Err(e) => FfiResult::err(format!("Failed to write output: {}", e)),
             }
         }
         Err(e) => FfiResult::err(format!("Failed to encode CBOR packet: {}", e)),

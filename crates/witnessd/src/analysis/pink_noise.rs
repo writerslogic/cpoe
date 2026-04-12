@@ -118,7 +118,10 @@ impl PinkNoiseAnalysis {
 }
 
 /// Compute spectral slope via FFT-based PSD and classify the noise type.
-pub fn analyze_pink_noise(data: &[f64], sample_rate: f64) -> Result<PinkNoiseAnalysis, PinkNoiseError> {
+pub fn analyze_pink_noise(
+    data: &[f64],
+    sample_rate: f64,
+) -> Result<PinkNoiseAnalysis, PinkNoiseError> {
     let n = data.len();
     if n < MIN_SPECTRAL_SAMPLES {
         return Err(PinkNoiseError::InsufficientDataPoints {
@@ -153,11 +156,11 @@ pub fn analyze_pink_noise(data: &[f64], sample_rate: f64) -> Result<PinkNoiseAna
     // log(P) = -α * log(f) + c, so spectral slope = -regression slope
     let (slope, _intercept, r_squared, std_error) = linear_regression(&log_freq, &log_power)
         .map_err(|e| PinkNoiseError::RegressionFailed(e.to_string()))?;
-        
+
     if !slope.is_finite() || !r_squared.is_finite() || !std_error.is_finite() {
         return Err(PinkNoiseError::RegressionProducedNaN);
     }
-    
+
     let spectral_slope = -slope;
 
     let noise_type = classify_noise_type(spectral_slope);
@@ -240,7 +243,7 @@ fn compute_psd(data: &[f64]) -> Result<Vec<f64>, PinkNoiseError> {
     let mut imag = vec![0.0; fft_size];
     let mut window_energy = 0.0;
 
-    // Fused loop: Hann window application, power normalizer, and zero-padded transfer 
+    // Fused loop: Hann window application, power normalizer, and zero-padded transfer
     // all without intermediate Vec allocations
     for (i, &x) in data.iter().enumerate() {
         let window = 0.5 * (1.0 - (2.0 * PI * i as f64 / (n - 1) as f64).cos());

@@ -122,7 +122,9 @@ fn test_packet_with_multiple_checkpoints() {
         .expect("build");
 
     assert_eq!(packet.checkpoints.len(), 3);
-    packet.verify_self_signed(chain.metadata.vdf_params).expect("verify");
+    packet
+        .verify_self_signed(chain.metadata.vdf_params)
+        .expect("verify");
 }
 
 #[test]
@@ -138,7 +140,9 @@ fn test_packet_verify_chain_hash_mismatch() {
 
     packet.chain_hash = "wrong_hash".to_string();
 
-    let err = packet.verify_self_signed(chain.metadata.vdf_params).unwrap_err();
+    let err = packet
+        .verify_self_signed(chain.metadata.vdf_params)
+        .unwrap_err();
     assert!(err.to_string().contains("chain hash mismatch"));
 }
 
@@ -155,7 +159,9 @@ fn test_packet_verify_document_hash_mismatch() {
 
     packet.document.final_hash = "wrong_hash".to_string();
 
-    let err = packet.verify_self_signed(chain.metadata.vdf_params).unwrap_err();
+    let err = packet
+        .verify_self_signed(chain.metadata.vdf_params)
+        .unwrap_err();
     assert!(err.to_string().contains("document final hash mismatch"));
 }
 
@@ -172,7 +178,9 @@ fn test_packet_verify_document_size_mismatch() {
 
     packet.document.final_size = 9999;
 
-    let err = packet.verify_self_signed(chain.metadata.vdf_params).unwrap_err();
+    let err = packet
+        .verify_self_signed(chain.metadata.vdf_params)
+        .unwrap_err();
     assert!(err.to_string().contains("document final size mismatch"));
 }
 
@@ -199,7 +207,9 @@ fn test_packet_verify_broken_chain_link() {
 
     packet.checkpoints[1].previous_hash = "wrong".to_string();
 
-    let err = packet.verify_self_signed(chain.metadata.vdf_params).unwrap_err();
+    let err = packet
+        .verify_self_signed(chain.metadata.vdf_params)
+        .unwrap_err();
     assert!(err.to_string().contains("broken chain link"));
 }
 
@@ -464,7 +474,9 @@ fn test_packet_verify_first_checkpoint_nonzero_previous() {
 
     packet.checkpoints[0].previous_hash = "not-valid-hex!".to_string();
 
-    let err = packet.verify_self_signed(chain.metadata.vdf_params).unwrap_err();
+    let err = packet
+        .verify_self_signed(chain.metadata.vdf_params)
+        .unwrap_err();
     assert!(err.to_string().contains("invalid genesis previous hash"));
 }
 

@@ -221,8 +221,7 @@ impl Mmr {
         for idx in &leaf_indices {
             leaf_hashes.push(self.store.get(*idx)?.hash);
         }
-        let (sibling_path, peak_index) =
-            self.generate_range_merkle_path(&leaf_indices, size)?;
+        let (sibling_path, peak_index) = self.generate_range_merkle_path(&leaf_indices, size)?;
         let peaks = self.get_peaks()?;
         let peak_indices = find_peaks(size);
         let mut peak_position = None;

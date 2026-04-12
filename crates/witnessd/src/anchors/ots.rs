@@ -16,14 +16,10 @@ const OTS_CALENDAR_URLS: &[&str] = &[
 const OTS_MAGIC: &[u8] = b"\x00OpenTimestamps\x00\x00Proof\x00\xbf\x89\xe2\xe8\x84\xe8\x92\x94";
 
 /// 8-byte tag identifying a Bitcoin attestation in the OTS binary format.
-const OTS_BITCOIN_ATTESTATION_TAG: [u8; 8] =
-    [0x05, 0x88, 0x96, 0x0d, 0x73, 0xd7, 0x19, 0x01];
+const OTS_BITCOIN_ATTESTATION_TAG: [u8; 8] = [0x05, 0x88, 0x96, 0x0d, 0x73, 0xd7, 0x19, 0x01];
 
 /// Public Bitcoin block explorer API base URLs, tried in order for fallback.
-const BITCOIN_BLOCK_APIS: &[&str] = &[
-    "https://blockstream.info/api",
-    "https://mempool.space/api",
-];
+const BITCOIN_BLOCK_APIS: &[&str] = &["https://blockstream.info/api", "https://mempool.space/api"];
 
 /// Size of a serialized Bitcoin block header in bytes.
 const BITCOIN_BLOCK_HEADER_SIZE: usize = 80;
@@ -39,15 +35,18 @@ pub struct OpenTimestampsProvider {
     calendar_urls: Vec<String>,
     client: reqwest::Client,
     /// Cache of verified Bitcoin block headers, keyed by block height.
-    header_cache:
-        std::sync::Mutex<std::collections::HashMap<u64, [u8; BITCOIN_BLOCK_HEADER_SIZE]>>,
+    header_cache: std::sync::Mutex<std::collections::HashMap<u64, [u8; BITCOIN_BLOCK_HEADER_SIZE]>>,
 }
 
 impl OpenTimestampsProvider {
     /// Create a provider using the default public calendar servers.
     pub fn new() -> Result<Self, AnchorError> {
         Ok(Self {
-            calendar_urls: OTS_CALENDAR_URLS.iter().copied().map(String::from).collect(),
+            calendar_urls: OTS_CALENDAR_URLS
+                .iter()
+                .copied()
+                .map(String::from)
+                .collect(),
             client: super::http::build_http_client(None)?,
             header_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
         })
@@ -457,9 +456,7 @@ impl OpenTimestampsProvider {
     ///
     /// Scans the raw proof bytes for the 8-byte Bitcoin attestation tag and
     /// reads the block height from the little-endian payload that follows.
-    fn extract_bitcoin_block_height(
-        proof_data: &[u8],
-    ) -> Result<Option<u64>, AnchorError> {
+    fn extract_bitcoin_block_height(proof_data: &[u8]) -> Result<Option<u64>, AnchorError> {
         if proof_data.len() < OTS_MAGIC.len() {
             return Err(AnchorError::InvalidFormat("Proof too short".into()));
         }
@@ -487,10 +484,10 @@ impl OpenTimestampsProvider {
                     let payload = Self::read_data(proof_data, &mut pos)?;
 
                     if tag == OTS_BITCOIN_ATTESTATION_TAG {
-                        let height =
-                            payload.iter().enumerate().fold(0u64, |acc, (i, &b)| {
-                                acc | ((b as u64) << (8 * i))
-                            });
+                        let height = payload
+                            .iter()
+                            .enumerate()
+                            .fold(0u64, |acc, (i, &b)| acc | ((b as u64) << (8 * i)));
                         return Ok(Some(height));
                     }
                 }
@@ -544,9 +541,8 @@ impl OpenTimestampsProvider {
             }
         }
 
-        Err(last_error.unwrap_or_else(|| {
-            AnchorError::Unavailable("All block explorer APIs failed".into())
-        }))
+        Err(last_error
+            .unwrap_or_else(|| AnchorError::Unavailable("All block explorer APIs failed".into())))
     }
 
     async fn fetch_block_header_from(
@@ -576,9 +572,7 @@ impl OpenTimestampsProvider {
             .map_err(|e| AnchorError::Network(e.to_string()))?;
         let block_hash = block_hash.trim();
 
-        if block_hash.len() != 64
-            || !block_hash.chars().all(|c| c.is_ascii_hexdigit())
-        {
+        if block_hash.len() != 64 || !block_hash.chars().all(|c| c.is_ascii_hexdigit()) {
             return Err(AnchorError::InvalidFormat(format!(
                 "Invalid block hash: {}",
                 &block_hash[..block_hash.len().min(80)]
@@ -586,8 +580,7 @@ impl OpenTimestampsProvider {
         }
 
         // GET /block/{hash}/header -> hex-encoded 80-byte header
-        let header_url =
-            format!("{}/block/{}/header", base_url, block_hash);
+        let header_url = format!("{}/block/{}/header", base_url, block_hash);
         let header_resp = self
             .client
             .get(&header_url)
@@ -607,9 +600,7 @@ impl OpenTimestampsProvider {
             .await
             .map_err(|e| AnchorError::Network(e.to_string()))?;
         let header_bytes = hex::decode(header_hex.trim())
-            .map_err(|e| AnchorError::InvalidFormat(format!(
-                "Invalid header hex: {e}"
-            )))?;
+            .map_err(|e| AnchorError::InvalidFormat(format!("Invalid header hex: {e}")))?;
 
         if header_bytes.len() != BITCOIN_BLOCK_HEADER_SIZE {
             return Err(AnchorError::InvalidFormat(format!(
@@ -625,13 +616,9 @@ impl OpenTimestampsProvider {
     }
 
     /// Extract the 32-byte merkle root from a raw Bitcoin block header.
-    fn parse_merkle_root(
-        header: &[u8; BITCOIN_BLOCK_HEADER_SIZE],
-    ) -> [u8; 32] {
+    fn parse_merkle_root(header: &[u8; BITCOIN_BLOCK_HEADER_SIZE]) -> [u8; 32] {
         let mut root = [0u8; 32];
-        root.copy_from_slice(
-            &header[HEADER_MERKLE_ROOT_OFFSET..HEADER_MERKLE_ROOT_OFFSET + 32],
-        );
+        root.copy_from_slice(&header[HEADER_MERKLE_ROOT_OFFSET..HEADER_MERKLE_ROOT_OFFSET + 32]);
         root
     }
 
@@ -803,9 +790,7 @@ impl AnchorProvider for OpenTimestampsProvider {
         let height = match Self::extract_bitcoin_block_height(&proof.proof_data) {
             Ok(Some(h)) => h,
             Ok(None) => {
-                log::warn!(
-                    "No Bitcoin attestation tag in proof; structural check only"
-                );
+                log::warn!("No Bitcoin attestation tag in proof; structural check only");
                 return Err(AnchorError::Unavailable(
                     "No Bitcoin block height in attestation; \
                      structural check passed"
@@ -881,7 +866,7 @@ mod tests {
     fn make_ots_proof_with_bitcoin(height: u64) -> Vec<u8> {
         let mut proof = OTS_MAGIC.to_vec();
         proof.push(0x08); // SHA256 op
-        // Bitcoin attestation: marker + tag + varint-len + height LE bytes
+                          // Bitcoin attestation: marker + tag + varint-len + height LE bytes
         proof.push(0x00);
         proof.extend_from_slice(&OTS_BITCOIN_ATTESTATION_TAG);
         let mut height_bytes = Vec::new();
@@ -944,16 +929,14 @@ mod tests {
     fn extract_bitcoin_height_none_when_no_attestation() {
         let mut proof = OTS_MAGIC.to_vec();
         proof.push(0x08);
-        let result =
-            OpenTimestampsProvider::extract_bitcoin_block_height(&proof).unwrap();
+        let result = OpenTimestampsProvider::extract_bitcoin_block_height(&proof).unwrap();
         assert!(result.is_none());
     }
 
     #[test]
     fn extract_bitcoin_height_rejects_bad_magic() {
         let proof = vec![0x00; 32];
-        let err =
-            OpenTimestampsProvider::extract_bitcoin_block_height(&proof).unwrap_err();
+        let err = OpenTimestampsProvider::extract_bitcoin_block_height(&proof).unwrap_err();
         assert!(matches!(err, AnchorError::InvalidFormat(_)));
     }
 
@@ -961,10 +944,9 @@ mod tests {
     fn parse_merkle_root_genesis() {
         let header = genesis_block_header();
         let root = OpenTimestampsProvider::parse_merkle_root(&header);
-        let expected = hex::decode(
-            "3ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a",
-        )
-        .unwrap();
+        let expected =
+            hex::decode("3ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a")
+                .unwrap();
         assert_eq!(root.as_slice(), expected.as_slice());
     }
 

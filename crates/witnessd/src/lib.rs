@@ -13,52 +13,52 @@ pub mod ffi;
 #[cfg(feature = "ffi")]
 uniffi::setup_scaffolding!("cpop_engine");
 
-pub mod evidence;
 pub mod checkpoint;
 pub mod checkpoint_mmr;
-pub mod mmr;
-pub mod continuation;
-pub mod provenance;
 pub mod collaboration;
+pub mod continuation;
+pub mod evidence;
+pub mod mmr;
+pub mod provenance;
 
 pub mod analysis;
-pub mod forensics;
 pub mod baseline;
-pub mod presence;
-pub mod physics;
-pub mod jitter;
 pub mod fingerprint;
+pub mod forensics;
+pub mod jitter;
+pub mod physics;
+pub mod presence;
 mod rfc_conversions;
 
 pub mod crypto;
 pub mod keyhierarchy;
-pub mod vdf;
-pub mod tpm;
 pub mod rats;
 pub mod sealed_chain;
 pub mod sealed_identity;
+pub mod tpm;
 pub mod trust_policy;
+pub mod vdf;
 
-pub mod store;
 pub mod config;
 pub mod error;
 pub mod identity;
 pub mod ipc;
 pub mod platform;
 pub mod sentinel;
+pub mod serde_utils;
+pub mod store;
 pub mod timing;
+pub mod utils;
 pub mod verify;
 pub mod wal;
-pub mod serde_utils;
-pub mod utils;
 
-pub mod engine;
+pub mod anchors;
 pub mod api_types;
+pub mod declaration;
+pub mod engine;
 pub mod report;
 pub mod research;
 pub mod transcription;
-pub mod anchors;
-pub mod declaration;
 pub mod war;
 pub mod writersproof;
 
@@ -106,10 +106,10 @@ impl<T> MutexRecover<T> for std::sync::Mutex<T> {
     }
 }
 
-pub use crate::error::{Error, Result};
 pub use crate::crypto::{
     compute_event_hash, compute_event_hmac, derive_hmac_key, restrict_permissions,
 };
+pub use crate::error::{Error, Result};
 pub use crate::identity::MnemonicHandler;
 #[cfg(feature = "did-webvh")]
 pub use identity::did_webvh::{CpopSigner, WebVHIdentity};
@@ -122,7 +122,7 @@ pub use crate::sentinel::{
 
 pub use crate::vdf::{
     AggregateError, AggregateMetadata, AggregationMethod, MerkleSample, MerkleVdfBuilder,
-    MerkleVdfProof, RoughtimeClient, SnarkScheme, SnarkVdfProof, TimeAnchor, TimeKeeper, 
+    MerkleVdfProof, RoughtimeClient, SnarkScheme, SnarkVdfProof, TimeAnchor, TimeKeeper,
     VdfAggregateProof, VdfProof, VerificationMode,
 };
 
@@ -131,9 +131,6 @@ pub use crate::fingerprint::{
     FingerprintManager, FingerprintStatus, ProfileId, VoiceFingerprint,
 };
 
-pub use crate::provenance::{
-    DerivationClaim, DerivationType, ProvenanceLink, ProvenanceMetadata, ProvenanceSection,
-};
 pub use crate::collaboration::{
     CollaborationMode, CollaborationPolicy, CollaborationSection, Collaborator, CollaboratorRole,
     ContributionClaim, ContributionSummary, ContributionType, MergeEvent, MergeRecord,
@@ -141,6 +138,9 @@ pub use crate::collaboration::{
 };
 pub use crate::continuation::{ContinuationSection, ContinuationSummary};
 pub use crate::physics::PhysicalContext;
+pub use crate::provenance::{
+    DerivationClaim, DerivationType, ProvenanceLink, ProvenanceMetadata, ProvenanceSection,
+};
 pub use crate::research::{
     AnonymizedSession, ResearchCollector, ResearchDataExport, ResearchUploader, UploadResult,
 };

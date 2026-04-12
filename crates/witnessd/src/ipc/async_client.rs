@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 use super::crypto::{
-    decode_message_json, encode_message_json, SecureSession,
-    KEY_CONFIRM_PLAINTEXT, SECURE_JSON_PROTOCOL_MAGIC,
+    decode_message_json, encode_message_json, SecureSession, KEY_CONFIRM_PLAINTEXT,
+    SECURE_JSON_PROTOCOL_MAGIC,
 };
 use super::messages::MAX_MESSAGE_SIZE;
 use super::messages::{IpcErrorCode, IpcMessage};
@@ -300,9 +300,9 @@ impl AsyncIpcClient {
         let encoded = encode_message_json(msg)
             .map_err(|e| AsyncIpcClientError::SerializationFailed(e.to_string()))?;
 
-        let payload = session.encrypt(&encoded).map_err(|e| {
-            AsyncIpcClientError::ProtocolError(format!("Encryption failed: {}", e))
-        })?;
+        let payload = session
+            .encrypt(&encoded)
+            .map_err(|e| AsyncIpcClientError::ProtocolError(format!("Encryption failed: {}", e)))?;
 
         if payload.len() > MAX_MESSAGE_SIZE {
             return Err(AsyncIpcClientError::MessageTooLarge(
@@ -399,9 +399,9 @@ impl AsyncIpcClient {
             .as_ref()
             .ok_or(AsyncIpcClientError::NotConnected)?;
 
-        let plaintext = session.decrypt(&buffer).map_err(|e| {
-            AsyncIpcClientError::ProtocolError(format!("Decryption failed: {}", e))
-        })?;
+        let plaintext = session
+            .decrypt(&buffer)
+            .map_err(|e| AsyncIpcClientError::ProtocolError(format!("Decryption failed: {}", e)))?;
 
         decode_message_json(&plaintext)
             .map_err(|e| AsyncIpcClientError::DeserializationFailed(e.to_string()))
@@ -444,10 +444,7 @@ impl AsyncIpcClient {
     /// Returns `NotConnected` if this client was never connected (i.e.,
     /// constructed via `new()` without a subsequent `connect()`).
     pub async fn reconnect(&mut self) -> std::result::Result<(), AsyncIpcClientError> {
-        let path = self
-            .path
-            .clone()
-            .ok_or(AsyncIpcClientError::NotConnected)?;
+        let path = self.path.clone().ok_or(AsyncIpcClientError::NotConnected)?;
 
         self.disconnect().await;
 

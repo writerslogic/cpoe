@@ -32,7 +32,10 @@ use std::io::BufWriter;
 ///
 /// Returns an error if font loading or PDF serialization fails (should not happen
 /// with built-in fonts under normal conditions).
-pub fn render_pdf(report: &WarReport, security_seed: Option<&[u8; 64]>) -> crate::error::Result<Vec<u8>> {
+pub fn render_pdf(
+    report: &WarReport,
+    security_seed: Option<&[u8; 64]>,
+) -> crate::error::Result<Vec<u8>> {
     let version = env!("CARGO_PKG_VERSION");
     let doc_hash_short = report
         .document_hash

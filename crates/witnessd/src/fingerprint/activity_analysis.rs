@@ -70,7 +70,9 @@ impl IkiDistribution {
             if s.is_finite() {
                 s
             } else {
-                log::warn!("IkiDistribution::from_intervals: skewness is non-finite, substituting 0.0");
+                log::warn!(
+                    "IkiDistribution::from_intervals: skewness is non-finite, substituting 0.0"
+                );
                 0.0
             }
         };
@@ -79,7 +81,9 @@ impl IkiDistribution {
             if k.is_finite() {
                 k
             } else {
-                log::warn!("IkiDistribution::from_intervals: kurtosis is non-finite, substituting 0.0");
+                log::warn!(
+                    "IkiDistribution::from_intervals: kurtosis is non-finite, substituting 0.0"
+                );
                 0.0
             }
         };

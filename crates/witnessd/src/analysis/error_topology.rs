@@ -14,8 +14,8 @@
 //! 0.2 to limit the impact of single-window estimation error on the composite
 //! score. Consider wiring `analysis/hurst.rs` here for a future improvement.
 
-use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fmt;
 
 /// Comprehensive error type for Error Topology analysis.
@@ -117,7 +117,9 @@ pub struct TopologyEvent {
 }
 
 /// Analyze error topology from a sequence of events. Requires >= 20 events.
-pub fn analyze_error_topology(events: &[TopologyEvent]) -> Result<ErrorTopology, ErrorTopologyError> {
+pub fn analyze_error_topology(
+    events: &[TopologyEvent],
+) -> Result<ErrorTopology, ErrorTopologyError> {
     if events.len() < 20 {
         return Err(ErrorTopologyError::InsufficientEvents {
             found: events.len(),
@@ -183,10 +185,10 @@ fn compute_gap_correlation(events: &[TopologyEvent], error_indices: &[usize]) ->
     // Replaced three separate Vec allocations with inline accumulators
     let mut pre_error_sum = 0.0;
     let mut pre_error_count = 0;
-    
+
     let mut post_error_sum = 0.0;
     let mut post_error_count = 0;
-    
+
     let mut normal_sum = 0.0;
     let mut normal_count = 0;
 
@@ -211,7 +213,7 @@ fn compute_gap_correlation(events: &[TopologyEvent], error_indices: &[usize]) ->
 
     let normal_mean = normal_sum / normal_count as f64;
     let pre_error_mean = pre_error_sum / pre_error_count as f64;
-    
+
     let post_error_mean = if post_error_count > 0 {
         post_error_sum / post_error_count as f64
     } else {

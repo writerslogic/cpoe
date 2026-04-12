@@ -180,7 +180,7 @@ mod tests {
         assert_eq!(lerp_score(0.5, 0.0, 1.0), 0.5);
         assert_eq!(lerp_score(1.0, 0.0, 1.0), 1.0);
         assert_eq!(lerp_score(-1.0, 0.0, 1.0), 0.0); // clamped below
-        assert_eq!(lerp_score(2.0, 0.0, 1.0), 1.0);  // clamped above
+        assert_eq!(lerp_score(2.0, 0.0, 1.0), 1.0); // clamped above
         assert_eq!(lerp_score(f64::NAN, 0.0, 1.0), 0.0);
         assert_eq!(lerp_score(f64::INFINITY, 0.0, 1.0), 0.0);
     }

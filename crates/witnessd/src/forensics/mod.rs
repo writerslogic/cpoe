@@ -12,8 +12,8 @@
 //!
 //! The dependency is one-directional: `forensics -> analysis`.
 
-pub(crate) mod analysis;
 mod advanced_metrics;
+pub(crate) mod analysis;
 mod assessment;
 mod cadence;
 mod comparison;

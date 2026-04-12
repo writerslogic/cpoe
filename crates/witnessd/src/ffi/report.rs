@@ -209,7 +209,13 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
         let hit = forensic_cache()
             .get(&cache_key)
             .filter(|e| e.event_count == events.len())
-            .map(|e| (Arc::clone(&e.profile), Arc::clone(&e.metrics), Arc::clone(&e.regions)));
+            .map(|e| {
+                (
+                    Arc::clone(&e.profile),
+                    Arc::clone(&e.metrics),
+                    Arc::clone(&e.regions),
+                )
+            });
         match hit {
             Some(cached) => cached,
             None => {
@@ -272,10 +278,13 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
         let cv = c.std_dev_iki_ns / c.mean_iki_ns;
         process.iki_cv = if cv.is_finite() { Some(cv) } else { None };
         process.total_keystrokes = Some(c.burst_count as u64 + c.pause_count as u64);
-        if c.percentiles[PERCENTILE_IDX_MEDIAN] > 0.0 && c.percentiles[PERCENTILE_IDX_MEDIAN].is_finite() {
+        if c.percentiles[PERCENTILE_IDX_MEDIAN] > 0.0
+            && c.percentiles[PERCENTILE_IDX_MEDIAN].is_finite()
+        {
             process.pause_median_sec = Some(c.percentiles[PERCENTILE_IDX_MEDIAN] / 1_000_000_000.0);
         }
-        if c.percentiles[PERCENTILE_IDX_P95] > 0.0 && c.percentiles[PERCENTILE_IDX_P95].is_finite() {
+        if c.percentiles[PERCENTILE_IDX_P95] > 0.0 && c.percentiles[PERCENTILE_IDX_P95].is_finite()
+        {
             process.pause_p95_sec = Some(c.percentiles[PERCENTILE_IDX_P95] / 1_000_000_000.0);
         }
     }
@@ -378,9 +387,9 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
             }
             #[cfg(not(feature = "did-webvh"))]
             {
-                crate::ffi::helpers::load_signing_key()
-                    .ok()
-                    .and_then(|sk| crate::identity::did_key_from_public(sk.verifying_key().as_bytes()))
+                crate::ffi::helpers::load_signing_key().ok().and_then(|sk| {
+                    crate::identity::did_key_from_public(sk.verifying_key().as_bytes())
+                })
             }
         },
     };

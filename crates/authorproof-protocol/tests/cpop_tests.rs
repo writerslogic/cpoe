@@ -20,7 +20,9 @@ fn test_cpop_full_roundtrip() {
         char_count: doc_content.len() as u64,
     };
 
-    let mut builder = Builder::new(document, Box::new(signing_key)).unwrap().with_min_entropy_bits(1);
+    let mut builder = Builder::new(document, Box::new(signing_key))
+        .unwrap()
+        .with_min_entropy_bits(1);
     builder
         .add_checkpoint(b"Checkpoint 1", 12)
         .expect("Add checkpoint failed");
@@ -59,7 +61,9 @@ fn test_cpop_tamper_detection() {
         char_count: doc_content.len() as u64,
     };
 
-    let mut builder = Builder::new(document, Box::new(signing_key)).unwrap().with_min_entropy_bits(1);
+    let mut builder = Builder::new(document, Box::new(signing_key))
+        .unwrap()
+        .with_min_entropy_bits(1);
     builder.add_checkpoint(b"Safe checkpoint 1", 5).unwrap();
     builder.add_checkpoint(b"Safe checkpoint 2", 5).unwrap();
     builder.add_checkpoint(b"Safe checkpoint 3", 5).unwrap();
@@ -150,7 +154,8 @@ fn test_cpop_playback_attack_detection() {
     let timestamps: Vec<u64> = std::iter::once(packet.created)
         .chain(packet.checkpoints.iter().map(|cp| cp.timestamp))
         .collect();
-    let engine = authorproof_protocol::forensics::ForensicsEngine::from_timestamps(&timestamps, true);
+    let engine =
+        authorproof_protocol::forensics::ForensicsEngine::from_timestamps(&timestamps, true);
     let analysis = engine.analyze();
     assert_eq!(
         analysis.verdict,
@@ -196,7 +201,9 @@ fn test_verify_evidence_cose_rejects_wrong_key() {
         char_count: doc_content.len() as u64,
     };
 
-    let mut builder = Builder::new(document, Box::new(signing_key_a)).unwrap().with_min_entropy_bits(1);
+    let mut builder = Builder::new(document, Box::new(signing_key_a))
+        .unwrap()
+        .with_min_entropy_bits(1);
     builder.add_checkpoint(b"checkpoint 1", 10).unwrap();
     builder.add_checkpoint(b"checkpoint 2", 10).unwrap();
     builder.add_checkpoint(b"checkpoint 3", 10).unwrap();
@@ -263,7 +270,9 @@ fn test_verifier_rejects_wrong_profile_uri() {
         char_count: doc_content.len() as u64,
     };
 
-    let mut builder = Builder::new(document, Box::new(signing_key.clone())).unwrap().with_min_entropy_bits(1);
+    let mut builder = Builder::new(document, Box::new(signing_key.clone()))
+        .unwrap()
+        .with_min_entropy_bits(1);
     builder.add_checkpoint(b"checkpoint 1", 10).unwrap();
     builder.add_checkpoint(b"checkpoint 2", 10).unwrap();
     builder.add_checkpoint(b"checkpoint 3", 10).unwrap();

@@ -258,7 +258,11 @@ fn compute_rqa(embed: &FlatEmbedding, threshold: f64, min_line: usize) -> RqaRes
         })
         .sum();
 
-    RqaResult { recurrence_rate: rr, determinism: det, laminarity: entropy }
+    RqaResult {
+        recurrence_rate: rr,
+        determinism: det,
+        laminarity: entropy,
+    }
 }
 
 // ---------------------------------------------------------------------------

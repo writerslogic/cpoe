@@ -248,8 +248,10 @@ fn checkpoint_to_wire(
         };
 
         let jitter_seal = if has_merkle_root {
-            let intervals_cbor = authorproof_protocol::codec::cbor::encode(&intervals)
-                .map_err(|e| Error::evidence(format!("CBOR encode intervals for jitter seal: {e}")))?;
+            let intervals_cbor =
+                authorproof_protocol::codec::cbor::encode(&intervals).map_err(|e| {
+                    Error::evidence(format!("CBOR encode intervals for jitter seal: {e}"))
+                })?;
             crate::crypto::compute_jitter_seal(merkle_root, swf_input, &intervals_cbor)
         } else {
             vec![0u8; 32]

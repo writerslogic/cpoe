@@ -23,9 +23,9 @@ pub fn sha256_of_path(path: &std::path::Path) -> [u8; 32] {
 /// Return an error if any value in `vals` is NaN or infinite.
 pub fn require_all_finite(vals: &[f64], context: &str) -> crate::error::Result<()> {
     if vals.iter().any(|x| !x.is_finite()) {
-        return Err(crate::error::Error::validation(
-            format!("{context}: contains NaN or infinity")
-        ));
+        return Err(crate::error::Error::validation(format!(
+            "{context}: contains NaN or infinity"
+        )));
     }
     Ok(())
 }
@@ -44,7 +44,9 @@ pub fn finite(x: f64) -> crate::error::Result<f64> {
     if x.is_finite() {
         Ok(x)
     } else {
-        Err(crate::error::Error::validation(format!("non-finite value: {x}")))
+        Err(crate::error::Error::validation(format!(
+            "non-finite value: {x}"
+        )))
     }
 }
 

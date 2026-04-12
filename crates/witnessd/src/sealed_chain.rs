@@ -62,7 +62,11 @@ impl SealedHeader {
         let mut document_id = [0u8; 32];
         document_id.copy_from_slice(&data[20..52]);
 
-        Ok(Self { version, nonce, document_id })
+        Ok(Self {
+            version,
+            nonce,
+            document_id,
+        })
     }
 }
 
@@ -98,7 +102,9 @@ impl ChainEncryptionKey {
 
     #[cfg(test)]
     pub fn from_bytes(key_bytes: [u8; 32]) -> Self {
-        Self { key: ProtectedKey::new(key_bytes) }
+        Self {
+            key: ProtectedKey::new(key_bytes),
+        }
     }
 }
 
@@ -134,10 +140,15 @@ pub fn save_sealed(
     let cipher = Aes256Gcm::new_from_slice(key.key.as_bytes())
         .map_err(|_| Error::crypto("cipher init failed"))?;
 
-    let ciphertext = cipher.encrypt(
-        Nonce::from_slice(&header.nonce),
-        Payload { msg: &plaintext, aad: &header_bytes },
-    ).map_err(|_| Error::crypto("encryption failed"))?;
+    let ciphertext = cipher
+        .encrypt(
+            Nonce::from_slice(&header.nonce),
+            Payload {
+                msg: &plaintext,
+                aad: &header_bytes,
+            },
+        )
+        .map_err(|_| Error::crypto("encryption failed"))?;
 
     atomic_write(path, &header_bytes, &ciphertext)
 }
@@ -159,10 +170,15 @@ pub fn load_sealed_verified(
     let cipher = Aes256Gcm::new_from_slice(key.key.as_bytes())
         .map_err(|_| Error::crypto("cipher init failed"))?;
 
-    let plaintext = cipher.decrypt(
-        Nonce::from_slice(&header.nonce),
-        Payload { msg: &data[HEADER_SIZE..], aad: &data[..HEADER_SIZE] },
-    ).map_err(|_| Error::crypto("decryption failed (tampered or wrong key)"))?;
+    let plaintext = cipher
+        .decrypt(
+            Nonce::from_slice(&header.nonce),
+            Payload {
+                msg: &data[HEADER_SIZE..],
+                aad: &data[..HEADER_SIZE],
+            },
+        )
+        .map_err(|_| Error::crypto("decryption failed (tampered or wrong key)"))?;
 
     let mut chain: Chain = serde_json::from_slice(&plaintext)
         .map_err(|e| Error::checkpoint(format!("deserialization failed: {e}")))?;
@@ -206,7 +222,9 @@ pub fn migrate_to_sealed(
     if sealed_path.exists() {
         let existing_id = read_sealed_document_id(&sealed_path)?;
         if existing_id != *document_id {
-            return Err(Error::checkpoint("sealed file exists with different document_id"));
+            return Err(Error::checkpoint(
+                "sealed file exists with different document_id",
+            ));
         }
     }
     save_sealed(&chain, &sealed_path, key, document_id)?;
@@ -256,7 +274,13 @@ fn save_sealed_v1(
     header.extend_from_slice(&nonce_bytes);
     header.extend_from_slice(document_id);
     let ciphertext = cipher
-        .encrypt(nonce, Payload { msg: &plaintext, aad: &header })
+        .encrypt(
+            nonce,
+            Payload {
+                msg: &plaintext,
+                aad: &header,
+            },
+        )
         .map_err(|_| Error::crypto("AES-GCM encryption failed"))?;
     let mut output = Vec::with_capacity(HEADER_SIZE + ciphertext.len());
     output.extend_from_slice(&header);

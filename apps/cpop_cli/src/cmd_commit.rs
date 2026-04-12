@@ -26,8 +26,28 @@ pub(crate) async fn cmd_commit(
 
     // Phase 1: file I/O, hashing, and DB read (all blocking)
     #[allow(clippy::type_complexity)]
-    let (abs_path_str, content_hash, content_len, file_size, size_delta, vdf_input, mut db, vdf_params, device_id, machine_id): (
-        String, [u8; 32], usize, i64, i32, [u8; 32], _, _, [u8; 16], String,
+    let (
+        abs_path_str,
+        content_hash,
+        content_len,
+        file_size,
+        size_delta,
+        vdf_input,
+        mut db,
+        vdf_params,
+        device_id,
+        machine_id,
+    ): (
+        String,
+        [u8; 32],
+        usize,
+        i64,
+        i32,
+        [u8; 32],
+        _,
+        _,
+        [u8; 16],
+        String,
     ) = tokio::task::spawn_blocking(move || -> Result<_> {
         if !file_path_owned.exists() {
             return Err(anyhow!("File not found: {}", file_path_owned.display()));
@@ -86,7 +106,18 @@ pub(crate) async fn cmd_commit(
         let device_id = get_device_id()?;
         let machine_id = get_machine_id();
 
-        Ok((abs_path_str, content_hash, content_len, file_size, size_delta, vdf_input, db, vdf_params, device_id, machine_id))
+        Ok((
+            abs_path_str,
+            content_hash,
+            content_len,
+            file_size,
+            size_delta,
+            vdf_input,
+            db,
+            vdf_params,
+            device_id,
+            machine_id,
+        ))
     })
     .await
     .context("pre-VDF I/O task")??;

@@ -82,13 +82,21 @@ pub fn get_active_focus() -> Result<FocusInfo> {
 /// Get document information for a specific process using Accessibility API.
 fn get_document_info_for_pid(pid: i32) -> DocumentInfo {
     if !check_accessibility_permissions() {
-        return DocumentInfo { doc_path: None, window_title: None, doc_title: None };
+        return DocumentInfo {
+            doc_path: None,
+            window_title: None,
+            doc_title: None,
+        };
     }
 
     unsafe {
         let app_element = AXUIElementCreateApplication(pid);
         if app_element.is_null() {
-            return DocumentInfo { doc_path: None, window_title: None, doc_title: None };
+            return DocumentInfo {
+                doc_path: None,
+                window_title: None,
+                doc_title: None,
+            };
         }
 
         let mut window_value: CFTypeRef = null_mut();
@@ -101,7 +109,11 @@ fn get_document_info_for_pid(pid: i32) -> DocumentInfo {
 
         if result != K_AX_ERROR_SUCCESS || window_value.is_null() {
             CFRelease(app_element);
-            return DocumentInfo { doc_path: None, window_title: None, doc_title: None };
+            return DocumentInfo {
+                doc_path: None,
+                window_title: None,
+                doc_title: None,
+            };
         }
 
         let window_element = window_value as *mut std::ffi::c_void;
@@ -117,7 +129,11 @@ fn get_document_info_for_pid(pid: i32) -> DocumentInfo {
         CFRelease(window_element);
         CFRelease(app_element);
 
-        DocumentInfo { doc_path, window_title, doc_title }
+        DocumentInfo {
+            doc_path,
+            window_title,
+            doc_title,
+        }
     }
 }
 

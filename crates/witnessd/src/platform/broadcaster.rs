@@ -31,7 +31,10 @@ where
         f.debug_struct("EventBroadcaster")
             .field("subscribers", &self.subscribers.len())
             .field("next_id", &self.next_id.load(Ordering::Relaxed))
-            .field("broadcast_count", &self.broadcast_count.load(Ordering::Relaxed))
+            .field(
+                "broadcast_count",
+                &self.broadcast_count.load(Ordering::Relaxed),
+            )
             .field("failed_sends", &self.failed_sends.load(Ordering::Relaxed))
             .finish()
     }
@@ -138,7 +141,10 @@ where
         f.debug_struct("SyncEventBroadcaster")
             .field("subscribers", &self.subscribers.len())
             .field("next_id", &self.next_id.load(Ordering::Relaxed))
-            .field("broadcast_count", &self.broadcast_count.load(Ordering::Relaxed))
+            .field(
+                "broadcast_count",
+                &self.broadcast_count.load(Ordering::Relaxed),
+            )
             .field("failed_sends", &self.failed_sends.load(Ordering::Relaxed))
             .finish()
     }

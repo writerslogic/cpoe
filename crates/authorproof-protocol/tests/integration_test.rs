@@ -31,7 +31,11 @@ fn test_evidence_packet_roundtrip() {
     assert_eq!(decoded.packet_id, packet.packet_id);
 }
 
-fn make_test_checkpoint(seq: u64, ts: u64, prev_digest: Vec<u8>) -> authorproof_protocol::rfc::Checkpoint {
+fn make_test_checkpoint(
+    seq: u64,
+    ts: u64,
+    prev_digest: Vec<u8>,
+) -> authorproof_protocol::rfc::Checkpoint {
     authorproof_protocol::rfc::Checkpoint {
         sequence: seq,
         checkpoint_id: vec![seq as u8; 16],

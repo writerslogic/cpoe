@@ -158,7 +158,9 @@ impl SecureStore {
 
         let mut events = Vec::new();
         let rows: Box<dyn Iterator<Item = rusqlite::Result<(SecureEvent, Vec<u8>)>>> = match limit {
-            Some(n) => Box::new(stmt.query_map(params![path.as_ref(), n], Self::row_to_event_with_hmac)?),
+            Some(n) => {
+                Box::new(stmt.query_map(params![path.as_ref(), n], Self::row_to_event_with_hmac)?)
+            }
             None => Box::new(stmt.query_map(params![path.as_ref()], Self::row_to_event_with_hmac)?),
         };
         for row in rows {
@@ -367,7 +369,11 @@ impl SecureStore {
     /// HMAC verification, because `verify_integrity()` will fail afterwards.
     /// The function checks whether the store has any verified events and returns
     /// an error if so.
-    pub fn update_file_path(&mut self, old_path: impl AsRef<Path>, new_path: impl AsRef<Path>) -> anyhow::Result<usize> {
+    pub fn update_file_path(
+        &mut self,
+        old_path: impl AsRef<Path>,
+        new_path: impl AsRef<Path>,
+    ) -> anyhow::Result<usize> {
         let old_path = old_path.as_ref().to_string_lossy();
         let new_path = new_path.as_ref().to_string_lossy();
         let tx = self.conn.transaction()?;

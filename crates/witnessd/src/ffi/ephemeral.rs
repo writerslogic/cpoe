@@ -18,8 +18,8 @@ use crate::ffi::types::{
     FfiEphemeralFinalizeResult, FfiEphemeralSessionResult, FfiEphemeralStatusResult, FfiResult,
 };
 use dashmap::DashMap;
-use std::sync::OnceLock;
 use sha2::{Digest, Sha256};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use super::helpers::device_identity;

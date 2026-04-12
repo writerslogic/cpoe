@@ -2,7 +2,7 @@
 
 //! Bridge implementations between internal Engine Analysis and RFC Protocol types.
 //!
-//! These conversions transform high-fidelity engine results into the serialized 
+//! These conversions transform high-fidelity engine results into the serialized
 //! structures required by the AuthorProof RFC specifications.
 
 use authorproof_protocol::rfc::biology::{
@@ -68,11 +68,20 @@ impl BiologyInvariantClaimExt for BiologyInvariantClaim {
         if let Some(h) = hurst {
             claim.hurst_exponent = Some(h.exponent);
             if h.is_white_noise() {
-                claim.push_anomaly(AnomalyType::WhiteNoiseHurst, 3, 
-                    format!("Hurst {:.3}: stochastic white noise detected", h.exponent));
+                claim.push_anomaly(
+                    AnomalyType::WhiteNoiseHurst,
+                    3,
+                    format!("Hurst {:.3}: stochastic white noise detected", h.exponent),
+                );
             } else if h.is_suspiciously_predictable() {
-                claim.push_anomaly(AnomalyType::PredictableHurst, 3, 
-                    format!("Hurst {:.3}: mechanical predictability detected", h.exponent));
+                claim.push_anomaly(
+                    AnomalyType::PredictableHurst,
+                    3,
+                    format!(
+                        "Hurst {:.3}: mechanical predictability detected",
+                        h.exponent
+                    ),
+                );
             }
         }
 
@@ -80,8 +89,11 @@ impl BiologyInvariantClaimExt for BiologyInvariantClaim {
         if let Some(pn) = pink_noise {
             claim.pink_noise = Some(pn.into());
             if !pn.is_biologically_plausible() {
-                claim.push_anomaly(AnomalyType::SpectralAnomaly, 2, 
-                    format!("Spectral slope {:.3} is non-biological", pn.spectral_slope));
+                claim.push_anomaly(
+                    AnomalyType::SpectralAnomaly,
+                    2,
+                    format!("Spectral slope {:.3} is non-biological", pn.spectral_slope),
+                );
             }
         }
 
@@ -89,15 +101,24 @@ impl BiologyInvariantClaimExt for BiologyInvariantClaim {
         if let Some(et) = error_topology {
             claim.error_topology = Some(et.into());
             if !et.is_valid {
-                claim.push_anomaly(AnomalyType::ErrorTopologyFail, 2, 
-                    format!("Error topology score {:.3} rejected", et.score));
+                claim.push_anomaly(
+                    AnomalyType::ErrorTopologyFail,
+                    2,
+                    format!("Error topology score {:.3} rejected", et.score),
+                );
             }
         }
 
         // 4. Global Robotic Detection (CV Analysis)
         if claim.measurements.coefficient_of_variation < ROBOTIC_CV_THRESHOLD {
-            claim.push_anomaly(AnomalyType::RoboticCadence, 3, 
-                format!("CV {:.3} indicates automated input", claim.measurements.coefficient_of_variation));
+            claim.push_anomaly(
+                AnomalyType::RoboticCadence,
+                3,
+                format!(
+                    "CV {:.3} indicates automated input",
+                    claim.measurements.coefficient_of_variation
+                ),
+            );
         }
 
         claim.compute_score();
@@ -140,7 +161,7 @@ impl From<&crate::analysis::active_probes::GaltonInvariantResult> for GaltonInva
 impl From<&crate::analysis::active_probes::ReflexGateResult> for ReflexGate {
     fn from(result: &crate::analysis::active_probes::ReflexGateResult) -> Self {
         let (m, s) = (result.mean_latency_ms, result.std_latency_ms);
-        
+
         // Elite: Map percentiles using precise Z-scores in a single pass
         let mut percentiles = [0.0; 5];
         for (i, z) in STANDARD_Z_SCORES.iter().enumerate() {

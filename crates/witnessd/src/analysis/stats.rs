@@ -21,11 +21,9 @@ impl fmt::Display for StatsError {
                 "Insufficient data points: found {}, minimum {} required",
                 found, required
             ),
-            Self::LengthMismatch { x_len, y_len } => write!(
-                f,
-                "Data length mismatch: X has {}, Y has {}",
-                x_len, y_len
-            ),
+            Self::LengthMismatch { x_len, y_len } => {
+                write!(f, "Data length mismatch: X has {}, Y has {}", x_len, y_len)
+            }
             Self::NoVariance => write!(f, "No variance in independent variable (X data)"),
             Self::DegenerateRegression => write!(f, "Degenerate regression: slope is NaN/Inf"),
         }
@@ -164,7 +162,10 @@ pub fn relative_similarity(a: f64, b: f64) -> f64 {
 pub fn linear_regression(x: &[f64], y: &[f64]) -> Result<(f64, f64, f64, f64), StatsError> {
     let n = x.len();
     if n < 2 {
-        return Err(StatsError::InsufficientData { found: n, required: 2 });
+        return Err(StatsError::InsufficientData {
+            found: n,
+            required: 2,
+        });
     }
     if n != y.len() {
         return Err(StatsError::LengthMismatch {
@@ -234,7 +235,7 @@ mod tests {
         let x = vec![1.0, 2.0, 3.0, 4.0, 5.0];
         let y = vec![2.0, 4.0, 6.0, 8.0, 10.0];
         let (slope, intercept, r_squared, _) = linear_regression(&x, &y).unwrap();
-        
+
         assert!((slope - 2.0).abs() < 1e-6);
         assert!(intercept.abs() < 1e-6);
         assert!((r_squared - 1.0).abs() < 1e-6);

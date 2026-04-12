@@ -16,16 +16,26 @@ impl Declaration {
     pub fn verify(&self) -> Result<(), String> {
         let pk_len = self.author_public_key.len();
         if pk_len != 32 {
-            return Err(format!("invalid public key length: expected 32, got {pk_len}"));
+            return Err(format!(
+                "invalid public key length: expected 32, got {pk_len}"
+            ));
         }
         let sig_len = self.signature.len();
         if sig_len != 64 {
-            return Err(format!("invalid signature length: expected 64, got {sig_len}"));
+            return Err(format!(
+                "invalid signature length: expected 64, got {sig_len}"
+            ));
         }
 
-        let pubkey_bytes: [u8; 32] = self.author_public_key.as_slice().try_into()
+        let pubkey_bytes: [u8; 32] = self
+            .author_public_key
+            .as_slice()
+            .try_into()
             .map_err(|_| format!("invalid public key length: expected 32, got {pk_len}"))?;
-        let sig_bytes: [u8; 64] = self.signature.as_slice().try_into()
+        let sig_bytes: [u8; 64] = self
+            .signature
+            .as_slice()
+            .try_into()
             .map_err(|_| format!("invalid signature length: expected 64, got {sig_len}"))?;
 
         let verifying_key = VerifyingKey::from_bytes(&pubkey_bytes)

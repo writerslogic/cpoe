@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::utils::stats::lerp_score;
 
-use super::types::{CadenceMetrics, PrimaryMetrics, SortedEvents};
 #[cfg(test)]
 use super::types::EventData;
+use super::types::{CadenceMetrics, PrimaryMetrics, SortedEvents};
 
 /// Minimum events for writing mode classification.
 pub const MIN_EVENTS_FOR_MODE: usize = 20;
@@ -342,7 +342,6 @@ pub fn analyze_revision_patterns(sorted: SortedEvents<'_>) -> RevisionPattern {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -416,8 +415,12 @@ mod tests {
             deletion_clustering: 0.5,
         };
 
-        let result =
-            classify_writing_mode(&primary, &cognitive_cadence(), SortedEvents::new(&events), events.len());
+        let result = classify_writing_mode(
+            &primary,
+            &cognitive_cadence(),
+            SortedEvents::new(&events),
+            events.len(),
+        );
         assert_eq!(result.mode, WritingMode::Cognitive);
         assert!(result.cognitive_score >= COGNITIVE_THRESHOLD);
         assert!(result.confidence > 0.0);
@@ -437,8 +440,12 @@ mod tests {
             deletion_clustering: 0.0,
         };
 
-        let result =
-            classify_writing_mode(&primary, &transcriptive_cadence(), SortedEvents::new(&events), events.len());
+        let result = classify_writing_mode(
+            &primary,
+            &transcriptive_cadence(),
+            SortedEvents::new(&events),
+            events.len(),
+        );
         assert_eq!(result.mode, WritingMode::Transcriptive);
         assert!(result.cognitive_score <= TRANSCRIPTIVE_THRESHOLD);
         assert!(result.revision_pattern.revision_cycle_count == 0);

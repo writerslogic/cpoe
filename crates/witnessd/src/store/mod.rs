@@ -80,4 +80,3 @@ pub fn open_store_with_signing_key(
     key_bytes.zeroize();
     SecureStore::open(db_path, hmac_key)
 }
-

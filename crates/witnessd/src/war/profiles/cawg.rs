@@ -537,8 +537,7 @@ mod tests {
     fn test_cawg_identity_verify_rejects_unsigned() {
         let ear = make_ear();
         let sk = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
-        let assertion =
-            to_cawg_identity(&ear, "did:key:z6MkNoSig").expect("identity assertion");
+        let assertion = to_cawg_identity(&ear, "did:key:z6MkNoSig").expect("identity assertion");
         assert!(assertion.verify(&sk.verifying_key()).is_err());
     }
 }

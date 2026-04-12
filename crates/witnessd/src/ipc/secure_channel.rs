@@ -194,7 +194,9 @@ impl<T: serde::de::DeserializeOwned> SecureReceiver<T> {
             .cipher
             .decrypt(nonce, msg.ciphertext.as_ref())
             .map_err(|_| {
-                log::warn!("secure channel: AEAD decryption failed (possible tampering or key mismatch)");
+                log::warn!(
+                    "secure channel: AEAD decryption failed (possible tampering or key mismatch)"
+                );
                 SecureChannelRecvError::Decryption
             })?;
 

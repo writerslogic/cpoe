@@ -168,8 +168,10 @@ impl Sentinel {
         };
 
         let writersproof_client = Arc::new(
-            crate::writersproof::WritersProofClient::new(crate::writersproof::client::DEFAULT_API_URL)
-                .map_err(|e| SentinelError::Anyhow(anyhow::anyhow!(e)))?,
+            crate::writersproof::WritersProofClient::new(
+                crate::writersproof::client::DEFAULT_API_URL,
+            )
+            .map_err(|e| SentinelError::Anyhow(anyhow::anyhow!(e)))?,
         );
 
         let sentinel = Self {
@@ -357,7 +359,11 @@ impl Sentinel {
     /// The `running` flag is set **after** all subsystems have initialized successfully
     /// so that `is_running()` only returns `true` when the sentinel is fully operational.
     pub async fn start(&self) -> Result<()> {
-        if self.running.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+        if self
+            .running
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
             return Err(SentinelError::AlreadyRunning);
         }
 

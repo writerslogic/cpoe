@@ -188,10 +188,14 @@ pub(crate) fn cmd_stop() -> Result<()> {
                     .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
                     .unwrap_or_default();
                 if let Some(ref exp) = expected {
-                    if !actual.is_empty() && !actual.contains(exp.as_str()) && !exp.contains(actual.as_str()) {
+                    if !actual.is_empty()
+                        && !actual.contains(exp.as_str())
+                        && !exp.contains(actual.as_str())
+                    {
                         return Err(anyhow!(
                             "PID {} belongs to '{}', not the daemon; refusing to send SIGTERM.",
-                            pid, actual
+                            pid,
+                            actual
                         ));
                     }
                 }

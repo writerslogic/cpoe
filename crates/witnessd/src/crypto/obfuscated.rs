@@ -11,7 +11,8 @@ static NONCE: AtomicU64 = AtomicU64::new(0);
 fn get_mask(n: u64) -> u64 {
     n ^ *SECRET.get_or_init(|| {
         let mut b = [0u8; 8];
-        getrandom::getrandom(&mut b).expect("getrandom failed; cannot initialize obfuscation secret");
+        getrandom::getrandom(&mut b)
+            .expect("getrandom failed; cannot initialize obfuscation secret");
         u64::from_ne_bytes(b)
     })
 }

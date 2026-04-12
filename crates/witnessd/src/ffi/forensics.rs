@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
-
 use crate::ffi::types::{FfiCalibrationResult, FfiProcessScore};
 use crate::vdf::Parameters;
 use std::sync::Mutex;

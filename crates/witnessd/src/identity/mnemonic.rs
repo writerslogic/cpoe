@@ -6,8 +6,8 @@ use bip39::{Language, Mnemonic};
 use hkdf::Hkdf;
 use rand::Rng;
 use sha2::{Digest, Sha256};
-use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 use std::fmt;
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 /// 64-byte seed derived from a mnemonic and silicon PUF, zeroized on drop.
 #[derive(Zeroize, ZeroizeOnDrop)]
@@ -15,9 +15,7 @@ pub struct SensitiveSeed([u8; 64]);
 
 impl fmt::Debug for SensitiveSeed {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("SensitiveSeed")
-            .field(&"[REDACTED]")
-            .finish()
+        f.debug_tuple("SensitiveSeed").field(&"[REDACTED]").finish()
     }
 }
 

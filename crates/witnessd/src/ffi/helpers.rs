@@ -141,8 +141,7 @@ pub(crate) fn load_api_key() -> Result<Zeroizing<String>, String> {
 pub(crate) fn load_events_for_path(
     path: &str,
 ) -> Result<(String, SecureStore, Vec<crate::store::SecureEvent>), String> {
-    let validated = crate::sentinel::helpers::validate_path(path)
-        .map_err(|e| e.to_string())?;
+    let validated = crate::sentinel::helpers::validate_path(path).map_err(|e| e.to_string())?;
     let canonical = validated.to_string_lossy().to_string();
     let store = open_store()?;
     let events = store

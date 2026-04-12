@@ -26,7 +26,10 @@ impl fmt::Display for IkiCompressionError {
                 "Insufficient IKI samples: found {}, minimum {} required",
                 found, required
             ),
-            Self::InvalidInputExceedsBounds => write!(f, "IKI values exceed 10^12 ns (>1000s); likely invalid input"),
+            Self::InvalidInputExceedsBounds => write!(
+                f,
+                "IKI values exceed 10^12 ns (>1000s); likely invalid input"
+            ),
             Self::NonFiniteValues => write!(f, "Input contains non-finite values"),
             Self::EmptyByteStream => write!(f, "No valid positive intervals to compress"),
         }
@@ -71,7 +74,9 @@ fn iki_ns_to_u16_ms(iki_ns: f64) -> Result<u16, IkiCompressionError> {
 ///
 /// Quantizes IKI intervals to millisecond precision and computes normalized
 /// Shannon entropy on the fly with zero heap allocations.
-pub fn analyze_iki_compression(iki_intervals_ns: &[f64]) -> Result<IkiCompressionAnalysis, IkiCompressionError> {
+pub fn analyze_iki_compression(
+    iki_intervals_ns: &[f64],
+) -> Result<IkiCompressionAnalysis, IkiCompressionError> {
     if iki_intervals_ns.iter().any(|&v| v > 1_000_000_000_000.0) {
         return Err(IkiCompressionError::InvalidInputExceedsBounds);
     }

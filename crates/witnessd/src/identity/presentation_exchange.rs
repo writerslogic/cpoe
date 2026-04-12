@@ -174,12 +174,18 @@ mod tests {
     fn test_presentation_exchange_different_tiers() {
         // bronze accepts all tiers
         let pd = cpop_attestation_request(60, "bronze");
-        let filter = pd.input_descriptors[1].constraints.fields[0].filter.as_ref().unwrap();
+        let filter = pd.input_descriptors[1].constraints.fields[0]
+            .filter
+            .as_ref()
+            .unwrap();
         assert_eq!(filter["enum"].as_array().unwrap().len(), 4);
 
         // gold accepts gold + platinum
         let pd = cpop_attestation_request(60, "gold");
-        let filter = pd.input_descriptors[1].constraints.fields[0].filter.as_ref().unwrap();
+        let filter = pd.input_descriptors[1].constraints.fields[0]
+            .filter
+            .as_ref()
+            .unwrap();
         let allowed = filter["enum"].as_array().unwrap();
         assert_eq!(allowed.len(), 2);
         assert!(allowed.iter().any(|v| v == "gold"));
@@ -187,7 +193,10 @@ mod tests {
 
         // platinum accepts only platinum
         let pd = cpop_attestation_request(60, "platinum");
-        let filter = pd.input_descriptors[1].constraints.fields[0].filter.as_ref().unwrap();
+        let filter = pd.input_descriptors[1].constraints.fields[0]
+            .filter
+            .as_ref()
+            .unwrap();
         assert_eq!(filter["enum"].as_array().unwrap().len(), 1);
     }
 }

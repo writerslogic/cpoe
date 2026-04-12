@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
-
-
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct FfiCheckpointDetail {

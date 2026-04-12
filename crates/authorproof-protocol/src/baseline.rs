@@ -140,10 +140,18 @@ impl BaselineDigest {
         if self.version != 1 {
             return Err(format!("unsupported baseline version: {}", self.version));
         }
-        self.iki_stats.validate().map_err(|e| format!("iki_stats: {e}"))?;
-        self.cv_stats.validate().map_err(|e| format!("cv_stats: {e}"))?;
-        self.hurst_stats.validate().map_err(|e| format!("hurst_stats: {e}"))?;
-        self.pause_stats.validate().map_err(|e| format!("pause_stats: {e}"))?;
+        self.iki_stats
+            .validate()
+            .map_err(|e| format!("iki_stats: {e}"))?;
+        self.cv_stats
+            .validate()
+            .map_err(|e| format!("cv_stats: {e}"))?;
+        self.hurst_stats
+            .validate()
+            .map_err(|e| format!("hurst_stats: {e}"))?;
+        self.pause_stats
+            .validate()
+            .map_err(|e| format!("pause_stats: {e}"))?;
         for (i, &v) in self.aggregate_iki_histogram.iter().enumerate() {
             if !v.is_finite() || v < 0.0 {
                 return Err(format!("aggregate_iki_histogram[{i}] invalid: {v}"));
@@ -327,7 +335,13 @@ mod tests {
     // -- StreamingStats validation tests --
 
     fn valid_stats() -> StreamingStats {
-        StreamingStats { count: 10, mean: 150.0, m2: 500.0, min: 80.0, max: 300.0 }
+        StreamingStats {
+            count: 10,
+            mean: 150.0,
+            m2: 500.0,
+            min: 80.0,
+            max: 300.0,
+        }
     }
 
     #[test]
@@ -358,13 +372,25 @@ mod tests {
 
     #[test]
     fn test_streaming_stats_min_gt_max() {
-        let s = StreamingStats { count: 5, mean: 0.0, m2: 0.0, min: 10.0, max: 1.0 };
+        let s = StreamingStats {
+            count: 5,
+            mean: 0.0,
+            m2: 0.0,
+            min: 10.0,
+            max: 1.0,
+        };
         assert!(s.validate().unwrap_err().contains("min"));
     }
 
     #[test]
     fn test_streaming_stats_min_gt_max_zero_count() {
-        let s = StreamingStats { count: 0, mean: 0.0, m2: 0.0, min: 10.0, max: 1.0 };
+        let s = StreamingStats {
+            count: 0,
+            mean: 0.0,
+            m2: 0.0,
+            min: 10.0,
+            max: 1.0,
+        };
         assert!(s.validate().is_ok(), "min > max allowed when count == 0");
     }
 
@@ -424,7 +450,10 @@ mod tests {
     fn test_baseline_digest_nan_aggregate_histogram() {
         let mut d = valid_digest();
         d.aggregate_iki_histogram[3] = f64::NAN;
-        assert!(d.validate().unwrap_err().contains("aggregate_iki_histogram"));
+        assert!(d
+            .validate()
+            .unwrap_err()
+            .contains("aggregate_iki_histogram"));
     }
 
     // -- SessionBehavioralSummary validation tests --

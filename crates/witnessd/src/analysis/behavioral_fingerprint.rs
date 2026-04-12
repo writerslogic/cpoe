@@ -70,7 +70,7 @@ impl BehavioralFingerprint {
             samples
         };
 
-        // Note: We collect the main intervals once because they are reused 
+        // Note: We collect the main intervals once because they are reused
         // heavily across multiple statistical passes.
         let intervals: Vec<f64> = samples
             .windows(2)
@@ -141,7 +141,7 @@ impl BehavioralFingerprint {
             .copied()
             .filter(|&i| i > BURST_SEPARATOR_MS)
             .fold((0.0, 0usize), |(sum, count), i| (sum + i, count + 1));
-            
+
         let sentence_pause_mean = if sentence_count > 0 {
             sentence_sum / sentence_count as f64
         } else {
@@ -154,7 +154,7 @@ impl BehavioralFingerprint {
             .copied()
             .filter(|&i| i > PARAGRAPH_PAUSE_MS)
             .fold((0.0, 0usize), |(sum, count), i| (sum + i, count + 1));
-            
+
         let paragraph_pause_mean = if para_count > 0 {
             para_sum / para_count as f64
         } else {
@@ -170,7 +170,7 @@ impl BehavioralFingerprint {
                 burst_int_count += 1;
             }
         }
-        
+
         let burst_speed_variance = if burst_int_count >= 2 {
             let burst_mean_val = burst_int_sum / burst_int_count as f64;
             let mut var_sum = 0.0;
@@ -180,7 +180,11 @@ impl BehavioralFingerprint {
                 }
             }
             let v = var_sum / (burst_int_count - 1) as f64;
-            if v.is_finite() { v } else { 0.0 }
+            if v.is_finite() {
+                v
+            } else {
+                0.0
+            }
         } else {
             0.0
         };

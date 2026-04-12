@@ -527,7 +527,9 @@ fn find_signed_data(data: &[u8]) -> Option<Tlv> {
         &outer
     };
     let explicit0 = find_child_by_tag(data, content_info, 0xA0)?;
-    children_of(data, &explicit0).into_iter().find(|c| c.tag == 0x30)
+    children_of(data, &explicit0)
+        .into_iter()
+        .find(|c| c.tag == 0x30)
 }
 
 /// All Certificate SEQUENCE TLVs from SignedData.certificates [0] IMPLICIT.
@@ -552,7 +554,9 @@ fn extract_certs(data: &[u8], signed_data: &Tlv) -> Vec<Tlv> {
 ///
 /// Path: Certificate → TBSCertificate → subjectPublicKeyInfo
 fn extract_spki(data: &[u8], cert: &Tlv) -> Option<Tlv> {
-    let tbs = children_of(data, cert).into_iter().find(|c| c.tag == 0x30)?;
+    let tbs = children_of(data, cert)
+        .into_iter()
+        .find(|c| c.tag == 0x30)?;
     // subjectPublicKeyInfo is a SEQUENCE { SEQUENCE(AlgId), BIT STRING }
     for child in children_of(data, &tbs) {
         if child.tag == 0x30 {
@@ -630,7 +634,7 @@ fn encode_der_length(out: &mut Vec<u8>, len: usize) {
 }
 
 fn verify_rsa_pkcs1v15_sha256(spki_der: &[u8], message: &[u8], sig_bytes: &[u8]) -> bool {
-    use rsa::{pkcs8::DecodePublicKey, pkcs1v15::VerifyingKey, signature::Verifier};
+    use rsa::{pkcs1v15::VerifyingKey, pkcs8::DecodePublicKey, signature::Verifier};
     let pub_key = match rsa::RsaPublicKey::from_public_key_der(spki_der) {
         Ok(k) => k,
         Err(_) => return false,
@@ -694,7 +698,9 @@ fn verify_cms_signature(token: &[u8], tst_info: &[u8]) -> Result<bool, AnchorErr
         ));
     }
 
-    Err(AnchorError::InvalidFormat("No parseable SignerInfo found".into()))
+    Err(AnchorError::InvalidFormat(
+        "No parseable SignerInfo found".into(),
+    ))
 }
 
 struct TimestampInfo {

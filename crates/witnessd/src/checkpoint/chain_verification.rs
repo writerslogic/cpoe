@@ -305,16 +305,13 @@ impl Chain {
             if let Some(proof_bytes) = &checkpoint.mmr_inclusion_proof {
                 match crate::mmr::InclusionProof::deserialize(proof_bytes) {
                     Err(_) => {
-                        report.fail(format!(
-                            "checkpoint {i}: malformed mmr_inclusion_proof"
-                        ));
+                        report.fail(format!("checkpoint {i}: malformed mmr_inclusion_proof"));
                         return report;
                     }
                     Ok(proof) => {
                         if let Err(e) = proof.verify(&checkpoint.hash) {
-                            report.fail(format!(
-                                "checkpoint {i}: MMR inclusion proof invalid: {e}"
-                            ));
+                            report
+                                .fail(format!("checkpoint {i}: MMR inclusion proof invalid: {e}"));
                             return report;
                         }
                         if let Some(next_cp) = self.checkpoints.get(i + 1) {

@@ -9,7 +9,11 @@ const MAX_EVIDENCE_FILE_SIZE: u64 = 64 * 1024 * 1024;
 fn read_bounded(path: &str) -> Result<Vec<u8>, String> {
     let meta = std::fs::metadata(path).map_err(|e| format!("Failed to stat file: {e}"))?;
     if meta.len() > MAX_EVIDENCE_FILE_SIZE {
-        return Err(format!("File too large ({} bytes, max {})", meta.len(), MAX_EVIDENCE_FILE_SIZE));
+        return Err(format!(
+            "File too large ({} bytes, max {})",
+            meta.len(),
+            MAX_EVIDENCE_FILE_SIZE
+        ));
     }
     std::fs::read(path).map_err(|e| format!("Failed to read file: {e}"))
 }
@@ -135,8 +139,9 @@ pub fn ffi_submit_beacon(document_path: String, timeout_secs: u64) -> FfiBeaconR
     }
     let effective_timeout = timeout_secs.clamp(5, 120);
 
-    let client = match crate::writersproof::WritersProofClient::new(crate::writersproof::client::DEFAULT_API_URL)
-    {
+    let client = match crate::writersproof::WritersProofClient::new(
+        crate::writersproof::client::DEFAULT_API_URL,
+    ) {
         Ok(c) => c.with_jwt(api_key),
         Err(e) => return err_beacon(format!("Failed to create API client: {e}")),
     };

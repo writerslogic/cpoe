@@ -110,8 +110,7 @@ pub fn open_secure_store() -> Result<SecureStore> {
     let db_path = dir.join("events.db");
 
     if let Ok(Some(hmac_key)) = witnessd::identity::SecureStorage::load_hmac_key() {
-        return SecureStore::open(&db_path, hmac_key)
-            .map_err(|e| anyhow!("Database error: {}", e));
+        return SecureStore::open(&db_path, hmac_key).map_err(|e| anyhow!("Database error: {}", e));
     }
 
     let signing_key = load_signing_key(&dir)?;

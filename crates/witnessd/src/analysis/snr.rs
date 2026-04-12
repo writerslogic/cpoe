@@ -84,7 +84,8 @@ pub fn analyze_snr(iki_intervals_ns: &[f64]) -> Result<SnrAnalysis, SnrError> {
             required: MIN_SAMPLES,
         });
     }
-    crate::utils::require_all_finite(iki_intervals_ns, "snr").map_err(|_| SnrError::NonFiniteValues)?;
+    crate::utils::require_all_finite(iki_intervals_ns, "snr")
+        .map_err(|_| SnrError::NonFiniteValues)?;
 
     // 50% overlapping windows (step = WINDOW_SIZE/2). Overlap inflates the
     // reported SNR by approximately 3 dB compared to non-overlapping windows

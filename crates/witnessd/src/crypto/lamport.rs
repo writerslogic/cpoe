@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 use sha2::{Digest, Sha256};
+use std::fmt;
 use subtle::{Choice, ConstantTimeEq};
 use zeroize::Zeroizing;
-use std::fmt;
 
 const N: usize = 256;
 const H_SZ: usize = 32;

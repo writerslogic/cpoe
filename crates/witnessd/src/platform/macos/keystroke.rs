@@ -479,8 +479,10 @@ impl KeystrokeCapture for MacOSKeystrokeCapture {
             return Err(anyhow!("Keystroke capture already running"));
         }
 
-        let (tx, rx): (mpsc::SyncSender<KeystrokeEvent>, mpsc::Receiver<KeystrokeEvent>) =
-            mpsc::sync_channel(KEYSTROKE_CHANNEL_CAPACITY);
+        let (tx, rx): (
+            mpsc::SyncSender<KeystrokeEvent>,
+            mpsc::Receiver<KeystrokeEvent>,
+        ) = mpsc::sync_channel(KEYSTROKE_CHANNEL_CAPACITY);
         self.sender = Some(tx.clone());
 
         let running = Arc::clone(&self.running);
@@ -642,6 +644,7 @@ impl std::fmt::Debug for KeystrokeMonitor {
 
 impl std::fmt::Debug for MacOSKeystrokeCapture {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MacOSKeystrokeCapture").finish_non_exhaustive()
+        f.debug_struct("MacOSKeystrokeCapture")
+            .finish_non_exhaustive()
     }
 }

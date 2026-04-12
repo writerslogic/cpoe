@@ -106,9 +106,7 @@ impl TryFrom<&Packet> for rfc::PacketRfc {
             ));
         }
         let content_hash_root = hex::decode(&packet.document.final_hash).map_err(|e| {
-            RfcConversionError::InvalidValue(format!(
-                "document.final_hash hex decode failed: {e}"
-            ))
+            RfcConversionError::InvalidValue(format!("document.final_hash hex decode failed: {e}"))
         })?;
 
         let content_hash_tree = rfc::ContentHashTree {

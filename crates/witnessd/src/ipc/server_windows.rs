@@ -163,7 +163,7 @@ fn get_token_user_sid(token: windows::Win32::Foundation::HANDLE) -> Result<Strin
 
     // Ensure LocalFree runs even if to_string() panics on malformed UTF-16.
     let _sid_guard = LocalAllocGuard(windows::Win32::Foundation::HLOCAL(
-        sid_string.as_ptr() as *mut _,
+        sid_string.as_ptr() as *mut _
     ));
 
     sid_string

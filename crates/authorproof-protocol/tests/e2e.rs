@@ -14,7 +14,9 @@ use authorproof_protocol::codec::{
 use authorproof_protocol::compact_ref::{CompactEvidenceRef, CompactRefError, CompactSummary};
 use authorproof_protocol::crypto::hash_sha256;
 use authorproof_protocol::evidence::{Builder, Verifier};
-use authorproof_protocol::rfc::{Checkpoint, DocumentRef, EvidencePacket, HashAlgorithm, HashValue};
+use authorproof_protocol::rfc::{
+    Checkpoint, DocumentRef, EvidencePacket, HashAlgorithm, HashValue,
+};
 use authorproof_protocol::war::types::{Block, Seal, Version};
 use ed25519_dalek::SigningKey;
 use rand::RngCore;

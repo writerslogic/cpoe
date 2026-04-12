@@ -762,7 +762,11 @@ impl JitterBinding {
             if labyrinth.attractor_points.len() > MAX_ATTRACTOR_POINTS {
                 findings.push(ValidationFinding::error(
                     "labyrinth.attractor_points",
-                    format!("count {} exceeds maximum {}", labyrinth.attractor_points.len(), MAX_ATTRACTOR_POINTS),
+                    format!(
+                        "count {} exceeds maximum {}",
+                        labyrinth.attractor_points.len(),
+                        MAX_ATTRACTOR_POINTS
+                    ),
                 ));
             }
             let expected_dim = labyrinth.embedding_dimension as usize;
@@ -770,7 +774,11 @@ impl JitterBinding {
                 if ap.len() != expected_dim {
                     findings.push(ValidationFinding::error(
                         "labyrinth.attractor_points",
-                        format!("row {i} has length {} but embedding_dimension is {}", ap.len(), expected_dim),
+                        format!(
+                            "row {i} has length {} but embedding_dimension is {}",
+                            ap.len(),
+                            expected_dim
+                        ),
                     ));
                     break;
                 }

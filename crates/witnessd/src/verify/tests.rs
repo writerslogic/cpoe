@@ -163,7 +163,7 @@ fn test_verdict_invalid_declaration_caps_to_v2() {
         forgery_analysis: None,
         velocity: Default::default(),
         session_stats: Default::default(),
-        assessment_score: crate::utils::Probability::clamp(0.95),  // > 0.9, triggers V1 in low-risk case
+        assessment_score: crate::utils::Probability::clamp(0.95), // > 0.9, triggers V1 in low-risk case
         perplexity_score: 0.0,
         steg_confidence: crate::utils::Probability::ZERO,
         anomaly_count: 0,
@@ -186,16 +186,16 @@ fn test_verdict_invalid_declaration_caps_to_v2() {
     };
 
     let v = verdict::compute_verdict(
-        true,                          // structural
-        Some(true),                    // signature valid
-        false,                         // declaration_valid = false (the cap)
+        true,       // structural
+        Some(true), // signature valid
+        false,      // declaration_valid = false (the cap)
         &SealVerification {
             jitter_tag_present: Some(true),
             entangled_binding_valid: Some(true),
             checkpoints_checked: 2,
         },
         &DurationCheck {
-            computed_min_seconds: 60.0,  // VDF data present
+            computed_min_seconds: 60.0, // VDF data present
             claimed_seconds: 60.0,
             ratio: 1.0,
             plausible: true,
@@ -211,8 +211,11 @@ fn test_verdict_invalid_declaration_caps_to_v2() {
 
     // Despite forensics returning V1VerifiedHuman, invalid declaration
     // should cap the result to V2LikelyHuman
-    assert_eq!(v, ForensicVerdict::V2LikelyHuman,
-               "Invalid declaration should cap V1 verdict to V2");
+    assert_eq!(
+        v,
+        ForensicVerdict::V2LikelyHuman,
+        "Invalid declaration should cap V1 verdict to V2"
+    );
 }
 
 #[test]
@@ -221,16 +224,16 @@ fn test_verdict_invalid_declaration_prevents_final_v1() {
     // (lines 105-112) when declaration_valid = false and forensics is None.
     // This directly tests the final if-block's !capped condition.
     let v = verdict::compute_verdict(
-        true,                          // structural
-        Some(true),                    // signature valid
-        false,                         // declaration_valid = false (capped = true)
+        true,       // structural
+        Some(true), // signature valid
+        false,      // declaration_valid = false (capped = true)
         &SealVerification {
             jitter_tag_present: Some(true),
-            entangled_binding_valid: Some(true),  // seals_structural_only = false
+            entangled_binding_valid: Some(true), // seals_structural_only = false
             checkpoints_checked: 2,
         },
         &DurationCheck {
-            computed_min_seconds: 60.0,  // no_vdf = false (VDF data present)
+            computed_min_seconds: 60.0, // no_vdf = false (VDF data present)
             claimed_seconds: 60.0,
             ratio: 1.0,
             plausible: true,
@@ -240,14 +243,17 @@ fn test_verdict_invalid_declaration_prevents_final_v1() {
             signing_key_consistent: true,
             ratchet_monotonic: true,
         },
-        None,  // No forensics: forces path through final branch (line 105)
+        None, // No forensics: forces path through final branch (line 105)
         None,
     );
 
     // The final branch checks (!no_vdf && !capped && ... signature == Some(true) ...)
     // With capped = true, V1VerifiedHuman is unreachable; must fall through to V2LikelyHuman
-    assert_eq!(v, ForensicVerdict::V2LikelyHuman,
-               "Invalid declaration (capped) must prevent V1 in final branch");
+    assert_eq!(
+        v,
+        ForensicVerdict::V2LikelyHuman,
+        "Invalid declaration (capped) must prevent V1 in final branch"
+    );
 }
 
 #[test]
@@ -286,14 +292,14 @@ fn test_verdict_overlapping_caps_both_apply() {
     let v = verdict::compute_verdict(
         true,
         Some(true),
-        false,  // declaration_valid = false → capped = true
+        false, // declaration_valid = false → capped = true
         &SealVerification {
             jitter_tag_present: Some(true),
             entangled_binding_valid: Some(true),
             checkpoints_checked: 2,
         },
         &DurationCheck {
-            computed_min_seconds: 0.0,  // no_vdf = true
+            computed_min_seconds: 0.0, // no_vdf = true
             claimed_seconds: 0.0,
             ratio: 1.0,
             plausible: true,
@@ -307,6 +313,9 @@ fn test_verdict_overlapping_caps_both_apply() {
         None,
     );
 
-    assert_eq!(v, ForensicVerdict::V2LikelyHuman,
-               "Both caps applied simultaneously must still produce V2LikelyHuman");
+    assert_eq!(
+        v,
+        ForensicVerdict::V2LikelyHuman,
+        "Both caps applied simultaneously must still produce V2LikelyHuman"
+    );
 }

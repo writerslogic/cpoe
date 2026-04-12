@@ -105,7 +105,9 @@ impl<'a> SortedEvents<'a> {
     /// Wrap a pre-sorted slice. Debug-asserts the sort invariant.
     pub fn new(events: &'a [EventData]) -> Self {
         debug_assert!(
-            events.windows(2).all(|w| w[0].timestamp_ns <= w[1].timestamp_ns),
+            events
+                .windows(2)
+                .all(|w| w[0].timestamp_ns <= w[1].timestamp_ns),
             "SortedEvents::new requires pre-sorted events"
         );
         Self(events)

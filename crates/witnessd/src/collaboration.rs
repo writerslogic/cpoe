@@ -375,8 +375,8 @@ impl Collaborator {
     /// Verify the attestation signature against the embedded public key.
     /// Both `public_key` and `attestation_signature` must be hex-encoded.
     pub fn verify_attestation(&self) -> Result<(), String> {
-        let pub_bytes = hex::decode(&self.public_key)
-            .map_err(|e| format!("invalid public key hex: {e}"))?;
+        let pub_bytes =
+            hex::decode(&self.public_key).map_err(|e| format!("invalid public key hex: {e}"))?;
         let vk = ed25519_dalek::VerifyingKey::from_bytes(
             pub_bytes
                 .as_slice()

@@ -6,8 +6,8 @@ use chrono::DateTime;
 use std::collections::HashMap;
 
 use super::types::{
-    Anomaly, AnomalyType, Assessment, CadenceMetrics, FocusMetrics, PrimaryMetrics,
-    RegionData, RiskLevel, Severity, SortedEvents, ALERT_THRESHOLD, MIN_EVENTS_FOR_ANALYSIS,
+    Anomaly, AnomalyType, Assessment, CadenceMetrics, FocusMetrics, PrimaryMetrics, RegionData,
+    RiskLevel, Severity, SortedEvents, ALERT_THRESHOLD, MIN_EVENTS_FOR_ANALYSIS,
     MIN_EVENTS_FOR_ASSESSMENT, THRESHOLD_GAP_HOURS, THRESHOLD_HIGH_VELOCITY_BPS,
     THRESHOLD_LOW_ENTROPY, THRESHOLD_MONOTONIC_APPEND,
 };

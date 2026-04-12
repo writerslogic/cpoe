@@ -113,13 +113,37 @@ pub type Result<T> = std::result::Result<T, Error>;
 impl Error {
     pub fn category(&self) -> ErrorCategory {
         match self {
-            Error::Io(_) | Error::Timeout(_) | Error::Ipc(_) | Error::Sentinel(_) | Error::Wal(_) | Error::Platform(_) => ErrorCategory::System,
+            Error::Io(_)
+            | Error::Timeout(_)
+            | Error::Ipc(_)
+            | Error::Sentinel(_)
+            | Error::Wal(_)
+            | Error::Platform(_) => ErrorCategory::System,
             #[cfg(unix)]
             Error::IpcUnix(_) => ErrorCategory::System,
-            Error::Crypto(_) | Error::Signature(_) | Error::HashMismatch { .. } | Error::Tpm(_) | Error::KeyHierarchy(_) => ErrorCategory::Security,
-            Error::Validation(_) | Error::Config(_) | Error::NotFound(_) | Error::InvalidState(_) | Error::Internal(_) | Error::Identity(_) | Error::Legacy(_) => ErrorCategory::Logic,
-            Error::Codec(_) | Error::CompactRef(_) | Error::Rfc(_) | Error::Anchor(_) | Error::Mmr(_) => ErrorCategory::Protocol,
-            Error::VdfAggregate(_) | Error::Forensics(_) | Error::Checkpoint(_) | Error::Evidence(_) | Error::Vdf(_) | Error::Physics(_) => ErrorCategory::Analysis,
+            Error::Crypto(_)
+            | Error::Signature(_)
+            | Error::HashMismatch { .. }
+            | Error::Tpm(_)
+            | Error::KeyHierarchy(_) => ErrorCategory::Security,
+            Error::Validation(_)
+            | Error::Config(_)
+            | Error::NotFound(_)
+            | Error::InvalidState(_)
+            | Error::Internal(_)
+            | Error::Identity(_)
+            | Error::Legacy(_) => ErrorCategory::Logic,
+            Error::Codec(_)
+            | Error::CompactRef(_)
+            | Error::Rfc(_)
+            | Error::Anchor(_)
+            | Error::Mmr(_) => ErrorCategory::Protocol,
+            Error::VdfAggregate(_)
+            | Error::Forensics(_)
+            | Error::Checkpoint(_)
+            | Error::Evidence(_)
+            | Error::Vdf(_)
+            | Error::Physics(_) => ErrorCategory::Analysis,
         }
     }
 
@@ -146,22 +170,54 @@ impl Error {
         )
     }
 
-    pub fn checkpoint(m: impl Into<String>) -> Self { Error::Checkpoint(m.into()) }
-    pub fn evidence(m: impl Into<String>) -> Self { Error::Evidence(m.into()) }
-    pub fn vdf(m: impl Into<String>) -> Self { Error::Vdf(m.into()) }
-    pub fn validation(m: impl Into<String>) -> Self { Error::Validation(m.into()) }
-    pub fn crypto(m: impl Into<String>) -> Self { Error::Crypto(m.into()) }
-    pub fn config(m: impl Into<String>) -> Self { Error::Config(m.into()) }
-    pub fn not_found(m: impl Into<String>) -> Self { Error::NotFound(m.into()) }
-    pub fn invalid_state(m: impl Into<String>) -> Self { Error::InvalidState(m.into()) }
-    pub fn platform(m: impl Into<String>) -> Self { Error::Platform(m.into()) }
-    pub fn identity(m: impl Into<String>) -> Self { Error::Identity(m.into()) }
-    pub fn physics(m: impl Into<String>) -> Self { Error::Physics(m.into()) }
-    pub fn rfc(m: impl Into<String>) -> Self { Error::Rfc(m.into()) }
-    pub fn signature(m: impl Into<String>) -> Self { Error::Signature(m.into()) }
-    pub fn internal(m: impl Into<String>) -> Self { Error::Internal(m.into()) }
-    pub fn ipc(m: impl Into<String>) -> Self { Error::Ipc(m.into()) }
-    pub fn io(m: impl Into<String>) -> Self { Error::Io(std::io::Error::other(m.into())) }
+    pub fn checkpoint(m: impl Into<String>) -> Self {
+        Error::Checkpoint(m.into())
+    }
+    pub fn evidence(m: impl Into<String>) -> Self {
+        Error::Evidence(m.into())
+    }
+    pub fn vdf(m: impl Into<String>) -> Self {
+        Error::Vdf(m.into())
+    }
+    pub fn validation(m: impl Into<String>) -> Self {
+        Error::Validation(m.into())
+    }
+    pub fn crypto(m: impl Into<String>) -> Self {
+        Error::Crypto(m.into())
+    }
+    pub fn config(m: impl Into<String>) -> Self {
+        Error::Config(m.into())
+    }
+    pub fn not_found(m: impl Into<String>) -> Self {
+        Error::NotFound(m.into())
+    }
+    pub fn invalid_state(m: impl Into<String>) -> Self {
+        Error::InvalidState(m.into())
+    }
+    pub fn platform(m: impl Into<String>) -> Self {
+        Error::Platform(m.into())
+    }
+    pub fn identity(m: impl Into<String>) -> Self {
+        Error::Identity(m.into())
+    }
+    pub fn physics(m: impl Into<String>) -> Self {
+        Error::Physics(m.into())
+    }
+    pub fn rfc(m: impl Into<String>) -> Self {
+        Error::Rfc(m.into())
+    }
+    pub fn signature(m: impl Into<String>) -> Self {
+        Error::Signature(m.into())
+    }
+    pub fn internal(m: impl Into<String>) -> Self {
+        Error::Internal(m.into())
+    }
+    pub fn ipc(m: impl Into<String>) -> Self {
+        Error::Ipc(m.into())
+    }
+    pub fn io(m: impl Into<String>) -> Self {
+        Error::Io(std::io::Error::other(m.into()))
+    }
 
     /// Specialized constructor for hex-formatted hash mismatches.
     pub fn hash_mismatch(expected: &[u8], actual: &[u8]) -> Self {

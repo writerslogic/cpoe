@@ -426,7 +426,12 @@ fn validate_did_host(did: &str) -> Result<(), Error> {
     let host_lower = host.to_lowercase();
 
     // Reject bare IP addresses (v4 and v6).
-    if host_lower.trim_start_matches('[').trim_end_matches(']').parse::<std::net::IpAddr>().is_ok() {
+    if host_lower
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .parse::<std::net::IpAddr>()
+        .is_ok()
+    {
         return Err(Error::identity(format!(
             "did:webvh host is an IP address (SSRF risk): {host_lower}"
         )));

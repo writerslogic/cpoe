@@ -272,13 +272,11 @@ impl Verifier {
                     ));
                 }
                 Some(ref sig) => {
-                    let payload = verify_evidence_cose(sig, &self.verifying_key).map_err(
-                        |e| {
-                            Error::Validation(format!(
-                                "Baseline digest_signature COSE verification failed: {e}"
-                            ))
-                        },
-                    )?;
+                    let payload = verify_evidence_cose(sig, &self.verifying_key).map_err(|e| {
+                        Error::Validation(format!(
+                            "Baseline digest_signature COSE verification failed: {e}"
+                        ))
+                    })?;
                     let signed_digest: crate::baseline::BaselineDigest =
                         ciborium::from_reader(&payload[..]).map_err(|e| {
                             Error::Validation(format!(

@@ -20,7 +20,10 @@ pub struct DocumentStats {
 
 impl SecureStore {
     /// Load cumulative stats for a document, or None if never tracked.
-    pub fn load_document_stats(&self, file_path: impl AsRef<Path>) -> anyhow::Result<Option<DocumentStats>> {
+    pub fn load_document_stats(
+        &self,
+        file_path: impl AsRef<Path>,
+    ) -> anyhow::Result<Option<DocumentStats>> {
         let file_path = file_path.as_ref().to_string_lossy();
         let mut stmt = self.conn.prepare(
             "SELECT file_path, total_keystrokes, total_focus_ms, session_count,

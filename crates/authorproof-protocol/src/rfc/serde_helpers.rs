@@ -30,7 +30,11 @@ pub(crate) mod hex_bytes {
             }
             fn visit_str<E: de::Error>(self, v: &str) -> Result<[u8; N], E> {
                 if v.len() != N * 2 {
-                    return Err(E::custom(format!("expected {} hex chars, got {}", N * 2, v.len())));
+                    return Err(E::custom(format!(
+                        "expected {} hex chars, got {}",
+                        N * 2,
+                        v.len()
+                    )));
                 }
                 let mut arr = [0u8; N];
                 hex::decode_to_slice(v, &mut arr).map_err(E::custom)?;
@@ -121,7 +125,10 @@ pub(crate) mod hex_bytes_32_opt {
                     }
                     fn visit_str<E: de::Error>(self, v: &str) -> Result<[u8; 32], E> {
                         if v.len() != 64 {
-                            return Err(E::custom(format!("expected 64 hex chars, got {}", v.len())));
+                            return Err(E::custom(format!(
+                                "expected 64 hex chars, got {}",
+                                v.len()
+                            )));
                         }
                         let mut arr = [0u8; 32];
                         hex::decode_to_slice(v, &mut arr).map_err(E::custom)?;

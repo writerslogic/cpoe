@@ -391,9 +391,12 @@ impl SentinelIpcHandler {
                 .iter()
                 .map(|e| {
                     let delta = e.size_delta;
-                    let cursor =
-                        crate::utils::Probability::clamp((e.file_size as f64 - delta.abs() as f64) / max_size).get();
-                    let extent = crate::utils::Probability::clamp(delta.abs() as f64 / max_size).get();
+                    let cursor = crate::utils::Probability::clamp(
+                        (e.file_size as f64 - delta.abs() as f64) / max_size,
+                    )
+                    .get();
+                    let extent =
+                        crate::utils::Probability::clamp(delta.abs() as f64 / max_size).get();
                     crate::evidence::EditRegion {
                         start_pct: cursor,
                         end_pct: (cursor + extent).min(1.0),
@@ -481,12 +484,15 @@ impl SentinelIpcHandler {
 
         {
             use std::io::Write;
-            let parent = validated_output.parent().unwrap_or(std::path::Path::new("."));
+            let parent = validated_output
+                .parent()
+                .unwrap_or(std::path::Path::new("."));
             let mut tmp = tempfile::NamedTempFile::new_in(parent)
                 .map_err(|e| format!("Failed to create temp file: {e}"))?;
             tmp.write_all(&encoded)
                 .map_err(|e| format!("Failed to write temp file: {e}"))?;
-            tmp.as_file().sync_all()
+            tmp.as_file()
+                .sync_all()
                 .map_err(|e| format!("Failed to sync temp file: {e}"))?;
             tmp.persist(&validated_output)
                 .map_err(|e| format!("Failed to rename output: {e}"))?;

@@ -492,8 +492,10 @@ fn test_declaration_with_jitter_seal() {
 #[test]
 fn test_declaration_jitter_seal_in_signature() {
     let signing_key = test_signing_key();
-    let jitter1 = DeclarationJitter::from_samples(&[1000u32; 10], 1000, false).expect("from_samples");
-    let jitter2 = DeclarationJitter::from_samples(&[2000u32; 10], 1000, false).expect("from_samples");
+    let jitter1 =
+        DeclarationJitter::from_samples(&[1000u32; 10], 1000, false).expect("from_samples");
+    let jitter2 =
+        DeclarationJitter::from_samples(&[2000u32; 10], 1000, false).expect("from_samples");
 
     let decl1 = no_ai_declaration([1u8; 32], [2u8; 32], "Test", "Statement")
         .with_jitter_seal(jitter1)
@@ -511,7 +513,8 @@ fn test_declaration_jitter_seal_in_signature() {
 #[test]
 fn test_declaration_jitter_seal_tampering_detected() {
     let signing_key = test_signing_key();
-    let jitter = DeclarationJitter::from_samples(&[1000u32; 10], 1000, false).expect("from_samples");
+    let jitter =
+        DeclarationJitter::from_samples(&[1000u32; 10], 1000, false).expect("from_samples");
 
     let mut decl = no_ai_declaration([1u8; 32], [2u8; 32], "Test", "Statement")
         .with_jitter_seal(jitter)

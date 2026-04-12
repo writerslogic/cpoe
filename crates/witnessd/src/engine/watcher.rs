@@ -9,7 +9,6 @@ use crate::store::SecureEvent;
 use crate::utils::now_ns;
 use crate::MutexRecover;
 use anyhow::{anyhow, Result};
-use zeroize::Zeroizing;
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use rand::RngCore;
 use std::fs;
@@ -17,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::{mpsc, Arc};
 use std::time::Duration;
+use zeroize::Zeroizing;
 
 pub(super) fn start_file_watcher(inner: &Arc<EngineInner>, watch_dirs: Vec<PathBuf>) -> Result<()> {
     // Drop the old watcher first so the channel closes and the thread unblocks.

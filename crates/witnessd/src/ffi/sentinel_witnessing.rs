@@ -134,11 +134,7 @@ struct StoreMetrics {
     error: Option<String>,
 }
 
-fn query_store_metrics(
-    path: &str,
-    cadence_score: f64,
-    focus_penalty: f64,
-) -> StoreMetrics {
+fn query_store_metrics(path: &str, cadence_score: f64, focus_penalty: f64) -> StoreMetrics {
     const MIN_MEANINGFUL_SCORE: f64 = 0.01;
 
     let store = match crate::ffi::helpers::open_store() {
@@ -169,8 +165,7 @@ fn query_store_metrics(
 
     let count = events.len() as u64;
     let store_score = if events.len() >= 2 {
-        let profile =
-            crate::forensics::ForensicEngine::evaluate_authorship(path, &events);
+        let profile = crate::forensics::ForensicEngine::evaluate_authorship(path, &events);
         profile.metrics.edit_entropy / crate::ffi::helpers::ENTROPY_NORMALIZATION_FACTOR
     } else {
         0.0

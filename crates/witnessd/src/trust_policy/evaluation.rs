@@ -59,7 +59,11 @@ impl AppraisalPolicy {
                     .iter()
                     .map(|f| f.normalized_score)
                     .fold(f32::INFINITY, f32::min);
-                if min.is_finite() { min } else { 0.0 }
+                if min.is_finite() {
+                    min
+                } else {
+                    0.0
+                }
             }
             TrustComputation::GeometricMean => {
                 if self.factors.is_empty() {
@@ -92,7 +96,11 @@ impl AppraisalPolicy {
         for t in &self.thresholds {
             match t.threshold_type {
                 ThresholdType::MinimumFactor | ThresholdType::RequiredFactor => {
-                    if !self.factors.iter().any(|f| f.factor_name == t.threshold_name) {
+                    if !self
+                        .factors
+                        .iter()
+                        .any(|f| f.factor_name == t.threshold_name)
+                    {
                         return Err(Error::validation(format!(
                             "threshold '{}' references unknown factor name",
                             t.threshold_name
@@ -169,7 +177,8 @@ impl AppraisalPolicy {
             };
 
             factor.observed_value = observed;
-            factor.normalized_score = crate::utils::Probability::clamp(normalized as f64).get() as f32;
+            factor.normalized_score =
+                crate::utils::Probability::clamp(normalized as f64).get() as f32;
             factor.contribution = factor.weight * factor.normalized_score;
         }
 

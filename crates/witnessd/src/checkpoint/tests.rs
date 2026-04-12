@@ -1367,15 +1367,24 @@ fn test_mmr_anchored_chain_verifies() {
     let cp0 = chain
         .commit_with_vdf_duration(None, Duration::from_millis(10))
         .expect("commit 0");
-    assert!(cp0.mmr_root.is_some(), "genesis checkpoint should have mmr_root");
-    assert!(cp0.mmr_inclusion_proof.is_some(), "genesis checkpoint should have mmr_inclusion_proof");
+    assert!(
+        cp0.mmr_root.is_some(),
+        "genesis checkpoint should have mmr_root"
+    );
+    assert!(
+        cp0.mmr_inclusion_proof.is_some(),
+        "genesis checkpoint should have mmr_inclusion_proof"
+    );
 
     fs::write(&path, b"second version").expect("update file");
     let cp1 = chain
         .commit_with_vdf_duration(None, Duration::from_millis(10))
         .expect("commit 1");
     assert!(cp1.mmr_root.is_some(), "checkpoint 1 should have mmr_root");
-    assert!(cp1.mmr_inclusion_proof.is_some(), "checkpoint 1 should have mmr_inclusion_proof");
+    assert!(
+        cp1.mmr_inclusion_proof.is_some(),
+        "checkpoint 1 should have mmr_inclusion_proof"
+    );
 
     chain.verify().expect("MMR-anchored chain should verify");
     drop(dir);
@@ -1436,7 +1445,10 @@ fn test_mmr_tampered_root_rejected() {
     let report = chain.verify_detailed();
     assert!(!report.valid, "tampered mmr_root should fail verification");
     assert!(
-        report.errors.iter().any(|e| e.contains("rollback detected")),
+        report
+            .errors
+            .iter()
+            .any(|e| e.contains("rollback detected")),
         "expected rollback error, got: {:?}",
         report.errors
     );

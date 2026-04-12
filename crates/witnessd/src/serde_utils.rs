@@ -40,7 +40,11 @@ pub mod hex_array {
                 fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
                     let mut arr = [0u8; N];
                     if v.len() != N * 2 {
-                        return Err(E::custom(format!("expected {} hex chars, got {}", N * 2, v.len())));
+                        return Err(E::custom(format!(
+                            "expected {} hex chars, got {}",
+                            N * 2,
+                            v.len()
+                        )));
                     }
                     hex::decode_to_slice(v, &mut arr).map_err(E::custom)?;
                     Ok(arr)
@@ -55,12 +59,18 @@ pub mod hex_array {
                     write!(f, "{} bytes", N)
                 }
                 fn visit_bytes<E: de::Error>(self, v: &[u8]) -> Result<Self::Value, E> {
-                    v.try_into().map_err(|_| E::custom(format!("expected {} bytes, got {}", N, v.len())))
+                    v.try_into()
+                        .map_err(|_| E::custom(format!("expected {} bytes, got {}", N, v.len())))
                 }
-                fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                fn visit_seq<A: de::SeqAccess<'de>>(
+                    self,
+                    mut seq: A,
+                ) -> Result<Self::Value, A::Error> {
                     let mut arr = [0u8; N];
                     for (i, byte) in arr.iter_mut().enumerate() {
-                        *byte = seq.next_element()?.ok_or_else(|| de::Error::invalid_length(i, &self))?;
+                        *byte = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::invalid_length(i, &self))?;
                     }
                     Ok(arr)
                 }
@@ -77,7 +87,10 @@ pub mod hex_array {
 pub mod hex_array_opt {
     use super::*;
 
-    pub fn serialize<S, const N: usize>(opt: &Option<[u8; N]>, serializer: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S, const N: usize>(
+        opt: &Option<[u8; N]>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -110,7 +123,11 @@ pub mod hex_array_opt {
                         }
                         fn visit_str<E: de::Error>(self, v: &str) -> Result<[u8; N], E> {
                             if v.len() != N * 2 {
-                                return Err(E::custom(format!("expected {} hex chars, got {}", N * 2, v.len())));
+                                return Err(E::custom(format!(
+                                    "expected {} hex chars, got {}",
+                                    N * 2,
+                                    v.len()
+                                )));
                             }
                             let mut arr = [0u8; N];
                             hex::decode_to_slice(v, &mut arr).map_err(E::custom)?;
@@ -138,14 +155,20 @@ pub mod hex_array_opt {
 
 pub mod hex_vec {
     use super::*;
-    pub fn serialize<S>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
+    pub fn serialize<S>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
         if serializer.is_human_readable() {
             serializer.serialize_str(&hex::encode(bytes))
         } else {
             serializer.serialize_bytes(bytes)
         }
     }
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error> where D: Deserializer<'de> {
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
         if deserializer.is_human_readable() {
             struct HexVisitor;
             impl<'a> de::Visitor<'a> for HexVisitor {
@@ -165,17 +188,23 @@ pub mod hex_vec {
 }
 
 pub mod base64_vec {
-    use base64::{engine::general_purpose::STANDARD, Engine};
     use super::*;
+    use base64::{engine::general_purpose::STANDARD, Engine};
 
-    pub fn serialize<S>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
+    pub fn serialize<S>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
         if serializer.is_human_readable() {
             serializer.serialize_str(&STANDARD.encode(bytes))
         } else {
             serializer.serialize_bytes(bytes)
         }
     }
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error> where D: Deserializer<'de> {
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
         if deserializer.is_human_readable() {
             struct B64Visitor;
             impl<'a> de::Visitor<'a> for B64Visitor {
@@ -201,11 +230,15 @@ pub mod base64_vec {
 pub mod raw_array {
     use super::*;
     pub fn serialize<S, const N: usize>(bytes: &[u8; N], serializer: S) -> Result<S::Ok, S::Error>
-    where S: Serializer {
+    where
+        S: Serializer,
+    {
         serializer.serialize_bytes(bytes)
     }
     pub fn deserialize<'de, D, const N: usize>(deserializer: D) -> Result<[u8; N], D::Error>
-    where D: Deserializer<'de> {
+    where
+        D: Deserializer<'de>,
+    {
         struct BytesVisitor<const N: usize>;
         impl<'de, const N: usize> de::Visitor<'de> for BytesVisitor<N> {
             type Value = [u8; N];
@@ -213,12 +246,15 @@ pub mod raw_array {
                 write!(f, "{} bytes", N)
             }
             fn visit_bytes<E: de::Error>(self, v: &[u8]) -> Result<Self::Value, E> {
-                v.try_into().map_err(|_| E::custom(format!("expected {} bytes, got {}", N, v.len())))
+                v.try_into()
+                    .map_err(|_| E::custom(format!("expected {} bytes, got {}", N, v.len())))
             }
             fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
                 let mut arr = [0u8; N];
                 for (i, byte) in arr.iter_mut().enumerate() {
-                    *byte = seq.next_element()?.ok_or_else(|| de::Error::invalid_length(i, &self))?;
+                    *byte = seq
+                        .next_element()?
+                        .ok_or_else(|| de::Error::invalid_length(i, &self))?;
                 }
                 Ok(arr)
             }
