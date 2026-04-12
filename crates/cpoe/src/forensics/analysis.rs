@@ -443,7 +443,9 @@ pub fn per_checkpoint_flags(
             interval_events
                 .windows(2)
                 .map(|w| {
-                    let dt = w[1].timestamp_ns.saturating_sub(w[0].timestamp_ns) as f64 / 1e9;
+                    let dt = crate::utils::ns_to_secs(
+                        w[1].timestamp_ns.saturating_sub(w[0].timestamp_ns),
+                    );
                     if dt > 0.0 {
                         w[1].size_delta.unsigned_abs() as f64 / dt
                     } else {

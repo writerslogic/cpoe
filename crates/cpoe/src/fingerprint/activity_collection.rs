@@ -69,7 +69,7 @@ impl ActivityFingerprintAccumulator {
                         .filter_map(|(a, b)| {
                             b.timestamp_ns
                                 .checked_sub(a.timestamp_ns)
-                                .map(|d| d as f64 / 1_000_000.0)
+                                .map(crate::utils::ns_to_ms)
                         })
                         .filter(|&i| i > 0.0 && i < 5000.0)
                         .collect();

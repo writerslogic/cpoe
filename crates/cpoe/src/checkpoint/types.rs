@@ -349,9 +349,7 @@ impl Checkpoint {
             hasher.update(swf.params.parallelism.to_be_bytes());
             hasher.update(swf.challenge);
             hasher.update(swf.proof_algorithm.to_be_bytes());
-            hasher.update(
-                (swf.claimed_duration.as_millis().min(u64::MAX as u128) as u64).to_be_bytes(),
-            );
+            hasher.update((crate::utils::duration_to_ms(swf.claimed_duration)).to_be_bytes());
         }
 
         if let Some(nonce) = &self.challenge_nonce {
@@ -397,7 +395,7 @@ impl Checkpoint {
                 vdf.input,
                 output,
                 vdf.iterations,
-                vdf.duration.as_millis().min(u64::MAX as u128) as u64,
+                crate::utils::duration_to_ms(vdf.duration),
                 calibration,
             )
         })

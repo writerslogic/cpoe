@@ -94,7 +94,7 @@ impl ActivityFingerprint {
             .filter_map(|w| {
                 w[1].timestamp_ns
                     .checked_sub(w[0].timestamp_ns)
-                    .map(|d| d as f64 / 1_000_000.0)
+                    .map(crate::utils::ns_to_ms)
             })
             .filter(|&i| i > 0.0 && i < 10000.0)
             .collect();

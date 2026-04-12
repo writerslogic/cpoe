@@ -95,7 +95,7 @@ pub fn ffi_export_evidence(path: String, tier: String, output: String) -> FfiRes
     let latest = &events[events.len() - 1];
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis().min(u64::MAX as u128) as u64)
+        .map(crate::utils::duration_to_ms)
         .unwrap_or(0);
 
     let content_tier = match tier.to_lowercase().as_str() {

@@ -168,7 +168,7 @@ fn detect_temporal_anomalies(
         let curr = &window[1];
 
         let delta_ns = curr.timestamp_ns.saturating_sub(prev.timestamp_ns);
-        let delta_sec = delta_ns as f64 / 1e9;
+        let delta_sec = crate::utils::ns_to_secs(delta_ns);
         let delta_hours = delta_sec / 3600.0;
 
         if delta_hours > THRESHOLD_GAP_HOURS {

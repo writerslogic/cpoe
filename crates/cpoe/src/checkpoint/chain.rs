@@ -517,7 +517,7 @@ impl Chain {
                 vdf.input,
                 output,
                 vdf.iterations,
-                vdf.duration.as_millis().min(u64::MAX as u128) as u64,
+                crate::utils::duration_to_ms(vdf.duration),
                 calibration.clone(),
             )
         });

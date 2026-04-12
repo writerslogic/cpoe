@@ -420,7 +420,7 @@ impl SentinelIpcHandler {
             let started_at = chrono::DateTime::from_timestamp_nanos(first_ts);
             let ended_at = chrono::DateTime::from_timestamp_nanos(last_ts);
             let elapsed_ns = last_ts.saturating_sub(first_ts).max(0) as u64;
-            let duration_secs = elapsed_ns as f64 / 1_000_000_000.0;
+            let duration_secs = crate::utils::ns_to_secs(elapsed_ns as i64);
 
             let (session_id, total_keystrokes, unique_states) = {
                 let sessions = self.sentinel.sessions.read_recover();

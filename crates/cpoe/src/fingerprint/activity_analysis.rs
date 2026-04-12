@@ -223,7 +223,7 @@ impl ZoneProfile {
             transitions[z0 * 8 + z1] += 1;
 
             let iki_ms = match w[1].timestamp_ns.checked_sub(w[0].timestamp_ns) {
-                Some(d) if d > 0 => d as f64 / 1_000_000.0,
+                Some(d) if d > 0 => crate::utils::ns_to_ms(d),
                 _ => continue,
             };
             let bucket = ((iki_ms / 50.0) as usize).min(19);

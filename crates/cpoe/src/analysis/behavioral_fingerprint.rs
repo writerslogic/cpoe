@@ -56,7 +56,7 @@ pub enum ForgeryFlag {
 }
 
 fn interval_ms(a: &SimpleJitterSample, b: &SimpleJitterSample) -> f64 {
-    b.timestamp_ns.saturating_sub(a.timestamp_ns).max(0) as f64 / 1_000_000.0
+    crate::utils::ns_to_ms(b.timestamp_ns.saturating_sub(a.timestamp_ns))
 }
 
 impl BehavioralFingerprint {

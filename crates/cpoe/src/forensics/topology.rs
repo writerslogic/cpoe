@@ -137,7 +137,7 @@ pub fn median_interval(sorted: SortedEvents<'_>) -> f64 {
 
     let intervals: Vec<f64> = sorted
         .windows(2)
-        .map(|w| w[1].timestamp_ns.saturating_sub(w[0].timestamp_ns).max(0) as f64 / 1e9)
+        .map(|w| crate::utils::ns_to_secs(w[1].timestamp_ns.saturating_sub(w[0].timestamp_ns)))
         .filter(|&iv| iv > 0.0)
         .collect();
 

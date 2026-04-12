@@ -944,7 +944,10 @@ mod tests {
             64,
             "commitment should be 64 hex chars"
         );
-        assert!(body.get("signature").is_none(), "signature omitted when None");
+        assert!(
+            body.get("signature").is_none(),
+            "signature omitted when None"
+        );
     }
 
     #[test]
@@ -1028,7 +1031,13 @@ mod tests {
         let c1 = compute_commitment(&prev, "hash1", 1, &nonce);
         let c2 = compute_commitment(&prev, "hash2", 1, &nonce);
         let c3 = compute_commitment(&prev, "hash1", 2, &nonce);
-        assert_ne!(c1, c2, "different content_hash must produce different commitment");
-        assert_ne!(c1, c3, "different ordinal must produce different commitment");
+        assert_ne!(
+            c1, c2,
+            "different content_hash must produce different commitment"
+        );
+        assert_ne!(
+            c1, c3,
+            "different ordinal must produce different commitment"
+        );
     }
 }

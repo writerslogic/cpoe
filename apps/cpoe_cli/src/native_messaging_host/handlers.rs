@@ -491,7 +491,10 @@ pub(crate) fn handle_stop_session() -> Response {
         let pubkey_hex = hex::encode(sk.verifying_key().as_bytes());
         let seal_line = format!(
             "<!-- session-seal: {} pubkey: {} file_hash: {} checkpoints: {} -->\n",
-            sig_hex, pubkey_hex, hex::encode(file_hash), session.checkpoint_count
+            sig_hex,
+            pubkey_hex,
+            hex::encode(file_hash),
+            session.checkpoint_count
         );
         let _ = std::fs::OpenOptions::new()
             .append(true)

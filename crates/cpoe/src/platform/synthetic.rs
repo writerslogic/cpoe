@@ -51,7 +51,7 @@ impl StatisticalAnomalyDetector {
                 // known-good reference and discard this event.
                 return StatisticalResult::Insufficient;
             }
-            delta_ns as f64 / 1_000_000.0
+            crate::utils::ns_to_ms(delta_ns)
         } else {
             self.last_timestamp_ns = Some(event.timestamp_ns);
             return StatisticalResult::Insufficient;

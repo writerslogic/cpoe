@@ -1260,6 +1260,7 @@ name = "cpoe_cli"
 version = "1.0.5"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "bs58",
  "chrono",
  "clap",
@@ -1277,6 +1278,7 @@ dependencies = [
  "hmac 0.12.1",
  "hostname",
  "notify",
+ "p256",
  "serde",
  "serde_json",
  "sha2 0.10.9",

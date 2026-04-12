@@ -134,7 +134,7 @@ pub fn build_ephemeral_packet(
         let started_at = chrono::DateTime::from_timestamp_nanos(started);
         let ended_at = chrono::DateTime::from_timestamp_nanos(ended);
         let elapsed_ns = ended.saturating_sub(started).max(0) as u64;
-        let duration_secs = elapsed_ns as f64 / 1_000_000_000.0;
+        let duration_secs = crate::utils::ns_to_secs(elapsed_ns as i64);
         let duration = std::time::Duration::from_nanos(elapsed_ns);
 
         let total_keystrokes = keystroke_count;

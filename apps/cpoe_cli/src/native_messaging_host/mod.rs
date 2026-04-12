@@ -63,15 +63,13 @@ fn main() {
         let response = match request {
             Request::Hello { client_pubkey, .. } => handle_hello(&client_pubkey),
             Request::KeyConfirm { token } => handle_key_confirm(&token),
-            Request::Encrypted { payload } => {
-                match decrypt_and_dispatch(&payload) {
-                    Ok(resp) => encrypt_response(&resp).unwrap_or(resp),
-                    Err(e) => Response::Error {
-                        message: format!("Decryption failed: {e}"),
-                        code: "DECRYPT_ERROR".into(),
-                    },
-                }
-            }
+            Request::Encrypted { payload } => match decrypt_and_dispatch(&payload) {
+                Ok(resp) => encrypt_response(&resp).unwrap_or(resp),
+                Err(e) => Response::Error {
+                    message: format!("Decryption failed: {e}"),
+                    code: "DECRYPT_ERROR".into(),
+                },
+            },
             Request::StartSession {
                 document_url,
                 document_title,
@@ -122,15 +120,16 @@ fn handle_hello(client_pubkey_b64: &str) -> Response {
     use cpoe::ipc::crypto::{SecureSession, KEY_CONFIRM_PLAINTEXT, P256_PUBLIC_KEY_SIZE};
     use p256::{ecdh::EphemeralSecret, elliptic_curve::sec1::ToEncodedPoint, PublicKey};
 
-    let client_pubkey_bytes = match base64::engine::general_purpose::STANDARD.decode(client_pubkey_b64) {
-        Ok(b) if b.len() == P256_PUBLIC_KEY_SIZE => b,
-        _ => {
-            return Response::Error {
-                message: "Invalid client public key".into(),
-                code: "HANDSHAKE_ERROR".into(),
+    let client_pubkey_bytes =
+        match base64::engine::general_purpose::STANDARD.decode(client_pubkey_b64) {
+            Ok(b) if b.len() == P256_PUBLIC_KEY_SIZE => b,
+            _ => {
+                return Response::Error {
+                    message: "Invalid client public key".into(),
+                    code: "HANDSHAKE_ERROR".into(),
+                }
             }
-        }
-    };
+        };
 
     let client_pubkey = match PublicKey::from_sec1_bytes(&client_pubkey_bytes) {
         Ok(pk) => pk,
@@ -223,22 +222,32 @@ fn decrypt_and_dispatch(payload_b64: &str) -> anyhow::Result<Response> {
 
     let ciphertext = base64::engine::general_purpose::STANDARD.decode(payload_b64)?;
     let guard = SECURE_SESSION.lock().unwrap_or_else(|p| p.into_inner());
-    let session = guard.as_ref().ok_or_else(|| anyhow::anyhow!("No secure session"))?;
+    let session = guard
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("No secure session"))?;
     let plaintext = session.decrypt(&ciphertext)?;
     let inner_request: Request = serde_json::from_slice(&plaintext)?;
     drop(guard);
 
     Ok(match inner_request {
-        Request::StartSession { document_url, document_title, .. } => {
-            handle_start_session(document_url, document_title)
-        }
-        Request::Checkpoint { content_hash, char_count, delta, commitment, ordinal } => {
-            handle_checkpoint(content_hash, char_count, delta, commitment, ordinal)
-        }
+        Request::StartSession {
+            document_url,
+            document_title,
+            ..
+        } => handle_start_session(document_url, document_title),
+        Request::Checkpoint {
+            content_hash,
+            char_count,
+            delta,
+            commitment,
+            ordinal,
+        } => handle_checkpoint(content_hash, char_count, delta, commitment, ordinal),
         Request::StopSession => handle_stop_session(),
         Request::GetStatus => handle_get_status(),
         Request::InjectJitter { intervals } => handle_inject_jitter(intervals),
-        Request::Ping { .. } => Response::Pong { version: env!("CARGO_PKG_VERSION").into() },
+        Request::Ping { .. } => Response::Pong {
+            version: env!("CARGO_PKG_VERSION").into(),
+        },
         _ => Response::Error {
             message: "Cannot nest handshake messages inside encrypted envelope".into(),
             code: "INVALID_REQUEST".into(),
