@@ -45,7 +45,7 @@ impl ActivityFingerprintAccumulator {
 
         let duration_secs =
             if let (Some(first), Some(last)) = (self.samples.front(), self.samples.back()) {
-                last.timestamp_ns.saturating_sub(first.timestamp_ns).max(0) as u64 / 1_000_000_000
+                crate::utils::ns_elapsed(last.timestamp_ns, first.timestamp_ns) / 1_000_000_000
             } else {
                 0
             };

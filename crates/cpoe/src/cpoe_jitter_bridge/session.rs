@@ -375,22 +375,10 @@ impl HybridJitterSession {
 
         let bytes = serde_json::to_vec_pretty(&data).map_err(|e| e.to_string())?;
 
-        use std::io::Write as _;
         let parent = path.as_ref().parent().unwrap_or(Path::new("."));
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        let mut tmp = tempfile::NamedTempFile::new_in(parent)
-            .map_err(|e| format!("failed to create temp file: {e}"))?;
-        tmp.write_all(&bytes).map_err(|e| e.to_string())?;
-        tmp.as_file()
-            .sync_all()
-            .map_err(|e| format!("failed to sync temp file: {e}"))?;
-        tmp.persist(path.as_ref()).map_err(|e| {
-            format!(
-                "failed to persist session file to {}: {}",
-                path.as_ref().display(),
-                e.error
-            )
-        })?;
+        crate::crypto::atomic_write(path.as_ref(), &bytes)
+            .map_err(|e| format!("failed to persist session file: {e}"))?;
         Ok(())
     }
 

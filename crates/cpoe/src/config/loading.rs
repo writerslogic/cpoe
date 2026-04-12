@@ -4,7 +4,6 @@ use super::defaults;
 use super::types::*;
 use anyhow::Result;
 use std::fs;
-use std::io::Write;
 use std::path::Path;
 
 impl CpopConfig {
@@ -130,12 +129,7 @@ impl CpopConfig {
         let config_path = self.data_dir.join("writersproof.json");
         let raw = serde_json::to_string_pretty(self)?;
 
-        let mut tmp = tempfile::NamedTempFile::new_in(&self.data_dir)?;
-        tmp.write_all(raw.as_bytes())?;
-        tmp.flush()?;
-        let tmp_path = tmp.into_temp_path();
-        tmp_path.persist(&config_path)?;
-
+        crate::crypto::atomic_write(&config_path, raw.as_bytes())?;
         crate::crypto::restrict_permissions(&config_path, 0o600)?;
         Ok(())
     }

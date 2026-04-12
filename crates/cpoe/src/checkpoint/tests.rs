@@ -857,7 +857,7 @@ fn test_checkpoint_to_rfc_vdf_conversion() {
     assert_eq!(rfc_vdf.iterations, internal_vdf.iterations);
     assert_eq!(
         rfc_vdf.duration_ms,
-        internal_vdf.duration.as_millis() as u64
+        crate::utils::duration_to_ms(internal_vdf.duration)
     );
 
     drop(dir);

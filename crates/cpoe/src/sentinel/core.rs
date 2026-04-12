@@ -531,7 +531,7 @@ impl Sentinel {
                         // Handle keyUp: compute dwell time and update last_keyup_ts
                         if event.event_type == crate::platform::KeyEventType::Up {
                             if let Some(down_ts) = pending_downs.remove(&event.keycode) {
-                                let _dwell = event.timestamp_ns.saturating_sub(down_ts).max(0) as u64;
+                                let _dwell = crate::utils::ns_elapsed(event.timestamp_ns, down_ts);
                                 // Dwell time is stored when the corresponding keyDown
                                 // sample was created; keyUp events are not stored as
                                 // separate jitter samples.
@@ -559,14 +559,14 @@ impl Sentinel {
 
                         // Inter-keyDown duration
                         let duration_since_last_ns: u64 = if last_keydown_ts_ns > 0 {
-                            event.timestamp_ns.saturating_sub(last_keydown_ts_ns).max(0) as u64
+                            crate::utils::ns_elapsed(event.timestamp_ns, last_keydown_ts_ns)
                         } else {
                             0
                         };
 
                         // Flight time: gap between last keyUp and this keyDown
                         let flight_time_ns: Option<u64> = if last_keyup_ts_ns > 0 {
-                            let ft = event.timestamp_ns.saturating_sub(last_keyup_ts_ns).max(0) as u64;
+                            let ft = crate::utils::ns_elapsed(event.timestamp_ns, last_keyup_ts_ns);
                             Some(ft)
                         } else {
                             None
@@ -669,7 +669,7 @@ impl Sentinel {
 
                     Some(event) = mouse_rx.recv() => {
                         let mouse_duration_ns: u64 = if last_mouse_ts_ns > 0 {
-                            event.timestamp_ns.saturating_sub(last_mouse_ts_ns).max(0) as u64
+                            crate::utils::ns_elapsed(event.timestamp_ns, last_mouse_ts_ns)
                         } else {
                             0
                         };

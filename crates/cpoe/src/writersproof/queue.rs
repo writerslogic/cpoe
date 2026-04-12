@@ -7,7 +7,6 @@
 //! can be drained when connectivity is restored.
 
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use chrono::Utc;
@@ -19,11 +18,7 @@ use crate::error::{Error, Result};
 
 /// Write data to a temp file in the same directory, then rename for atomicity (EH-016).
 fn atomic_write(path: &Path, data: &[u8]) -> Result<()> {
-    let dir = path.parent().unwrap_or(path);
-    let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
-    tmp.write_all(data)?;
-    tmp.persist(path)
-        .map_err(|e| Error::checkpoint(format!("atomic rename failed: {e}")))?;
+    crate::crypto::atomic_write(path, data)?;
     Ok(())
 }
 

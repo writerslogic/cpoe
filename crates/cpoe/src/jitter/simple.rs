@@ -61,7 +61,7 @@ impl SimpleJitterSession {
             .last()
             .map(|s| s.timestamp_ns)
             .unwrap_or(i64::try_from(start_nanos).unwrap_or(i64::MAX));
-        let duration = timestamp_ns.saturating_sub(last_ts).max(0) as u64;
+        let duration = crate::utils::ns_elapsed(timestamp_ns, last_ts);
 
         self.samples.push(SimpleJitterSample {
             timestamp_ns,

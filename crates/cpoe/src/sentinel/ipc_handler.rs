@@ -419,7 +419,7 @@ impl SentinelIpcHandler {
             let last_ts = store_events.last().map(|e| e.timestamp_ns).unwrap_or(0);
             let started_at = chrono::DateTime::from_timestamp_nanos(first_ts);
             let ended_at = chrono::DateTime::from_timestamp_nanos(last_ts);
-            let elapsed_ns = last_ts.saturating_sub(first_ts).max(0) as u64;
+            let elapsed_ns = crate::utils::ns_elapsed(last_ts, first_ts);
             let duration_secs = crate::utils::ns_to_secs(elapsed_ns as i64);
 
             let (session_id, total_keystrokes, unique_states) = {

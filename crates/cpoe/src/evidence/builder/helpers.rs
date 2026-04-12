@@ -133,7 +133,7 @@ pub fn build_ephemeral_packet(
         let ended = snapshots.last().map(|s| s.timestamp_ns).unwrap_or(0);
         let started_at = chrono::DateTime::from_timestamp_nanos(started);
         let ended_at = chrono::DateTime::from_timestamp_nanos(ended);
-        let elapsed_ns = ended.saturating_sub(started).max(0) as u64;
+        let elapsed_ns = crate::utils::ns_elapsed(ended, started);
         let duration_secs = crate::utils::ns_to_secs(elapsed_ns as i64);
         let duration = std::time::Duration::from_nanos(elapsed_ns);
 
