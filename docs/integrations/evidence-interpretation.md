@@ -6,11 +6,11 @@
 
 ## Overview
 
-This guide provides vendors and verifiers with criteria for interpreting CPOP evidence packets (`.cpop`), identifying tampering, and differentiating legitimate creative actions from adversarial forgery.
+This guide provides vendors and verifiers with criteria for interpreting CPoE evidence packets (`.cpoe`), identifying tampering, and differentiating legitimate creative actions from adversarial forgery.
 
 ## 1. Online Verification Portal (`writerslogic.com/verify`)
 
-The most common way to verify a `.cpop` evidence packet is through our web-based portal.
+The most common way to verify a `.cpoe` evidence packet is through our web-based portal.
 
 *   **Privacy-Preserving:** The portal performs verification **locally in your browser**. Your evidence files and document contents are never uploaded to our servers.
 *   **WASM Engine:** The same Rust cryptographic engine used in the desktop apps is compiled to WebAssembly to power the portal, ensuring parity in verification results.
@@ -51,7 +51,7 @@ Even without a verifier tool, certain patterns in the JSON evidence packet sugge
 
 ### 3.2 Key Replay (The "Pre-computation" Attack)
 - **Red Flag:** Identical `checkpoint_hash` across different documents or sessions.
-- **Detection:** CPOP entangles the document hash into the session certificate. A mismatch indicates the user attempted to "replay" valid evidence from an old document onto a new one.
+- **Detection:** CPoE entangles the document hash into the session certificate. A mismatch indicates the user attempted to "replay" valid evidence from an old document onto a new one.
 
 ### 3.3 History Pruning
 - **Red Flag:** Gaps in the `sequence` numbers or a broken `prev_hash` chain.

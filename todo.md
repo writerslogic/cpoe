@@ -187,7 +187,7 @@ seed.copy_from_slice(&data[..32]);
 ### SYS-011: Path parameters should accept &Path / impl AsRef<Path>
 
 - **Model:** Sonnet | **Scope:** idiomatic
-- **Files:** `apps/cpop_cli/src/cmd_*.rs`, `crates/cpoe/src/wal/operations.rs:22-27`, checkpoint, store modules
+- **Files:** `apps/cpoe_cli/src/cmd_*.rs`, `crates/cpoe/src/wal/operations.rs:22-27`, checkpoint, store modules
 - **Severity:** HIGH | **Leverage:** HIGH | **Status:** fixed 2026-04-10 (store load_document_stats/get_events_for_file/update_file_path changed to impl AsRef<Path>; WAL/checkpoint were already fixed)
 - **Priority:** 7/240 | **Estimated time:** 4h
 - **Description:** Functions take `String` or `&str` for file paths. Should accept `impl AsRef<Path>` for flexibility (works with Path, &str, String, OsStr).
@@ -242,7 +242,7 @@ seed.copy_from_slice(&data[..32]);
 ### SYS-009: Allocation discipline sweep (to_string on literals, Vec of static strs)
 
 - **Model:** Haiku | **Scope:** memory
-- **Files:** Widespread across `apps/cpop_cli/`, `crates/cpoe/src/sentinel/`, `crates/cpoe/src/evidence/`, `crates/cpoe/src/analysis/`
+- **Files:** Widespread across `apps/cpoe_cli/`, `crates/cpoe/src/sentinel/`, `crates/cpoe/src/evidence/`, `crates/cpoe/src/analysis/`
 - **Severity:** HIGH | **Leverage:** MEDIUM | **Status:** rejected 2026-04-10 (struct fields typed String, not &str; .to_string() is idiomatic; proper fix requires type refactoring)
 - **Priority:** 10/240 | **Estimated time:** 2h
 - **Description:** `.to_string()` on string literals ("auto", "default"), `vec![]` of constants. Each allocates unnecessarily.
@@ -353,17 +353,17 @@ seed.copy_from_slice(&data[..32]);
 ### SYS-003: Async-blocking VDF and hash chain operations
 
 - **Model:** Sonnet | **Scope:** async
-- **Files:** `crates/cpoe/src/vdf/proof.rs` (compute, verify methods), `apps/cpop_cli/src/cmd_commit.rs:83`
+- **Files:** `crates/cpoe/src/vdf/proof.rs` (compute, verify methods), `apps/cpoe_cli/src/cmd_commit.rs:83`
 - **Severity:** HIGH | **Leverage:** CRITICAL | **Status:** fixed 2026-04-11 (added compute_async/verify_async via spawn_blocking; cmd_commit made async; both async callers await it)
 - **Priority:** 16/240 | **Estimated time:** 4h
-- **Description:** VDF and hash-chain loops are CPU-bound (seconds) with no enforcement against being called from Tokio task. Fixing one call site leaves others exposed. Callers live in cpop_cli, not cpoe; wrappers in cpoe, config in cpop_cli.
+- **Description:** VDF and hash-chain loops are CPU-bound (seconds) with no enforcement against being called from Tokio task. Fixing one call site leaves others exposed. Callers live in cpoe_cli, not cpoe; wrappers in cpoe, config in cpoe_cli.
 - **Root cause:** No async wrappers; sync functions directly called from async code.
 - **Fix:**
   1. Add `compute_async()` and `verify_async()` wrappers in `crates/cpoe/src/vdf/proof.rs`
   2. Wrappers use `tokio::task::spawn_blocking(|| self.compute_sync())`
   3. Mark sync versions `#[deprecated(since = "0.4", note = "use *_async from async fn")]`
-  4. Update cpop_cli call sites to use async versions and `.await`
-  5. Add to `apps/cpop_cli/clippy.toml`:
+  4. Update cpoe_cli call sites to use async versions and `.await`
+  5. Add to `apps/cpoe_cli/clippy.toml`:
 
 ```toml
 [[disallowed-methods]]
@@ -382,13 +382,13 @@ reason = "blocks reactor; use verify_async from async fn"
 ### SYS-016: Blocking I/O and CPU work on the Tokio reactor (broader than VDF)
 
 - **Model:** Opus | **Scope:** async | **Leverage:** CRITICAL
-- **Files:** `apps/cpop_cli/src/cmd_*.rs`, IPC handler, beacon paths, checkpoint operations
+- **Files:** `apps/cpoe_cli/src/cmd_*.rs`, IPC handler, beacon paths, checkpoint operations
 - **Severity:** HIGH | **Status:** fixed 2026-04-11 (spawn_blocking for file/DB/crypto in cmd_commit/anchor/export; tokio::time::sleep in daemon; VDF calibrate)
 - **Priority:** 17/240 | **Estimated time:** 12h
 - **Description:** Broader async issues beyond VDF. Extends SYS-003 logic to file I/O, store access, signature operations in async context. Depends on SYS-021 (lock scope fixes).
 - **Root cause:** No systematic audit for blocking operations in async paths.
 - **Fix:**
-  1. Audit all async contexts in cpop_cli for blocking operations
+  1. Audit all async contexts in cpoe_cli for blocking operations
   2. File I/O: wrap fs:: calls in `spawn_blocking`
   3. Store access: wrap store.get/append in `spawn_blocking`
   4. Crypto: wrap ed25519 signing in `spawn_blocking`
@@ -786,7 +786,7 @@ pub enum SecureChannelSendError {
   <!-- pid:no_timeout | verified:false | first:2026-04-07 -->
   build_http_client(None) already applies DEFAULT_TIMEOUT_SECS; timeout is set on the shared reqwest Client before the POST is executed.
 
-- [x] **C-025** `[security]` `ffi/system.rs:228-255`: `#[cfg(debug_assertions)]` block writes list output to `/tmp/cpop_list_debug.txt`; SYS-004 regression -- FIXED 2026-04-07
+- [x] **C-025** `[security]` `ffi/system.rs:228-255`: `#[cfg(debug_assertions)]` block writes list output to `/tmp/cpoe_list_debug.txt`; SYS-004 regression -- FIXED 2026-04-07
   <!-- pid:no_structured_logging | verified:true | first:2026-04-07 | systemic:SYS-008 -->
   Removed entire cfg(debug_assertions) block; replaced with log::debug!() calls for sentinel session and store result counts.
 
@@ -802,7 +802,7 @@ pub enum SecureChannelSendError {
   <!-- pid:logic_in_boundary | verified:true | first:2026-04-07 | systemic:SYS-003 -->
   Added process-level `ForensicCacheEntry` DashMap in ffi/report.rs keyed by (path, event_count); cache hit skips both evaluate_authorship and run_full_forensics; cache capped at 10 entries with clear-on-overflow.
 
-- [x] **C-029** `[security]` `apps/cpop_macos/cpoe/SubscriptionService.swift:176`: Storage upgrade purchase proceeds without `appAccountToken` when `userId` is nil -- FIXED 2026-04-07
+- [x] **C-029** `[security]` `apps/cpoe_macos/cpoe/SubscriptionService.swift:176`: Storage upgrade purchase proceeds without `appAccountToken` when `userId` is nil -- FIXED 2026-04-07
   <!-- pid:missing_validation | verified:true | first:2026-04-07 -->
   Added guard requiring userId + valid UUID before purchase; always passes appAccountToken(accountUUID) so Apple's S2S notification can identify the account.
 
@@ -854,7 +854,7 @@ pub enum SecureChannelSendError {
   <!-- pid:missing_validation | verified:analytical | first:2026-04-06 -->
   Impact: Direct XOR of entropy into master key reduces independence; correlated behavioral inputs create predictable key evolution | Fix: Use HKDF-Expand(master_key, entropy_bytes, "cpoe-behavioral-entropy-v1") for key update | Effort: medium
 
-- [x] **H-012** `[security]` `apps/cpop_cli/src/cmd_daemon.rs:113`: PID file used for stop without liveness check; OS PID reuse causes wrong-process kill
+- [x] **H-012** `[security]` `apps/cpoe_cli/src/cmd_daemon.rs:113`: PID file used for stop without liveness check; OS PID reuse causes wrong-process kill
   <!-- pid:toctou | verified:analytical | first:2026-04-06 -->
   Impact: If daemon dies and OS reuses PID, `cpoe stop` kills an unrelated process | Fix: Verify /proc/{pid}/comm matches expected process name before sending signal; or use socket-based stop | Effort: medium
 
@@ -966,11 +966,11 @@ pub enum SecureChannelSendError {
   <!-- pid:silent_error | verified:true | first:2026-04-07 -->
   Now returns Response::Error { code: "JITTER_WRITE_FAILED" } on write failure instead of eprintln + success response.
 
-- [-] **H-040** `[security]` `apps/cpop_macos/cpoe/AppDelegate.swift:464`: File descriptor not validated before `flock()` call -- FALSE POSITIVE 2026-04-07
+- [-] **H-040** `[security]` `apps/cpoe_macos/cpoe/AppDelegate.swift:464`: File descriptor not validated before `flock()` call -- FALSE POSITIVE 2026-04-07
   <!-- pid:missing_validation | verified:false | first:2026-04-07 -->
   guard fd >= 0 else { return } is present at line 458 before the flock() call at line 464; invalid fd is already handled.
 
-- [-] **H-041** `[concurrency]` `apps/cpop_macos/cpoe/AppDelegate.swift:165`: `applicationShouldTerminate` returns `.terminateNow` without awaiting task cancellation -- FALSE POSITIVE 2026-04-07
+- [-] **H-041** `[concurrency]` `apps/cpoe_macos/cpoe/AppDelegate.swift:165`: `applicationShouldTerminate` returns `.terminateNow` without awaiting task cancellation -- FALSE POSITIVE 2026-04-07
   <!-- pid:data_race | verified:false | first:2026-04-07 -->
   The daemon handles graceful shutdown via IPC stop command and WAL fsync before the app exits; AppKit termination is not the primary shutdown path for the background daemon process.
 
@@ -1828,7 +1828,7 @@ pub enum SecureChannelSendError {
   <!-- pid:silent_error | first:2026-04-08 -->
   Impact: `anchor_res` error is logged at `warn!` then discarded; `FfiBeaconResult.success = true` is returned even when the WritersProof anchor call failed. Swift caller returns `CommandResult(success: true)` to the user -- they believe evidence is anchored when it is not. | Fix: If `anchor_res` is `Err`, either set `error_message` in the result or return `success: false`; distinguish "beacon fetched but not anchored" from "beacon fetched and anchored".
 
-- [x] **H-045** `[concurrency]` `apps/cpop_macos/cpoe/Service/CPoEService+Actions.swift`: stale session index -- FIXED (current code computes firstIndex after every await; capture-before-gap pattern used in export)
+- [x] **H-045** `[concurrency]` `apps/cpoe_macos/cpoe/Service/CPoEService+Actions.swift`: stale session index -- FIXED (current code computes firstIndex after every await; capture-before-gap pattern used in export)
   <!-- pid:toctou | first:2026-04-08 -->
   Impact: `sessionIndex` is captured via `firstIndex(where:)` before `await engine.commit()`; a concurrent `refreshStatus()` can add, remove, or reorder `sessions` during the await. After the await, `sessions[idx]` may access the wrong session or crash out-of-bounds. | Fix: After the await, re-query by path: `if let idx = sessions.firstIndex(where: { $0.documentPath == doc })`.
 
@@ -1836,13 +1836,13 @@ pub enum SecureChannelSendError {
   <!-- pid:key_zeroize_inconsistency | first:2026-04-08 -->
   Impact: `(*api_key).clone()` dereferences the `Zeroizing<String>` wrapper and clones a bare `String`. That allocation is not Zeroized until `with_jwt` re-wraps it one frame later -- same pattern in `beacon.rs:115`. Defeats the zeroize guarantee. | Fix: Change `with_jwt` to accept `Zeroizing<String>` directly; pass `api_key` (consumed) rather than `(*api_key).clone()`.
 
-- [x] **H-047** `[resource_management]` `apps/cpop_macos/cpoe/EngineService/EngineService.swift`: orphan FFI cleanup -- FIXED 2026-04-11 (CleanupTaskRegistry actor caps concurrent cleanups at 8 and deduplicates by session ID; drops new requests with a warning when full)
+- [x] **H-047** `[resource_management]` `apps/cpoe_macos/cpoe/EngineService/EngineService.swift`: orphan FFI cleanup -- FIXED 2026-04-11 (CleanupTaskRegistry actor caps concurrent cleanups at 8 and deduplicates by session ID; drops new requests with a warning when full)
   <!-- pid:no_resource_cleanup | first:2026-04-08 -->
   Impact: `Task.detached { ffiEphemeralFinalize(...) }` is fire-and-forget. App shutdown or actor deallocation before the task runs leaves the Rust-side ephemeral session in memory indefinitely. | Fix: Store cleanup task handles; cancel and await them during graceful shutdown.
 
 ### Medium
 
-- [x] **M-100** `[security]` `apps/cpop_macos/cpoe/ChallengeService.swift`: session ID Unicode -- FIXED (current code validates via explicit ASCII scalar range plus length <= 128)
+- [x] **M-100** `[security]` `apps/cpoe_macos/cpoe/ChallengeService.swift`: session ID Unicode -- FIXED (current code validates via explicit ASCII scalar range plus length <= 128)
   <!-- pid:missing_validation | first:2026-04-08 -->
   Impact: Unicode homoglyphs or combining characters pass the guard but produce unexpected URL segments. Only ASCII alphanumerics and `-_` should be accepted. | Fix: Replace CharacterSet check with explicit ASCII byte-range comparison.
 
@@ -1854,11 +1854,11 @@ pub enum SecureChannelSendError {
   <!-- pid:stringly_typed | first:2026-04-08 -->
   Impact: Swift caller must string-parse `"Anchored: <id> (log index <n>)"` to extract values; format changes silently break consumers. | Fix: Return a dedicated `FfiAnchorResult` record with `anchor_id: Option<String>` and `log_index: u64` fields.
 
-- [x] **M-103** `[concurrency]` `apps/cpop_macos/cpoe/StatusBarController.swift`: Task weak self guard -- FIXED (all Task closures with [weak self] now include an immediate guard let self; 4 sites audited)
+- [x] **M-103** `[concurrency]` `apps/cpoe_macos/cpoe/StatusBarController.swift`: Task weak self guard -- FIXED (all Task closures with [weak self] now include an immediate guard let self; 4 sites audited)
   <!-- pid:weak_self_capture | first:2026-04-08 -->
   Impact: Timer and observer Task closures access `self?` properties without `guard let self else { return }`. If `StatusBarController` deallocates while a timer fires, closures execute on nil. | Fix: Add `guard let self else { return }` as first line of every `[weak self]` Task closure.
 
-- [x] **M-104** `[error_handling]` `apps/cpop_macos/cpoe/StatusBarController.swift`: untracked checkpoint Task -- FIXED (pendingChallengeTask is now stored and cancelled-then-replaced on each auto-checkpoint)
+- [x] **M-104** `[error_handling]` `apps/cpoe_macos/cpoe/StatusBarController.swift`: untracked checkpoint Task -- FIXED (pendingChallengeTask is now stored and cancelled-then-replaced on each auto-checkpoint)
   <!-- pid:fire_and_forget | first:2026-04-08 -->
   Impact: `Task(priority: .utility) { ... }` for checkpoint writes is fire-and-forget. App termination before the task completes silently abandons the checkpoint. | Fix: Store the task handle and await it during shutdown, or track completion via the existing checkpoint state machine.
 

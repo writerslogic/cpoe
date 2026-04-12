@@ -4,9 +4,9 @@
 # Requires: WritersProof running, Accessibility permission granted
 set -eo pipefail
 
-APP_PATH="/Users/davidcondrey/Library/Developer/Xcode/DerivedData/cpop-acbocyyijoncmrdjcnabxgdfoebc/Build/Products/Debug/WritersProof.app"
+APP_PATH="/Users/davidcondrey/Library/Developer/Xcode/DerivedData/cpoe-acbocyyijoncmrdjcnabxgdfoebc/Build/Products/Debug/WritersProof.app"
 DB_PATH="$HOME/Library/Application Support/WritersProof/events.db"
-TEST_FILE="/tmp/cpop_e2e_test_$(date +%s).txt"
+TEST_FILE="/tmp/cpoe_e2e_test_$(date +%s).txt"
 PASS=0; FAIL=0; SKIP=0
 
 pass() { echo "  PASS  $1"; PASS=$((PASS + 1)); }
@@ -49,8 +49,8 @@ fi
 echo "[2] Calibration"
 
 sleep 2
-if [ -f /tmp/cpop_engine_debug.txt ]; then
-    LAST_IPS=$(grep 'swfIPS=' /tmp/cpop_engine_debug.txt | tail -1 | sed 's/.*swfIPS=\([0-9]*\).*/\1/')
+if [ -f /tmp/cpoe_engine_debug.txt ]; then
+    LAST_IPS=$(grep 'swfIPS=' /tmp/cpoe_engine_debug.txt | tail -1 | sed 's/.*swfIPS=\([0-9]*\).*/\1/')
     if [ -n "$LAST_IPS" ] && [ "$LAST_IPS" -gt 0 ] 2>/dev/null; then
         pass "SWF calibrated: $LAST_IPS iter/s"
     else
@@ -274,7 +274,7 @@ for FILE in "$HOME/Library/Application Support/WritersProof/signing_key" "$TOKEN
     fi
 done
 
-if [ -f /tmp/cpop_auth_debug.txt ]; then
+if [ -f /tmp/cpoe_auth_debug.txt ]; then
     skip "Debug auth log exists at /tmp (expected in DEBUG builds only)"
 fi
 

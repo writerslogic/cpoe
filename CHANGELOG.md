@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `cpoe export -f cpoe` crash — CBOR export path now builds from secure store
-- `cpoe --version` showed `cpop_cli` instead of `cpoe`
+- `cpoe --version` showed `cpoe_cli` instead of `cpoe`
 - `cpoe export --json` silently ignored — now outputs machine-readable JSON
 - `--quiet` and `--json` suppress "Basic tier" warning on stderr
 - Jitter bridge tests compile error (missing `Duration` import)
@@ -39,7 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Homebrew formula now installs `cpoe` binary (was `wld`)
 - install.sh updated for `cpoe` binary name
 - Scoop manifest updated for `cpoe.exe` binary name
-- `cpoe_jitter` and `cpop_protocol` crates now sourced from crates.io (v0.2.0 and v0.1.0)
+- `cpoe_jitter` and `cpoe_protocol` crates now sourced from crates.io (v0.2.0 and v0.1.0)
 - `PoPSigner` trait renamed to `EvidenceSigner` (aligns with cpoe-protocol v0.1.0)
 - Package manager update workflow aligned with release workflow (repository dispatch)
 
@@ -128,7 +128,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.2.0] - 2026-02-22
 
 ### Added
-- cpop_protocol crate for PoP wire format (CBOR/COSE)
+- cpoe_protocol crate for PoP wire format (CBOR/COSE)
 - cpoe_jitter `no_std` support and security hardening
 - Fuzz targets for VDF and protocol components
 - Browser extension with native messaging host
@@ -142,7 +142,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.0] - 2026-02-01
 
 ### Added
-- Initial release of cpop_engine
+- Initial release of cpoe_engine
 - Merkle Mountain Range (MMR) for tamper-evident event storage
 - Ed25519 signing with domain separation
 - VDF-based time proofs

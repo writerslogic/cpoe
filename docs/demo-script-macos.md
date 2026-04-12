@@ -75,7 +75,7 @@
 
 ## VERIFICATION (3:15 -- 3:45)
 
-**[Action: Show the verification section of the report, or demonstrate uploading the .cpop file to writerslogic.com/verify if available.]**
+**[Action: Show the verification section of the report, or demonstrate uploading the .cpoe file to writerslogic.com/verify if available.]**
 
 > The critical point is that none of this requires trusting us. The evidence file is cryptographically signed and can be verified by anyone. Upload it to the web verifier, or run the open-source command-line tool. Verification checks the signatures, the checkpoint chain, the VDF timing proofs, and the behavioral plausibility -- all independently.
 
