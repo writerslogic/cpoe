@@ -17,20 +17,20 @@ fn test_find_peaks() {
 #[test]
 fn test_mmr_append_and_root() {
     let store = Box::new(MemoryStore::new());
-    let mmr = Mmr::new(store).unwrap();
+    let mmr = Mmr::new(store).expect("create mmr");
 
-    let idx1 = mmr.append(b"1").unwrap();
+    let idx1 = mmr.append(b"1").expect("append 1");
     assert_eq!(idx1, 0);
     assert_eq!(mmr.size(), 1);
-    let root1 = mmr.get_root().unwrap();
+    let root1 = mmr.get_root().expect("get root 1");
 
-    let idx2 = mmr.append(b"2").unwrap();
+    let idx2 = mmr.append(b"2").expect("append 2");
     assert_eq!(idx2, 1);
     assert_eq!(mmr.size(), 3);
-    let root2 = mmr.get_root().unwrap();
+    let root2 = mmr.get_root().expect("get root 2");
     assert_ne!(root1, root2);
 
-    let idx3 = mmr.append(b"3").unwrap();
+    let idx3 = mmr.append(b"3").expect("append 3");
     assert_eq!(idx3, 3);
     assert_eq!(mmr.size(), 4);
 }
@@ -47,33 +47,33 @@ fn test_leaf_count_from_size() {
 #[test]
 fn test_inclusion_proof() {
     let store = Box::new(MemoryStore::new());
-    let mmr = Mmr::new(store).unwrap();
+    let mmr = Mmr::new(store).expect("create mmr");
 
     for i in 0..10 {
-        mmr.append(&[i as u8]).unwrap();
+        mmr.append(&[i as u8]).expect("append");
     }
 
     for i in 0..10 {
-        let leaf_idx = mmr.get_leaf_index(i).unwrap();
-        let proof = mmr.generate_proof(leaf_idx).unwrap();
+        let leaf_idx = mmr.get_leaf_index(i).expect("get leaf index");
+        let proof = mmr.generate_proof(leaf_idx).expect("generate proof");
 
         assert_eq!(proof.leaf_index, leaf_idx);
-        assert_eq!(proof.root, mmr.get_root().unwrap());
+        assert_eq!(proof.root, mmr.get_root().expect("get root"));
     }
 }
 
 #[test]
 fn test_inclusion_proof_verify_valid() {
     let store = Box::new(MemoryStore::new());
-    let mmr = Mmr::new(store).unwrap();
+    let mmr = Mmr::new(store).expect("create mmr");
 
     for i in 0..10u8 {
-        mmr.append(&[i]).unwrap();
+        mmr.append(&[i]).expect("append");
     }
 
     for i in 0..10u64 {
-        let leaf_idx = mmr.get_leaf_index(i).unwrap();
-        let proof = mmr.generate_proof(leaf_idx).unwrap();
+        let leaf_idx = mmr.get_leaf_index(i).expect("get leaf index");
+        let proof = mmr.generate_proof(leaf_idx).expect("generate proof");
         proof.verify(&[i as u8]).expect("valid proof should verify");
     }
 }
@@ -81,14 +81,14 @@ fn test_inclusion_proof_verify_valid() {
 #[test]
 fn test_inclusion_proof_verify_wrong_data() {
     let store = Box::new(MemoryStore::new());
-    let mmr = Mmr::new(store).unwrap();
+    let mmr = Mmr::new(store).expect("create mmr");
 
     for i in 0..5u8 {
-        mmr.append(&[i]).unwrap();
+        mmr.append(&[i]).expect("append");
     }
 
-    let leaf_idx = mmr.get_leaf_index(2).unwrap();
-    let proof = mmr.generate_proof(leaf_idx).unwrap();
+    let leaf_idx = mmr.get_leaf_index(2).expect("get leaf index");
+    let proof = mmr.generate_proof(leaf_idx).expect("generate proof");
     let err = proof.verify(b"wrong data").unwrap_err();
     assert!(
         matches!(err, MmrError::HashMismatch),
@@ -99,14 +99,14 @@ fn test_inclusion_proof_verify_wrong_data() {
 #[test]
 fn test_inclusion_proof_verify_tampered_root() {
     let store = Box::new(MemoryStore::new());
-    let mmr = Mmr::new(store).unwrap();
+    let mmr = Mmr::new(store).expect("create mmr");
 
     for i in 0..4u8 {
-        mmr.append(&[i]).unwrap();
+        mmr.append(&[i]).expect("append");
     }
 
-    let leaf_idx = mmr.get_leaf_index(0).unwrap();
-    let mut proof = mmr.generate_proof(leaf_idx).unwrap();
+    let leaf_idx = mmr.get_leaf_index(0).expect("get leaf index");
+    let mut proof = mmr.generate_proof(leaf_idx).expect("generate proof");
     proof.root = [0xffu8; 32];
     let err = proof.verify(&[0u8]).unwrap_err();
     assert!(
@@ -118,15 +118,15 @@ fn test_inclusion_proof_verify_tampered_root() {
 #[test]
 fn test_inclusion_proof_serialize_deserialize_roundtrip() {
     let store = Box::new(MemoryStore::new());
-    let mmr = Mmr::new(store).unwrap();
+    let mmr = Mmr::new(store).expect("create mmr");
 
     for i in 0..8u8 {
-        mmr.append(&[i]).unwrap();
+        mmr.append(&[i]).expect("append");
     }
 
     for i in 0..8u64 {
-        let leaf_idx = mmr.get_leaf_index(i).unwrap();
-        let proof = mmr.generate_proof(leaf_idx).unwrap();
+        let leaf_idx = mmr.get_leaf_index(i).expect("get leaf index");
+        let proof = mmr.generate_proof(leaf_idx).expect("generate proof");
         let bytes = proof.serialize().expect("serialize should succeed");
         let restored = InclusionProof::deserialize(&bytes).expect("deserialize should succeed");
 
@@ -158,11 +158,11 @@ fn test_inclusion_proof_deserialize_too_short() {
 #[test]
 fn test_inclusion_proof_deserialize_wrong_version() {
     let store = Box::new(MemoryStore::new());
-    let mmr = Mmr::new(store).unwrap();
-    mmr.append(b"a").unwrap();
-    let leaf_idx = mmr.get_leaf_index(0).unwrap();
-    let proof = mmr.generate_proof(leaf_idx).unwrap();
-    let mut bytes = proof.serialize().unwrap();
+    let mmr = Mmr::new(store).expect("create mmr");
+    mmr.append(b"a").expect("append");
+    let leaf_idx = mmr.get_leaf_index(0).expect("get leaf index");
+    let proof = mmr.generate_proof(leaf_idx).expect("generate proof");
+    let mut bytes = proof.serialize().expect("serialize");
     bytes[0] = 0xff; // corrupt version
     let err = InclusionProof::deserialize(&bytes).unwrap_err();
     assert!(matches!(err, MmrError::InvalidProof));
@@ -171,10 +171,10 @@ fn test_inclusion_proof_deserialize_wrong_version() {
 #[test]
 fn test_single_element_proof() {
     let store = Box::new(MemoryStore::new());
-    let mmr = Mmr::new(store).unwrap();
+    let mmr = Mmr::new(store).expect("create mmr");
 
-    mmr.append(b"only").unwrap();
-    let proof = mmr.generate_proof(0).unwrap();
+    mmr.append(b"only").expect("append");
+    let proof = mmr.generate_proof(0).expect("generate proof");
 
     assert!(
         proof.merkle_path.is_empty(),
@@ -185,8 +185,8 @@ fn test_single_element_proof() {
         .verify(b"only")
         .expect("single-element proof should verify");
 
-    let bytes = proof.serialize().unwrap();
-    let restored = InclusionProof::deserialize(&bytes).unwrap();
+    let bytes = proof.serialize().expect("serialize");
+    let restored = InclusionProof::deserialize(&bytes).expect("deserialize");
     restored
         .verify(b"only")
         .expect("roundtripped single-element proof should verify");
@@ -195,13 +195,13 @@ fn test_single_element_proof() {
 #[test]
 fn test_range_proof_verify_valid() {
     let store = Box::new(MemoryStore::new());
-    let mmr = Mmr::new(store).unwrap();
+    let mmr = Mmr::new(store).expect("create mmr");
 
     for i in 0..8u8 {
-        mmr.append(&[i]).unwrap();
+        mmr.append(&[i]).expect("append");
     }
 
-    let proof = mmr.generate_range_proof(1, 3).unwrap();
+    let proof = mmr.generate_range_proof(1, 3).expect("generate range proof");
     let leaf_data: Vec<Vec<u8>> = (1..=3u8).map(|i| vec![i]).collect();
     proof
         .verify(&leaf_data)
@@ -211,13 +211,13 @@ fn test_range_proof_verify_valid() {
 #[test]
 fn test_range_proof_verify_wrong_data() {
     let store = Box::new(MemoryStore::new());
-    let mmr = Mmr::new(store).unwrap();
+    let mmr = Mmr::new(store).expect("create mmr");
 
     for i in 0..8u8 {
-        mmr.append(&[i]).unwrap();
+        mmr.append(&[i]).expect("append");
     }
 
-    let proof = mmr.generate_range_proof(0, 2).unwrap();
+    let proof = mmr.generate_range_proof(0, 2).expect("generate range proof");
     let bad_data: Vec<Vec<u8>> = vec![vec![0], vec![1], vec![99]];
     let err = proof.verify(&bad_data).unwrap_err();
     assert!(matches!(err, MmrError::HashMismatch));
@@ -226,13 +226,13 @@ fn test_range_proof_verify_wrong_data() {
 #[test]
 fn test_range_proof_wrong_count() {
     let store = Box::new(MemoryStore::new());
-    let mmr = Mmr::new(store).unwrap();
+    let mmr = Mmr::new(store).expect("create mmr");
 
     for i in 0..4u8 {
-        mmr.append(&[i]).unwrap();
+        mmr.append(&[i]).expect("append");
     }
 
-    let proof = mmr.generate_range_proof(0, 1).unwrap();
+    let proof = mmr.generate_range_proof(0, 1).expect("generate range proof");
     // Pass wrong number of leaves
     let err = proof.verify(&[vec![0]]).unwrap_err();
     assert!(matches!(err, MmrError::InvalidProof));
@@ -241,13 +241,13 @@ fn test_range_proof_wrong_count() {
 #[test]
 fn test_range_proof_serialize_deserialize_roundtrip() {
     let store = Box::new(MemoryStore::new());
-    let mmr = Mmr::new(store).unwrap();
+    let mmr = Mmr::new(store).expect("create mmr");
 
     for i in 0..8u8 {
-        mmr.append(&[i]).unwrap();
+        mmr.append(&[i]).expect("append");
     }
 
-    let proof = mmr.generate_range_proof(2, 5).unwrap();
+    let proof = mmr.generate_range_proof(2, 5).expect("generate range proof");
     let bytes = proof.serialize().expect("serialize should succeed");
     let restored = RangeProof::deserialize(&bytes).expect("deserialize should succeed");
 
@@ -281,12 +281,12 @@ fn test_range_proof_deserialize_too_short() {
 #[test]
 fn test_range_proof_deserialize_wrong_version() {
     let store = Box::new(MemoryStore::new());
-    let mmr = Mmr::new(store).unwrap();
+    let mmr = Mmr::new(store).expect("create mmr");
     for i in 0..4u8 {
-        mmr.append(&[i]).unwrap();
+        mmr.append(&[i]).expect("append");
     }
-    let proof = mmr.generate_range_proof(0, 1).unwrap();
-    let mut bytes = proof.serialize().unwrap();
+    let proof = mmr.generate_range_proof(0, 1).expect("generate range proof");
+    let mut bytes = proof.serialize().expect("serialize");
     bytes[0] = 0xff;
     let err = RangeProof::deserialize(&bytes).unwrap_err();
     assert!(matches!(err, MmrError::InvalidProof));
@@ -316,7 +316,7 @@ fn test_mmr_error_variants() {
 #[test]
 fn test_empty_mmr_operations() {
     let store = Box::new(MemoryStore::new());
-    let mmr = Mmr::new(store).unwrap();
+    let mmr = Mmr::new(store).expect("create mmr");
 
     assert_eq!(mmr.size(), 0);
     assert_eq!(mmr.leaf_count(), 0);
@@ -332,9 +332,9 @@ fn test_empty_mmr_operations() {
 #[test]
 fn test_index_out_of_range() {
     let store = Box::new(MemoryStore::new());
-    let mmr = Mmr::new(store).unwrap();
-    mmr.append(b"a").unwrap();
-    mmr.append(b"b").unwrap();
+    let mmr = Mmr::new(store).expect("create mmr");
+    mmr.append(b"a").expect("append a");
+    mmr.append(b"b").expect("append b");
 
     // Leaf ordinal beyond leaf count
     assert!(matches!(
@@ -353,25 +353,25 @@ fn test_index_out_of_range() {
 #[test]
 fn test_large_mmr_proof_integrity() {
     let store = Box::new(MemoryStore::new());
-    let mmr = Mmr::new(store).unwrap();
+    let mmr = Mmr::new(store).expect("create mmr");
 
     for i in 0..64u64 {
-        mmr.append(&i.to_le_bytes()).unwrap();
+        mmr.append(&i.to_le_bytes()).expect("append");
     }
 
     assert_eq!(mmr.leaf_count(), 64);
 
     // Verify proofs at boundaries: first, last, middle
     for &ordinal in &[0u64, 31, 63] {
-        let leaf_idx = mmr.get_leaf_index(ordinal).unwrap();
-        let proof = mmr.generate_proof(leaf_idx).unwrap();
+        let leaf_idx = mmr.get_leaf_index(ordinal).expect("get leaf index");
+        let proof = mmr.generate_proof(leaf_idx).expect("generate proof");
         proof
             .verify(&ordinal.to_le_bytes())
             .expect("large MMR proof should verify");
     }
 
     // Range proof spanning multiple subtrees
-    let range_proof = mmr.generate_range_proof(10, 20).unwrap();
+    let range_proof = mmr.generate_range_proof(10, 20).expect("generate range proof");
     let leaf_data: Vec<Vec<u8>> = (10..=20u64).map(|i| i.to_le_bytes().to_vec()).collect();
     range_proof
         .verify(&leaf_data)
@@ -381,14 +381,14 @@ fn test_large_mmr_proof_integrity() {
 #[test]
 fn test_inclusion_proof_tampered_peak() {
     let store = Box::new(MemoryStore::new());
-    let mmr = Mmr::new(store).unwrap();
+    let mmr = Mmr::new(store).expect("create mmr");
 
     for i in 0..4u8 {
-        mmr.append(&[i]).unwrap();
+        mmr.append(&[i]).expect("append");
     }
 
-    let leaf_idx = mmr.get_leaf_index(1).unwrap();
-    let mut proof = mmr.generate_proof(leaf_idx).unwrap();
+    let leaf_idx = mmr.get_leaf_index(1).expect("get leaf index");
+    let mut proof = mmr.generate_proof(leaf_idx).expect("generate proof");
     // Corrupt the peak at peak_position
     proof.peaks[proof.peak_position] = [0xaa; 32];
     let err = proof.verify(&[1u8]).unwrap_err();
@@ -398,12 +398,12 @@ fn test_inclusion_proof_tampered_peak() {
 #[test]
 fn test_inclusion_proof_invalid_peak_position() {
     let store = Box::new(MemoryStore::new());
-    let mmr = Mmr::new(store).unwrap();
-    mmr.append(b"x").unwrap();
-    mmr.append(b"y").unwrap();
+    let mmr = Mmr::new(store).expect("create mmr");
+    mmr.append(b"x").expect("append x");
+    mmr.append(b"y").expect("append y");
 
-    let leaf_idx = mmr.get_leaf_index(0).unwrap();
-    let mut proof = mmr.generate_proof(leaf_idx).unwrap();
+    let leaf_idx = mmr.get_leaf_index(0).expect("get leaf index");
+    let mut proof = mmr.generate_proof(leaf_idx).expect("generate proof");
     proof.peak_position = 999;
     let err = proof.verify(b"x").unwrap_err();
     assert!(matches!(err, MmrError::InvalidProof));
@@ -412,18 +412,18 @@ fn test_inclusion_proof_invalid_peak_position() {
 #[test]
 fn test_get_leaf_indices_range() {
     let store = Box::new(MemoryStore::new());
-    let mmr = Mmr::new(store).unwrap();
+    let mmr = Mmr::new(store).expect("create mmr");
 
     for i in 0..8u8 {
-        mmr.append(&[i]).unwrap();
+        mmr.append(&[i]).expect("append");
     }
 
-    let indices = mmr.get_leaf_indices(0, 7).unwrap();
+    let indices = mmr.get_leaf_indices(0, 7).expect("get leaf indices");
     assert_eq!(indices.len(), 8);
 
     // Each should match the individual get_leaf_index
     for ordinal in 0..8u64 {
-        let single = mmr.get_leaf_index(ordinal).unwrap();
+        let single = mmr.get_leaf_index(ordinal).expect("get leaf index");
         assert_eq!(indices[ordinal as usize], single);
     }
 

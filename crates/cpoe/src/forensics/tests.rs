@@ -19,6 +19,23 @@ fn create_test_events(count: usize) -> Vec<EventData> {
         .collect()
 }
 
+fn make_checkpoint_proof(ordinal: u64, timestamp_ns: i64) -> crate::evidence::CheckpointProof {
+    crate::evidence::CheckpointProof {
+        ordinal,
+        content_hash: String::new(),
+        content_size: 0,
+        timestamp: chrono::DateTime::from_timestamp_nanos(timestamp_ns),
+        message: None,
+        vdf_input: None,
+        vdf_output: None,
+        vdf_iterations: None,
+        elapsed_time: None,
+        previous_hash: String::new(),
+        hash: String::new(),
+        signature: None,
+    }
+}
+
 fn create_test_regions() -> HashMap<i64, Vec<RegionData>> {
     let mut regions = HashMap::new();
     for i in 0..10 {
@@ -731,4 +748,395 @@ fn test_cadence_percentiles_ordered() {
             cadence.percentiles
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// per_checkpoint_flags / analyze_focus_patterns
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// per_checkpoint_flags
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_per_checkpoint_flags_empty_checkpoints() {
+    let events = create_test_events(10);
+    let result = analysis::per_checkpoint_flags(&events, &[]);
+    assert!(result.checkpoint_flags.is_empty());
+    assert!(!result.suspicious);
+    assert_eq!(result.pct_flagged.get(), 0.0);
+}
+
+#[test]
+fn test_per_checkpoint_flags_robotic_timing() {
+    use crate::evidence::CheckpointProof;
+
+    // Create events with perfectly regular timing (low CV = robotic)
+    let events: Vec<EventData> = (0..20)
+        .map(|i| EventData {
+            id: i as i64,
+            timestamp_ns: 1_000_000_000_000 + i as i64 * 100_000_000, // exact 100ms intervals
+            file_size: 100 + i as i64,
+            size_delta: 1,
+            file_path: "/test.txt".to_string(),
+        })
+        .collect();
+
+    let checkpoints = vec![make_checkpoint_proof(
+        0,
+        1_000_000_000_000 + 20 * 100_000_000,
+    )];
+
+    let result = analysis::per_checkpoint_flags(&events, &checkpoints);
+    assert_eq!(result.checkpoint_flags.len(), 1);
+    let flag = &result.checkpoint_flags[0];
+    assert_eq!(flag.event_count, 20);
+    // Perfectly regular intervals should have very low CV
+    assert!(flag.timing_cv < 0.15, "timing_cv={}", flag.timing_cv);
+}
+
+#[test]
+fn test_per_checkpoint_flags_all_append_flagged() {
+    // All positive size_delta with enough events should be flagged
+    let events: Vec<EventData> = (0..10)
+        .map(|i| EventData {
+            id: i as i64,
+            timestamp_ns: 1_000_000_000_000 + i as i64 * 500_000_000,
+            file_size: 100 + i as i64 * 10,
+            size_delta: 10, // all positive
+            file_path: "/test.txt".to_string(),
+        })
+        .collect();
+
+    let checkpoints = vec![make_checkpoint_proof(
+        0,
+        1_000_000_000_000 + 10 * 500_000_000,
+    )];
+
+    let result = analysis::per_checkpoint_flags(&events, &checkpoints);
+    assert_eq!(result.checkpoint_flags.len(), 1);
+    assert!(result.checkpoint_flags[0].all_append);
+}
+
+// ---------------------------------------------------------------------------
+// analyze_focus_patterns
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_analyze_focus_patterns_empty() {
+    let result = analysis::analyze_focus_patterns(&[], 10_000);
+    assert_eq!(result.switch_count, 0);
+    assert_eq!(result.ai_app_switch_count, 0);
+    assert!(!result.reading_pattern_detected);
+}
+
+#[test]
+fn test_analyze_focus_patterns_zero_session() {
+    use crate::sentinel::types::FocusSwitchRecord;
+    let switches = vec![FocusSwitchRecord {
+        lost_at: std::time::SystemTime::now(),
+        regained_at: None,
+        target_app: "TextEdit".to_string(),
+        target_bundle_id: "com.apple.TextEdit".to_string(),
+    }];
+    let result = analysis::analyze_focus_patterns(&switches, 0);
+    assert_eq!(result.switch_count, 0);
+}
+
+#[test]
+fn test_analyze_focus_patterns_ai_app_detection() {
+    use crate::sentinel::types::FocusSwitchRecord;
+    let now = std::time::SystemTime::now();
+    let switches = vec![
+        FocusSwitchRecord {
+            lost_at: now,
+            regained_at: Some(now + std::time::Duration::from_secs(5)),
+            target_app: "ChatGPT".to_string(),
+            target_bundle_id: "com.openai.chatgpt".to_string(),
+        },
+        FocusSwitchRecord {
+            lost_at: now + std::time::Duration::from_secs(10),
+            regained_at: Some(now + std::time::Duration::from_secs(15)),
+            target_app: "Claude".to_string(),
+            target_bundle_id: "com.anthropic.claude".to_string(),
+        },
+    ];
+    let result = analysis::analyze_focus_patterns(&switches, 60_000);
+    assert_eq!(result.switch_count, 2);
+    assert_eq!(result.ai_app_switch_count, 2);
+}
+
+#[test]
+fn test_analyze_focus_patterns_reading_pattern() {
+    use crate::sentinel::types::FocusSwitchRecord;
+    let now = std::time::SystemTime::now();
+
+    // 4 rapid short switches to the same browser (< 10s each)
+    let switches: Vec<FocusSwitchRecord> = (0..4)
+        .map(|i| FocusSwitchRecord {
+            lost_at: now + std::time::Duration::from_secs(i * 15),
+            regained_at: Some(now + std::time::Duration::from_secs(i * 15 + 5)),
+            target_app: "Safari".to_string(),
+            target_bundle_id: "com.apple.Safari".to_string(),
+        })
+        .collect();
+
+    let result = analysis::analyze_focus_patterns(&switches, 120_000);
+    assert!(result.reading_pattern_detected);
+}
+
+#[test]
+fn test_analyze_focus_patterns_out_of_focus_ratio() {
+    use crate::sentinel::types::FocusSwitchRecord;
+    let now = std::time::SystemTime::now();
+    let switches = vec![FocusSwitchRecord {
+        lost_at: now,
+        regained_at: Some(now + std::time::Duration::from_secs(30)),
+        target_app: "Finder".to_string(),
+        target_bundle_id: "com.apple.Finder".to_string(),
+    }];
+    // 30s away out of 60s session = 0.5 ratio
+    let result = analysis::analyze_focus_patterns(&switches, 60_000);
+    assert!(result.out_of_focus_ratio.get() > 0.4);
+    assert!(result.out_of_focus_ratio.get() < 0.6);
+}
+
+// ---------------------------------------------------------------------------
+// analyze_forensics (integration)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_analyze_forensics_minimal() {
+    let events = create_test_events(20);
+    let regions = create_test_regions();
+    let metrics = analysis::analyze_forensics(&events, &regions, None, None, None);
+    // Should produce a valid assessment score
+    assert!(metrics.assessment_score.get() >= 0.0);
+    assert!(metrics.assessment_score.get() <= 1.0);
+}
+
+#[test]
+fn test_analyze_forensics_with_jitter() {
+    let events = create_test_events(50);
+    let regions = create_test_regions();
+
+    let samples: Vec<SimpleJitterSample> = (0..50)
+        .map(|i| {
+            let variation = ((i * 7) % 30) as i64 * 5_000_000;
+            SimpleJitterSample {
+                timestamp_ns: i as i64 * 150_000_000 + variation,
+                duration_since_last_ns: 150_000_000,
+                zone: (i % 8) as u8,
+                ..Default::default()
+            }
+        })
+        .collect();
+
+    let metrics = analysis::analyze_forensics(&events, &regions, Some(&samples), None, None);
+    assert!(metrics.assessment_score.get() >= 0.0);
+    // With jitter, cadence should be populated
+    assert!(metrics.cadence.mean_iki_ns > 0.0);
+}
+
+#[test]
+fn test_analyze_forensics_insufficient_events() {
+    let events = create_test_events(2); // Below MIN_EVENTS_FOR_ANALYSIS
+    let regions = HashMap::new();
+    let metrics = analysis::analyze_forensics(&events, &regions, None, None, None);
+    // Should still return valid metrics without panicking
+    assert!(metrics.assessment_score.get() >= 0.0);
+}
+
+#[test]
+fn test_analyze_forensics_ext_with_context() {
+    let events = create_test_events(30);
+    let regions = create_test_regions();
+    let context = analysis::AnalysisContext {
+        document_length: 5000,
+        total_keystrokes: 300,
+        checkpoint_count: 5,
+    };
+    let metrics =
+        analysis::analyze_forensics_ext(&events, &regions, None, None, None, &context);
+    assert!(metrics.assessment_score.get() >= 0.0);
+    assert_eq!(metrics.checkpoint_count, 5);
+}
+
+// ---------------------------------------------------------------------------
+// assessment: compute_assessment_score
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_assessment_score_insufficient_events() {
+    let primary = PrimaryMetrics::default();
+    let cadence = CadenceMetrics::default();
+    let score = assessment::compute_assessment_score(&primary, &cadence, 0, 2, 0.0);
+    assert_eq!(score, 0.0, "too few events should return 0.0");
+}
+
+#[test]
+fn test_assessment_score_perfect_human() {
+    let primary = PrimaryMetrics {
+        monotonic_append_ratio: Probability::clamp(0.5),
+        edit_entropy: 3.5,
+        positive_negative_ratio: Probability::clamp(0.7),
+        deletion_clustering: 0.5,
+        ..Default::default()
+    };
+    let cadence = CadenceMetrics {
+        coefficient_of_variation: 0.5,
+        is_robotic: false,
+        correction_ratio: Probability::clamp(0.1),
+        post_pause_cv: 0.6,
+        pause_depth_distribution: [0.3, 0.4, 0.3],
+        ..Default::default()
+    };
+    let score = assessment::compute_assessment_score(&primary, &cadence, 0, 100, 0.8);
+    assert!(score > 0.8, "human-like input should score high, got {score}");
+}
+
+#[test]
+fn test_assessment_score_robotic_penalized() {
+    let primary = PrimaryMetrics {
+        monotonic_append_ratio: Probability::clamp(0.95),
+        edit_entropy: 0.5,
+        positive_negative_ratio: Probability::clamp(0.98),
+        deletion_clustering: 1.0,
+        ..Default::default()
+    };
+    let cadence = CadenceMetrics {
+        coefficient_of_variation: 0.05,
+        is_robotic: true,
+        zero_variance_windows: 5,
+        ..Default::default()
+    };
+    let score = assessment::compute_assessment_score(&primary, &cadence, 3, 100, 0.0);
+    assert!(score < 0.4, "robotic input should score low, got {score}");
+}
+
+#[test]
+fn test_assessment_score_anomalies_reduce_score() {
+    let primary = PrimaryMetrics {
+        monotonic_append_ratio: Probability::clamp(0.5),
+        edit_entropy: 3.0,
+        positive_negative_ratio: Probability::clamp(0.6),
+        ..Default::default()
+    };
+    let cadence = CadenceMetrics {
+        coefficient_of_variation: 0.4,
+        ..Default::default()
+    };
+    let score_no_anomalies =
+        assessment::compute_assessment_score(&primary, &cadence, 0, 100, 0.0);
+    let score_with_anomalies =
+        assessment::compute_assessment_score(&primary, &cadence, 5, 100, 0.0);
+    assert!(
+        score_with_anomalies < score_no_anomalies,
+        "anomalies should reduce score"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// assessment: determine_risk_level
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_risk_level_insufficient() {
+    assert_eq!(
+        assessment::determine_risk_level(0.9, 2),
+        RiskLevel::Insufficient
+    );
+}
+
+#[test]
+fn test_risk_level_low() {
+    assert_eq!(assessment::determine_risk_level(0.8, 100), RiskLevel::Low);
+}
+
+#[test]
+fn test_risk_level_medium() {
+    assert_eq!(
+        assessment::determine_risk_level(0.5, 100),
+        RiskLevel::Medium
+    );
+}
+
+#[test]
+fn test_risk_level_high() {
+    assert_eq!(assessment::determine_risk_level(0.2, 100), RiskLevel::High);
+}
+
+// ---------------------------------------------------------------------------
+// assessment: compute_cadence_score
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_cadence_score_robotic() {
+    let cadence = CadenceMetrics {
+        is_robotic: true,
+        coefficient_of_variation: 0.05,
+        percentiles: [0.0, 0.0, 0.0, 0.0, 100.0],
+        ..Default::default()
+    };
+    let score = assessment::compute_cadence_score(&cadence);
+    assert!(score < 0.5, "robotic cadence should score low, got {score}");
+}
+
+#[test]
+fn test_cadence_score_normal() {
+    let cadence = CadenceMetrics {
+        is_robotic: false,
+        coefficient_of_variation: 0.5,
+        percentiles: [50.0, 80.0, 120.0, 180.0, 300.0],
+        ..Default::default()
+    };
+    let score = assessment::compute_cadence_score(&cadence);
+    assert!(
+        score > 0.8,
+        "normal cadence should score high, got {score}"
+    );
+}
+
+#[test]
+fn test_cadence_score_no_data() {
+    let cadence = CadenceMetrics {
+        percentiles: [0.0; 5],
+        ..Default::default()
+    };
+    let score = assessment::compute_cadence_score(&cadence);
+    assert_eq!(score, 0.0, "no data should return 0.0");
+}
+
+// ---------------------------------------------------------------------------
+// assessment: apply_focus_penalties
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_focus_penalties_reading_pattern() {
+    let mut score = Probability::clamp(0.9);
+    let focus = FocusMetrics {
+        reading_pattern_detected: true,
+        ..Default::default()
+    };
+    assessment::apply_focus_penalties(&mut score, &focus);
+    assert!(score.get() < 0.9, "reading pattern should reduce score");
+}
+
+#[test]
+fn test_focus_penalties_ai_switches() {
+    let mut score = Probability::clamp(0.9);
+    let focus = FocusMetrics {
+        ai_app_switch_count: 10,
+        ..Default::default()
+    };
+    assessment::apply_focus_penalties(&mut score, &focus);
+    assert!(score.get() < 0.9, "AI switches should reduce score");
+}
+
+#[test]
+fn test_focus_penalties_no_flags() {
+    let mut score = Probability::clamp(0.9);
+    let focus = FocusMetrics::default();
+    assessment::apply_focus_penalties(&mut score, &focus);
+    assert_eq!(score.get(), 0.9, "no flags should not change score");
 }

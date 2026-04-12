@@ -237,16 +237,16 @@ fn test_chain_latest_and_at() {
         .commit_with_vdf_duration(None, Duration::from_millis(10))
         .expect("commit 0");
     assert!(chain.latest().is_some());
-    assert_eq!(chain.latest().unwrap().ordinal, 0);
+    assert_eq!(chain.latest().expect("latest after commit 0").ordinal, 0);
 
     fs::write(&path, b"updated").expect("update");
     chain
         .commit_with_vdf_duration(None, Duration::from_millis(10))
         .expect("commit 1");
-    assert_eq!(chain.latest().unwrap().ordinal, 1);
+    assert_eq!(chain.latest().expect("latest after commit 1").ordinal, 1);
 
-    assert_eq!(chain.at(0).unwrap().ordinal, 0);
-    assert_eq!(chain.at(1).unwrap().ordinal, 1);
+    assert_eq!(chain.at(0).expect("at ordinal 0").ordinal, 0);
+    assert_eq!(chain.at(1).expect("at ordinal 1").ordinal, 1);
     assert!(chain.at(2).is_err());
 
     drop(dir);
@@ -433,7 +433,7 @@ fn test_entangled_single_commit() {
     assert_eq!(checkpoint.ordinal, 0);
     assert!(checkpoint.vdf.is_some());
     assert!(checkpoint.jitter_binding.is_some());
-    let binding = checkpoint.jitter_binding.as_ref().unwrap();
+    let binding = checkpoint.jitter_binding.as_ref().expect("jitter binding");
     assert_eq!(binding.jitter_hash, jitter_hash);
     assert_eq!(binding.session_id, "session-1");
     assert_eq!(binding.keystroke_count, 50);
@@ -486,8 +486,8 @@ fn test_entangled_multiple_commits() {
     assert_eq!(cp1.previous_hash, cp0.hash);
     assert_eq!(cp2.previous_hash, cp1.hash);
 
-    let vdf0 = cp0.vdf.as_ref().unwrap();
-    let vdf1 = cp1.vdf.as_ref().unwrap();
+    let vdf0 = cp0.vdf.as_ref().expect("vdf proof 0");
+    let vdf1 = cp1.vdf.as_ref().expect("vdf proof 1");
     let expected_input1 = vdf::chain_input_entangled(vdf0.output, [2u8; 32], cp1.content_hash, 1);
     assert_eq!(vdf1.input, expected_input1);
 
@@ -556,7 +556,7 @@ fn test_entangled_verify_detects_jitter_tampering() {
     chain.checkpoints[0]
         .jitter_binding
         .as_mut()
-        .unwrap()
+        .expect("jitter binding")
         .jitter_hash = [0xFFu8; 32];
     chain.checkpoints[0].hash = chain.checkpoints[0].compute_hash();
 
@@ -627,7 +627,7 @@ fn test_entangled_chain_save_load() {
     );
     assert_eq!(loaded.checkpoints.len(), 1);
 
-    let binding = loaded.checkpoints[0].jitter_binding.as_ref().unwrap();
+    let binding = loaded.checkpoints[0].jitter_binding.as_ref().expect("loaded jitter binding");
     assert_eq!(binding.jitter_hash, [0xABu8; 32]);
     assert_eq!(binding.session_id, "session-test");
     assert_eq!(binding.keystroke_count, 42);
@@ -751,11 +751,11 @@ fn test_commit_rfc_with_jitter_binding() {
     assert!(checkpoint.rfc_jitter.is_some());
     assert!(checkpoint.jitter_binding.is_some());
 
-    let rfc_vdf = checkpoint.rfc_vdf.as_ref().unwrap();
+    let rfc_vdf = checkpoint.rfc_vdf.as_ref().expect("rfc vdf proof");
     assert!(rfc_vdf.iterations > 0);
     assert_eq!(rfc_vdf.calibration.hardware_class, "test-hardware");
 
-    let jitter = checkpoint.rfc_jitter.as_ref().unwrap();
+    let jitter = checkpoint.rfc_jitter.as_ref().expect("rfc jitter binding");
     assert_eq!(jitter.entropy_commitment.hash, [0xABu8; 32]);
     assert_eq!(jitter.summary.hurst_exponent, Some(0.72));
 
@@ -850,8 +850,8 @@ fn test_checkpoint_to_rfc_vdf_conversion() {
         vec![],
         1700000000,
     );
-    let rfc_vdf = checkpoint.to_rfc_vdf(calibration).unwrap();
-    let internal_vdf = checkpoint.vdf.as_ref().unwrap();
+    let rfc_vdf = checkpoint.to_rfc_vdf(calibration).expect("to_rfc_vdf");
+    let internal_vdf = checkpoint.vdf.as_ref().expect("internal vdf proof");
     assert_eq!(rfc_vdf.challenge, internal_vdf.input);
     assert_eq!(&rfc_vdf.output[..32], &internal_vdf.output[..]);
     assert_eq!(rfc_vdf.iterations, internal_vdf.iterations);
@@ -1007,15 +1007,15 @@ fn test_entangled_commit_with_physics_context() {
         .expect("commit 0");
 
     assert!(cp0.vdf.is_some());
-    let binding = cp0.jitter_binding.as_ref().unwrap();
+    let binding = cp0.jitter_binding.as_ref().expect("jitter binding");
     assert!(binding.physics_seed.is_some());
 
     let expected_seed =
         crate::physics::entanglement::Entanglement::create_seed(cp0.content_hash, &physics);
-    assert_eq!(binding.physics_seed.unwrap(), expected_seed);
+    assert_eq!(binding.physics_seed.expect("physics seed"), expected_seed);
 
     let plain_input = vdf::chain_input_entangled([0u8; 32], [1u8; 32], cp0.content_hash, 0);
-    let vdf_proof = cp0.vdf.as_ref().unwrap();
+    let vdf_proof = cp0.vdf.as_ref().expect("vdf proof");
     assert_ne!(
         vdf_proof.input, plain_input,
         "VDF input should differ from non-physics input"
@@ -1035,7 +1035,7 @@ fn test_entangled_commit_with_physics_context() {
         )
         .expect("commit 1");
 
-    assert!(cp1.jitter_binding.as_ref().unwrap().physics_seed.is_some());
+    assert!(cp1.jitter_binding.as_ref().expect("jitter binding cp1").physics_seed.is_some());
     chain
         .verify()
         .expect("verify multi-checkpoint physics chain");
@@ -1098,19 +1098,19 @@ fn test_entangled_commit_mixed_physics_and_none() {
     assert!(chain.checkpoints[0]
         .jitter_binding
         .as_ref()
-        .unwrap()
+        .expect("jitter binding 0")
         .physics_seed
         .is_some());
     assert!(chain.checkpoints[1]
         .jitter_binding
         .as_ref()
-        .unwrap()
+        .expect("jitter binding 1")
         .physics_seed
         .is_none());
     assert!(chain.checkpoints[2]
         .jitter_binding
         .as_ref()
-        .unwrap()
+        .expect("jitter binding 2")
         .physics_seed
         .is_some());
 
@@ -1171,7 +1171,7 @@ fn test_commit_rfc_with_argon2() {
         cp0.argon2_swf.is_some(),
         "genesis RFC commit should have Argon2id SWF proof"
     );
-    let swf = cp0.argon2_swf.as_ref().unwrap();
+    let swf = cp0.argon2_swf.as_ref().expect("argon2 swf proof");
     assert_ne!(swf.merkle_root, [0u8; 32], "Merkle root should be non-zero");
     assert_ne!(swf.input, [0u8; 32], "SWF input should be non-zero");
 

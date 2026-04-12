@@ -6,11 +6,11 @@ use chrono::Utc;
 use tempfile::TempDir;
 
 fn test_puf() -> SoftwarePUF {
-    SoftwarePUF::new_from_seed("device-1", vec![7u8; 32]).unwrap()
+    SoftwarePUF::new_from_seed("device-1", vec![7u8; 32]).expect("create test puf")
 }
 
 fn different_puf() -> SoftwarePUF {
-    SoftwarePUF::new_from_seed("device-2", vec![8u8; 32]).unwrap()
+    SoftwarePUF::new_from_seed("device-2", vec![8u8; 32]).expect("create different puf")
 }
 
 #[test]
@@ -288,7 +288,7 @@ fn test_verify_key_hierarchy_invalid_cert() {
     session.sign_checkpoint([1u8; 32]).expect("sign");
 
     let mut evidence = session.export(&identity);
-    evidence.session_certificate.as_mut().unwrap().signature[0] ^= 0xFF;
+    evidence.session_certificate.as_mut().expect("session certificate").signature[0] ^= 0xFF;
 
     let err = verify_key_hierarchy(&evidence).unwrap_err();
     assert!(matches!(err, KeyHierarchyError::InvalidCert));

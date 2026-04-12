@@ -56,6 +56,7 @@ impl HidInputCapture {
     /// Returns `None` if the HID manager could not be created or opened.
     pub fn start() -> Option<Self> {
         let mut info = MachTimebaseInfo { numer: 0, denom: 0 };
+        // SAFETY: mach_timebase_info writes to a valid stack-allocated struct.
         unsafe {
             mach_timebase_info(&mut info);
         }
@@ -86,6 +87,8 @@ impl HidInputCapture {
             .name("cpoe-hid-capture".into())
             .spawn(move || {
                 let ctx_ptr = ctx_addr as *const HidCaptureContext;
+                // SAFETY: ctx_ptr was obtained from Arc::into_raw; run_hid_loop's
+                // safety contract is satisfied (dedicated thread, valid pointer).
                 let result = unsafe { run_hid_loop(ctx_ptr) };
                 match result {
                     Some((manager, run_loop)) => {
@@ -93,7 +96,8 @@ impl HidInputCapture {
                             Some(HidThreadHandles { run_loop, manager });
                         running_clone.store(true, Ordering::SeqCst);
                         let _ = ready_tx.send(true);
-                        // Block until CFRunLoopStop is called from stop().
+                        // SAFETY: CFRunLoopRun blocks on the current thread's run loop
+                        // until CFRunLoopStop is called from stop().
                         unsafe { CFRunLoopRun() };
                     }
                     None => {
@@ -109,7 +113,8 @@ impl HidInputCapture {
             .unwrap_or(false);
         if !ok {
             log::warn!("HID capture thread failed to start");
-            // Reclaim the Arc ref we leaked for the callback via into_raw.
+            // SAFETY: We incremented the strong count via Arc::into_raw(Arc::clone(&context))
+            // in start(); the thread failed, so we must reclaim to avoid a leak.
             unsafe { Arc::decrement_strong_count(Arc::as_ptr(&context)) };
             return None;
         }
@@ -155,6 +160,9 @@ impl HidInputCapture {
             .take();
 
         if let Some(h) = thread_handles {
+            // SAFETY: h.manager and h.run_loop are valid CF objects created by
+            // run_hid_loop. We replace the callback with a no-op first, then
+            // unschedule, close, and release before stopping the run loop.
             unsafe {
                 // Unschedule and close the HID manager before stopping the run loop.
                 IOHIDManagerRegisterInputValueCallback(
@@ -302,6 +310,9 @@ extern "C" fn hid_input_callback(
         return;
     }
 
+    // SAFETY: context is a valid *const HidCaptureContext with a live Arc ref
+    // (guaranteed by the into_raw/decrement_strong_count pairing in start/stop).
+    // value is a valid IOHIDValueRef provided by IOKit.
     unsafe {
         let element = IOHIDValueGetElement(value);
         if element.is_null() {

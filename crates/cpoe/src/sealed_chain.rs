@@ -326,55 +326,55 @@ mod tests {
             document_id: [2u8; 32],
         };
         let bytes = header.to_bytes();
-        let decoded = SealedHeader::from_bytes(&bytes).unwrap();
+        let decoded = SealedHeader::from_bytes(&bytes).expect("header decode");
         assert_eq!(header, decoded);
     }
 
     #[test]
     fn test_sealed_roundtrip() {
-        let dir = TempDir::new().unwrap();
-        let canonical_dir = dir.path().canonicalize().unwrap();
+        let dir = TempDir::new().expect("create temp dir");
+        let canonical_dir = dir.path().canonicalize().expect("canonicalize temp dir");
         let doc_path = canonical_dir.join("test.txt");
-        fs::write(&doc_path, b"hello world").unwrap();
+        fs::write(&doc_path, b"hello world").expect("write test file");
 
         let mut chain = Chain::new(&doc_path, test_vdf_params())
-            .unwrap()
+            .expect("create chain")
             .with_signature_policy(SignaturePolicy::Optional);
         chain
             .commit_with_vdf_duration(None, Duration::from_millis(10))
-            .unwrap();
+            .expect("commit checkpoint");
 
         let key = test_key();
         let doc_id = test_document_id();
         let sealed_path = canonical_dir.join("chain.sealed");
 
-        save_sealed(&chain, &sealed_path, &key, &doc_id).unwrap();
+        save_sealed(&chain, &sealed_path, &key, &doc_id).expect("save sealed chain");
         assert!(sealed_path.exists());
 
-        let loaded = load_sealed(&sealed_path, &key).unwrap();
+        let loaded = load_sealed(&sealed_path, &key).expect("load sealed chain");
         assert_eq!(loaded.checkpoints.len(), chain.checkpoints.len());
         assert_eq!(loaded.checkpoints[0].hash, chain.checkpoints[0].hash);
     }
 
     #[test]
     fn test_wrong_key_fails() {
-        let dir = TempDir::new().unwrap();
-        let canonical_dir = dir.path().canonicalize().unwrap();
+        let dir = TempDir::new().expect("create temp dir");
+        let canonical_dir = dir.path().canonicalize().expect("canonicalize temp dir");
         let doc_path = canonical_dir.join("test.txt");
-        fs::write(&doc_path, b"data").unwrap();
+        fs::write(&doc_path, b"data").expect("write test file");
 
         let mut chain = Chain::new(&doc_path, test_vdf_params())
-            .unwrap()
+            .expect("create chain")
             .with_signature_policy(SignaturePolicy::Optional);
         chain
             .commit_with_vdf_duration(None, Duration::from_millis(10))
-            .unwrap();
+            .expect("commit checkpoint");
 
         let key = test_key();
         let doc_id = test_document_id();
         let sealed_path = canonical_dir.join("chain.sealed");
 
-        save_sealed(&chain, &sealed_path, &key, &doc_id).unwrap();
+        save_sealed(&chain, &sealed_path, &key, &doc_id).expect("save sealed chain");
 
         let wrong_key = ChainEncryptionKey::from_bytes([0xCC; 32]);
         let result = load_sealed(&sealed_path, &wrong_key);
@@ -387,28 +387,28 @@ mod tests {
 
     #[test]
     fn test_tampered_ciphertext_fails() {
-        let dir = TempDir::new().unwrap();
-        let canonical_dir = dir.path().canonicalize().unwrap();
+        let dir = TempDir::new().expect("create temp dir");
+        let canonical_dir = dir.path().canonicalize().expect("canonicalize temp dir");
         let doc_path = canonical_dir.join("test.txt");
-        fs::write(&doc_path, b"data").unwrap();
+        fs::write(&doc_path, b"data").expect("write test file");
 
         let mut chain = Chain::new(&doc_path, test_vdf_params())
-            .unwrap()
+            .expect("create chain")
             .with_signature_policy(SignaturePolicy::Optional);
         chain
             .commit_with_vdf_duration(None, Duration::from_millis(10))
-            .unwrap();
+            .expect("commit checkpoint");
 
         let key = test_key();
         let doc_id = test_document_id();
         let sealed_path = canonical_dir.join("chain.sealed");
 
-        save_sealed(&chain, &sealed_path, &key, &doc_id).unwrap();
+        save_sealed(&chain, &sealed_path, &key, &doc_id).expect("save sealed chain");
 
-        let mut data = fs::read(&sealed_path).unwrap();
+        let mut data = fs::read(&sealed_path).expect("read sealed file");
         let tamper_idx = HEADER_SIZE + 5;
         data[tamper_idx] ^= 0xFF;
-        fs::write(&sealed_path, &data).unwrap();
+        fs::write(&sealed_path, &data).expect("write tampered file");
 
         let result = load_sealed(&sealed_path, &key);
         assert!(result.is_err());
@@ -416,8 +416,8 @@ mod tests {
 
     #[test]
     fn test_is_sealed_file() {
-        let dir = TempDir::new().unwrap();
-        let canonical_dir = dir.path().canonicalize().unwrap();
+        let dir = TempDir::new().expect("create temp dir");
+        let canonical_dir = dir.path().canonicalize().expect("canonicalize temp dir");
 
         let sealed_path = canonical_dir.join("test.sealed");
         let mut data = Vec::new();
@@ -426,11 +426,11 @@ mod tests {
         data.extend_from_slice(&[0u8; 12]); // nonce
         data.extend_from_slice(&[0u8; 32]); // doc_id
         data.extend_from_slice(&[0u8; 32]); // fake ciphertext
-        fs::write(&sealed_path, &data).unwrap();
+        fs::write(&sealed_path, &data).expect("write sealed file");
         assert!(is_sealed_file(&sealed_path));
 
         let json_path = canonical_dir.join("test.json");
-        fs::write(&json_path, b"{}").unwrap();
+        fs::write(&json_path, b"{}").expect("write json file");
         assert!(!is_sealed_file(&json_path));
 
         assert!(!is_sealed_file(&canonical_dir.join("nonexistent")));
@@ -438,69 +438,69 @@ mod tests {
 
     #[test]
     fn test_read_sealed_document_id() {
-        let dir = TempDir::new().unwrap();
-        let canonical_dir = dir.path().canonicalize().unwrap();
+        let dir = TempDir::new().expect("create temp dir");
+        let canonical_dir = dir.path().canonicalize().expect("canonicalize temp dir");
         let doc_path = canonical_dir.join("test.txt");
-        fs::write(&doc_path, b"data").unwrap();
+        fs::write(&doc_path, b"data").expect("write test file");
 
         let mut chain = Chain::new(&doc_path, test_vdf_params())
-            .unwrap()
+            .expect("create chain")
             .with_signature_policy(SignaturePolicy::Optional);
         chain
             .commit_with_vdf_duration(None, Duration::from_millis(10))
-            .unwrap();
+            .expect("commit checkpoint");
 
         let key = test_key();
         let doc_id = test_document_id();
         let sealed_path = canonical_dir.join("chain.sealed");
 
-        save_sealed(&chain, &sealed_path, &key, &doc_id).unwrap();
+        save_sealed(&chain, &sealed_path, &key, &doc_id).expect("save sealed chain");
 
-        let read_id = read_sealed_document_id(&sealed_path).unwrap();
+        let read_id = read_sealed_document_id(&sealed_path).expect("read document id");
         assert_eq!(read_id, doc_id);
     }
 
     #[test]
     fn test_load_sealed_verified_correct_id() {
-        let dir = TempDir::new().unwrap();
-        let canonical_dir = dir.path().canonicalize().unwrap();
+        let dir = TempDir::new().expect("create temp dir");
+        let canonical_dir = dir.path().canonicalize().expect("canonicalize temp dir");
         let doc_path = canonical_dir.join("test.txt");
-        fs::write(&doc_path, b"data").unwrap();
+        fs::write(&doc_path, b"data").expect("write test file");
 
         let mut chain = Chain::new(&doc_path, test_vdf_params())
-            .unwrap()
+            .expect("create chain")
             .with_signature_policy(SignaturePolicy::Optional);
         chain
             .commit_with_vdf_duration(None, Duration::from_millis(10))
-            .unwrap();
+            .expect("commit checkpoint");
 
         let key = test_key();
         let doc_id = test_document_id();
         let sealed_path = canonical_dir.join("chain.sealed");
-        save_sealed(&chain, &sealed_path, &key, &doc_id).unwrap();
+        save_sealed(&chain, &sealed_path, &key, &doc_id).expect("save sealed chain");
 
-        let loaded = load_sealed_verified(&sealed_path, &key, Some(&doc_id)).unwrap();
+        let loaded = load_sealed_verified(&sealed_path, &key, Some(&doc_id)).expect("load verified chain");
         assert_eq!(loaded.checkpoints.len(), chain.checkpoints.len());
     }
 
     #[test]
     fn test_load_sealed_verified_wrong_id() {
-        let dir = TempDir::new().unwrap();
-        let canonical_dir = dir.path().canonicalize().unwrap();
+        let dir = TempDir::new().expect("create temp dir");
+        let canonical_dir = dir.path().canonicalize().expect("canonicalize temp dir");
         let doc_path = canonical_dir.join("test.txt");
-        fs::write(&doc_path, b"data").unwrap();
+        fs::write(&doc_path, b"data").expect("write test file");
 
         let mut chain = Chain::new(&doc_path, test_vdf_params())
-            .unwrap()
+            .expect("create chain")
             .with_signature_policy(SignaturePolicy::Optional);
         chain
             .commit_with_vdf_duration(None, Duration::from_millis(10))
-            .unwrap();
+            .expect("commit checkpoint");
 
         let key = test_key();
         let doc_id = test_document_id();
         let sealed_path = canonical_dir.join("chain.sealed");
-        save_sealed(&chain, &sealed_path, &key, &doc_id).unwrap();
+        save_sealed(&chain, &sealed_path, &key, &doc_id).expect("save sealed chain");
 
         let wrong_id = [0xCC; 32];
         let result = load_sealed_verified(&sealed_path, &key, Some(&wrong_id));
@@ -513,31 +513,31 @@ mod tests {
 
     #[test]
     fn test_migrate_to_sealed() {
-        let dir = TempDir::new().unwrap();
-        let canonical_dir = dir.path().canonicalize().unwrap();
+        let dir = TempDir::new().expect("create temp dir");
+        let canonical_dir = dir.path().canonicalize().expect("canonicalize temp dir");
         let doc_path = canonical_dir.join("test.txt");
-        fs::write(&doc_path, b"hello").unwrap();
+        fs::write(&doc_path, b"hello").expect("write test file");
 
         let mut chain = Chain::new(&doc_path, test_vdf_params())
-            .unwrap()
+            .expect("create chain")
             .with_signature_policy(SignaturePolicy::Optional);
         chain
             .commit_with_vdf_duration(None, Duration::from_millis(10))
-            .unwrap();
+            .expect("commit checkpoint");
 
         let json_path = canonical_dir.join("chain.json");
-        chain.save(&json_path).unwrap();
+        chain.save(&json_path).expect("save json chain");
         assert!(json_path.exists());
 
         let key = test_key();
         let doc_id = test_document_id();
 
-        let sealed_path = migrate_to_sealed(&json_path, &key, &doc_id).unwrap();
+        let sealed_path = migrate_to_sealed(&json_path, &key, &doc_id).expect("migrate to sealed");
         assert!(sealed_path.exists());
         assert!(!json_path.exists()); // original renamed
         assert!(canonical_dir.join("chain.json.bak").exists());
 
-        let loaded = load_sealed(&sealed_path, &key).unwrap();
+        let loaded = load_sealed(&sealed_path, &key).expect("load migrated chain");
         assert_eq!(loaded.checkpoints.len(), 1);
     }
 
@@ -546,57 +546,57 @@ mod tests {
         let master_seed = [0x42u8; 32];
         let doc_id = [0x01u8; 32];
 
-        let key1 = ChainEncryptionKey::derive(&master_seed, &doc_id).unwrap();
-        let key2 = ChainEncryptionKey::derive(&master_seed, &doc_id).unwrap();
+        let key1 = ChainEncryptionKey::derive(&master_seed, &doc_id).expect("derive key1");
+        let key2 = ChainEncryptionKey::derive(&master_seed, &doc_id).expect("derive key2");
 
         assert_eq!(key1.key.as_bytes(), key2.key.as_bytes());
 
         let doc_id2 = [0x02u8; 32];
-        let key3 = ChainEncryptionKey::derive(&master_seed, &doc_id2).unwrap();
+        let key3 = ChainEncryptionKey::derive(&master_seed, &doc_id2).expect("derive key3");
         assert_ne!(key1.key.as_bytes(), key3.key.as_bytes());
     }
 
     #[test]
     fn test_short_file_fails() {
-        let dir = TempDir::new().unwrap();
+        let dir = TempDir::new().expect("create temp dir");
         let path = dir.path().join("short.sealed");
-        fs::write(&path, b"WCS").unwrap();
+        fs::write(&path, b"WCS").expect("write short file");
 
         assert!(load_sealed(&path, &test_key()).is_err());
     }
 
     #[test]
     fn test_invalid_magic_fails() {
-        let dir = TempDir::new().unwrap();
+        let dir = TempDir::new().expect("create temp dir");
         let path = dir.path().join("bad.sealed");
         let mut data = vec![0u8; 100];
         data[0..4].copy_from_slice(b"XXXX");
-        fs::write(&path, &data).unwrap();
+        fs::write(&path, &data).expect("write bad magic file");
 
         assert!(load_sealed(&path, &test_key()).is_err());
     }
 
     #[test]
     fn test_v1_backward_compatibility() {
-        let dir = TempDir::new().unwrap();
-        let canonical_dir = dir.path().canonicalize().unwrap();
+        let dir = TempDir::new().expect("create temp dir");
+        let canonical_dir = dir.path().canonicalize().expect("canonicalize temp dir");
         let doc_path = canonical_dir.join("test.txt");
-        fs::write(&doc_path, b"data").unwrap();
+        fs::write(&doc_path, b"data").expect("write test file");
 
         let mut chain = Chain::new(&doc_path, test_vdf_params())
-            .unwrap()
+            .expect("create chain")
             .with_signature_policy(SignaturePolicy::Optional);
         chain
             .commit_with_vdf_duration(None, Duration::from_millis(10))
-            .unwrap();
+            .expect("commit checkpoint");
 
         let key = test_key();
         let doc_id = test_document_id();
         let path = canonical_dir.join("chain_v1.sealed");
 
-        save_sealed_v1(&chain, &path, &key, &doc_id).unwrap();
+        save_sealed_v1(&chain, &path, &key, &doc_id).expect("save sealed v1");
 
-        let loaded = load_sealed(&path, &key).unwrap();
+        let loaded = load_sealed(&path, &key).expect("load sealed v1");
         assert_eq!(loaded.checkpoints.len(), chain.checkpoints.len());
         assert_eq!(loaded.checkpoints[0].hash, chain.checkpoints[0].hash);
     }

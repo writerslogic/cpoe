@@ -270,7 +270,7 @@ fn test_active_session() {
 
     verifier.start_session().expect("start session");
     assert!(verifier.active_session().is_some());
-    assert!(verifier.active_session().unwrap().active);
+    assert!(verifier.active_session().expect("active session").active);
 
     verifier.end_session().expect("end session");
     assert!(verifier.active_session().is_none());
@@ -458,7 +458,7 @@ fn test_challenge_status_transitions() {
         .respond_to_challenge(&challenge.id, word)
         .expect("respond");
 
-    let session = verifier.active_session().unwrap();
+    let session = verifier.active_session().expect("active session");
     assert_eq!(session.challenges[0].status, ChallengeStatus::Passed);
 }
 
@@ -515,7 +515,7 @@ fn test_session_timestamps() {
     std::thread::sleep(Duration::from_millis(10));
     let ended = verifier.end_session().expect("end");
     assert!(ended.end_time.is_some());
-    assert!(ended.end_time.unwrap() > start_time);
+    assert!(ended.end_time.expect("end time set") > start_time);
 }
 
 #[test]
@@ -536,7 +536,7 @@ fn test_challenge_response_recorded() {
         .respond_to_challenge(&challenge.id, word)
         .expect("respond");
 
-    let session = verifier.active_session().unwrap();
+    let session = verifier.active_session().expect("active session");
     assert!(session.challenges[0].responded_at.is_some());
     assert!(session.challenges[0].response_hash.is_some());
 }

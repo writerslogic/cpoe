@@ -108,7 +108,7 @@ fn test_block_from_packet_signed() {
 
     let seal_check = report.checks.iter().find(|c| c.name == "seal_signature");
     assert!(seal_check.is_some(), "Should have seal_signature check");
-    assert!(seal_check.unwrap().passed, "Seal signature should pass");
+    assert!(seal_check.expect("seal_signature check present").passed, "Seal signature should pass");
 }
 
 #[test]
@@ -234,7 +234,7 @@ fn test_block_with_verifier_nonce() {
     let block = Block::from_packet(&packet).expect("create block");
 
     assert!(block.verifier_nonce.is_some());
-    assert_eq!(block.verifier_nonce.unwrap(), nonce);
+    assert_eq!(block.verifier_nonce.expect("verifier nonce present"), nonce);
 }
 
 #[test]
@@ -284,7 +284,7 @@ fn test_block_ascii_decode_with_verifier_nonce() {
 
     let decoded = Block::decode_ascii(&ascii).expect("decode");
     assert!(decoded.verifier_nonce.is_some());
-    assert_eq!(decoded.verifier_nonce.unwrap(), nonce);
+    assert_eq!(decoded.verifier_nonce.expect("decoded verifier nonce present"), nonce);
 }
 
 #[test]
@@ -311,7 +311,7 @@ fn test_forensic_details_with_verifier_nonce() {
     assert!(report.details.has_verifier_nonce);
     assert!(report.details.verifier_nonce.is_some());
     assert_eq!(
-        report.details.verifier_nonce.as_ref().unwrap(),
+        report.details.verifier_nonce.as_ref().expect("verifier nonce in details"),
         &hex::encode(nonce)
     );
 }

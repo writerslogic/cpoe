@@ -234,8 +234,8 @@ fn test_wal_truncate_race_condition() {
 
     let wal = Arc::new(Wal::open(&path, session_id, signing_key).expect("open wal"));
 
-    wal.append(EntryType::Heartbeat, vec![1]).unwrap();
-    wal.append(EntryType::Heartbeat, vec![2]).unwrap();
+    wal.append(EntryType::Heartbeat, vec![1]).expect("append entry 1");
+    wal.append(EntryType::Heartbeat, vec![2]).expect("append entry 2");
 
     let wal_clone = Arc::clone(&wal);
     let handle = thread::spawn(move || {
@@ -248,7 +248,7 @@ fn test_wal_truncate_race_condition() {
         let _ = wal.truncate(1);
     }
 
-    handle.join().unwrap();
+    handle.join().expect("join writer thread");
 
     let verification = wal.verify().expect("verify");
     assert!(
@@ -317,7 +317,7 @@ fn test_wal_rotate_if_needed_no_rotation() {
 #[test]
 fn test_wal_rotate_if_needed_triggers() {
     let dir = std::env::temp_dir().join(format!("wal-rot-{}", uuid::Uuid::new_v4()));
-    fs::create_dir_all(&dir).unwrap();
+    fs::create_dir_all(&dir).expect("create temp dir");
     let path = dir.join("test.wal");
     let session_id = [21u8; 32];
     let signing_key = test_signing_key();
@@ -330,7 +330,7 @@ fn test_wal_rotate_if_needed_triggers() {
     // Set threshold to 1 byte so rotation is forced.
     let archive = wal.rotate_if_needed(1).expect("rotate");
     assert!(archive.is_some());
-    let archive_path = archive.unwrap();
+    let archive_path = archive.expect("archive path");
     assert!(archive_path.exists());
     assert!(archive_path.to_string_lossy().ends_with(".archive"));
 
@@ -352,12 +352,12 @@ fn test_wal_rotate_if_needed_triggers() {
 #[test]
 fn test_wal_list_and_prune_archives() {
     let dir = std::env::temp_dir().join(format!("wal-prune-{}", uuid::Uuid::new_v4()));
-    fs::create_dir_all(&dir).unwrap();
+    fs::create_dir_all(&dir).expect("create temp dir");
 
     // Create fake archive files with ordered timestamps.
     for i in 1..=5 {
         let name = format!("test.wal.{}.archive", i);
-        fs::write(dir.join(&name), b"fake").unwrap();
+        fs::write(dir.join(&name), b"fake").expect("write fake archive");
     }
 
     let archives = Wal::list_archives(&dir);
@@ -516,7 +516,7 @@ fn test_wal_rejects_tampered_entry() {
 #[test]
 fn test_list_archives_empty() {
     let dir = std::env::temp_dir().join(format!("wal-empty-{}", uuid::Uuid::new_v4()));
-    fs::create_dir_all(&dir).unwrap();
+    fs::create_dir_all(&dir).expect("create temp dir");
 
     let archives = Wal::list_archives(&dir);
     assert!(archives.is_empty());
@@ -527,12 +527,12 @@ fn test_list_archives_empty() {
 #[test]
 fn test_prune_archives_keeps_newest() {
     let dir = std::env::temp_dir().join(format!("wal-prune-keep-{}", uuid::Uuid::new_v4()));
-    fs::create_dir_all(&dir).unwrap();
+    fs::create_dir_all(&dir).expect("create temp dir");
 
     // Create 7 archive files with ordered timestamps.
     for i in 1..=7 {
         let name = format!("test.wal.{}.archive", i * 1000);
-        fs::write(dir.join(&name), format!("archive-{}", i)).unwrap();
+        fs::write(dir.join(&name), format!("archive-{}", i)).expect("write fake archive");
     }
 
     assert_eq!(Wal::list_archives(&dir).len(), 7);
@@ -545,14 +545,14 @@ fn test_prune_archives_keeps_newest() {
 
     // The three newest (timestamps 5000, 6000, 7000) should survive.
     for path in &remaining {
-        let name = path.file_name().unwrap().to_string_lossy();
+        let name = path.file_name().expect("archive file name").to_string_lossy();
         let ts: u64 = name
             .strip_prefix("test.wal.")
-            .unwrap()
+            .expect("strip prefix")
             .strip_suffix(".archive")
-            .unwrap()
+            .expect("strip suffix")
             .parse()
-            .unwrap();
+            .expect("parse timestamp");
         assert!(
             ts >= 5000,
             "Expected only newest archives to survive, found timestamp {}",
@@ -570,7 +570,7 @@ fn test_prune_archives_keeps_newest() {
 #[test]
 fn test_wal_rotate_preserves_session() {
     let dir = std::env::temp_dir().join(format!("wal-rot-sess-{}", uuid::Uuid::new_v4()));
-    fs::create_dir_all(&dir).unwrap();
+    fs::create_dir_all(&dir).expect("create temp dir");
     let path = dir.join("session.wal");
     let session_id = [33u8; 32];
     let signing_key = test_signing_key();
@@ -602,4 +602,97 @@ fn test_wal_rotate_preserves_session() {
 
     let _ = wal.close();
     let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_wal_flush_noop_when_closed() {
+    let path = temp_wal_path();
+    let session_id = [40u8; 32];
+    let signing_key = test_signing_key();
+
+    let wal = Wal::open(&path, session_id, signing_key).expect("open wal");
+    wal.append(EntryType::Heartbeat, vec![1]).expect("append");
+    wal.close().expect("close");
+    // flush after close should succeed silently
+    wal.flush().expect("flush after close");
+
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
+fn test_wal_flush_syncs_pending() {
+    let path = temp_wal_path();
+    let session_id = [41u8; 32];
+    let signing_key = test_signing_key();
+
+    // Use a large sync interval so appends don't auto-sync
+    let wal =
+        Wal::open_with_sync_interval(&path, session_id, signing_key, 1000).expect("open wal");
+    wal.append(EntryType::Heartbeat, vec![1]).expect("append");
+    wal.append(EntryType::DocumentHash, vec![2])
+        .expect("append");
+    // Explicit flush should not fail
+    wal.flush().expect("flush");
+
+    let v = wal.verify().expect("verify");
+    assert!(v.valid);
+    assert_eq!(v.entries, 2);
+
+    let _ = wal.close();
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
+fn test_wal_checkpoint_forces_sync() {
+    let path = temp_wal_path();
+    let session_id = [42u8; 32];
+    let signing_key = test_signing_key();
+
+    // Large sync interval, but Checkpoint entry type should force sync
+    let wal =
+        Wal::open_with_sync_interval(&path, session_id, signing_key, 1000).expect("open wal");
+    wal.append(EntryType::Checkpoint, vec![0xAA; 32])
+        .expect("checkpoint append");
+
+    let v = wal.verify().expect("verify");
+    assert!(v.valid);
+    assert_eq!(v.entries, 1);
+
+    let _ = wal.close();
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
+fn test_wal_verify_detects_wrong_signing_key() {
+    let path = temp_wal_path();
+    let session_id = [43u8; 32];
+    let signing_key = test_signing_key();
+
+    let wal = Wal::open(&path, session_id, signing_key).expect("open wal");
+    wal.append(EntryType::Heartbeat, vec![1]).expect("append");
+    wal.close().expect("close");
+
+    // Reopen with a different signing key
+    let different_key = SigningKey::from_bytes(&[1u8; 32]);
+    let wal2 = Wal::open(&path, session_id, different_key).expect("open with wrong key");
+    // scan_to_end should have truncated the entries signed by the other key
+    assert_eq!(wal2.entry_count(), 0);
+
+    let _ = wal2.close();
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
+fn test_wal_empty_verify() {
+    let path = temp_wal_path();
+    let session_id = [44u8; 32];
+    let signing_key = test_signing_key();
+
+    let wal = Wal::open(&path, session_id, signing_key).expect("open wal");
+    let v = wal.verify().expect("verify empty");
+    assert!(v.valid);
+    assert_eq!(v.entries, 0);
+
+    let _ = wal.close();
+    let _ = fs::remove_file(&path);
 }

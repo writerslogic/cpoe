@@ -484,7 +484,7 @@ fn test_declaration_with_jitter_seal() {
     assert!(decl.has_jitter_seal());
     assert!(decl.verify().is_ok());
 
-    let sealed = decl.jitter_sealed.as_ref().unwrap();
+    let sealed = decl.jitter_sealed.as_ref().expect("jitter seal present");
     assert_eq!(sealed.keystroke_count, 10);
     assert!(sealed.hardware_sealed);
 }
@@ -521,7 +521,7 @@ fn test_declaration_jitter_seal_tampering_detected() {
         .sign(&signing_key)
         .expect("sign");
 
-    decl.jitter_sealed.as_mut().unwrap().jitter_hash = [0xFFu8; 32];
+    decl.jitter_sealed.as_mut().expect("jitter seal present for tampering").jitter_hash = [0xFFu8; 32];
 
     assert!(decl.verify().is_err());
 }
@@ -554,7 +554,7 @@ fn test_declaration_jitter_encode_decode_roundtrip() {
     assert!(decoded.has_jitter_seal());
     assert!(decoded.verify().is_ok());
 
-    let sealed = decoded.jitter_sealed.unwrap();
+    let sealed = decoded.jitter_sealed.expect("decoded jitter seal present");
     assert_eq!(sealed.jitter_hash, [0xABu8; 32]);
     assert_eq!(sealed.keystroke_count, 50);
     assert_eq!(sealed.duration_ms, 5000);

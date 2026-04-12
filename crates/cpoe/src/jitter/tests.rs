@@ -439,7 +439,7 @@ fn test_hash_chain_root() {
     }
 
     let root = hash_chain_root(&session.samples);
-    assert_eq!(root, session.samples.last().unwrap().hash);
+    assert_eq!(root, session.samples.last().expect("last sample").hash);
 
     let _ = fs::remove_file(&path);
 }

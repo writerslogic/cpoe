@@ -70,6 +70,8 @@ pub fn has_required_permissions() -> bool {
 
 /// Get information about the currently focused application and document.
 pub fn get_active_focus() -> Result<FocusInfo> {
+    // SAFETY: Win32 GetForegroundWindow, GetWindowThreadProcessId, and GetWindowTextW
+    // are safe to call from any thread. hwnd is checked for null before use.
     unsafe {
         let hwnd = GetForegroundWindow();
         if hwnd.0.is_null() {
@@ -108,6 +110,9 @@ pub fn get_active_focus() -> Result<FocusInfo> {
 }
 
 fn get_process_path(pid: u32) -> Result<String> {
+    // SAFETY: OpenProcess with PROCESS_QUERY_LIMITED_INFORMATION is a safe query-only call.
+    // path buffer is stack-allocated with known size; QueryFullProcessImageNameW writes at
+    // most `size` u16 elements.
     unsafe {
         let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid)?;
         let mut path = [0u16; 1024];
@@ -177,6 +182,8 @@ impl KeystrokeMonitor {
             return Err(anyhow!("KeystrokeMonitor already active"));
         }
         *GLOBAL_SESSION.lock_recover() = Some(Arc::clone(&session));
+        // SAFETY: SetWindowsHookExW installs a system-wide hook; the callback runs in
+        // the message pump thread. GetCurrentThreadId and GetMessageW are thread-safe.
         unsafe {
             let hook =
                 match SetWindowsHookExW(WH_KEYBOARD_LL, Some(low_level_keyboard_proc), None, 0) {
@@ -216,6 +223,8 @@ impl KeystrokeMonitor {
 
 impl Drop for KeystrokeMonitor {
     fn drop(&mut self) {
+        // SAFETY: UnhookWindowsHookEx and PostThreadMessageW are safe Win32 calls.
+        // _hook was obtained from SetWindowsHookExW; pump_thread_id from GetCurrentThreadId.
         unsafe {
             let _ = UnhookWindowsHookEx(HHOOK(self._hook as *mut _));
             if !PostThreadMessageW(self.pump_thread_id, WM_QUIT, WPARAM(0), LPARAM(0)).as_bool() {
@@ -314,6 +323,8 @@ impl KeystrokeCapture for WindowsKeystrokeCapture {
 
         self.running.store(true, Ordering::SeqCst);
 
+        // SAFETY: SetWindowsHookExW installs a system-wide keyboard hook. The callback
+        // function signature matches the WH_KEYBOARD_LL contract.
         unsafe {
             let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keystroke_capture_hook), None, 0)?;
             self.hook = Some(HookHandle(hook));
@@ -322,7 +333,8 @@ impl KeystrokeCapture for WindowsKeystrokeCapture {
         let running = Arc::clone(&self.running);
         let thread_id_store = Arc::clone(&self.pump_thread_id);
         let handle = std::thread::spawn(move || {
-            // Record this thread's ID so stop() can post WM_QUIT to wake GetMessageW.
+            // SAFETY: GetCurrentThreadId is always safe. GetMessageW blocks until a
+            // message arrives; WM_QUIT from stop() breaks the loop.
             let tid = unsafe { GetCurrentThreadId() };
             thread_id_store.store(tid, Ordering::SeqCst);
 
@@ -344,6 +356,7 @@ impl KeystrokeCapture for WindowsKeystrokeCapture {
         self.running.store(false, Ordering::SeqCst);
 
         if let Some(hook_handle) = self.hook.take() {
+            // SAFETY: hook_handle.0 was obtained from SetWindowsHookExW above.
             unsafe {
                 if let Err(e) = UnhookWindowsHookEx(hook_handle.0) {
                     log::warn!("UnhookWindowsHookEx failed for keyboard hook: {e}");
@@ -359,6 +372,7 @@ impl KeystrokeCapture for WindowsKeystrokeCapture {
         // forever inside GetMessageW), so detach instead of hanging stop().
         let tid = self.pump_thread_id.load(Ordering::SeqCst);
         let posted = if tid != 0 {
+            // SAFETY: PostThreadMessageW with a valid thread ID is safe.
             unsafe { PostThreadMessageW(tid, WM_QUIT, WPARAM(0), LPARAM(0)).as_bool() }
         } else {
             false
@@ -618,6 +632,8 @@ impl MouseCapture for WindowsMouseCapture {
 
         self.running.store(true, Ordering::SeqCst);
 
+        // SAFETY: SetWindowsHookExW installs a system-wide mouse hook. The callback
+        // function signature matches the WH_MOUSE_LL contract.
         unsafe {
             let hook = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_capture_hook), None, 0)?;
             self.hook = Some(HookHandle(hook));
@@ -626,11 +642,12 @@ impl MouseCapture for WindowsMouseCapture {
         let running = Arc::clone(&self.running);
         let thread_id_store = Arc::clone(&self.pump_thread_id);
         let handle = std::thread::spawn(move || {
-            // Record this thread's ID so stop() can post WM_QUIT to wake GetMessageW.
+            // SAFETY: GetCurrentThreadId is always safe.
             let tid = unsafe { GetCurrentThreadId() };
             thread_id_store.store(tid, Ordering::SeqCst);
 
             let mut msg = MSG::default();
+            // SAFETY: GetMessageW blocks until a message arrives; WM_QUIT breaks the loop.
             while running.load(Ordering::SeqCst) {
                 unsafe {
                     if GetMessageW(&mut msg, None, 0, 0).0 <= 0 {
@@ -648,6 +665,7 @@ impl MouseCapture for WindowsMouseCapture {
         self.running.store(false, Ordering::SeqCst);
 
         if let Some(hook_handle) = self.hook.take() {
+            // SAFETY: hook_handle.0 was obtained from SetWindowsHookExW above.
             unsafe {
                 if let Err(e) = UnhookWindowsHookEx(hook_handle.0) {
                     log::warn!("UnhookWindowsHookEx failed for mouse hook: {e}");
@@ -661,6 +679,7 @@ impl MouseCapture for WindowsMouseCapture {
         // Post WM_QUIT to unblock GetMessageW in the pump thread, then join it.
         let tid = self.pump_thread_id.load(Ordering::SeqCst);
         if tid != 0 {
+            // SAFETY: PostThreadMessageW with a valid thread ID is safe.
             unsafe {
                 if !PostThreadMessageW(tid, WM_QUIT, WPARAM(0), LPARAM(0)).as_bool() {
                     log::warn!("PostThreadMessageW failed for mouse pump thread {tid}");

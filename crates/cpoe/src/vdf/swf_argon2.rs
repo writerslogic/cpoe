@@ -20,6 +20,8 @@ use subtle::ConstantTimeEq;
 /// - Windows: `THREAD_PRIORITY_IDLE`
 fn lower_thread_priority() -> i32 {
     #[cfg(target_os = "macos")]
+    // SAFETY: getpriority/setpriority with PRIO_DARWIN_THREAD only affect the
+    // calling thread. No shared state or pointer dereferences.
     unsafe {
         // PRIO_DARWIN_THREAD (3) + PRIO_DARWIN_BG (0x1000): thread-specific
         // background QoS — does NOT affect other threads in the process.
@@ -30,6 +32,8 @@ fn lower_thread_priority() -> i32 {
         prev
     }
     #[cfg(all(unix, not(target_os = "macos")))]
+    // SAFETY: pthread_self() is always valid for the calling thread.
+    // pthread_getschedparam/pthread_setschedparam only affect this thread.
     unsafe {
         // SCHED_IDLE (5) — thread runs only when no other runnable thread
         // wants the CPU. Saves the previous policy to restore later.
@@ -41,6 +45,8 @@ fn lower_thread_priority() -> i32 {
         old_policy
     }
     #[cfg(windows)]
+    // SAFETY: GetCurrentThread returns a pseudo-handle valid for the calling thread.
+    // SetThreadPriority only affects the calling thread.
     unsafe {
         extern "system" {
             fn GetCurrentThread() -> isize;
@@ -59,17 +65,20 @@ fn lower_thread_priority() -> i32 {
 /// Restore thread priority after Argon2 computation.
 fn restore_thread_priority(prev: i32) {
     #[cfg(target_os = "macos")]
+    // SAFETY: setpriority with PRIO_DARWIN_THREAD only affects the calling thread.
     unsafe {
         const PRIO_DARWIN_THREAD: i32 = 3;
         libc::setpriority(PRIO_DARWIN_THREAD, 0, prev);
     }
     #[cfg(all(unix, not(target_os = "macos")))]
+    // SAFETY: pthread_self() is valid; pthread_setschedparam only affects this thread.
     unsafe {
         // Restore SCHED_OTHER (normal policy)
         let param: libc::sched_param = std::mem::zeroed();
         libc::pthread_setschedparam(libc::pthread_self(), prev, &param);
     }
     #[cfg(windows)]
+    // SAFETY: GetCurrentThread pseudo-handle is always valid; restores original priority.
     unsafe {
         extern "system" {
             fn GetCurrentThread() -> isize;

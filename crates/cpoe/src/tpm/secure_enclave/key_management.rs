@@ -29,6 +29,10 @@ use std::ptr::null_mut;
 
 pub(super) fn load_or_create_se_key(tag_str: &str) -> Result<(SecKeyRef, Vec<u8>), TpmError> {
     let tag = CFData::from_buffer(tag_str.as_bytes());
+    // SAFETY: kSec* constants are static CFStringRef values provided by the Security
+    // framework. wrap_under_get_rule increments the refcount so the CFDictionary can
+    // hold them safely. The `as CFTypeRef` casts are valid because all kSec* constants
+    // are toll-free bridged CFType objects.
     let query = core_foundation::dictionary::CFDictionary::from_CFType_pairs(&[
         (
             unsafe { CFString::wrap_under_get_rule(kSecClass) },
@@ -49,6 +53,7 @@ pub(super) fn load_or_create_se_key(tag_str: &str) -> Result<(SecKeyRef, Vec<u8>
     ]);
 
     let mut result: CFTypeRef = null_mut();
+    // SAFETY: query is a valid CFDictionary; result is an out-pointer we check before use.
     let status = unsafe { SecItemCopyMatching(query.as_concrete_TypeRef(), &mut result) };
 
     if status == errSecSuccess && !result.is_null() {
@@ -62,6 +67,8 @@ pub(super) fn load_or_create_se_key(tag_str: &str) -> Result<(SecKeyRef, Vec<u8>
         )));
     }
 
+    // SAFETY: kCFAllocatorDefault and kSecAttr* are valid static constants.
+    // null_mut() error param is allowed; we check the return for null below.
     let access = unsafe {
         SecAccessControlCreateWithFlags(
             kCFAllocatorDefault,
@@ -71,6 +78,8 @@ pub(super) fn load_or_create_se_key(tag_str: &str) -> Result<(SecKeyRef, Vec<u8>
         )
     };
 
+    // SAFETY: kSec* constants are static CFStringRef values; wrap_under_get_rule
+    // retains them for the dictionary's lifetime.
     let mut private_pairs: Vec<(CFString, CFType)> = Vec::new();
     private_pairs.push((
         unsafe { CFString::wrap_under_get_rule(kSecAttrIsPermanent) },
@@ -86,6 +95,8 @@ pub(super) fn load_or_create_se_key(tag_str: &str) -> Result<(SecKeyRef, Vec<u8>
         ));
     }
 
+    // SAFETY: access is non-null (checked above). wrap_under_create_rule takes
+    // ownership, so CFDictionary will release it when dropped.
     private_pairs.push((
         unsafe { CFString::wrap_under_get_rule(kSecAttrAccessControl) },
         unsafe { CFType::wrap_under_create_rule(access as CFTypeRef) },
@@ -96,6 +107,7 @@ pub(super) fn load_or_create_se_key(tag_str: &str) -> Result<(SecKeyRef, Vec<u8>
     let key_size = 256i32;
     let key_size_cf = CFNumber::from(key_size);
 
+    // SAFETY: Same pattern as query dict above; all kSec* are static CFStringRef.
     let key_attrs = core_foundation::dictionary::CFDictionary::from_CFType_pairs(&[
         (
             unsafe { CFString::wrap_under_get_rule(kSecAttrKeyType) },
@@ -116,10 +128,12 @@ pub(super) fn load_or_create_se_key(tag_str: &str) -> Result<(SecKeyRef, Vec<u8>
     ]);
 
     let mut error: CFErrorRef = null_mut();
+    // SAFETY: key_attrs is a valid CFDictionary; error is an out-pointer we release below.
     let key_ref = unsafe { SecKeyCreateRandomKey(key_attrs.as_concrete_TypeRef(), &mut error) };
 
     if key_ref.is_null() {
         if !error.is_null() {
+            // SAFETY: error is a non-null CFErrorRef that we own; release to avoid leak.
             unsafe { core_foundation_sys::base::CFRelease(error as CFTypeRef) };
         }
         return Err(TpmError::KeyGeneration(format!(
@@ -158,18 +172,24 @@ pub(super) fn load_or_create_key(state: &mut SecureEnclaveState) -> Result<(), T
 }
 
 pub(super) fn extract_public_key(key_ref: SecKeyRef) -> Result<Vec<u8>, TpmError> {
+    // SAFETY: key_ref is a valid SecKeyRef obtained from SecItemCopyMatching or
+    // SecKeyCreateRandomKey. SecKeyCopyPublicKey returns a new +1 ref we must release.
     let public_key = unsafe { SecKeyCopyPublicKey(key_ref) };
     if public_key.is_null() {
         return Err(TpmError::KeyExport("public key unavailable".into()));
     }
     let mut error: CFErrorRef = null_mut();
+    // SAFETY: public_key is non-null (checked above); error is an out-pointer.
     let data_ref = unsafe { SecKeyCopyExternalRepresentation(public_key, &mut error) };
     if data_ref.is_null() {
+        // SAFETY: public_key is a non-null CF object we own; release to avoid leak.
         unsafe { core_foundation_sys::base::CFRelease(public_key as *mut std::ffi::c_void) };
         return Err(TpmError::KeyExport("public key export failed".into()));
     }
+    // SAFETY: data_ref is non-null (checked above); wrap_under_create_rule takes ownership.
     let data = unsafe { CFData::wrap_under_create_rule(data_ref) };
     let result = data.bytes().to_vec();
+    // SAFETY: public_key is a non-null CF object we own; release after extracting bytes.
     unsafe { core_foundation_sys::base::CFRelease(public_key as *mut std::ffi::c_void) };
     Ok(result)
 }

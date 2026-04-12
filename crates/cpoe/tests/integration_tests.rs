@@ -70,7 +70,7 @@ fn test_keystroke_injection_reaches_session() {
     // Inject 20 keystrokes with realistic timing (100-250ms intervals).
     let base_ns = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .expect("system time")
         .as_nanos() as i64;
 
     let keycodes: [u16; 20] = [
@@ -166,7 +166,7 @@ fn test_checkpoint_creates_store_event() {
         files.iter().map(|f| &f.path).collect::<Vec<_>>()
     );
 
-    let tracked = files.iter().find(|f| f.path == canonical_str).unwrap();
+    let tracked = files.iter().find(|f| f.path == canonical_str).expect("tracked file found");
     assert_eq!(tracked.checkpoint_count, 1);
 }
 
@@ -209,7 +209,7 @@ fn test_cumulative_keystrokes_persist_across_sessions() {
 
     let base_ns = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .expect("system time")
         .as_nanos() as i64;
 
     for i in 0..50 {
@@ -288,7 +288,7 @@ fn test_export_verify_roundtrip() {
     assert!(export.success, "export failed: {:?}", export.error_message);
     assert!(output_path.exists(), "evidence file not created");
 
-    let file_size = std::fs::metadata(&output_path).unwrap().len();
+    let file_size = std::fs::metadata(&output_path).expect("read evidence metadata").len();
     assert!(file_size > 0, "evidence file is empty");
 
     // Verify the exported evidence.
@@ -382,7 +382,7 @@ fn test_document_stats_via_ffi_roundtrip() {
 
     let (dir, _g) = setup();
     let test_file = dir.path().join("stats_test.txt");
-    std::fs::write(&test_file, "test content for stats").unwrap();
+    std::fs::write(&test_file, "test content for stats").expect("write test file");
 
     let init = ffi_init();
     assert!(init.success, "init: {:?}", init.error_message);
@@ -406,7 +406,7 @@ fn test_document_stats_via_ffi_roundtrip() {
         files.iter().map(|f| &f.path).collect::<Vec<_>>()
     );
     assert!(
-        found.unwrap().checkpoint_count >= 1,
+        found.expect("tracked file entry").checkpoint_count >= 1,
         "should have at least 1 checkpoint"
     );
 }
@@ -593,7 +593,7 @@ fn test_export_at_multiple_tiers() {
             result.error_message
         );
         assert!(output.exists(), "evidence file for tier {tier} not created");
-        let size = std::fs::metadata(&output).unwrap().len();
+        let size = std::fs::metadata(&output).expect("read tier evidence metadata").len();
         assert!(size > 0, "evidence file for tier {tier} is empty");
     }
 }
@@ -1141,7 +1141,7 @@ fn test_concurrent_checkpoints_same_file() {
         })
         .collect();
 
-    let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+    let results: Vec<_> = handles.into_iter().map(|h| h.join().expect("thread join")).collect();
     let success_count = results.iter().filter(|r| r.success).count();
     assert!(
         success_count >= 1,

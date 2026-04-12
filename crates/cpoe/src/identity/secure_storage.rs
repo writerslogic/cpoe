@@ -448,6 +448,9 @@ fn save_macos(account: &str, data: &[u8]) -> Result<()> {
     let account_cf = CFString::new(account);
 
     // "pdmn" is the Keychain schema column name for kSecAttrAccessible
+    // SAFETY: All kSec* constants below are static CFStringRef values from the Security
+    // framework. wrap_under_get_rule retains them for the dictionary's lifetime.
+    // The `as _` casts are toll-free bridged CFTypeRef conversions.
     let k_sec_attr_accessible = CFString::new("pdmn");
     let v_sec_attr_accessible = unsafe {
         core_foundation::base::CFType::wrap_under_get_rule(
@@ -478,6 +481,7 @@ fn save_macos(account: &str, data: &[u8]) -> Result<()> {
         (k_sec_attr_accessible, v_sec_attr_accessible),
     ]);
 
+    // SAFETY: dict is a valid CFDictionary; null_mut() result param means we don't need the ref back.
     let status = unsafe { SecItemAdd(dict.as_concrete_TypeRef(), std::ptr::null_mut()) };
     if status != security_framework_sys::base::errSecSuccess {
         return Err(anyhow!("Keychain add failed with status: {}", status));
@@ -500,6 +504,8 @@ fn load_macos(account: &str) -> Result<Option<Zeroizing<Vec<u8>>>> {
     let service_cf = CFString::new(SERVICE_NAME);
     let account_cf = CFString::new(account);
 
+    // SAFETY: All kSec* constants below are static CFStringRef values from the Security
+    // framework. wrap_under_get_rule retains them for the dictionary's lifetime.
     let k_sec_match_limit = unsafe { CFString::wrap_under_get_rule(kSecMatchLimit as _) };
     let v_sec_match_limit_one = core_foundation::number::CFNumber::from(1).as_CFType();
 
@@ -524,9 +530,12 @@ fn load_macos(account: &str) -> Result<Option<Zeroizing<Vec<u8>>>> {
     ]);
 
     let mut result: core_foundation_sys::base::CFTypeRef = std::ptr::null_mut();
+    // SAFETY: query is a valid CFDictionary; result is an out-pointer checked before use.
     let status = unsafe { SecItemCopyMatching(query.as_concrete_TypeRef(), &mut result) };
 
     if status == security_framework_sys::base::errSecSuccess && !result.is_null() {
+        // SAFETY: result is non-null and was returned as +1 by SecItemCopyMatching;
+        // wrap_under_create_rule takes ownership so it will be released on drop.
         let data_cf = unsafe { core_foundation::data::CFData::wrap_under_create_rule(result as _) };
         let mut encoded = String::from_utf8(data_cf.bytes().to_vec())
             .map_err(|e| anyhow!("Invalid UTF-8 in keychain data: {}", e))?;
@@ -558,6 +567,8 @@ fn delete_macos(account: &str) -> Result<()> {
     let service_cf = CFString::new(SERVICE_NAME);
     let account_cf = CFString::new(account);
 
+    // SAFETY: All kSec* constants are static CFStringRef values from the Security
+    // framework. wrap_under_get_rule retains them for the dictionary's lifetime.
     let query = CFDictionary::from_CFType_pairs(&[
         (
             unsafe { CFString::wrap_under_get_rule(kSecClass as _) },
@@ -575,6 +586,7 @@ fn delete_macos(account: &str) -> Result<()> {
         ),
     ]);
 
+    // SAFETY: query is a valid CFDictionary.
     let status = unsafe { SecItemDelete(query.as_concrete_TypeRef()) };
     if status == security_framework_sys::base::errSecSuccess || status == -25300
     /* errSecItemNotFound */
@@ -778,5 +790,142 @@ mod backend_tests {
         // Under cfg(test) the global backend must be in-memory so cargo
         // test never reaches the OS keychain.
         assert!(SecureStorage::is_keychain_disabled());
+    }
+
+    #[test]
+    fn in_memory_backend_overwrite() {
+        let b = InMemoryBackend::new();
+        b.save("key", b"first").unwrap();
+        b.save("key", b"second").unwrap();
+        let loaded = b.load("key").unwrap().expect("some");
+        assert_eq!(loaded.as_slice(), b"second");
+    }
+
+    #[test]
+    fn in_memory_backend_delete_nonexistent() {
+        let b = InMemoryBackend::new();
+        // Deleting a key that doesn't exist should succeed silently
+        b.delete("nonexistent").unwrap();
+    }
+
+    #[test]
+    fn in_memory_backend_load_nonexistent() {
+        let b = InMemoryBackend::new();
+        assert!(b.load("nonexistent").unwrap().is_none());
+    }
+
+    #[test]
+    fn in_memory_backend_multiple_accounts() {
+        let b = InMemoryBackend::new();
+        b.save("a", b"alpha").unwrap();
+        b.save("b", b"bravo").unwrap();
+        b.save("c", b"charlie").unwrap();
+        assert_eq!(b.load("a").unwrap().expect("a").as_slice(), b"alpha");
+        assert_eq!(b.load("b").unwrap().expect("b").as_slice(), b"bravo");
+        assert_eq!(b.load("c").unwrap().expect("c").as_slice(), b"charlie");
+        b.delete("b").unwrap();
+        assert!(b.load("b").unwrap().is_none());
+        // a and c should still be there
+        assert!(b.load("a").unwrap().is_some());
+        assert!(b.load("c").unwrap().is_some());
+    }
+
+    #[test]
+    fn seed_save_load_delete_and_cache_invalidation() {
+        // Combined test: avoids race conditions from parallel test execution
+        // on the shared global InMemoryBackend.
+        let seed = [0x42u8; 32];
+        SecureStorage::save_seed(&seed).unwrap();
+        let loaded = SecureStorage::load_seed().unwrap().expect("seed present");
+        assert_eq!(loaded.len(), 32);
+
+        // Cache invalidation: reset and reload should return the same value
+        SecureStorage::reset_seed_cache();
+        let reloaded = SecureStorage::load_seed().unwrap().expect("reloaded");
+        assert_eq!(loaded.as_slice(), reloaded.as_slice());
+
+        // Delete and verify gone
+        SecureStorage::delete_seed().unwrap();
+        SecureStorage::reset_seed_cache();
+        assert!(SecureStorage::load_seed().unwrap().is_none());
+    }
+
+    #[test]
+    fn hmac_key_save_load_cycle() {
+        let key = [0xBBu8; 32];
+        SecureStorage::save_hmac_key(&key).unwrap();
+        let loaded = SecureStorage::load_hmac_key()
+            .unwrap()
+            .expect("hmac present");
+        assert_eq!(loaded.len(), 32);
+        SecureStorage::reset_hmac_cache();
+        let reloaded = SecureStorage::load_hmac_key()
+            .unwrap()
+            .expect("hmac still present");
+        assert_eq!(loaded.as_slice(), reloaded.as_slice());
+    }
+
+    #[test]
+    fn signing_key_save_load_cycle() {
+        let key = [0xCCu8; 32];
+        SecureStorage::save_signing_key(&key).unwrap();
+        let loaded = SecureStorage::load_signing_key()
+            .unwrap()
+            .expect("signing key present");
+        assert_eq!(loaded.len(), 32);
+    }
+
+    #[test]
+    fn mnemonic_save_load_cycle() {
+        let phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        SecureStorage::save_mnemonic(phrase).unwrap();
+        let loaded = SecureStorage::load_mnemonic()
+            .unwrap()
+            .expect("mnemonic present");
+        assert_eq!(loaded.as_str(), phrase);
+        SecureStorage::reset_mnemonic_cache();
+        let reloaded = SecureStorage::load_mnemonic()
+            .unwrap()
+            .expect("mnemonic reloaded");
+        assert_eq!(reloaded.as_str(), phrase);
+    }
+
+    #[test]
+    fn fingerprint_key_save_load_cycle() {
+        let key = [0xDDu8; 32];
+        // Reset cache first to avoid stale values from parallel tests.
+        SecureStorage::reset_fingerprint_key_cache();
+        SecureStorage::save_fingerprint_key(&key).unwrap();
+        let loaded = SecureStorage::load_fingerprint_key()
+            .unwrap()
+            .expect("fingerprint key present");
+        assert_eq!(loaded.as_slice(), &key);
+        SecureStorage::reset_fingerprint_key_cache();
+        let reloaded = SecureStorage::load_fingerprint_key()
+            .unwrap()
+            .expect("fingerprint key reloaded");
+        assert_eq!(loaded.as_slice(), reloaded.as_slice());
+    }
+
+    #[test]
+    fn device_identity_save_load_delete() {
+        let device_id = [0xEEu8; 16];
+        let machine_id = "test-machine-001";
+        SecureStorage::save_device_identity(&device_id, machine_id).unwrap();
+        // load_device_identity uses a OnceLock cache that may already be
+        // populated by another test; verify via the backend directly.
+        let loaded_did = SecureStorage::load(DEVICE_ID_ACCOUNT)
+            .unwrap()
+            .expect("device_id present");
+        assert_eq!(loaded_did.as_slice(), &device_id);
+        let loaded_mid = SecureStorage::load(MACHINE_ID_ACCOUNT)
+            .unwrap()
+            .expect("machine_id present");
+        assert_eq!(
+            String::from_utf8(loaded_mid.to_vec()).unwrap(),
+            machine_id
+        );
+        SecureStorage::delete_device_identity().unwrap();
+        assert!(SecureStorage::load(DEVICE_ID_ACCOUNT).unwrap().is_none());
     }
 }

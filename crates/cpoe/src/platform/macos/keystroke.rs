@@ -157,6 +157,8 @@ impl EventTapRunner {
     fn stop(&mut self) {
         let rl_ptr = self.run_loop.lock_recover().take().map(|h| h.0);
         if let Some(p) = rl_ptr {
+            // SAFETY: CFRunLoopStop is documented as thread-safe; p was obtained
+            // from CFRunLoopGetCurrent + CFRetain in the start() thread.
             unsafe {
                 CFRunLoopStop(p);
             }
@@ -186,6 +188,8 @@ impl EventTapRunner {
         }
         if thread_joined {
             if let Some(res) = self.tap_resources.lock_recover().take() {
+                // SAFETY: Thread has joined, so no callbacks can fire. Each CF object
+                // was retained during start(); releasing them restores the refcount.
                 unsafe {
                     CFRelease(res.source);
                     CFRelease(res.tap);
@@ -219,6 +223,8 @@ where
         if event_type == K_CG_EVENT_TAP_DISABLED_BY_TIMEOUT {
             let ptr = tap_ptr.load(Ordering::SeqCst);
             if !ptr.is_null() {
+                // SAFETY: ptr is a valid CFMachPortRef obtained from CGEventTapCreate;
+                // re-enabling a timed-out tap is the documented recovery pattern.
                 unsafe { CGEventTapEnable(ptr, true) };
                 let enabled = unsafe { CGEventTapIsEnabled(ptr) };
                 if !enabled {
@@ -237,6 +243,7 @@ where
         }
 
         if event_type == K_CG_EVENT_KEY_DOWN || event_type == K_CG_EVENT_KEY_UP {
+            // SAFETY: event is a valid CGEventRef provided by the run loop callback.
             let verification = unsafe { verify_event_source(event) };
 
             match verification {
@@ -311,6 +318,8 @@ impl KeystrokeMonitor {
             Arc::clone(&rejected_count),
             move |event, verification| {
                 let now = chrono::Utc::now().timestamp_nanos_safe();
+                // SAFETY: event is a valid CGEventRef; K_CG_KEYBOARD_EVENT_KEYCODE
+                // is a valid field constant for key events.
                 let keycode =
                     unsafe { CGEventGetIntegerValueField(event, K_CG_KEYBOARD_EVENT_KEYCODE) };
                 let keycode_u16 = u16::try_from(keycode).unwrap_or(0xFF);
@@ -505,6 +514,8 @@ impl KeystrokeCapture for MacOSKeystrokeCapture {
             if event_type == K_CG_EVENT_TAP_DISABLED_BY_TIMEOUT {
                 let ptr: *mut std::ffi::c_void = tap_ptr_cb.load(Ordering::SeqCst);
                 if !ptr.is_null() {
+                    // SAFETY: ptr is a valid CFMachPortRef from CGEventTapCreate;
+                    // re-enabling a timed-out tap is the documented recovery pattern.
                     unsafe { CGEventTapEnable(ptr, true) };
                     let enabled = unsafe { CGEventTapIsEnabled(ptr) };
                     if !enabled {
@@ -525,6 +536,7 @@ impl KeystrokeCapture for MacOSKeystrokeCapture {
             }
 
             if event_type == K_CG_EVENT_KEY_DOWN || event_type == K_CG_EVENT_KEY_UP {
+                // SAFETY: event is a valid CGEventRef provided by the run loop callback.
                 let verification = unsafe { verify_event_source(event) };
 
                 let is_hardware = match verification {
@@ -542,6 +554,7 @@ impl KeystrokeCapture for MacOSKeystrokeCapture {
 
                 if is_hardware {
                     let now = chrono::Utc::now().timestamp_nanos_safe();
+                    // SAFETY: event is a valid CGEventRef for a key event.
                     let keycode = u16::try_from(unsafe {
                         CGEventGetIntegerValueField(event, K_CG_KEYBOARD_EVENT_KEYCODE)
                     })

@@ -399,7 +399,7 @@ fn test_builder_with_provenance() {
         .expect("build");
 
     assert!(packet.provenance.is_some());
-    assert_eq!(packet.provenance.as_ref().unwrap().device_id, "test-device");
+    assert_eq!(packet.provenance.as_ref().expect("provenance").device_id, "test-device");
 }
 
 #[test]
@@ -600,7 +600,7 @@ fn test_external_anchors() {
         .expect("build");
 
     assert!(packet.external.is_some());
-    let external = packet.external.unwrap();
+    let external = packet.external.expect("external anchors");
     assert_eq!(external.opentimestamps.len(), 1);
     assert_eq!(external.rfc3161.len(), 1);
 }
@@ -672,10 +672,10 @@ fn test_hardware_evidence_with_attestation_nonce() {
         .expect("build");
 
     assert!(packet.hardware.is_some());
-    let hw = packet.hardware.as_ref().unwrap();
+    let hw = packet.hardware.as_ref().expect("hardware evidence");
     assert_eq!(hw.device_id, "test-device");
     assert!(hw.attestation_nonce.is_some());
-    assert_eq!(hw.attestation_nonce.unwrap(), nonce);
+    assert_eq!(hw.attestation_nonce.expect("attestation nonce"), nonce);
 
     assert!(packet.hardware.is_some());
 }
@@ -706,7 +706,7 @@ fn test_hardware_evidence_without_nonce() {
         .expect("build");
 
     assert!(packet.hardware.is_some());
-    let hw = packet.hardware.as_ref().unwrap();
+    let hw = packet.hardware.as_ref().expect("hardware evidence");
     assert!(hw.attestation_nonce.is_none());
 }
 
