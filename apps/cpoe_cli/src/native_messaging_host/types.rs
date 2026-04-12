@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
+use ed25519_dalek::SigningKey;
 use serde::{Deserialize, Serialize};
 use std::sync::{Mutex, OnceLock};
 use zeroize::Zeroize;
@@ -43,6 +44,9 @@ pub(crate) enum Response {
         message: String,
         /// Session nonce the browser must include in commitments.
         session_nonce: String,
+        /// Device Ed25519 public key (hex) for server-side signature verification.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        device_public_key: Option<String>,
     },
     CheckpointCreated {
         hash: String,
@@ -50,6 +54,9 @@ pub(crate) enum Response {
         message: String,
         /// Server-side commitment hash for the browser to chain.
         commitment: String,
+        /// Ed25519 signature over the checkpoint payload (hex).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
     },
     SessionStopped {
         message: String,
@@ -90,12 +97,15 @@ pub(crate) struct Session {
     /// Token bucket in milli-batches (1 batch = 1000 units; refill at 10 batches/sec = 10 units/ms).
     pub(crate) bucket_millitokens: u64,
     pub(crate) last_refill: std::time::Instant,
+    /// Device Ed25519 signing key for checkpoint signatures. ZeroizeOnDrop via ed25519-dalek.
+    pub(crate) signing_key: Option<SigningKey>,
 }
 
 impl Drop for Session {
     fn drop(&mut self) {
         self.session_nonce.zeroize();
         self.prev_commitment.zeroize();
+        // SigningKey handles its own zeroization via ZeroizeOnDrop.
     }
 }
 

@@ -37,8 +37,9 @@ let callbackId = 0;
 // Anti-forgery commitment chain state
 let sessionNonce = null;
 let prevCommitment = null;
-let genesisReady = null; // Promise that resolves when genesis commitment is set
+let genesisReady = null;
 let checkpointOrdinal = COMMITMENT_CHAIN_INITIAL_ORDINAL;
+let devicePublicKey = null;
 
 function connectToNativeHost() {
   if (nativePort || isConnecting) {
@@ -130,6 +131,7 @@ function handleNativeMessage(message) {
       if (message.session_nonce) {
         sessionNonce = message.session_nonce;
         checkpointOrdinal = COMMITMENT_CHAIN_INITIAL_ORDINAL;
+        devicePublicKey = message.device_public_key || null;
         genesisReady = computeGenesisCommitment(message.session_nonce)
           .then((genesis) => { prevCommitment = genesis; })
           .catch(() => { prevCommitment = null; });
@@ -158,6 +160,7 @@ function handleNativeMessage(message) {
       prevCommitment = null;
       genesisReady = null;
       checkpointOrdinal = COMMITMENT_CHAIN_INITIAL_ORDINAL;
+      devicePublicKey = null;
       updateBadge("", "#95a5a6");
       stopCheckpointTimer();
       broadcastToPopup({ type: "session_update", active: false });

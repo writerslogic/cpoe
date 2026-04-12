@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Commercial
 
+use ed25519_dalek::Signer;
 use sha2::{Digest, Sha256};
 use std::io::Write;
 use std::time::Instant;
@@ -127,6 +128,8 @@ pub(crate) fn handle_start_session(document_url: String, document_title: String)
         };
     }
 
+    let signing_key = load_device_signing_key();
+
     let mut genesis_hasher = Sha256::new();
     genesis_hasher.update(session_id.as_bytes());
     genesis_hasher.update(session_nonce);
@@ -161,6 +164,10 @@ pub(crate) fn handle_start_session(document_url: String, document_title: String)
         }
     }
 
+    let device_public_key = signing_key
+        .as_ref()
+        .map(|sk: &ed25519_dalek::SigningKey| hex::encode(sk.verifying_key().as_bytes()));
+
     *session_lock = Some(Session {
         id: session_id.clone(),
         document_url: document_url.clone(),
@@ -175,12 +182,14 @@ pub(crate) fn handle_start_session(document_url: String, document_title: String)
         last_checkpoint_ts: now_ns,
         bucket_millitokens: JITTER_TOKEN_MAX,
         last_refill: Instant::now(),
+        signing_key,
     });
 
     Response::SessionStarted {
         session_id,
         message: format!("Now witnessing: {document_title}"),
         session_nonce: hex::encode(session_nonce),
+        device_public_key,
     }
 }
 
@@ -215,19 +224,11 @@ pub(crate) fn handle_checkpoint(
 
     let now_ns = now_nanos();
 
-    if session.checkpoint_count > 0 {
-        if ordinal.is_none() {
-            return Response::Error {
-                message: "Ordinal is required after genesis checkpoint".into(),
-                code: "MISSING_ORDINAL".into(),
-            };
-        }
-        if commitment.is_none() {
-            return Response::Error {
-                message: "Commitment is required after genesis checkpoint".into(),
-                code: "MISSING_COMMITMENT".into(),
-            };
-        }
+    if session.checkpoint_count > 0 && ordinal.is_none() {
+        return Response::Error {
+            message: "Ordinal is required after genesis checkpoint".into(),
+            code: "MISSING_ORDINAL".into(),
+        };
     }
 
     if let Some(ord) = ordinal {
@@ -269,6 +270,9 @@ pub(crate) fn handle_checkpoint(
     // Allow char_count to decrease (user may delete text or undo).
     // This is normal editing behavior, not an integrity violation.
 
+    // Browser commitment is an optional protocol-integrity check.
+    // The daemon computes its own commitment (below) and signs it with Ed25519;
+    // the browser's value is not security-critical against a local adversary.
     if let Some(ref browser_commitment) = commitment {
         let expected = compute_commitment(
             &session.prev_commitment,
@@ -276,39 +280,13 @@ pub(crate) fn handle_checkpoint(
             session.expected_ordinal,
             &session.session_nonce,
         );
-
-        // Validate hex length before decoding to avoid timing leaks from
-        // variable-length decode operations.
-        if browser_commitment.len() != 64 {
-            return Response::Error {
-                message: "Invalid commitment length (expected 64 hex chars)".into(),
-                code: "INVALID_COMMITMENT_HEX".into(),
-            };
-        }
-        let browser_bytes = match hex::decode(browser_commitment) {
-            Ok(b) => b,
-            Err(_) => {
-                return Response::Error {
-                    message: "Invalid hex in browser commitment".into(),
-                    code: "INVALID_COMMITMENT_HEX".into(),
-                };
+        if let Ok(browser_bytes) = hex::decode(browser_commitment) {
+            if browser_bytes.len() == 32 && expected.ct_eq(&browser_bytes).unwrap_u8() == 0 {
+                eprintln!(
+                    "Warning: browser commitment mismatch for ordinal {} (protocol integrity check)",
+                    session.expected_ordinal,
+                );
             }
-        };
-        // Check length first, then do constant-time comparison separately
-        // to avoid short-circuit leaking timing info about length.
-        if browser_bytes.len() != 32 {
-            return Response::Error {
-                message: "Commitment chain verification failed".into(),
-                code: "COMMITMENT_MISMATCH".into(),
-            };
-        }
-        if expected.ct_eq(&browser_bytes).unwrap_u8() == 0 {
-            #[cfg(debug_assertions)]
-            eprintln!("Commitment chain violation detected");
-            return Response::Error {
-                message: "Commitment chain verification failed".into(),
-                code: "COMMITMENT_MISMATCH".into(),
-            };
         }
     }
 
@@ -356,6 +334,18 @@ pub(crate) fn handle_checkpoint(
         session.expected_ordinal,
         &session.session_nonce,
     );
+
+    let signature = session.signing_key.as_ref().map(|sk| {
+        let mut payload = Vec::with_capacity(128);
+        payload.extend_from_slice(b"cpoe-checkpoint-sig-v1");
+        payload.extend_from_slice(session.id.as_bytes());
+        payload.extend_from_slice(&session.expected_ordinal.to_le_bytes());
+        payload.extend_from_slice(content_hash.as_bytes());
+        payload.extend_from_slice(&new_commitment);
+        payload.extend_from_slice(&now_ns.to_le_bytes());
+        hex::encode(sk.sign(&payload).to_bytes())
+    });
+
     session.prev_commitment = new_commitment;
     session.expected_ordinal += 1;
     session.checkpoint_count += 1;
@@ -369,7 +359,29 @@ pub(crate) fn handle_checkpoint(
             .message
             .unwrap_or_else(|| "Checkpoint created".into()),
         commitment: hex::encode(new_commitment),
+        signature,
     }
+}
+
+fn load_device_signing_key() -> Option<ed25519_dalek::SigningKey> {
+    let dir = if let Ok(d) = std::env::var("CPOE_DATA_DIR") {
+        std::path::PathBuf::from(d)
+    } else {
+        dirs::home_dir()?.join(".writersproof")
+    };
+    let key_path = dir.join("signing_key");
+    let mut key_data = std::fs::read(&key_path).ok()?;
+    use zeroize::Zeroize;
+    if key_data.len() != 32 && key_data.len() != 64 {
+        key_data.zeroize();
+        return None;
+    }
+    let mut seed = [0u8; 32];
+    seed.copy_from_slice(&key_data[..32]);
+    key_data.zeroize();
+    let key = ed25519_dalek::SigningKey::from_bytes(&seed);
+    seed.zeroize();
+    Some(key)
 }
 
 /// Compute commitment hash: H(prev_commitment || content_hash || ordinal || session_nonce).
