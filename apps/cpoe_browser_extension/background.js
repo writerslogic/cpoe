@@ -10,28 +10,24 @@
  */
 
 importScripts("standalone.js");
+importScripts("secure-channel.js");
 
 const NATIVE_HOST_NAME = "com.writerslogic.witnessd";
-const CHECKPOINT_INTERVAL_MS = 30_000; // 30 seconds default
+const PROTOCOL_VERSION = 1;
+const MIN_NATIVE_PROTOCOL_VERSION = 1;
+const CHECKPOINT_INTERVAL_MS = 30_000;
 const MAX_PENDING_CALLBACKS = 256;
 const GENESIS_COMMITMENT_PREFIX = "CPoE-Genesis-v1";
-const COMMITMENT_CHAIN_INITIAL_ORDINAL = 2; // Ordinal 1 = session start
+const COMMITMENT_CHAIN_INITIAL_ORDINAL = 2;
 
-// M-118: Shared action names used in message validation
-const CONTENT_ACTIONS = [
+const CONTENT_ACTIONS = new Set([
   "start_witnessing", "stop_witnessing", "content_changed", "keystroke_jitter"
-];
-const VALID_ACTIONS = [
-  ...CONTENT_ACTIONS, "get_status", "popup_connect", "export_evidence"
-];
+]);
+const VALID_ACTIONS = new Set([
+  "start_witnessing", "stop_witnessing", "content_changed", "keystroke_jitter",
+  "get_status", "popup_connect", "export_evidence"
+]);
 
-/**
- * Global mutable state. Service worker restarts will reset these to defaults.
- * (H-105) Chrome MV3 service workers can be terminated and restarted at any time.
- * Critical session state (sessionNonce, prevCommitment, checkpointOrdinal) is
- * ephemeral by design — a service worker restart forces a new session handshake
- * with the native host, which re-initializes the commitment chain.
- */
 let nativePort = null;
 let isConnected = false;
 let isConnecting = false;
@@ -40,34 +36,64 @@ let checkpointTimer = null;
 let pendingCallbacks = new Map();
 let callbackId = 0;
 
-// Operating mode: "native" | "standalone" | "detecting"
 let operatingMode = "detecting";
 let standaloneSessionId = null;
+let nativeHostVersion = null;
 
-// Anti-forgery commitment chain state (native mode only)
+// Feature capabilities — populated from native host handshake or defaults
+let capabilities = {
+  hardwareAttestation: false,
+  vdfProofs: false,
+  secureEnclave: false,
+  secureChannel: false,
+  ed25519Signatures: false,
+  hashChain: true,
+  keystrokeJitter: true,
+};
+
 let sessionNonce = null;
 let prevCommitment = null;
 let genesisReady = null;
 let checkpointOrdinal = COMMITMENT_CHAIN_INITIAL_ORDINAL;
 let devicePublicKey = null;
+let secureChannel = null;
 
-/**
- * Probe for the native messaging host on startup.
- * If it responds within 2s, use native mode. Otherwise standalone.
- */
 function detectNativeHost() {
   operatingMode = "detecting";
   try {
     const probe = chrome.runtime.connectNative(NATIVE_HOST_NAME);
     const timeout = setTimeout(() => {
       probe.disconnect();
-      operatingMode = "standalone";
-      updateBadge("S", "#f39c12");
+      setStandaloneMode();
     }, 2000);
 
-    probe.onMessage.addListener(() => {
+    probe.onMessage.addListener((msg) => {
       clearTimeout(timeout);
       probe.disconnect();
+
+      if (msg && typeof msg.protocol_version === "number") {
+        if (msg.protocol_version < MIN_NATIVE_PROTOCOL_VERSION) {
+          setStandaloneMode();
+          broadcastToPopup({
+            type: "error",
+            message: "Desktop app is outdated. Please update for full protection.",
+          });
+          return;
+        }
+        nativeHostVersion = msg.version || null;
+
+        // Populate capabilities from host response
+        if (msg.capabilities && typeof msg.capabilities === "object") {
+          capabilities = { ...capabilities, ...msg.capabilities };
+        } else {
+          capabilities.hardwareAttestation = true;
+          capabilities.vdfProofs = true;
+          capabilities.secureEnclave = true;
+          capabilities.secureChannel = true;
+          capabilities.ed25519Signatures = true;
+        }
+      }
+
       operatingMode = "native";
       updateBadge("", "#2ecc71");
     });
@@ -75,22 +101,32 @@ function detectNativeHost() {
     probe.onDisconnect.addListener(() => {
       clearTimeout(timeout);
       if (operatingMode === "detecting") {
-        operatingMode = "standalone";
-        updateBadge("S", "#f39c12");
+        setStandaloneMode();
       }
     });
 
-    probe.postMessage({ type: "ping" });
+    probe.postMessage({ type: "ping", protocol_version: PROTOCOL_VERSION });
   } catch (_) {
-    operatingMode = "standalone";
-    updateBadge("S", "#f39c12");
+    setStandaloneMode();
   }
 }
 
+function setStandaloneMode() {
+  operatingMode = "standalone";
+  capabilities = {
+    hardwareAttestation: false,
+    vdfProofs: false,
+    secureEnclave: false,
+    secureChannel: false,
+    ed25519Signatures: false,
+    hashChain: true,
+    keystrokeJitter: true,
+  };
+  updateBadge("S", "#f39c12");
+}
+
 function connectToNativeHost() {
-  if (nativePort || isConnecting) {
-    return;
-  }
+  if (nativePort || isConnecting) return;
 
   isConnecting = true;
   try {
@@ -101,8 +137,6 @@ function connectToNativeHost() {
     });
 
     nativePort.onDisconnect.addListener(() => {
-      const error = chrome.runtime.lastError;
-      console.warn("Native host disconnected:", error?.message || "unknown");
       nativePort = null;
       isConnected = false;
       isConnecting = false;
@@ -112,9 +146,8 @@ function connectToNativeHost() {
     isConnected = true;
     updateBadge("", "#2ecc71");
 
-    sendNativeMessage({ type: "ping" });
-  } catch (err) {
-    console.error("Failed to connect to native host:", err);
+    sendNativeMessage({ type: "ping", protocol_version: PROTOCOL_VERSION });
+  } catch (_) {
     isConnected = false;
     updateBadge("!", "#e74c3c");
   } finally {
@@ -128,52 +161,74 @@ function disconnectFromNativeHost() {
     nativePort = null;
   }
   isConnected = false;
+  secureChannel = null;
   updateBadge("", "#95a5a6");
 }
 
+function initiateSecureChannel() {
+  if (secureChannel) return;
+  secureChannel = new SecureChannel();
+  secureChannel.performHandshake((msg) => nativePort.postMessage(msg)).catch(() => {
+    secureChannel = null;
+  });
+}
+
 function sendNativeMessage(message) {
-  if (!nativePort) {
-    connectToNativeHost();
-  }
+  if (!nativePort) connectToNativeHost();
+  if (!nativePort) return;
 
-  if (!nativePort) {
-    console.error("Cannot send message: not connected to native host");
-    return;
-  }
-
-  // H-106: Enforce max pending callbacks to prevent unbounded growth
   if (pendingCallbacks.size >= MAX_PENDING_CALLBACKS) {
-    console.warn("Pending callbacks limit reached, dropping oldest");
     const oldest = pendingCallbacks.keys().next().value;
     pendingCallbacks.delete(oldest);
+  }
+
+  if (secureChannel && secureChannel.handshakeComplete) {
+    secureChannel.encrypt(message).then((envelope) => {
+      nativePort.postMessage(envelope);
+    }).catch(() => {
+      nativePort.postMessage(message);
+    });
+    return;
   }
 
   nativePort.postMessage(message);
 }
 
-/**
- * Handle messages from the native messaging host.
- * (M-052) Acknowledged: this handler is ~60 lines of switch/case which is
- * acceptable for a flat message dispatch; extracting sub-handlers would add
- * indirection without meaningful benefit.
- */
 function handleNativeMessage(message) {
-  // SYS-019: Validate native message structure before dispatch
   if (!message || typeof message !== "object" || typeof message.type !== "string") {
-    console.warn("Ignoring malformed native message:", message);
     return;
   }
 
   switch (message.type) {
     case "pong":
-      console.log(`Native host connected: v${message.version}`);
       isConnected = true;
+      if (typeof message.protocol_version === "number") {
+        nativeHostVersion = message.version || null;
+      }
       updateBadge("", "#2ecc71");
+      initiateSecureChannel();
+      break;
+
+    case "hello_accept":
+      if (secureChannel && !secureChannel.handshakeComplete) {
+        secureChannel.handleHelloAccept(message, (msg) => nativePort.postMessage(msg))
+          .then(() => { capabilities.secureChannel = true; })
+          .catch(() => { secureChannel = null; });
+      }
+      break;
+
+    case "key_confirmed":
+      break;
+
+    case "encrypted":
+      if (secureChannel && secureChannel.handshakeComplete) {
+        secureChannel.decrypt(message).then((inner) => {
+          handleNativeMessage(inner);
+        }).catch(() => {});
+      }
       break;
 
     case "session_started":
-      console.log(`Session started: ${message.session_id}`);
-      // Initialize commitment chain from session nonce
       if (message.session_nonce) {
         sessionNonce = message.session_nonce;
         checkpointOrdinal = COMMITMENT_CHAIN_INITIAL_ORDINAL;
@@ -187,21 +242,14 @@ function handleNativeMessage(message) {
       break;
 
     case "checkpoint_created":
-      console.log(
-        `Checkpoint #${message.checkpoint_count}: ${message.hash?.slice(0, 12)}...`
-      );
-      // Update commitment chain with server's confirmed commitment
       if (message.commitment) {
         prevCommitment = message.commitment;
       }
-      // Ordinal is already incremented at send time (see content_changed handler)
       updateBadge(String(message.checkpoint_count), "#2ecc71");
       broadcastToPopup({ type: "checkpoint_update", ...message });
       break;
 
     case "session_stopped":
-      console.log("Session stopped:", message.message);
-      // Clear commitment chain state
       sessionNonce = null;
       prevCommitment = null;
       genesisReady = null;
@@ -220,7 +268,6 @@ function handleNativeMessage(message) {
       break;
 
     case "error":
-      console.error(`Native host error [${message.code}]: ${message.message}`);
       broadcastToPopup({
         type: "error",
         message: sanitizeErrorMessage(message.message),
@@ -229,11 +276,10 @@ function handleNativeMessage(message) {
       break;
 
     default:
-      console.warn("Unknown native message type:", message.type);
+      break;
   }
 }
 
-// Allowed URL patterns for content script messages (must match manifest.json host_permissions)
 const ALLOWED_ORIGINS = [
   /^https:\/\/docs\.google\.com\//,
   /^https:\/\/(www\.)?overleaf\.com\//,
@@ -256,48 +302,89 @@ const ALLOWED_ORIGINS = [
   /^https:\/\/[^/]*\.?substack\.com\//,
 ];
 
+let customDomainPatterns = [];
+
+function loadCustomDomains() {
+  chrome.storage.local.get(["customDomains"], (result) => {
+    const domains = result.customDomains || [];
+    customDomainPatterns = domains
+      .filter((d) => typeof d === "string" && d.length > 0)
+      .map((d) => {
+        const escaped = d.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*");
+        return new RegExp("^https:\\/\\/" + escaped + "\\/");
+      });
+  });
+}
+
+const CUSTOM_SCRIPT_ID = "cpoe-custom-domains";
+
+function syncCustomContentScripts(domains) {
+  if (!domains || domains.length === 0) {
+    chrome.scripting.unregisterContentScripts({ ids: [CUSTOM_SCRIPT_ID] }).catch(() => {});
+    return;
+  }
+  const patterns = domains.map((d) => `https://${d.replace(/\*/g, "*")}/*`);
+  chrome.scripting.unregisterContentScripts({ ids: [CUSTOM_SCRIPT_ID] }).catch(() => {}).then(() => {
+    chrome.scripting.registerContentScripts([{
+      id: CUSTOM_SCRIPT_ID,
+      matches: patterns,
+      js: ["content.js"],
+      runAt: "document_idle",
+    }]).catch(() => {});
+  });
+}
+
+chrome.storage.onChanged.addListener((changes) => {
+  if (changes.customDomains) {
+    loadCustomDomains();
+    syncCustomContentScripts(changes.customDomains.newValue || []);
+  }
+});
+
+loadCustomDomains();
+chrome.storage.local.get(["customDomains"], (result) => {
+  syncCustomContentScripts(result.customDomains || []);
+});
+
+function isAllowedOrigin(url) {
+  return ALLOWED_ORIGINS.some((re) => re.test(url)) ||
+    customDomainPatterns.some((re) => re.test(url));
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  // SYS-019: Validate message structure
   if (!message || typeof message !== "object" || typeof message.action !== "string") {
     sendResponse({ ok: false, error: "Malformed message" });
     return true;
   }
 
-  // SYS-019: Reject unknown actions early
-  if (!VALID_ACTIONS.includes(message.action)) {
+  if (!VALID_ACTIONS.has(message.action)) {
     sendResponse({ ok: false, error: "Unknown action" });
     return true;
   }
 
-  // Block messages from other extensions
   if (sender.id !== chrome.runtime.id) {
     sendResponse({ ok: false, error: "Unauthorized sender" });
     return true;
   }
 
-  // Content script actions require a valid tab with an allowed URL
-  // M-098: TOCTOU note — the URL check and subsequent use are in the same
-  // synchronous event-loop turn, so no interleaving is possible in JS.
-  if (CONTENT_ACTIONS.includes(message.action)) {
+  if (CONTENT_ACTIONS.has(message.action)) {
     const tabUrl = sender.tab?.url || sender.url || "";
-    if (!sender.tab || !ALLOWED_ORIGINS.some((re) => re.test(tabUrl))) {
+    if (!sender.tab || !isAllowedOrigin(tabUrl)) {
       sendResponse({ ok: false, error: "Unauthorized origin" });
       return true;
     }
   }
 
-  // --- Standalone mode: route through in-browser engine ---
   if (operatingMode === "standalone") {
     handleStandaloneAction(message, sender, sendResponse);
     return true;
   }
 
-  // --- Native mode: route through native messaging host ---
   switch (message.action) {
     case "start_witnessing":
       {
         const url = message.url;
-        if (typeof url !== "string" || !ALLOWED_ORIGINS.some((re) => re.test(url))) {
+        if (typeof url !== "string" || !isAllowedOrigin(url)) {
           sendResponse({ ok: false, error: "Invalid document URL" });
           break;
         }
@@ -360,12 +447,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case "get_status":
       sendNativeMessage({ type: "get_status" });
-      sendResponse({ ok: true, connected: isConnected, mode: "native" });
+      sendResponse({ ok: true, connected: isConnected, mode: "native", capabilities });
       break;
 
     case "popup_connect":
       sendNativeMessage({ type: "get_status" });
-      sendResponse({ ok: true, connected: isConnected, mode: "native" });
+      sendResponse({ ok: true, connected: isConnected, mode: "native", capabilities });
       break;
 
     case "export_evidence":
@@ -406,30 +493,19 @@ function broadcastToPopup(message) {
   chrome.runtime.sendMessage(message).catch(() => {});
 }
 
-/**
- * Sanitize error messages from native host before displaying in popup.
- * Caps length to prevent UI flooding and strips control characters.
- */
 function sanitizeErrorMessage(raw) {
   if (typeof raw !== "string") return "Unknown error";
-  // Strip control characters (except newline/tab) that could spoof UI
   const cleaned = raw.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
-  // Cap length to prevent oversized messages
   if (cleaned.length > 200) {
     return cleaned.slice(0, 200) + "\u2026";
   }
   return cleaned || "Unknown error";
 }
 
-/**
- * Derive a deterministic genesis commitment from the session nonce.
- * SHA-256("CPoE-Genesis-v1" || session_nonce).
- * This ensures the first checkpoint has a valid prev_commitment.
- *
- * M-090: The commitment chain is stored entirely in memory (prevCommitment is
- * a single hash, not a growing list). Storage I/O only occurs for the session
- * nonce read at startup. Chain length does not affect storage I/O.
- */
+// Pre-allocated lookup table for hex encoding
+const HEX = [];
+for (let i = 0; i < 256; i++) HEX[i] = i.toString(16).padStart(2, "0");
+
 async function computeGenesisCommitment(sessionNonceHex) {
   const prefix = new TextEncoder().encode(GENESIS_COMMITMENT_PREFIX);
   const nonce = hexToBytes(sessionNonceHex);
@@ -440,23 +516,17 @@ async function computeGenesisCommitment(sessionNonceHex) {
   return bytesToHex(new Uint8Array(hashBuf));
 }
 
-/**
- * Compute commitment hash: SHA-256(prev_commitment || content_hash || ordinal_le || session_nonce).
- * Must match the server-side computation in native_messaging_host.rs.
- */
 async function computeCommitment(prevCommitmentHex, contentHash, ordinal, sessionNonceHex) {
   const prev = hexToBytes(prevCommitmentHex);
   const nonce = hexToBytes(sessionNonceHex);
   const contentBytes = new TextEncoder().encode(contentHash);
 
-  // ordinal as 8-byte little-endian
   const ordinalBuf = new ArrayBuffer(8);
   const ordinalView = new DataView(ordinalBuf);
   ordinalView.setUint32(0, ordinal & 0xffffffff, true);
   ordinalView.setUint32(4, Math.floor(ordinal / 0x100000000), true);
   const ordinalBytes = new Uint8Array(ordinalBuf);
 
-  // Concatenate: prev(32) + contentHash(utf8) + ordinal(8) + nonce(16)
   const combined = new Uint8Array(prev.length + contentBytes.length + 8 + nonce.length);
   let offset = 0;
   combined.set(prev, offset); offset += prev.length;
@@ -477,12 +547,11 @@ function hexToBytes(hex) {
 }
 
 function bytesToHex(bytes) {
-  return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
+  let hex = "";
+  for (let i = 0; i < bytes.length; i++) hex += HEX[bytes[i]];
+  return hex;
 }
 
-/**
- * Handle actions in standalone mode via the in-browser evidence engine.
- */
 async function handleStandaloneAction(message, sender, sendResponse) {
   switch (message.action) {
     case "start_witnessing":
@@ -493,6 +562,10 @@ async function handleStandaloneAction(message, sender, sendResponse) {
         );
         standaloneSessionId = result.session_id;
         activeTabId = sender.tab?.id;
+        await chrome.storage.local.set({
+          _standaloneSessionId: standaloneSessionId,
+          _standaloneTabId: activeTabId,
+        });
         startCheckpointTimer();
         updateBadge("\u2713", "#f39c12");
         broadcastToPopup({ type: "session_update", ...result, active: true });
@@ -505,6 +578,7 @@ async function handleStandaloneAction(message, sender, sendResponse) {
         const result = await standaloneStopSession(standaloneSessionId);
         activeTabId = null;
         standaloneSessionId = null;
+        await chrome.storage.local.remove(["_standaloneSessionId", "_standaloneTabId"]);
         stopCheckpointTimer();
         updateBadge("S", "#f39c12");
         broadcastToPopup({ type: "session_update", active: false, ...result });
@@ -535,6 +609,9 @@ async function handleStandaloneAction(message, sender, sendResponse) {
       break;
 
     case "keystroke_jitter":
+      if (standaloneSessionId && message.intervals) {
+        await standaloneRecordJitter(standaloneSessionId, message.intervals);
+      }
       sendResponse({ ok: true, mode: "standalone" });
       break;
 
@@ -543,7 +620,7 @@ async function handleStandaloneAction(message, sender, sendResponse) {
       {
         const status = await standaloneGetStatus(standaloneSessionId);
         broadcastToPopup({ type: "status_update", ...status });
-        sendResponse({ ok: true, mode: "standalone", connected: false, ...status });
+        sendResponse({ ok: true, mode: "standalone", connected: false, capabilities, ...status });
       }
       break;
 
@@ -573,8 +650,17 @@ chrome.runtime.onInstalled.addListener(() => {
   detectNativeHost();
 });
 
-// Re-detect on service worker wake (MV3 can terminate and restart)
 detectNativeHost();
+
+chrome.storage.local.get(["_standaloneSessionId", "_standaloneTabId"], (result) => {
+  if (result._standaloneSessionId) {
+    standaloneSessionId = result._standaloneSessionId;
+    activeTabId = result._standaloneTabId || null;
+    if (activeTabId) {
+      startCheckpointTimer();
+    }
+  }
+});
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (tabId === activeTabId) {
@@ -589,6 +675,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     prevCommitment = null;
     checkpointOrdinal = COMMITMENT_CHAIN_INITIAL_ORDINAL;
     stopCheckpointTimer();
+    chrome.storage.local.remove(["_standaloneSessionId", "_standaloneTabId"]);
     updateBadge(operatingMode === "standalone" ? "S" : "", "#95a5a6");
   }
 });
