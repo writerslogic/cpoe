@@ -114,7 +114,7 @@ pub fn ffi_sentinel_inject_keystroke(
 
     // Debug: log inject_keystroke calls
     #[cfg(debug_assertions)]
-    {
+    if std::env::var("CPOE_DEBUG_INJECT").is_ok() {
         use std::sync::atomic::{AtomicU64, Ordering as AO};
         static INJECT_COUNT: AtomicU64 = AtomicU64::new(0);
         static REJECT_COUNT: AtomicU64 = AtomicU64::new(0);

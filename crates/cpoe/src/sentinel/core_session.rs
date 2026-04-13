@@ -337,6 +337,10 @@ impl Sentinel {
         // are never lost on abrupt session end.
         self.commit_checkpoint_for_path(&path_str);
 
+        // Pre-cache the event store before acquiring the sessions write lock
+        // to maintain lock ordering (signing_key before sessions, per AUD-041).
+        let store_result = self.open_event_store();
+
         let session = self.sessions.write_recover().remove(&path_str);
 
         if let Some(session) = session {
@@ -348,7 +352,7 @@ impl Sentinel {
                 .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
                 .map(|d| d.as_secs() as i64)
                 .unwrap_or(now_ts);
-            match self.open_event_store() {
+            match store_result {
                 Ok(store) => {
                     let prev_dur = store
                         .load_document_stats(&path_str)

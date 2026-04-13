@@ -159,7 +159,7 @@ pub fn ffi_sentinel_start() -> FfiResult {
     };
 
     #[cfg(debug_assertions)]
-    {
+    if std::env::var("CPOE_DEBUG_SENTINEL").is_ok() {
         use std::io::Write;
         let debug_path = std::env::var("CPOE_DATA_DIR")
             .map(|d| format!("{}/sentinel_debug.txt", d))

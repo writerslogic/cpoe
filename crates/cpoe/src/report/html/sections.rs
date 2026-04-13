@@ -1484,8 +1484,8 @@ pub(super) fn write_edit_topology(html: &mut String, r: &WarReport) -> fmt::Resu
     let mut bins_ins = [0i64; 20];
     let mut bins_del = [0i64; 20];
     for region in &r.edit_topology {
-        let start_bin = ((region.start_pct * 20.0).floor() as usize).min(19);
-        let end_bin = ((region.end_pct * 20.0).ceil() as usize).min(20);
+        let start_bin = ((region.start_pct / 100.0 * 20.0).floor() as usize).min(19);
+        let end_bin = ((region.end_pct / 100.0 * 20.0).ceil() as usize).min(20);
         for b in start_bin..end_bin {
             if region.delta_sign > 0 {
                 bins_ins[b] += region.byte_count.unsigned_abs() as i64;

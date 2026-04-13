@@ -191,7 +191,7 @@ pub fn analyze_forensics_ext_with_focus(
 
     // Sort once at pipeline entry; all analyzers receive the sorted invariant.
     let mut sorted_buf = events.to_vec();
-    sorted_buf.sort_by_key(|e| e.timestamp_ns);
+    sorted_buf.sort_unstable_by_key(|e| e.timestamp_ns);
     let sorted = SortedEvents::new(&sorted_buf);
 
     if let (Some(model), Some(text)) = (perplexity_model, document_text) {

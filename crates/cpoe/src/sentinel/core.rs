@@ -143,8 +143,12 @@ pub struct Sentinel {
 impl Sentinel {
     /// Create a new sentinel from the given configuration.
     pub fn new(config: SentinelConfig) -> Result<Self> {
-        config.validate().map_err(SentinelError::Anyhow)?;
-        config.ensure_directories().map_err(SentinelError::Anyhow)?;
+        config
+            .validate()
+            .map_err(|e| SentinelError::InvalidConfig(e.to_string()))?;
+        config
+            .ensure_directories()
+            .map_err(|e| SentinelError::Io(std::io::Error::other(e.to_string())))?;
 
         let shadow = ShadowManager::new(&config.shadow_dir)?;
         let (session_events_tx, _) = broadcast::channel(100);
@@ -1309,6 +1313,15 @@ impl Sentinel {
             .get(path)
             .map(|s| s.jitter_samples.clone())
             .unwrap_or_default()
+    }
+
+    /// Compute cadence score under the session lock without cloning samples.
+    pub fn document_cadence_score(&self, path: &str) -> f64 {
+        self.sessions
+            .read_recover()
+            .get(path)
+            .map(|s| crate::forensics::cadence_score_from_samples(&s.jitter_samples))
+            .unwrap_or(0.0)
     }
 
     /// Return the path of the currently focused document, if any.

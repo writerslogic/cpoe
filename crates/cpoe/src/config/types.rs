@@ -2,7 +2,7 @@
 
 use super::defaults;
 use crate::vdf::params::Parameters as VdfParameters;
-use anyhow::Result;
+use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -385,11 +385,9 @@ impl SentinelConfig {
 
     /// Validate sentinel config values (nonzero intervals, consistent bounds).
     pub fn validate(&self) -> Result<()> {
-        use anyhow::bail;
-
         fn require_nonzero(val: u64, name: &str) -> Result<()> {
             if val == 0 {
-                bail!("{name} must be > 0");
+                return Err(Error::validation(format!("{name} must be > 0")));
             }
             Ok(())
         }
@@ -399,11 +397,10 @@ impl SentinelConfig {
         require_nonzero(self.poll_interval_ms, "poll_interval_ms")?;
 
         if self.idle_timeout_secs < self.checkpoint_interval_secs {
-            bail!(
+            return Err(Error::validation(format!(
                 "idle_timeout_secs ({}) must be >= checkpoint_interval_secs ({})",
-                self.idle_timeout_secs,
-                self.checkpoint_interval_secs
-            );
+                self.idle_timeout_secs, self.checkpoint_interval_secs
+            )));
         }
         Ok(())
     }
@@ -420,32 +417,33 @@ impl SentinelConfig {
 impl CpopConfig {
     /// Validate all config values after load/deserialization.
     pub fn validate(&self) -> Result<()> {
-        use anyhow::bail;
-
         if self.retention_days == 0 {
-            bail!("retention_days must be > 0");
+            return Err(Error::validation("retention_days must be > 0"));
         }
         if self.vdf.iterations_per_second == 0 {
-            bail!("vdf.iterations_per_second must be > 0");
+            return Err(Error::validation("vdf.iterations_per_second must be > 0"));
         }
         if self.vdf.min_iterations == 0 {
-            bail!("vdf.min_iterations must be > 0");
+            return Err(Error::validation("vdf.min_iterations must be > 0"));
         }
         if self.vdf.max_iterations == 0 {
-            bail!("vdf.max_iterations must be > 0");
+            return Err(Error::validation("vdf.max_iterations must be > 0"));
         }
         if self.vdf.min_iterations > self.vdf.max_iterations {
-            bail!(
+            return Err(Error::validation(format!(
                 "vdf.min_iterations ({}) must be <= max_iterations ({})",
-                self.vdf.min_iterations,
-                self.vdf.max_iterations
-            );
+                self.vdf.min_iterations, self.vdf.max_iterations
+            )));
         }
         if self.presence.challenge_interval_secs == 0 {
-            bail!("presence.challenge_interval_secs must be > 0");
+            return Err(Error::validation(
+                "presence.challenge_interval_secs must be > 0",
+            ));
         }
         if self.presence.response_window_secs == 0 {
-            bail!("presence.response_window_secs must be > 0");
+            return Err(Error::validation(
+                "presence.response_window_secs must be > 0",
+            ));
         }
         self.sentinel.validate()?;
         Ok(())

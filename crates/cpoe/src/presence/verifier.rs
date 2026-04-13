@@ -275,7 +275,6 @@ impl Verifier {
         (format!("Type the phrase: {phrase}"), phrase.to_lowercase())
     }
 
-    #[allow(clippy::type_complexity)]
     fn generate_math(&mut self) -> (String, String) {
         let a = self.rng.random_range(1..=20);
         let b = self.rng.random_range(1..=20);
@@ -289,6 +288,7 @@ impl Verifier {
             x * y
         }
 
+        #[allow(clippy::type_complexity)]
         let ops: [(&str, fn(i32, i32) -> i32); 3] = [("+", add), ("-", sub), ("*", mul)];
         let (symbol, op) = ops[self.rng.random_range(0..ops.len())];
         let result = op(a, b);
