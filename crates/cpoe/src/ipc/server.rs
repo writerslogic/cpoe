@@ -174,10 +174,12 @@ impl IpcServer {
         }
         #[cfg(target_os = "windows")]
         {
+            let mut is_first = true;
             loop {
                 let server = named_pipe::ServerOptions::new()
-                    .first_pipe_instance(false)
+                    .first_pipe_instance(is_first)
                     .create(&self.pipe_name)?;
+                is_first = false;
 
                 server.connect().await?;
                 let acquired =
@@ -261,10 +263,12 @@ impl IpcServer {
         }
         #[cfg(target_os = "windows")]
         {
+            let mut is_first = true;
             loop {
                 let server = named_pipe::ServerOptions::new()
-                    .first_pipe_instance(false)
+                    .first_pipe_instance(is_first)
                     .create(&self.pipe_name)?;
+                is_first = false;
 
                 tokio::select! {
                     result = server.connect() => {

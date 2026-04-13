@@ -4,6 +4,7 @@
 
 use nix::sys::socket::getsockopt;
 use std::os::fd::AsFd;
+use std::os::unix::fs::FileTypeExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 use thiserror::Error;
@@ -77,8 +78,22 @@ impl SecureUnixSocket {
         let listener = match UnixListener::bind(path) {
             Ok(l) => l,
             Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
-                // Intentionally ignored: stale socket removal; bind() will fail if removal fails
-                let _ = std::fs::remove_file(path);
+                // Verify it's actually a socket before removing (symlink guard).
+                match std::fs::symlink_metadata(path) {
+                    Ok(meta) if meta.file_type().is_socket() => {}
+                    Ok(_) => {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::AddrInUse,
+                            format!(
+                                "IPC path {} is not a socket; refusing to remove",
+                                path.display()
+                            ),
+                        )
+                        .into())
+                    }
+                    Err(e) => return Err(e.into()),
+                }
+                std::fs::remove_file(path)?;
                 UnixListener::bind(path)?
             }
             Err(e) => return Err(e.into()),
