@@ -45,7 +45,7 @@ impl Engine {
         self.inner.running.store(true, Ordering::SeqCst);
 
         #[cfg(target_os = "macos")]
-        {
+        if std::env::var("CPOE_SKIP_PERMISSIONS").is_err() {
             let monitor =
                 platform::macos::KeystrokeMonitor::start(Arc::clone(&self.inner.jitter_session))?;
             *self.inner.keystroke_monitor.lock_recover() = Some(monitor);
