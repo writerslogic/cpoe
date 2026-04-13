@@ -3,6 +3,7 @@
 use crate::mmr::errors::MmrError;
 use crate::mmr::node::{Node, NODE_SIZE};
 use crate::RwLockRecover;
+use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::Path;
@@ -21,16 +22,19 @@ pub struct FileStore {
     file: RwLock<File>,
     writer: RwLock<BufWriter<File>>,
     size: RwLock<u64>,
+    cache: RwLock<HashMap<u64, Node>>,
 }
 
 impl FileStore {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, MmrError> {
+        let path = path.as_ref();
         let file = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             .truncate(false) // MMR store is appended to, not truncated
             .open(path)?;
+        crate::crypto::restrict_permissions(path, 0o600)?;
         let metadata = file.metadata()?;
         let len = metadata.len();
         if len % NODE_SIZE as u64 != 0 {
@@ -43,6 +47,7 @@ impl FileStore {
             file: RwLock::new(file),
             writer: RwLock::new(BufWriter::with_capacity(4096, append_file)),
             size: RwLock::new(node_count),
+            cache: RwLock::new(HashMap::new()),
         })
     }
 }
@@ -55,6 +60,7 @@ impl Store for FileStore {
         }
         let mut writer = self.writer.write_recover();
         writer.write_all(&node.serialize())?;
+        self.cache.write_recover().insert(node.index, node.clone());
         *size += 1;
         Ok(())
     }
@@ -63,6 +69,9 @@ impl Store for FileStore {
         let size = *self.size.read_recover();
         if index >= size {
             return Err(MmrError::IndexOutOfRange);
+        }
+        if let Some(node) = self.cache.read_recover().get(&index) {
+            return Ok(node.clone());
         }
         {
             let mut writer = self.writer.write_recover();
@@ -85,6 +94,7 @@ impl Store for FileStore {
             let mut writer = self.writer.write_recover();
             writer.flush()?;
         }
+        self.cache.write_recover().clear();
         let file = self.file.read_recover();
         file.sync_all()?;
         Ok(())
