@@ -226,6 +226,48 @@ pub fn linear_regression(x: &[f64], y: &[f64]) -> Result<(f64, f64, f64, f64), S
     Ok((slope, intercept, r_squared, std_error))
 }
 
+/// Squared Euclidean distance between two slices.
+///
+/// Only the overlapping prefix is used if lengths differ.
+#[inline(always)]
+pub fn sq_dist(a: &[f64], b: &[f64]) -> f64 {
+    a.iter().zip(b.iter()).map(|(x, y)| (x - y).powi(2)).sum()
+}
+
+/// Least-squares linear regression for y-only data where x = 0, 1, 2, ...
+///
+/// Returns (slope, intercept). Returns (0.0, mean(y)) on degenerate input.
+pub fn linear_regression_y_only(y: &[f64]) -> (f64, f64) {
+    let n = y.len() as f64;
+    if n < 2.0 {
+        let m = if y.is_empty() { 0.0 } else { y[0] };
+        return (0.0, m);
+    }
+
+    let x_mean = (n - 1.0) / 2.0;
+    let y_mean: f64 = y.iter().sum::<f64>() / n;
+
+    let mut sum_xy = 0.0;
+    let mut sum_x2 = 0.0;
+
+    for (i, &val) in y.iter().enumerate() {
+        let dx = i as f64 - x_mean;
+        sum_xy += dx * (val - y_mean);
+        sum_x2 += dx * dx;
+    }
+
+    if sum_x2 <= 0.0 {
+        return (0.0, y_mean);
+    }
+
+    let slope = sum_xy / sum_x2;
+    if !slope.is_finite() {
+        return (0.0, y_mean);
+    }
+    let intercept = y_mean - slope * x_mean;
+    (slope, intercept)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -68,10 +68,7 @@ pub struct LyapunovAnalysis {
     pub confidence: f64,
 }
 
-#[inline(always)]
-fn sq_dist(a: &[f64], b: &[f64]) -> f64 {
-    a.iter().zip(b.iter()).map(|(x, y)| (x - y).powi(2)).sum()
-}
+use super::stats::{linear_regression_y_only, sq_dist};
 
 /// Estimate the largest Lyapunov exponent using Rosenstein's method.
 ///
@@ -194,7 +191,7 @@ pub fn analyze_lyapunov(iki_intervals_ns: &[f64]) -> Result<LyapunovAnalysis, Ly
 
     // Estimate slope of the linear region (first quarter)
     let fit_len = (log_divergence.len() / 4).max(5).min(log_divergence.len());
-    let (slope, _) = linear_regression(&log_divergence[..fit_len]);
+    let (slope, _) = linear_regression_y_only(&log_divergence[..fit_len]);
 
     // Correct for using ln(sq_dist) instead of ln(dist): ln(d²) = 2*ln(d), so divide slope by 2
     let exponent = slope / 2.0;
@@ -207,27 +204,6 @@ pub fn analyze_lyapunov(iki_intervals_ns: &[f64]) -> Result<LyapunovAnalysis, Ly
         flagged,
         confidence,
     })
-}
-
-/// Simple least-squares linear regression. Returns (slope, intercept).
-fn linear_regression(y: &[f64]) -> (f64, f64) {
-    let n = y.len() as f64;
-    let sum_x: f64 = (0..y.len()).map(|i| i as f64).sum();
-    let sum_y: f64 = y.iter().sum();
-    let sum_xy: f64 = y.iter().enumerate().map(|(i, &v)| i as f64 * v).sum();
-    let sum_x2: f64 = (0..y.len()).map(|i| (i as f64).powi(2)).sum();
-
-    let denom = n * sum_x2 - sum_x * sum_x;
-    if denom.abs() < 1e-15 {
-        return (0.0, sum_y / n);
-    }
-
-    let slope = (n * sum_xy - sum_x * sum_y) / denom;
-    if !slope.is_finite() {
-        return (0.0, sum_y / n);
-    }
-    let intercept = (sum_y - slope * sum_x) / n;
-    (slope, intercept)
 }
 
 #[cfg(test)]

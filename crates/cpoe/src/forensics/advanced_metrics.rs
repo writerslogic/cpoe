@@ -3,6 +3,7 @@
 //! Advanced forensic metrics: CLC, repair locality, and fatigue trajectory.
 
 use super::types::{ClcMetrics, FatigueTrajectoryMetrics, RepairLocalityMetrics};
+use crate::analysis::stats::linear_regression_y_only;
 use crate::jitter::SimpleJitterSample;
 use crate::utils::stats::{coefficient_of_variation, mean, mean_and_variance, std_dev};
 
@@ -320,7 +321,7 @@ fn compute_three_phase_residual(ikis: &[f64], p1_end: usize, p2_end: usize) -> f
     // Phase 1 (warmup): fit linear trend downward.
     if p1_end >= 2 {
         let phase1 = &ikis[..p1_end];
-        let (m1, b1) = fit_linear(phase1);
+        let (m1, b1) = linear_regression_y_only(phase1);
         for (i, &val) in phase1.iter().enumerate() {
             let pred = m1 * i as f64 + b1;
             sse += (val - pred).powi(2);
@@ -339,7 +340,7 @@ fn compute_three_phase_residual(ikis: &[f64], p1_end: usize, p2_end: usize) -> f
     // Phase 3 (fatigue): fit linear trend upward.
     if ikis.len() > p2_end && ikis.len() - p2_end >= 2 {
         let phase3 = &ikis[p2_end..];
-        let (m3, b3) = fit_linear(phase3);
+        let (m3, b3) = linear_regression_y_only(phase3);
         for (i, &val) in phase3.iter().enumerate() {
             let pred = m3 * i as f64 + b3;
             sse += (val - pred).powi(2);
@@ -347,35 +348,6 @@ fn compute_three_phase_residual(ikis: &[f64], p1_end: usize, p2_end: usize) -> f
     }
 
     sse
-}
-
-/// Fit linear regression y = mx + b to a sequence.
-fn fit_linear(data: &[f64]) -> (f64, f64) {
-    if data.len() < 2 {
-        return (0.0, mean(data));
-    }
-
-    let n = data.len() as f64;
-    let x_mean = (n - 1.0) / 2.0; // 0, 1, 2, ..., n-1
-    let y_mean = mean(data);
-
-    let mut sum_xy = 0.0;
-    let mut sum_x2 = 0.0;
-
-    for (i, &y) in data.iter().enumerate() {
-        let x = i as f64;
-        sum_xy += (x - x_mean) * (y - y_mean);
-        sum_x2 += (x - x_mean).powi(2);
-    }
-
-    if sum_x2 <= 0.0 {
-        return (0.0, y_mean);
-    }
-
-    let m = sum_xy / sum_x2;
-    let b = y_mean - m * x_mean;
-
-    (m, b)
 }
 
 #[cfg(test)]

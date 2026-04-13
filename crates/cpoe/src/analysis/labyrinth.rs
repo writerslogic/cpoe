@@ -4,6 +4,7 @@
 //! Fuses keystroke (1D) and mouse (2D) data into a unified phase space.
 //! RFC draft-condrey-rats-pop §5.4.
 
+use super::stats::sq_dist;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -433,15 +434,6 @@ fn estimate_betti(embed: &FlatEmbedding) -> [usize; 3] {
     let beta_0 = components.max(1);
     let beta_1 = if embed.dim >= 4 { 1 } else { 0 };
     [beta_0, beta_1, 0]
-}
-
-// ---------------------------------------------------------------------------
-// Utility
-// ---------------------------------------------------------------------------
-
-#[inline(always)]
-fn sq_dist(a: &[f64], b: &[f64]) -> f64 {
-    a.iter().zip(b.iter()).map(|(x, y)| (x - y).powi(2)).sum()
 }
 
 #[cfg(test)]
