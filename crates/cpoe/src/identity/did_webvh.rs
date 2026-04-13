@@ -560,6 +560,19 @@ fn data_dir() -> Option<PathBuf> {
 fn load_signing_key() -> Result<SigningKey, String> {
     let data_dir = data_dir().ok_or_else(|| "Data directory not found".to_string())?;
     let key_path = data_dir.join("signing_key");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let meta = std::fs::metadata(&key_path)
+            .map_err(|e| format!("stat signing key: {e}"))?;
+        let mode = meta.mode() & 0o777;
+        if mode & 0o077 != 0 {
+            return Err(format!(
+                "signing key file has unsafe permissions {:o}; expected owner-only",
+                mode
+            ));
+        }
+    }
     let key_data = zeroize::Zeroizing::new(
         std::fs::read(&key_path).map_err(|e| format!("read signing key: {e}"))?,
     );

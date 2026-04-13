@@ -40,7 +40,6 @@ pub(super) fn sign(state: &SecureEnclaveState, data: &[u8]) -> Result<Vec<u8>, T
     Ok(sig.bytes().to_vec())
 }
 
-#[allow(dead_code)]
 pub(super) fn sign_with_key(key_ref: SecKeyRef, data: &[u8]) -> Result<Vec<u8>, TpmError> {
     if key_ref.is_null() {
         return Err(TpmError::NotInitialized);
@@ -65,7 +64,6 @@ pub(super) fn sign_with_key(key_ref: SecKeyRef, data: &[u8]) -> Result<Vec<u8>, 
     Ok(sig.bytes().to_vec())
 }
 
-#[allow(dead_code)]
 pub(super) fn verify_ecdsa_signature(
     public_key: &[u8],
     data: &[u8],
@@ -113,6 +111,9 @@ pub(super) fn verify_ecdsa_signature(
         );
 
         if sec_key.is_null() {
+            if !error.is_null() {
+                core_foundation_sys::base::CFRelease(error as *mut std::ffi::c_void);
+            }
             return Err(TpmError::UnsupportedPublicKey);
         }
 
@@ -128,6 +129,9 @@ pub(super) fn verify_ecdsa_signature(
         );
 
         core_foundation_sys::base::CFRelease(sec_key as *mut std::ffi::c_void);
+        if !error.is_null() {
+            core_foundation_sys::base::CFRelease(error as *mut std::ffi::c_void);
+        }
 
         Ok(result)
     }

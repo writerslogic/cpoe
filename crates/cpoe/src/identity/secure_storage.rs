@@ -31,9 +31,8 @@ static HMAC_CACHE: Mutex<Option<ProtectedBuf>> = Mutex::new(None);
 static FINGERPRINT_KEY_CACHE: Mutex<Option<ProtectedBuf>> = Mutex::new(None);
 /// Mutex instead of OnceLock so the cache can be invalidated after re-generation.
 static MNEMONIC_CACHE: Mutex<Option<Zeroizing<String>>> = Mutex::new(None);
-/// Accepted risk: machine_id (String) is not zeroized. It is a non-secret device
-/// identifier, so the residual exposure does not warrant switching to Mutex.
-static IDENTITY_CACHE: OnceLock<([u8; 16], String)> = OnceLock::new();
+/// Mutex instead of OnceLock so the cache can be invalidated after delete.
+static IDENTITY_CACHE: Mutex<Option<([u8; 16], String)>> = Mutex::new(None);
 #[cfg(all(target_os = "macos", not(test)))]
 static MIGRATION_ONCE: Once = Once::new();
 
@@ -358,8 +357,11 @@ impl SecureStorage {
 
     /// Load the device identity (device_id, machine_id) from the platform keychain.
     pub fn load_device_identity() -> Result<Option<([u8; 16], String)>> {
-        if let Some(cached) = IDENTITY_CACHE.get() {
-            return Ok(Some(cached.clone()));
+        {
+            let guard = IDENTITY_CACHE.lock_recover();
+            if let Some(ref cached) = *guard {
+                return Ok(Some(cached.clone()));
+            }
         }
         let device_id_bytes = Self::load(DEVICE_ID_ACCOUNT)?;
         let machine_id_bytes = Self::load(MACHINE_ID_ACCOUNT)?;
@@ -382,7 +384,7 @@ impl SecureStorage {
                 }
                 let machine_id = String::from_utf8(mid.to_vec())
                     .map_err(|e| anyhow!("Invalid UTF-8 in machine ID from keyring: {}", e))?;
-                let _ = IDENTITY_CACHE.set((device_id, machine_id.clone()));
+                *IDENTITY_CACHE.lock_recover() = Some((device_id, machine_id.clone()));
                 Ok(Some((device_id, machine_id)))
             }
             _ => Ok(None),
@@ -393,6 +395,7 @@ impl SecureStorage {
     pub fn delete_device_identity() -> Result<()> {
         Self::delete(DEVICE_ID_ACCOUNT)?;
         Self::delete(MACHINE_ID_ACCOUNT)?;
+        *IDENTITY_CACHE.lock_recover() = None;
         Ok(())
     }
 

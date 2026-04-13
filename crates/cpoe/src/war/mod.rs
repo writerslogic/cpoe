@@ -118,6 +118,15 @@ impl Block {
         })
     }
 
+    /// Create from an owned evidence packet. Callers that no longer need
+    /// the packet after block creation should prefer this to avoid holding
+    /// two copies simultaneously.
+    pub fn from_packet_owned(packet: Packet) -> Result<Self, String> {
+        let mut block = Self::from_packet(&packet)?;
+        block.evidence = Some(Box::new(packet));
+        Ok(block)
+    }
+
     /// Create a signed WAR block from an evidence packet.
     pub fn from_packet_signed(
         packet: &Packet,

@@ -57,19 +57,16 @@ impl TbsContext {
             device_id: String::new(),
         };
 
-        match ctx.get_random(16) {
-            Ok(random_bytes) => {
-                ctx.device_id =
-                    format!("windows-tpm-{}", crate::utils::short_hex_id(&random_bytes));
-            }
-            Err(_) => {
-                ctx.device_id = format!(
-                    "windows-tpm-{:x}-{}",
-                    Utc::now().timestamp(),
-                    std::process::id()
-                );
-            }
-        }
+        // Derive a stable device ID from the machine name so bindings survive restarts.
+        let machine_hash = {
+            let host = hostname::get()
+                .map(|h| h.to_string_lossy().to_string())
+                .unwrap_or_else(|_| "unknown".to_string());
+            use sha2::{Digest, Sha256};
+            let digest = Sha256::digest(format!("cpoe-windows-tpm-{}", host).as_bytes());
+            crate::utils::short_hex_id(&digest)
+        };
+        ctx.device_id = format!("windows-tpm-{}", machine_hash);
 
         Ok(ctx)
     }

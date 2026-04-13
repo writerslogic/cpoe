@@ -20,4 +20,4 @@ pub use async_client::{AsyncIpcClient, AsyncIpcClientError};
 pub use messages::{IpcErrorCode, IpcMessage, IpcMessageHandler};
 pub use rbac::{check_authorization, required_role, IpcRole};
 pub use server::IpcServer;
-pub use sync_client::IpcClient;
+pub(crate) use sync_client::IpcClient;
