@@ -507,7 +507,11 @@ pub fn ffi_ephemeral_checkpoint_hash(
         .content_snapshots
         .last()
         .and_then(|s| s.message.clone());
-    let entry_clone = entry.clone();
+    // Extract fields needed for flush_session_state before releasing the DashMap guard.
+    let flush_context_label = entry.context_label.clone();
+    let flush_started_at_ns = entry.started_at_ns;
+    let flush_keystroke_count = entry.keystroke_count;
+    let flush_jitter_count = entry.jitter_intervals.len();
     drop(entry); // Release DashMap guard before disk I/O
 
     let ephemeral_path = format!("ephemeral://{session_id}");
@@ -536,7 +540,10 @@ pub fn ffi_ephemeral_checkpoint_hash(
         }
     };
 
-    flush_session_state(&session_id, &entry_clone);
+    flush_session_state_fields(
+        &session_id, &flush_context_label, flush_started_at_ns,
+        checkpoint_count, flush_keystroke_count, flush_jitter_count,
+    );
 
     let msg = format!(
         "Ephemeral checkpoint #{}: {}",
@@ -641,6 +648,40 @@ fn build_war_block(
 }
 
 /// Flush ephemeral session state to disk for crash recovery.
+fn flush_session_state_fields(
+    session_id: &str,
+    context_label: &str,
+    started_at_ns: i64,
+    checkpoint_count: u64,
+    keystroke_count: u64,
+    jitter_count: usize,
+) {
+    let Some(data_dir) = get_data_dir() else {
+        return;
+    };
+    let recovery_dir = data_dir.join("ephemeral-sessions");
+    if std::fs::create_dir_all(&recovery_dir).is_err() {
+        return;
+    }
+
+    let state = serde_json::json!({
+        "session_id": session_id,
+        "context_label": context_label,
+        "started_at_ns": started_at_ns,
+        "checkpoint_count": checkpoint_count,
+        "keystroke_count": keystroke_count,
+        "jitter_count": jitter_count,
+    });
+
+    let path = recovery_dir.join(format!("{session_id}.json"));
+    let tmp_path = recovery_dir.join(format!("{session_id}.json.tmp"));
+    if let Ok(bytes) = serde_json::to_vec_pretty(&state) {
+        if let Err(e) = std::fs::write(&tmp_path, &bytes).and_then(|_| std::fs::rename(&tmp_path, &path)) {
+            log::warn!("Failed to persist ephemeral session {session_id}: {e}");
+        }
+    }
+}
+
 fn flush_session_state(session_id: &str, session: &EphemeralSession) {
     let Some(data_dir) = get_data_dir() else {
         return;
@@ -661,8 +702,10 @@ fn flush_session_state(session_id: &str, session: &EphemeralSession) {
 
     let path = recovery_dir.join(format!("{session_id}.json"));
     let tmp_path = recovery_dir.join(format!("{session_id}.json.tmp"));
-    if std::fs::write(&tmp_path, state.to_string()).is_ok() {
-        let _ = std::fs::rename(&tmp_path, &path);
+    if let Err(e) = std::fs::write(&tmp_path, state.to_string())
+        .and_then(|_| std::fs::rename(&tmp_path, &path))
+    {
+        log::warn!("Failed to flush session state {session_id}: {e}");
     }
 }
 

@@ -16,7 +16,6 @@ const NATIVE_HOST_NAME = "com.writerslogic.witnessd";
 const PROTOCOL_VERSION = 1;
 const MIN_NATIVE_PROTOCOL_VERSION = 1;
 const CHECKPOINT_INTERVAL_MS = 30_000;
-const MAX_PENDING_CALLBACKS = 256;
 const GENESIS_COMMITMENT_PREFIX = "CPoE-Genesis-v1";
 const COMMITMENT_CHAIN_INITIAL_ORDINAL = 2;
 
@@ -33,8 +32,6 @@ let isConnected = false;
 let isConnecting = false;
 let activeTabId = null;
 let checkpointTimer = null;
-let pendingCallbacks = new Map();
-let callbackId = 0;
 
 let operatingMode = "detecting";
 let standaloneSessionId = null;
@@ -177,16 +174,11 @@ function sendNativeMessage(message) {
   if (!nativePort) connectToNativeHost();
   if (!nativePort) return;
 
-  if (pendingCallbacks.size >= MAX_PENDING_CALLBACKS) {
-    const oldest = pendingCallbacks.keys().next().value;
-    pendingCallbacks.delete(oldest);
-  }
-
   if (secureChannel && secureChannel.handshakeComplete) {
     secureChannel.encrypt(message).then((envelope) => {
       nativePort.postMessage(envelope);
-    }).catch(() => {
-      nativePort.postMessage(message);
+    }).catch((err) => {
+      broadcastToPopup({ type: "error", message: "Secure channel encrypt failed" });
     });
     return;
   }
@@ -210,7 +202,7 @@ function handleNativeMessage(message) {
       break;
 
     case "hello_accept":
-      if (secureChannel && !secureChannel.handshakeComplete) {
+      if (secureChannel && !secureChannel.handshakeComplete && secureChannel._handshakeResolve) {
         secureChannel.handleHelloAccept(message, (msg) => nativePort.postMessage(msg))
           .then(() => { capabilities.secureChannel = true; })
           .catch(() => { secureChannel = null; });
@@ -565,6 +557,7 @@ async function handleStandaloneAction(message, sender, sendResponse) {
         await chrome.storage.local.set({
           _standaloneSessionId: standaloneSessionId,
           _standaloneTabId: activeTabId,
+          _sessionStartTime: Date.now(),
         });
         startCheckpointTimer();
         updateBadge("\u2713", "#f39c12");
@@ -578,7 +571,7 @@ async function handleStandaloneAction(message, sender, sendResponse) {
         const result = await standaloneStopSession(standaloneSessionId);
         activeTabId = null;
         standaloneSessionId = null;
-        await chrome.storage.local.remove(["_standaloneSessionId", "_standaloneTabId"]);
+        await chrome.storage.local.remove(["_standaloneSessionId", "_standaloneTabId", "_sessionStartTime"]);
         stopCheckpointTimer();
         updateBadge("S", "#f39c12");
         broadcastToPopup({ type: "session_update", active: false, ...result });
@@ -662,12 +655,12 @@ chrome.storage.local.get(["_standaloneSessionId", "_standaloneTabId"], (result) 
   }
 });
 
-chrome.tabs.onRemoved.addListener((tabId) => {
+chrome.tabs.onRemoved.addListener(async (tabId) => {
   if (tabId === activeTabId) {
     if (operatingMode === "native") {
       sendNativeMessage({ type: "stop_session" });
     } else if (standaloneSessionId) {
-      standaloneStopSession(standaloneSessionId);
+      await standaloneStopSession(standaloneSessionId);
     }
     activeTabId = null;
     standaloneSessionId = null;
@@ -675,7 +668,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     prevCommitment = null;
     checkpointOrdinal = COMMITMENT_CHAIN_INITIAL_ORDINAL;
     stopCheckpointTimer();
-    chrome.storage.local.remove(["_standaloneSessionId", "_standaloneTabId"]);
+    chrome.storage.local.remove(["_standaloneSessionId", "_standaloneTabId", "_sessionStartTime"]);
     updateBadge(operatingMode === "standalone" ? "S" : "", "#95a5a6");
   }
 });

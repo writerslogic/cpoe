@@ -65,17 +65,20 @@ fn main() {
             Request::KeyConfirm { token } => handle_key_confirm(&token),
             Request::Encrypted { payload } => match decrypt_and_dispatch(&payload) {
                 Ok(resp) => encrypt_response(&resp).unwrap_or(resp),
-                Err(e) => Response::Error {
-                    message: format!("Decryption failed: {e}"),
-                    code: "DECRYPT_ERROR".into(),
-                },
+                Err(e) => {
+                    let err = Response::Error {
+                        message: format!("Decryption failed: {e}"),
+                        code: "DECRYPT_ERROR".into(),
+                    };
+                    encrypt_response(&err).unwrap_or(err)
+                }
             },
             Request::StartSession {
                 document_url,
                 document_title,
                 protocol_version,
             } => {
-                if let Some(ref v) = protocol_version {
+                if let Some(v) = protocol_version {
                     if v != PROTOCOL_VERSION {
                         eprintln!(
                             "protocol_version mismatch: client={v} server={PROTOCOL_VERSION}"
@@ -95,7 +98,7 @@ fn main() {
             Request::GetStatus => handle_get_status(),
             Request::InjectJitter { intervals } => handle_inject_jitter(intervals),
             Request::Ping { protocol_version } => {
-                if let Some(ref v) = protocol_version {
+                if let Some(v) = protocol_version {
                     if v != PROTOCOL_VERSION {
                         eprintln!(
                             "protocol_version mismatch: client={v} server={PROTOCOL_VERSION}"
@@ -221,13 +224,14 @@ fn decrypt_and_dispatch(payload_b64: &str) -> anyhow::Result<Response> {
     use base64::Engine;
 
     let ciphertext = base64::engine::general_purpose::STANDARD.decode(payload_b64)?;
-    let guard = SECURE_SESSION.lock().unwrap_or_else(|p| p.into_inner());
-    let session = guard
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("No secure session"))?;
-    let plaintext = session.decrypt(&ciphertext)?;
+    let plaintext = {
+        let guard = SECURE_SESSION.lock().unwrap_or_else(|p| p.into_inner());
+        let session = guard
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No secure session"))?;
+        session.decrypt(&ciphertext)?
+    };
     let inner_request: Request = serde_json::from_slice(&plaintext)?;
-    drop(guard);
 
     Ok(match inner_request {
         Request::StartSession {
