@@ -139,19 +139,17 @@ pub fn verify_signature_for_provider(
             }
             Err(TpmError::InvalidSignature)
         }
-        _ => {
-            // Hardware TPM: try ECDSA first (P-256 SRK), then RSA, then Ed25519
+        "tpm2-linux" | "tpm2-windows" => {
+            // Hardware TPM: try ECDSA first (P-256 SRK), then RSA
             if let Some(result) = try_verify_ecdsa_p256(public_key, payload, signature) {
                 return result;
             }
             if let Some(result) = try_verify_rsa(public_key, payload, signature) {
                 return result;
             }
-            if let Some(result) = try_verify_ed25519(public_key, payload, signature) {
-                return result;
-            }
             Err(TpmError::UnsupportedPublicKey)
         }
+        _ => Err(TpmError::NotAvailable)
     }
 }
 
