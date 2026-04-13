@@ -498,10 +498,10 @@ impl SecureStore {
                 signature,
                 pubkey,
                 salt_commitment,
-                chain_index as i64,
+                i64::try_from(chain_index).unwrap_or(i64::MAX),
                 entangled_hash,
                 entropy_digest,
-                entropy_bytes.map(|v| v as i64),
+                entropy_bytes.map(|v| i64::try_from(v).unwrap_or(i64::MAX)),
                 file_path,
             ],
         )?;

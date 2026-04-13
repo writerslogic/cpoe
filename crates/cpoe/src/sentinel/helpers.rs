@@ -113,9 +113,9 @@ pub fn handle_focus_event_sync(
                 if let Some(ref path) = path_to_unfocus {
                     if let Some(session) = sessions_map.get_mut(path.as_str()) {
                         if session.focus_switches.len() >= super::types::MAX_FOCUS_SWITCHES {
-                            session.focus_switches.remove(0);
+                            session.focus_switches.pop_front();
                         }
-                        session.focus_switches.push(FocusSwitchRecord {
+                        session.focus_switches.push_back(FocusSwitchRecord {
                             lost_at: SystemTime::now(),
                             regained_at: None,
                             target_app: event.app_name.clone(),
@@ -135,7 +135,7 @@ pub fn handle_focus_event_sync(
                 // If this document is regaining focus, stamp regained_at on its
                 // most recent open switch record.
                 if let Some(session) = sessions_map.get_mut(doc_path.as_str()) {
-                    if let Some(last) = session.focus_switches.last_mut() {
+                    if let Some(last) = session.focus_switches.back_mut() {
                         if last.regained_at.is_none() {
                             last.regained_at = Some(SystemTime::now());
                         }

@@ -26,7 +26,7 @@
 //! CBOR Semantic Tag: 1129336645 (0x43504F45, "CPoE" per IANA)
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use super::fixed_point::{Centibits, Decibits, Millibits, RhoMillibits, SlopeDecibits};
 use super::serde_helpers::{hex_bytes_vec, hex_bytes_vec_opt};
@@ -96,8 +96,8 @@ pub struct PacketRfc {
     /// Vendor extensions (string keys).
     /// Uses `serde_json::Value` because this internal type is only serialized
     /// to JSON; CBOR wire encoding uses the separate `EvidencePacket` type.
-    #[serde(flatten, skip_serializing_if = "HashMap::is_empty")]
-    pub extensions: HashMap<String, serde_json::Value>,
+    #[serde(flatten, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extensions: BTreeMap<String, serde_json::Value>,
 }
 
 /// VDF structure from CDDL.
@@ -426,7 +426,7 @@ impl PacketRfc {
             profile: Some(ProfileDeclaration::core()),
             privacy_budget: None,
             key_rotation: None,
-            extensions: HashMap::new(),
+            extensions: BTreeMap::new(),
         }
     }
 

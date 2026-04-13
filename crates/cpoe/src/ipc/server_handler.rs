@@ -183,6 +183,9 @@ pub(super) async fn handle_connection_inner<
         let plaintext = if let Some(ref session) = secure_session {
             match session.decrypt(&msg_buf) {
                 Ok(pt) => pt,
+                // Coupled to the anyhow!("SequenceDesync: ...") string in
+                // SecureSession::decrypt (crypto.rs). Not a typed variant; update
+                // both sites together if the prefix changes.
                 Err(e) if e.to_string().starts_with("SequenceDesync:") => {
                     log::warn!(
                         "IPC: sequence desync on {}: {} (skipping message)",

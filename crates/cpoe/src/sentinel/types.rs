@@ -3,6 +3,7 @@
 use crate::crypto::ObfuscatedString;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::VecDeque;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
@@ -258,7 +259,7 @@ pub struct DocumentSession {
     /// Per-document jitter samples for forensic analysis.
     pub jitter_samples: Vec<crate::jitter::SimpleJitterSample>,
     /// Focus loss events during this session (timestamps when user switched away).
-    pub focus_switches: Vec<FocusSwitchRecord>,
+    pub focus_switches: VecDeque<FocusSwitchRecord>,
     /// AI tools detected by Endpoint Security during this session.
     pub ai_tools_detected: Vec<DetectedAiTool>,
     /// Number of ES capture gaps (dropped events) during this session.
@@ -352,7 +353,7 @@ impl DocumentSession {
             app_name,
             window_title,
             jitter_samples: Vec::new(),
-            focus_switches: Vec::new(),
+            focus_switches: VecDeque::new(),
             ai_tools_detected: Vec::new(),
             capture_gaps: 0,
             has_focus: false,

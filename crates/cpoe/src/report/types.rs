@@ -407,7 +407,14 @@ impl WarReport {
     /// Generate a report ID in the format WAR-XXXXXXXX.
     pub fn generate_id() -> String {
         let mut bytes = [0u8; 4];
-        getrandom::getrandom(&mut bytes).expect("CSPRNG failure is fatal");
+        if let Err(e) = getrandom::getrandom(&mut bytes) {
+            log::warn!("CSPRNG unavailable, falling back to timestamp ID: {}", e);
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
+            return format!("WAR-{:08X}", (ts & 0xFFFF_FFFF) as u32);
+        }
         let hex = hex::encode(bytes).to_uppercase();
         format!("WAR-{}", hex)
     }

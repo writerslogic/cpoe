@@ -6,6 +6,7 @@ use std::fs::File;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use thiserror::Error;
+use zeroize::Zeroize;
 
 pub(super) const VERSION: u32 = 2;
 pub(super) const MAGIC: &[u8; 4] = b"SWAL"; // Secure WAL
@@ -142,6 +143,16 @@ pub(super) struct WalState {
     pub(super) byte_count: u64,
     pub(super) sync_interval: u64,
     pub(super) pending_syncs: u64,
+}
+
+impl Drop for WalState {
+    fn drop(&mut self) {
+        // Extract, zeroize, and replace to ensure secret bytes are wiped even
+        // if SigningKey's own Drop is optimized away.
+        let mut bytes = self.signing_key.to_bytes();
+        bytes.zeroize();
+        self.signing_key = SigningKey::from_bytes(&bytes);
+    }
 }
 
 #[derive(Debug)]

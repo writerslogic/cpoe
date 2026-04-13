@@ -203,6 +203,7 @@ fn not_tracking(capture_active: bool) -> FfiWitnessingStatus {
         forensic_score: 0.0,
         last_paste_chars: 0,
         event_confidence: 1.0,
+        document_has_focus: false,
         keystroke_capture_active: capture_active,
         error_message: None,
     }
@@ -235,15 +236,16 @@ pub fn ffi_sentinel_witnessing_status() -> FfiWitnessingStatus {
         capture_active,
         session_paths
     );
-    let session = current_path
+    let focused_session = current_path
         .as_ref()
-        .and_then(|p| sessions.iter().find(|s| &s.path == p))
-        .or_else(|| {
-            sessions
-                .iter()
-                .find(|s| s.app_bundle_id == "cli")
-                .or_else(|| sessions.first())
-        });
+        .and_then(|p| sessions.iter().find(|s| &s.path == p));
+    let doc_has_focus = focused_session.is_some();
+    let session = focused_session.or_else(|| {
+        sessions
+            .iter()
+            .find(|s| s.app_bundle_id == "cli")
+            .or_else(|| sessions.iter().max_by_key(|s| s.total_keystrokes()))
+    });
     let session = match session {
         Some(s) => {
             crate::sentinel::trace!(
@@ -279,7 +281,7 @@ pub fn ffi_sentinel_witnessing_status() -> FfiWitnessingStatus {
     let cadence_score = crate::forensics::cadence_score_from_samples(&doc_samples);
 
     let focus = crate::forensics::analysis::analyze_focus_patterns(
-        &session.focus_switches,
+        &Vec::from(session.focus_switches.clone()),
         session.total_focus_ms,
     );
     let focus_penalty = crate::forensics::compute_focus_penalty(&focus);
@@ -303,6 +305,7 @@ pub fn ffi_sentinel_witnessing_status() -> FfiWitnessingStatus {
         forensic_score: metrics.forensic_score,
         last_paste_chars,
         event_confidence: session.average_event_confidence(),
+        document_has_focus: doc_has_focus,
         keystroke_capture_active: capture_active,
         error_message: metrics.error,
     }

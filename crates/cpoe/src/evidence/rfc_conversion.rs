@@ -180,7 +180,7 @@ impl TryFrom<&Packet> for rfc::PacketRfc {
             profile,
             privacy_budget: None,
             key_rotation: None,
-            extensions: std::collections::HashMap::new(),
+            extensions: std::collections::BTreeMap::new(),
         })
     }
 }

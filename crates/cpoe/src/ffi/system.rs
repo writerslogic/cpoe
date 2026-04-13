@@ -267,7 +267,7 @@ pub fn ffi_list_tracked_files() -> Vec<FfiTrackedFile> {
             let doc_samples = sentinel.document_jitter_samples(&session.path);
             let forensic_score = crate::forensics::session_forensic_score(
                 &doc_samples,
-                &session.focus_switches,
+                &Vec::from(session.focus_switches.clone()),
                 session.total_focus_ms,
             );
 

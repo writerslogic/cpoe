@@ -318,7 +318,14 @@ impl IpcMessage {
                     ));
                 }
             }
-            IpcMessage::SystemAlert { message, .. } => {
+            IpcMessage::SystemAlert { level, message } => {
+                if level.len() > MAX_SHORT_STRING {
+                    return Err(format!(
+                        "SystemAlert level too long: {} bytes (max {})",
+                        level.len(),
+                        MAX_SHORT_STRING
+                    ));
+                }
                 if message.len() > MAX_ALERT_MESSAGE {
                     return Err(format!(
                         "SystemAlert message too long: {} bytes (max {})",
@@ -333,8 +340,17 @@ impl IpcMessage {
             IpcMessage::StopWitnessing { file_path: Some(p) } => {
                 validate_ipc_path(p)?;
             }
-            IpcMessage::ExportWithNonce { file_path, .. } => {
+            IpcMessage::ExportWithNonce {
+                file_path, title, ..
+            } => {
                 validate_ipc_path(file_path)?;
+                if title.len() > MAX_ALERT_MESSAGE {
+                    return Err(format!(
+                        "ExportWithNonce title too long: {} bytes (max {})",
+                        title.len(),
+                        MAX_ALERT_MESSAGE
+                    ));
+                }
             }
             IpcMessage::VerifyWithNonce { evidence_path, .. } => {
                 validate_ipc_path(evidence_path)?;
