@@ -26,7 +26,11 @@ pub struct AmbientEntropy {
 impl AmbientSensing {
     /// Capture ambient entropy from OS, processes, and hardware identifiers.
     pub fn capture() -> AmbientEntropy {
-        let sys = System::new_all();
+        let sys = System::new_with_specifics(
+            sysinfo::RefreshKind::nothing()
+                .with_memory(sysinfo::MemoryRefreshKind::everything())
+                .with_processes(sysinfo::ProcessRefreshKind::nothing()),
+        );
 
         let mut hasher = Sha256::new();
         hasher.update(b"cpoe-ambient-v1");

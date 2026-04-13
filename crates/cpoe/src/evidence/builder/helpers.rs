@@ -105,7 +105,10 @@ pub fn build_ephemeral_packet(
         let mut cp_hasher = Sha256::new();
         cp_hasher.update(EPHEMERAL_CHECKPOINT_DST);
         cp_hasher.update((i as u64).to_be_bytes());
-        cp_hasher.update(hex::decode(&prev_hash).unwrap_or_else(|_| vec![0u8; 32]));
+        cp_hasher.update(hex::decode(&prev_hash).unwrap_or_else(|e| {
+            log::warn!("Invalid prev_hash hex in checkpoint chain: {e}");
+            vec![0u8; 32]
+        }));
         cp_hasher.update(snap.content_hash);
         cp_hasher.update(snap.char_count.to_be_bytes());
         cp_hasher.update((snap.timestamp_ns.max(0) as u64).to_be_bytes());

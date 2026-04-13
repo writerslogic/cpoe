@@ -126,7 +126,7 @@ impl HwCosignScheduler {
     /// Record a checkpoint and return `true` if the threshold has been
     /// crossed, meaning it is time for a hardware co-signature.
     pub fn record_checkpoint(&mut self) -> bool {
-        self.checkpoints_since_cosign += 1;
+        self.checkpoints_since_cosign = self.checkpoints_since_cosign.saturating_add(1);
         self.checkpoints_since_cosign >= self.current_threshold
     }
 

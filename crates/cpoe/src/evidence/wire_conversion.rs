@@ -98,8 +98,8 @@ pub fn chain_to_wire_with_signatures(
         AttestationTier::SoftwareOnly
     });
     // ENHANCED = jitter binding; MAXIMUM = jitter + physical state on all checkpoints
-    let all_have_physical = has_jitter && all_have_physical;
-    let content_tier = if all_have_physical {
+    let is_maximum_tier = has_jitter && all_have_physical;
+    let content_tier = if is_maximum_tier {
         Some(ContentTier::Maximum)
     } else if has_jitter {
         Some(ContentTier::Enhanced)
