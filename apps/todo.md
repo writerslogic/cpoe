@@ -5,8 +5,8 @@
 | Severity | Open | Fixed | Skipped | Possibly Fixed |
 |----------|------|-------|---------|----------------|
 | CRITICAL | 0    | 2     | 12      | 0              |
-| HIGH     | 56   | 0     | 0       | 0              |
-| MEDIUM   | 97   | 0     | 0       | 0              |
+| HIGH     | 0    | 19    | 56      | 0              |
+| MEDIUM   | 80   | 6     | 11      | 0              |
 
 ## Compound Risk
 - [ ] **CLU-001** `ffi_crash_cascade`, CRITICAL, components: C-001, C-002, C-003, C-007
