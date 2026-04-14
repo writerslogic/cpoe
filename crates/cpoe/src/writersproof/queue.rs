@@ -146,11 +146,19 @@ impl OfflineQueue {
         let mut results = Vec::new();
 
         for mut entry in entries {
-            let evidence = base64::Engine::decode(
+            let evidence = match base64::Engine::decode(
                 &base64::engine::general_purpose::STANDARD,
                 &entry.evidence_b64,
-            )
-            .map_err(|e| Error::crypto(format!("base64 decode failed: {e}")))?;
+            ) {
+                Ok(v) => v,
+                Err(e) => {
+                    self.update_entry_error(
+                        &mut entry,
+                        &format!("base64 decode failed: {e}"),
+                    )?;
+                    continue;
+                }
+            };
 
             let nonce = match client.request_nonce(&entry.hardware_key_id).await {
                 Ok(resp) => {

@@ -360,16 +360,15 @@ impl Collaborator {
     /// Canonical bytes used as the Ed25519 signing input.
     /// Deterministic JSON of all fields except `attestation_signature`.
     pub fn signing_payload(&self) -> Vec<u8> {
-        let payload = serde_json::json!({
-            "public_key": self.public_key,
-            "role": self.role,
-            "display_name": self.display_name,
-            "identifier": self.identifier,
-            "active_periods": self.active_periods,
-            "checkpoint_ranges": self.checkpoint_ranges,
-            "contribution_summary": self.contribution_summary,
-        });
-        serde_json::to_vec(&payload).expect("collaborator payload serialization is infallible")
+        let mut map = std::collections::BTreeMap::new();
+        map.insert("active_periods", serde_json::json!(self.active_periods));
+        map.insert("checkpoint_ranges", serde_json::json!(self.checkpoint_ranges));
+        map.insert("contribution_summary", serde_json::json!(self.contribution_summary));
+        map.insert("display_name", serde_json::json!(self.display_name));
+        map.insert("identifier", serde_json::json!(self.identifier));
+        map.insert("public_key", serde_json::json!(self.public_key));
+        map.insert("role", serde_json::json!(self.role));
+        serde_json::to_vec(&map).expect("collaborator payload serialization is infallible")
     }
 
     /// Verify the attestation signature against the embedded public key.
