@@ -86,7 +86,7 @@ pub fn ffi_link_derivative(source_path: String, export_path: String, message: St
     };
 
     let file_size = std::fs::metadata(&source)
-        .map(|m| m.len() as i64)
+        .map(|m| i64::try_from(m.len()).unwrap_or(i64::MAX))
         .unwrap_or(0);
 
     let note = if message.is_empty() {
@@ -354,7 +354,7 @@ fn decode_evidence_for_c2pa(
         checkpoints.push(authorproof_protocol::rfc::Checkpoint {
             sequence: cp.ordinal,
             checkpoint_id,
-            timestamp: cp.timestamp.timestamp_millis() as u64,
+            timestamp: cp.timestamp.timestamp_millis().max(0) as u64,
             content_hash: authorproof_protocol::rfc::HashValue {
                 algorithm: authorproof_protocol::rfc::HashAlgorithm::Sha256,
                 digest: hex::decode(&cp.content_hash).map_err(|e| ctx("content_hash", &e))?,
@@ -386,7 +386,7 @@ fn decode_evidence_for_c2pa(
         version: 1,
         profile_uri: "urn:ietf:params:rats:eat:profile:pop:1.0".to_string(),
         packet_id,
-        created: packet.exported_at.timestamp_millis() as u64,
+        created: packet.exported_at.timestamp_millis().max(0) as u64,
         document: authorproof_protocol::rfc::DocumentRef {
             content_hash: authorproof_protocol::rfc::HashValue {
                 algorithm: authorproof_protocol::rfc::HashAlgorithm::Sha256,

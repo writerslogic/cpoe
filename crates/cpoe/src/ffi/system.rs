@@ -268,7 +268,7 @@ pub fn ffi_list_tracked_files() -> Vec<FfiTrackedFile> {
             let elapsed_ns = session
                 .start_time
                 .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos() as i64)
+                .map(|d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX))
                 .unwrap_or(0);
             // Compute forensic score from per-document jitter + focus data.
             let doc_samples = sentinel.document_jitter_samples(&session.path);
@@ -399,6 +399,7 @@ pub fn ffi_get_dashboard_metrics() -> FfiDashboardMetrics {
 /// Return per-day checkpoint counts for the last N days (activity heatmap data).
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn ffi_get_activity_data(days: u32) -> Vec<FfiActivityPoint> {
+    let days = days.min(3650);
     let store = match open_store() {
         Ok(s) => s,
         Err(e) => {

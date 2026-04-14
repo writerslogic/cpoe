@@ -89,6 +89,10 @@ pub fn ffi_sentinel_es_ai_tool_detected(
     let mut updated = 0u32;
     for session in sessions.values_mut() {
         if session.ai_tools_detected.len() >= MAX_AI_TOOLS_PER_SESSION {
+            log::warn!(
+                "AI tool tracking limit reached ({MAX_AI_TOOLS_PER_SESSION}); ignoring {}",
+                tool.signing_id
+            );
             continue;
         }
         let already = session
@@ -188,6 +192,10 @@ pub fn ffi_sentinel_es_capture_gap(missed_count: u32) -> bool {
 /// fires within 30 seconds, the nonce expires and is discarded.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn ffi_sentinel_set_challenge_nonce(nonce: String) -> bool {
+    if nonce.len() > 1024 {
+        log::warn!("Challenge nonce too long ({} bytes), rejecting", nonce.len());
+        return false;
+    }
     let sentinel_opt = get_sentinel();
     let sentinel = match sentinel_opt.as_ref() {
         Some(s) if s.is_running() => s,

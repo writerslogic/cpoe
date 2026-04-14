@@ -50,18 +50,7 @@ pub fn ffi_sentinel_inject_keystroke(
     // KeyUp events are forwarded to the event loop for dwell time computation.
     // They bypass rate limiting, verification, and voice collection.
     if is_key_up {
-        let _event = crate::platform::KeystrokeEvent {
-            timestamp_ns,
-            keycode,
-            zone,
-            event_type: crate::platform::KeyEventType::Up,
-            char_value: None,
-            is_hardware: true,
-            device_id: None,
-            transport_type: None,
-        };
-        // Send directly to the sentinel's keystroke channel if available
-        // For now, just update the sentinel's activity accumulator
+        // KeyUp events are noted for dwell time but no further processing needed yet.
         return true;
     }
 
@@ -126,7 +115,7 @@ pub fn ffi_sentinel_inject_keystroke(
             use std::io::Write;
             let debug_path = std::env::var("CPOE_DATA_DIR")
                 .map(|d| format!("{}/inject_debug.txt", d))
-                .unwrap_or_else(|_| "/tmp/cpop_inject_debug.txt".to_string());
+                .unwrap_or_else(|_| "/tmp/cpoe_inject_debug.txt".to_string());
             if let Ok(mut f) = std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -246,6 +235,9 @@ pub fn ffi_sentinel_inject_keystroke(
 /// records this so the next checkpoint can flag it as a paste.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn ffi_sentinel_notify_paste(char_count: i64) -> bool {
+    if char_count < 0 {
+        return false;
+    }
     let sentinel_opt = get_sentinel();
     let sentinel = match sentinel_opt.as_ref() {
         Some(s) if s.is_running() => s,

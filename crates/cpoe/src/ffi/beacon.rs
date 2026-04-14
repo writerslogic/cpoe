@@ -287,7 +287,7 @@ fn check_beacon_from_store(canonical: &str) -> FfiBeaconResult {
     }
 
     FfiBeaconResult {
-        success: true,
+        success: false,
         anchor_id: None,
         timestamp_epoch_ms: None,
         drand_round: None,
@@ -325,11 +325,11 @@ pub fn ffi_list_beacons(document_path: String) -> FfiBeaconListResult {
     let cbor_payload = crate::ffi::helpers::unwrap_cose_or_raw(&data);
     let packet = match crate::evidence::Packet::decode(&cbor_payload) {
         Ok(p) => p,
-        Err(_) => {
+        Err(e) => {
             return FfiBeaconListResult {
-                success: true,
+                success: false,
                 beacons: vec![],
-                error_message: None,
+                error_message: Some(format!("Failed to decode evidence packet: {e}")),
             };
         }
     };

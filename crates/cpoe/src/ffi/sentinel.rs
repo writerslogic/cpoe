@@ -110,7 +110,11 @@ pub fn ffi_sentinel_start() -> FfiResult {
             s.set_hmac_key(key);
         }
         // Store in the global before starting
-        if let Ok(mut guard) = SENTINEL.lock() {
+        {
+            let mut guard = SENTINEL.lock().unwrap_or_else(|p| {
+                log::warn!("SENTINEL mutex was poisoned, recovering");
+                p.into_inner()
+            });
             *guard = Some(Arc::clone(&s));
         }
         s
@@ -130,17 +134,21 @@ pub fn ffi_sentinel_start() -> FfiResult {
         Ok(Ok(())) => {}
         Ok(Err(e)) => {
             if is_new_sentinel {
-                if let Ok(mut guard) = SENTINEL.lock() {
-                    *guard = None;
-                }
+                let mut guard = SENTINEL.lock().unwrap_or_else(|p| {
+                    log::warn!("SENTINEL mutex was poisoned, recovering");
+                    p.into_inner()
+                });
+                *guard = None;
             }
             return FfiResult::err(format!("Failed to start sentinel: {e}"));
         }
         Err(_) => {
             if is_new_sentinel {
-                if let Ok(mut guard) = SENTINEL.lock() {
-                    *guard = None;
-                }
+                let mut guard = SENTINEL.lock().unwrap_or_else(|p| {
+                    log::warn!("SENTINEL mutex was poisoned, recovering");
+                    p.into_inner()
+                });
+                *guard = None;
             }
             return FfiResult::err(
                 "Sentinel start timed out — check accessibility permissions".to_string(),

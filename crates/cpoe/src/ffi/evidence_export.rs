@@ -147,7 +147,7 @@ pub fn ffi_export_evidence(path: String, tier: String, output: String) -> FfiRes
                 checkpoint_id,
                 timestamp: timestamp_ms,
                 content_hash: HashValue::try_sha256(ev.content_hash.to_vec())?,
-                char_count: ev.file_size as u64,
+                char_count: ev.file_size.max(0) as u64,
                 delta: EditDelta {
                     chars_added: ev.size_delta.max(0) as u64,
                     // Widen to i64 before negating to avoid overflow on i32::MIN
@@ -217,7 +217,7 @@ pub fn ffi_export_evidence(path: String, tier: String, output: String) -> FfiRes
     // Compute character count by reading the file as UTF-8.
     // Falls back to byte count for non-UTF-8 files.
     // Read once and verify the content hash matches to avoid TOCTOU (M-038).
-    let byte_length = latest.file_size as u64;
+    let byte_length = latest.file_size.max(0) as u64;
     let char_count = std::fs::read(&file_path)
         .map_err(|e| log::warn!("read file for char count failed: {e}"))
         .ok()
