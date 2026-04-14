@@ -30,6 +30,9 @@ fn runtime() -> &'static tokio::runtime::Runtime {
 /// string in `message` on success.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn ffi_create_webvh_identity(address: String) -> FfiResult {
+    if address.len() > 2048 {
+        return FfiResult::err("Address too long");
+    }
     let signing_key = match load_signing_key() {
         Ok(k) => k,
         Err(e) => {

@@ -294,18 +294,27 @@ const ALLOWED_ORIGINS = [
   /^https:\/\/[^/]*\.?substack\.com\//,
 ];
 
-let customDomainPatterns = [];
+let customDomainList = [];
 
 function loadCustomDomains() {
   chrome.storage.local.get(["customDomains"], (result) => {
-    const domains = result.customDomains || [];
-    customDomainPatterns = domains
-      .filter((d) => typeof d === "string" && d.length > 0)
-      .map((d) => {
-        const escaped = d.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*");
-        return new RegExp("^https:\\/\\/" + escaped + "\\/");
-      });
+    customDomainList = (result.customDomains || [])
+      .filter((d) => typeof d === "string" && d.length > 0);
   });
+}
+
+function matchesCustomDomain(url) {
+  let hostname;
+  try { hostname = new URL(url).hostname; } catch { return false; }
+  for (const domain of customDomainList) {
+    if (domain.startsWith("*.")) {
+      const suffix = domain.slice(2);
+      if (hostname === suffix || hostname.endsWith("." + suffix)) return true;
+    } else {
+      if (hostname === domain) return true;
+    }
+  }
+  return false;
 }
 
 const CUSTOM_SCRIPT_ID = "cpoe-custom-domains";
@@ -340,7 +349,7 @@ chrome.storage.local.get(["customDomains"], (result) => {
 
 function isAllowedOrigin(url) {
   return ALLOWED_ORIGINS.some((re) => re.test(url)) ||
-    customDomainPatterns.some((re) => re.test(url));
+    matchesCustomDomain(url);
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -531,6 +540,9 @@ async function computeCommitment(prevCommitmentHex, contentHash, ordinal, sessio
 }
 
 function hexToBytes(hex) {
+  if (typeof hex !== "string" || hex.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(hex)) {
+    throw new Error("Invalid hex string");
+  }
   const bytes = new Uint8Array(hex.length / 2);
   for (let i = 0; i < bytes.length; i++) {
     bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
@@ -545,6 +557,20 @@ function bytesToHex(bytes) {
 }
 
 async function handleStandaloneAction(message, sender, sendResponse) {
+  let responded = false;
+  const respond = (data) => { if (!responded) { responded = true; sendResponse(data); } };
+  try {
+    return await handleStandaloneActionInner(message, sender, respond);
+  } catch (err) {
+    const msg = err?.name === "QuotaExceededError"
+      ? "Storage full. Evidence cannot be saved. Free up browser storage or install the desktop app."
+      : "Evidence storage error. Try restarting the browser.";
+    broadcastToPopup({ type: "error", message: msg });
+    respond({ ok: false, error: msg });
+  }
+}
+
+async function handleStandaloneActionInner(message, sender, sendResponse) {
   switch (message.action) {
     case "start_witnessing":
       {
@@ -652,6 +678,21 @@ chrome.storage.local.get(["_standaloneSessionId", "_standaloneTabId"], (result) 
     if (activeTabId) {
       startCheckpointTimer();
     }
+  }
+});
+
+// Gracefully stop active sessions before extension update takes effect.
+chrome.runtime.onUpdateAvailable.addListener(() => {
+  if (standaloneSessionId) {
+    standaloneStopSession(standaloneSessionId).then(() => {
+      chrome.storage.local.remove(["_standaloneSessionId", "_standaloneTabId", "_sessionStartTime"]);
+      chrome.runtime.reload();
+    });
+  } else if (operatingMode === "native" && activeTabId) {
+    sendNativeMessage({ type: "stop_session" });
+    chrome.runtime.reload();
+  } else {
+    chrome.runtime.reload();
   }
 });
 

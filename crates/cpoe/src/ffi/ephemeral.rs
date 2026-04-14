@@ -70,7 +70,7 @@ struct ContentSnapshot {
     timestamp_ns: i64,
     content_hash: [u8; 32],
     byte_count: u64,
-    _size_delta: i32,
+    size_delta: i32,
     message: Option<String>,
 }
 
@@ -240,7 +240,7 @@ pub fn ffi_ephemeral_checkpoint(session_id: String, content: String, message: St
         timestamp_ns: crate::utils::now_ns(),
         content_hash,
         byte_count,
-        _size_delta: size_delta,
+        size_delta,
         message: context_note,
     });
     entry.checkpoint_count += 1;
@@ -496,7 +496,7 @@ pub fn ffi_ephemeral_checkpoint_hash(
         timestamp_ns: crate::utils::now_ns(),
         content_hash,
         byte_count,
-        _size_delta: size_delta,
+        size_delta,
         message: context_note,
     });
     entry.checkpoint_count += 1;
@@ -683,30 +683,14 @@ fn flush_session_state_fields(
 }
 
 fn flush_session_state(session_id: &str, session: &EphemeralSession) {
-    let Some(data_dir) = get_data_dir() else {
-        return;
-    };
-    let recovery_dir = data_dir.join("ephemeral-sessions");
-    if std::fs::create_dir_all(&recovery_dir).is_err() {
-        return;
-    }
-
-    let state = serde_json::json!({
-        "session_id": session_id,
-        "context_label": session.context_label,
-        "started_at_ns": session.started_at_ns,
-        "checkpoint_count": session.checkpoint_count,
-        "keystroke_count": session.keystroke_count,
-        "jitter_count": session.jitter_intervals.len(),
-    });
-
-    let path = recovery_dir.join(format!("{session_id}.json"));
-    let tmp_path = recovery_dir.join(format!("{session_id}.json.tmp"));
-    if let Err(e) = std::fs::write(&tmp_path, state.to_string())
-        .and_then(|_| std::fs::rename(&tmp_path, &path))
-    {
-        log::warn!("Failed to flush session state {session_id}: {e}");
-    }
+    flush_session_state_fields(
+        session_id,
+        &session.context_label,
+        session.started_at_ns,
+        session.checkpoint_count,
+        session.keystroke_count,
+        session.jitter_intervals.len(),
+    );
 }
 
 /// Remove crash-recovery state after successful finalization.
