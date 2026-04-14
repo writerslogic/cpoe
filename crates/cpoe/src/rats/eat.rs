@@ -17,7 +17,9 @@ use crate::tpm;
 use crate::war::ear::{
     Ar4siStatus, EarAppraisal, EarToken, TrustworthinessVector, VerifierId, CWT_KEY_EAT_PROFILE,
     CWT_KEY_IAT, CWT_KEY_SUBMODS, EAR_KEY_POLICY_ID, EAR_KEY_STATUS, EAR_KEY_TRUST_VECTOR,
-    EAR_KEY_VERIFIER_ID, POP_KEY_CHAIN_DURATION, POP_KEY_CHAIN_LENGTH, POP_KEY_WARNINGS,
+    EAR_KEY_VERIFIER_ID, POP_KEY_ABSENCE, POP_KEY_CHAIN_DURATION, POP_KEY_CHAIN_LENGTH,
+    POP_KEY_ENTROPY, POP_KEY_EVIDENCE_REF, POP_KEY_FORENSIC, POP_KEY_FORGERY_COST,
+    POP_KEY_PROCESS_END, POP_KEY_PROCESS_START, POP_KEY_SEAL, POP_KEY_WARNINGS,
 };
 
 /// CWT standard claim keys (RFC 8392 Section 4).
@@ -219,9 +221,65 @@ fn appraisal_to_cbor(a: &EarAppraisal) -> Value {
         ));
     }
 
+    if let Some(ref seal) = a.pop_seal {
+        let mut buf = Vec::new();
+        ciborium::into_writer(&seal, &mut buf).ok();
+        map.push((Value::Integer(POP_KEY_SEAL.into()), Value::Bytes(buf)));
+    }
+
+    if let Some(ref evidence_ref) = a.pop_evidence_ref {
+        map.push((
+            Value::Integer(POP_KEY_EVIDENCE_REF.into()),
+            Value::Bytes(evidence_ref.clone()),
+        ));
+    }
+
+    if let Some(ref entropy) = a.pop_entropy_report {
+        let mut buf = Vec::new();
+        ciborium::into_writer(&entropy, &mut buf).ok();
+        map.push((Value::Integer(POP_KEY_ENTROPY.into()), Value::Bytes(buf)));
+    }
+
+    if let Some(ref forgery) = a.pop_forgery_cost {
+        let mut buf = Vec::new();
+        ciborium::into_writer(&forgery, &mut buf).ok();
+        map.push((
+            Value::Integer(POP_KEY_FORGERY_COST.into()),
+            Value::Bytes(buf),
+        ));
+    }
+
+    if let Some(ref forensic) = a.pop_forensic_summary {
+        let mut buf = Vec::new();
+        ciborium::into_writer(&forensic, &mut buf).ok();
+        map.push((Value::Integer(POP_KEY_FORENSIC.into()), Value::Bytes(buf)));
+    }
+
+    if let Some(ref absence) = a.pop_absence_claims {
+        if !absence.is_empty() {
+            let mut buf = Vec::new();
+            ciborium::into_writer(&absence, &mut buf).ok();
+            map.push((Value::Integer(POP_KEY_ABSENCE.into()), Value::Bytes(buf)));
+        }
+    }
+
     if let Some(ref warnings) = a.pop_warnings {
         let arr: Vec<Value> = warnings.iter().map(|w| Value::Text(w.clone())).collect();
         map.push((Value::Integer(POP_KEY_WARNINGS.into()), Value::Array(arr)));
+    }
+
+    if let Some(ref start) = a.pop_process_start {
+        map.push((
+            Value::Integer(POP_KEY_PROCESS_START.into()),
+            Value::Text(start.clone()),
+        ));
+    }
+
+    if let Some(ref end) = a.pop_process_end {
+        map.push((
+            Value::Integer(POP_KEY_PROCESS_END.into()),
+            Value::Text(end.clone()),
+        ));
     }
 
     Value::Map(map)
@@ -333,9 +391,17 @@ fn cbor_to_appraisal(value: &Value) -> Result<EarAppraisal> {
     let mut status = Ar4siStatus::None;
     let mut trust_vector = None;
     let mut policy_id = None;
+    let mut seal = None;
+    let mut evidence_ref = None;
+    let mut entropy_report = None;
+    let mut forgery_cost = None;
+    let mut forensic_summary = None;
     let mut chain_length = None;
     let mut chain_duration = None;
+    let mut absence_claims = None;
     let mut warnings = None;
+    let mut process_start = None;
+    let mut process_end = None;
 
     for (k, v) in map {
         let key = cbor_int(k).unwrap_or(0);
@@ -351,11 +417,41 @@ fn cbor_to_appraisal(value: &Value) -> Result<EarAppraisal> {
                     policy_id = Some(s.clone());
                 }
             }
+            k if k == POP_KEY_SEAL => {
+                if let Value::Bytes(b) = v {
+                    seal = ciborium::from_reader(b.as_slice()).ok();
+                }
+            }
+            k if k == POP_KEY_EVIDENCE_REF => {
+                if let Value::Bytes(b) = v {
+                    evidence_ref = Some(b.clone());
+                }
+            }
+            k if k == POP_KEY_ENTROPY => {
+                if let Value::Bytes(b) = v {
+                    entropy_report = ciborium::from_reader(b.as_slice()).ok();
+                }
+            }
+            k if k == POP_KEY_FORGERY_COST => {
+                if let Value::Bytes(b) = v {
+                    forgery_cost = ciborium::from_reader(b.as_slice()).ok();
+                }
+            }
+            k if k == POP_KEY_FORENSIC => {
+                if let Value::Bytes(b) = v {
+                    forensic_summary = ciborium::from_reader(b.as_slice()).ok();
+                }
+            }
             k if k == POP_KEY_CHAIN_LENGTH => {
                 chain_length = Some(cbor_int(v).unwrap_or(0) as u64);
             }
             k if k == POP_KEY_CHAIN_DURATION => {
                 chain_duration = Some(cbor_int(v).unwrap_or(0) as u64);
+            }
+            k if k == POP_KEY_ABSENCE => {
+                if let Value::Bytes(b) = v {
+                    absence_claims = ciborium::from_reader(b.as_slice()).ok();
+                }
             }
             k if k == POP_KEY_WARNINGS => {
                 if let Value::Array(arr) = v {
@@ -372,6 +468,16 @@ fn cbor_to_appraisal(value: &Value) -> Result<EarAppraisal> {
                     warnings = Some(ws);
                 }
             }
+            k if k == POP_KEY_PROCESS_START => {
+                if let Value::Text(s) = v {
+                    process_start = Some(s.clone());
+                }
+            }
+            k if k == POP_KEY_PROCESS_END => {
+                if let Value::Text(s) = v {
+                    process_end = Some(s.clone());
+                }
+            }
             _ => {}
         }
     }
@@ -380,17 +486,17 @@ fn cbor_to_appraisal(value: &Value) -> Result<EarAppraisal> {
         ear_status: status,
         ear_trustworthiness_vector: trust_vector,
         ear_appraisal_policy_id: policy_id,
-        pop_seal: None,
-        pop_evidence_ref: None,
-        pop_entropy_report: None,
-        pop_forgery_cost: None,
-        pop_forensic_summary: None,
+        pop_seal: seal,
+        pop_evidence_ref: evidence_ref,
+        pop_entropy_report: entropy_report,
+        pop_forgery_cost: forgery_cost,
+        pop_forensic_summary: forensic_summary,
         pop_chain_length: chain_length,
         pop_chain_duration: chain_duration,
-        pop_absence_claims: None,
+        pop_absence_claims: absence_claims,
         pop_warnings: warnings,
-        pop_process_start: None,
-        pop_process_end: None,
+        pop_process_start: process_start,
+        pop_process_end: process_end,
     })
 }
 

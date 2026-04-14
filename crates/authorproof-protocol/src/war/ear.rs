@@ -34,6 +34,8 @@ pub const POP_KEY_CHAIN_LENGTH: i64 = 70006;
 pub const POP_KEY_CHAIN_DURATION: i64 = 70007;
 pub const POP_KEY_ABSENCE: i64 = 70008;
 pub const POP_KEY_WARNINGS: i64 = 70009;
+pub const POP_KEY_PROCESS_START: i64 = 70010;
+pub const POP_KEY_PROCESS_END: i64 = 70011;
 
 /// AR4SI appraisal status per draft-ietf-rats-ar4si.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
