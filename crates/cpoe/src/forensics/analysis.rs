@@ -571,12 +571,34 @@ pub fn analyze_focus_patterns(
     // Detect reading pattern: repeated short switches to the same app.
     let reading_pattern_detected = detect_reading_pattern(switches);
 
+    // Compute mid-typing switch ratio: fraction of consecutive switches where
+    // the gap between regaining focus and losing it again was <2s, indicating
+    // the user was actively working (not idle) between focus changes.
+    let mid_typing_switch_ratio = if switches.len() >= 2 {
+        let mut mid_typing = 0usize;
+        let mut pairs = 0usize;
+        for pair in switches.windows(2) {
+            if let Some(regained) = pair[0].regained_at {
+                if let Ok(gap) = pair[1].lost_at.duration_since(regained) {
+                    pairs += 1;
+                    if gap.as_secs_f64() < 2.0 {
+                        mid_typing += 1;
+                    }
+                }
+            }
+        }
+        if pairs > 0 { mid_typing as f64 / pairs as f64 } else { 0.0 }
+    } else {
+        0.0
+    };
+
     FocusMetrics {
         switch_count,
         out_of_focus_ratio,
         ai_app_switch_count,
         avg_away_duration_sec,
         reading_pattern_detected,
+        mid_typing_switch_ratio,
     }
 }
 

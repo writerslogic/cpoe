@@ -290,6 +290,10 @@ pub struct FocusMetrics {
     pub avg_away_duration_sec: f64,
     /// Whether the pattern suggests reading from external source.
     pub reading_pattern_detected: bool,
+    /// Fraction of focus switches that occurred within 2s of a keystroke event.
+    /// High ratio (>0.5) indicates reference-checking during active composition (cognitive).
+    /// Low ratio (<0.2) indicates content staging between typing bursts (transcriptive).
+    pub mid_typing_switch_ratio: f64,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -395,7 +399,7 @@ impl ForensicMetrics {
             linearity_score: Some(self.primary.monotonic_append_ratio.get()),
             hurst_exponent: self.hurst_exponent,
             checkpoint_count: self.checkpoint_count,
-            chain_duration_secs: self.session_stats.total_editing_time_sec as u64,
+            chain_duration_secs: self.session_stats.total_editing_time_sec.max(0.0) as u64,
             explanation: format!("Internal Assessment Score: {:.2}", self.assessment_score),
         }
     }

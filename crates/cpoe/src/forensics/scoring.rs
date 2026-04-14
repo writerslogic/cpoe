@@ -33,12 +33,20 @@ pub fn cadence_score_from_samples(samples: &[SimpleJitterSample]) -> f64 {
 /// - 0.10 if more than 3 AI-app switches occurred,
 /// - 0.0 otherwise.
 pub fn compute_focus_penalty(focus: &FocusMetrics) -> f64 {
-    if focus.reading_pattern_detected {
+    let base = if focus.reading_pattern_detected {
         0.15
     } else if focus.ai_app_switch_count > 3 {
         0.10
     } else {
-        0.0
+        return 0.0;
+    };
+    // If most focus switches happened during active typing (mid_typing_switch_ratio > 0.5),
+    // the user is reference-checking (cognitive), not staging content (transcriptive).
+    // Reduce the penalty proportionally.
+    if focus.mid_typing_switch_ratio > 0.5 {
+        base * (1.0 - focus.mid_typing_switch_ratio).max(0.2)
+    } else {
+        base
     }
 }
 
