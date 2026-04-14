@@ -222,7 +222,13 @@ impl SealedIdentityStore {
         // v1 XOR-only wrapping corruption and tampering).
         // Safety: HMAC integrity was already verified in load_blob() above,
         // so blob.public_key is authentic before this comparison.
-        if signing_key.verifying_key().to_bytes().as_slice() != blob.public_key.as_slice() {
+        if signing_key
+            .verifying_key()
+            .to_bytes()
+            .ct_eq(&blob.public_key)
+            .unwrap_u8()
+            == 0
+        {
             return Err(SealedIdentityError::BlobCorrupted);
         }
 
@@ -300,14 +306,17 @@ impl SealedIdentityStore {
 
         // Verify identity continuity: the re-derived seed must produce the
         // same public key as the original blob.
-        if seed.len() == 32 {
+        if seed.len() != 32 {
+            return Err(SealedIdentityError::BlobCorrupted);
+        }
+        {
             let mut key_bytes = [0u8; 32];
             key_bytes.copy_from_slice(&seed);
             let derived_pub = SigningKey::from_bytes(&key_bytes)
                 .verifying_key()
                 .to_bytes();
             key_bytes.zeroize();
-            if derived_pub.as_slice() != old_blob.public_key.as_slice() {
+            if derived_pub.ct_eq(&old_blob.public_key).unwrap_u8() == 0 {
                 return Err(SealedIdentityError::BlobCorrupted);
             }
         }

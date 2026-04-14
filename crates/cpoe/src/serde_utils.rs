@@ -297,7 +297,11 @@ pub mod hex_serde {
         S: Serializer,
         T: AsRef<[u8]>,
     {
-        serializer.serialize_str(&hex::encode(data.as_ref()))
+        if serializer.is_human_readable() {
+            serializer.serialize_str(&hex::encode(data.as_ref()))
+        } else {
+            serializer.serialize_bytes(data.as_ref())
+        }
     }
     pub fn deserialize<'de, D, const N: usize>(deserializer: D) -> Result<[u8; N], D::Error>
     where
