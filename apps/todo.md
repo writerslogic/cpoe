@@ -297,7 +297,7 @@
   <!-- pid:regex_dos | batch:10 | verified:true | first:2026-04-11 -->
   Impact: UI freeze during lock screen validation | Fix: Length validation before regex; use compiled regex | Effort: small
 
-- [ ] **H-046** `[security]` `WatchPathsDialog.xaml.cs:95`: Path traversal via junctions/symlinks escaping watched dir
+- [x] **H-046** `[security]` `WatchPathsDialog.xaml.cs:95`: Path traversal via junctions/symlinks escaping watched dir
   <!-- pid:path_traversal | batch:10 | verified:true | first:2026-04-11 -->
   Impact: Monitoring sensitive system folders | Fix: GetFullPath() + resolve all symlinks | Effort: medium
 
@@ -309,7 +309,7 @@
   <!-- pid:missing_validation | batch:10 | verified:true | first:2026-04-11 -->
   Impact: Malformed DIDs bypass validation | Fix: Strict format with length limits | Effort: medium
 
-- [ ] **H-049** `[concurrency]` `HomePage.xaml.cs:185`: Fire-and-forget async without CancellationToken
+- [x] **H-049** `[concurrency]` `HomePage.xaml.cs:185`: Fire-and-forget async without CancellationToken
   <!-- pid:missing_cancellation_token | batch:10 | verified:true | first:2026-04-11 -->
   Impact: NullReferenceException after page navigation | Fix: CancellationTokenSource in OnNavigatedFrom | Effort: medium
 
