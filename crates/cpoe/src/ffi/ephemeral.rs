@@ -70,6 +70,7 @@ struct ContentSnapshot {
     timestamp_ns: i64,
     content_hash: [u8; 32],
     byte_count: u64,
+    #[allow(dead_code)]
     size_delta: i32,
     message: Option<String>,
 }
