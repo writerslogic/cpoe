@@ -133,11 +133,11 @@
   <!-- pid:INIT_FFI_VALIDATION | batch:3 | verified:true | first:2026-04-11 -->
   Impact: Startup crash with no recovery | Fix: Wrap in try/catch; degrade gracefully | Effort: medium
 
-- [ ] **H-005** `[security]` `EndpointSecurityClient.swift:238`: Force unwrap of es_new_client result
+- [x] **H-005** `[security]` `EndpointSecurityClient.swift:238`: Force unwrap of es_new_client result
   <!-- pid:ES_NULLCHECK | batch:3 | verified:true | first:2026-04-11 -->
   Impact: Null pointer deref if client nil with SUCCESS | Fix: guard let client | Effort: small
 
-- [ ] **H-006** `[security]` `EndpointSecurityClient.swift:122`: Unsafe C string from ES without null-termination validation
+- [x] **H-006** `[security]` `EndpointSecurityClient.swift:122`: Unsafe C string from ES without null-termination validation
   <!-- pid:ES_CSTRING_SAFETY | batch:3 | verified:true | first:2026-04-11 -->
   Impact: Buffer over-read in all file/process event data | Fix: Use String(bytes:encoding:) with length | Effort: medium
 
@@ -173,7 +173,7 @@
   <!-- pid:SYSTEM_TIME_ATTACK | batch:4 | verified:true | first:2026-04-11 -->
   Impact: Attacker resets device binding checks via time adjustment | Fix: Use mach_absolute_time() | Effort: medium
 
-- [ ] **H-015** `[security]` `EncryptedSessionStore.swift:141`: Key rotation fallback without audit trail
+- [x] **H-015** `[security]` `EncryptedSessionStore.swift:141`: Key rotation fallback without audit trail
   <!-- pid:KEY_ROTATION_AUDIT | batch:4 | verified:true | first:2026-04-11 -->
   Impact: Silent key confusion on fallback; hard to detect incomplete rotation | Fix: Log which key decrypted | Effort: small
 
@@ -269,7 +269,7 @@
   <!-- pid:race_condition | batch:11 | verified:true | first:2026-04-11 -->
   Impact: Invalid commitment chain with null prevCommitment | Fix: Await genesis before checkpoints | Effort: small
 
-- [ ] **H-039** `[security]` `WritersProofClient.ts:142` (Atlassian): API error responses logged including body text
+- [-] **H-039** `[security]` `WritersProofClient.ts:142` (Atlassian): API error responses logged including body text
   <!-- pid:log_info_leak | batch:11 | verified:true | first:2026-04-11 -->
   Impact: Information disclosure of internal API details | Fix: Log only status code | Effort: small
 
@@ -305,7 +305,7 @@
   <!-- pid:insufficient_system_path_validation | batch:10 | verified:true | first:2026-04-11 -->
   Impact: Watching AppData, LocalAppData, ProgramData | Fix: Expand to all Environment.SpecialFolder | Effort: small
 
-- [ ] **H-048** `[security]` `CollaborativeEvidenceDialog.xaml.cs:320`: DID identity validation without length/checksum
+- [x] **H-048** `[security]` `CollaborativeEvidenceDialog.xaml.cs:320`: DID identity validation without length/checksum
   <!-- pid:missing_validation | batch:10 | verified:true | first:2026-04-11 -->
   Impact: Malformed DIDs bypass validation | Fix: Strict format with length limits | Effort: medium
 
