@@ -221,6 +221,18 @@ pub struct ProofParams {
     /// Waypoint memory in KiB (Mode 10 only)
     #[serde(rename = "6", default, skip_serializing_if = "Option::is_none")]
     pub waypoint_memory: Option<u64>,
+
+    /// PoSME reads per step (d). Mode 30/31 only.
+    #[serde(rename = "7", default, skip_serializing_if = "Option::is_none")]
+    pub reads_per_step: Option<u64>,
+
+    /// PoSME Fiat-Shamir challenge count (Q). Mode 30/31 only.
+    #[serde(rename = "8", default, skip_serializing_if = "Option::is_none")]
+    pub challenges: Option<u64>,
+
+    /// PoSME recursive provenance depth (R). Mode 30/31 only.
+    #[serde(rename = "9", default, skip_serializing_if = "Option::is_none")]
+    pub recursion_depth: Option<u64>,
 }
 
 /// Merkle proof per CDDL `merkle-proof`.

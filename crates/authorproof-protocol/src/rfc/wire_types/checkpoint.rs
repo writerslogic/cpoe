@@ -34,6 +34,7 @@ use super::serde_helpers::{fixed_bytes_16, fixed_bytes_32_opt, serde_bytes_opt};
 ///     ? 17 => bstr .size 32, ; verifier-nonce
 ///     ? 18 => bstr .size 8192, ; lamport-signature
 ///     ? 19 => bstr .size 8, ; lamport-pubkey-fingerprint
+///     ? 20 => bstr,         ; posme-proof (draft-condrey-cfrg-posme)
 /// }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -121,6 +122,15 @@ pub struct CheckpointWire {
         with = "serde_bytes_opt"
     )]
     pub lamport_pubkey_fingerprint: Option<Vec<u8>>,
+
+    /// PoSME proof (draft-condrey-cfrg-posme). Raw CBOR-encoded PosmeProof bytes.
+    #[serde(
+        rename = "20",
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_bytes_opt"
+    )]
+    pub posme_proof: Option<Vec<u8>>,
 }
 
 const MAX_SELF_RECEIPTS: usize = 100;

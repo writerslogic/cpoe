@@ -38,6 +38,9 @@ fn test_checkpoint_wire_cbor_roundtrip() {
                 steps: 1000,
                 waypoint_interval: None,
                 waypoint_memory: None,
+                reads_per_step: None,
+                challenges: None,
+                recursion_depth: None,
             },
             input: vec![0x11; 32],
             merkle_root: vec![0x22; 32],
@@ -58,6 +61,7 @@ fn test_checkpoint_wire_cbor_roundtrip() {
         verifier_nonce: None,
         lamport_signature: None,
         lamport_pubkey_fingerprint: None,
+        posme_proof: None,
     };
 
     let encoded = codec::cbor::encode(&checkpoint).expect("encode checkpoint");
@@ -100,6 +104,9 @@ fn create_test_evidence_packet() -> EvidencePacketWire {
                 steps: 1000,
                 waypoint_interval: None,
                 waypoint_memory: None,
+                reads_per_step: None,
+                challenges: None,
+                recursion_depth: None,
             },
             input: vec![0x11; 32],
             merkle_root: vec![0x22; 32],
@@ -120,6 +127,7 @@ fn create_test_evidence_packet() -> EvidencePacketWire {
         verifier_nonce: None,
         lamport_signature: None,
         lamport_pubkey_fingerprint: None,
+        posme_proof: None,
     };
 
     let mut checkpoints = vec![checkpoint.clone()];

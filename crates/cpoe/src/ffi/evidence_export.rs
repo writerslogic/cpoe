@@ -170,6 +170,9 @@ pub fn ffi_export_evidence(path: String, tier: String, output: String) -> FfiRes
                         steps: ev.vdf_iterations,
                         waypoint_interval: None,
                         waypoint_memory: None,
+                        reads_per_step: None,
+                        challenges: None,
+                        recursion_depth: None,
                     },
                     input: vdf_input_bytes,
                     merkle_root,
@@ -186,6 +189,7 @@ pub fn ffi_export_evidence(path: String, tier: String, output: String) -> FfiRes
                 verifier_nonce: None,
                 lamport_signature: ev.lamport_signature.clone(),
                 lamport_pubkey_fingerprint: ev.lamport_pubkey_fingerprint.clone(),
+                posme_proof: None,
             })
         })
         .collect::<Result<Vec<_>, String>>()

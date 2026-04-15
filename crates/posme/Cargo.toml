@@ -1,0 +1,15 @@
+[package]
+name = "posme"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+description = "Proof of Sequential Memory Execution (draft-condrey-cfrg-posme)"
+
+[dependencies]
+blake3 = "1.8"
+serde = { version = "1.0", features = ["derive"] }
+
+[features]
+default = []
+prover = []

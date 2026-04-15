@@ -169,6 +169,9 @@ fn checkpoint_to_wire(
                 steps: swf.params.iterations,
                 waypoint_interval: None,
                 waypoint_memory: None,
+                reads_per_step: None,
+                challenges: None,
+                recursion_depth: None,
             },
             input: swf.input.to_vec(),
             merkle_root: swf.merkle_root.to_vec(),
@@ -197,6 +200,9 @@ fn checkpoint_to_wire(
                 steps: vdf.iterations,
                 waypoint_interval: None,
                 waypoint_memory: None,
+                reads_per_step: None,
+                challenges: None,
+                recursion_depth: None,
             },
             input: vdf.input.to_vec(),
             merkle_root: vdf.output.to_vec(),
@@ -213,6 +219,9 @@ fn checkpoint_to_wire(
                 steps: 0,
                 waypoint_interval: None,
                 waypoint_memory: None,
+                reads_per_step: None,
+                challenges: None,
+                recursion_depth: None,
             },
             input: vec![0u8; 32],
             merkle_root: vec![0u8; 32],
@@ -355,6 +364,7 @@ fn checkpoint_to_wire(
         verifier_nonce: None,
         lamport_signature: lamport.and_then(|s| s.lamport_signature.clone()),
         lamport_pubkey_fingerprint: lamport.and_then(|s| s.lamport_pubkey_fingerprint.clone()),
+        posme_proof: None,
     };
     // SHA-256(CBOR(checkpoint \ {8})) per spec
     wire.checkpoint_hash = wire.compute_hash().map_err(Error::crypto)?;

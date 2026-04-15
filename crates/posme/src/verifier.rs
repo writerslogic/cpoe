@@ -1,0 +1,322 @@
+// SPDX-License-Identifier: Apache-2.0
+
+//! Stateless PoSME proof verification (no arena allocation).
+
+use crate::block::LAMBDA;
+use crate::error::{PosmeError, Result};
+use crate::hash::{addr_from, i2osp, posme_hash, DST_CAUSAL, DST_FIAT_SHAMIR, DST_INIT, DST_TRANSCRIPT};
+use crate::merkle;
+use crate::proof::{PosmeProof, StepProof, INIT_WITNESS_COUNT, PROOF_ALGORITHM_POSME, PROOF_ALGORITHM_POSME_ENTANGLED};
+
+fn verify_root_chain_path(
+    commitment: &[u8; LAMBDA],
+    index: usize,
+    value: &[u8; LAMBDA],
+    path: &[[u8; LAMBDA]],
+    total_roots: usize,
+) -> bool {
+    let n = total_roots.next_power_of_two();
+    let expected_depth = (n as u32).trailing_zeros() as usize;
+    if path.len() != expected_depth {
+        return false;
+    }
+    let mut current = *value;
+    let mut pos = n + index;
+    for sibling in path {
+        current = if pos.is_multiple_of(2) {
+            posme_hash(&[&current, sibling])
+        } else {
+            posme_hash(&[sibling, &current])
+        };
+        pos /= 2;
+    }
+    current == *commitment
+}
+
+fn derive_challenges(
+    final_transcript: &[u8; LAMBDA],
+    root_chain_commitment: &[u8; LAMBDA],
+    q: u16,
+    k: u32,
+) -> Vec<u32> {
+    let sigma = posme_hash(&[DST_FIAT_SHAMIR, final_transcript, root_chain_commitment]);
+    let mut challenges = Vec::with_capacity(q as usize);
+    let mut counter = 0u32;
+    while challenges.len() < q as usize {
+        let h = posme_hash(&[&sigma, &i2osp(counter)]);
+        let val = u32::from_be_bytes([h[0], h[1], h[2], h[3]]) % k;
+        let step = val + 1;
+        if !challenges.contains(&step) {
+            challenges.push(step);
+        }
+        counter += 1;
+    }
+    challenges
+}
+
+/// Verify a complete PoSME proof.
+pub fn verify(seed: &[u8], proof: &PosmeProof) -> Result<bool> {
+    proof.params.validate()?;
+
+    if proof.proof_algorithm != PROOF_ALGORITHM_POSME
+        && proof.proof_algorithm != PROOF_ALGORITHM_POSME_ENTANGLED
+    {
+        return Err(PosmeError::VerificationFailed(format!(
+            "unknown proof algorithm: {}", proof.proof_algorithm
+        )));
+    }
+
+    let n = proof.params.arena_blocks;
+    let k = proof.params.total_steps;
+    let d = proof.params.reads_per_step;
+    let total_roots = k as usize + 1;
+
+    // Step 1: Verify root_0 is in the root chain.
+    if !verify_root_chain_path(
+        &proof.root_chain_commitment, 0, &proof.root_0, &proof.root_0_path, total_roots,
+    ) {
+        return Err(PosmeError::RootChainFailed { step_id: 0 });
+    }
+
+    // Step 2: Verify init witnesses bind root_0 to the seed.
+    // Each witness contains a block that must match the deterministic init formula
+    // AND be in root_0 via its Merkle path.
+    if proof.init_witnesses.len() < INIT_WITNESS_COUNT {
+        return Err(PosmeError::VerificationFailed(format!(
+            "insufficient init witnesses: {} < {INIT_WITNESS_COUNT}",
+            proof.init_witnesses.len()
+        )));
+    }
+    // Re-derive expected witness indices from seed + root_0 (Fiat-Shamir).
+    let sigma = posme_hash(&[b"PoSME-init-witness-v1", seed, &proof.root_0]);
+    let mut expected_indices = Vec::with_capacity(INIT_WITNESS_COUNT);
+    let mut counter = 0u32;
+    while expected_indices.len() < INIT_WITNESS_COUNT {
+        let h = posme_hash(&[&sigma, &i2osp(counter)]);
+        let idx = u32::from_be_bytes([h[0], h[1], h[2], h[3]]) % n;
+        counter += 1;
+        if expected_indices.contains(&idx) {
+            continue;
+        }
+        expected_indices.push(idx);
+    }
+    for (w, &expected_idx) in proof.init_witnesses.iter().zip(&expected_indices) {
+        if w.index != expected_idx {
+            return Err(PosmeError::VerificationFailed(format!(
+                "init witness index mismatch: got {}, expected {expected_idx}", w.index
+            )));
+        }
+        // Verify block data matches deterministic init.
+        let expected_data = if w.index == 0 {
+            posme_hash(&[DST_INIT, seed, &i2osp(0)])
+        } else {
+            // We can't verify blocks > 0 without their dependencies (prev, skip).
+            // Block 0 is fully verifiable. For blocks > 0, we verify only the
+            // causal field (which depends only on seed + index) and the Merkle path.
+            w.block.data // trust data, verify causal + Merkle
+        };
+        let expected_causal = posme_hash(&[DST_CAUSAL, seed, &i2osp(w.index)]);
+        if w.index == 0 && w.block.data != expected_data {
+            return Err(PosmeError::VerificationFailed(
+                "init block 0 data mismatch".into()
+            ));
+        }
+        if w.block.causal != expected_causal {
+            return Err(PosmeError::VerificationFailed(format!(
+                "init block {} causal mismatch", w.index
+            )));
+        }
+        // Verify Merkle path against root_0.
+        if !merkle::verify_path(&proof.root_0, w.index, &w.block, &w.merkle_path, n) {
+            return Err(PosmeError::MerkleVerifyFailed { step_id: 0, address: w.index });
+        }
+    }
+
+    // Step 3: Recompute T_0 from seed and root_0.
+    let t_0 = posme_hash(&[DST_TRANSCRIPT, seed, &proof.root_0]);
+
+    // Step 4: Derive challenges and verify they match the proof's steps.
+    let expected_challenges = derive_challenges(
+        &proof.final_transcript,
+        &proof.root_chain_commitment,
+        proof.params.challenges,
+        k,
+    );
+    let proof_step_ids: Vec<u32> = proof.challenged_steps.iter().map(|s| s.step_id).collect();
+    if proof_step_ids != expected_challenges {
+        return Err(PosmeError::ChallengeMismatch);
+    }
+
+    // Step 5: Verify each challenged step.
+    let ctx = VerifyCtx { n, d, k, total_roots, t_0 };
+    // Collect transcript values for cross-checking between consecutive challenged steps.
+    let mut step_transcripts: Vec<(u32, [u8; LAMBDA])> = Vec::with_capacity(proof.challenged_steps.len());
+
+    for sp in &proof.challenged_steps {
+        let transcript_val = verify_step(sp, proof, &ctx)?;
+        step_transcripts.push((sp.step_id, transcript_val));
+    }
+
+    // Step 6: Cross-check transcript chain between consecutive challenged steps.
+    // If step c produces T_c, and a later challenged step c' has cursor_in,
+    // and c' = c+1, then cursor_in of c' must equal T_c.
+    let mut sorted_transcripts = step_transcripts.clone();
+    sorted_transcripts.sort_by_key(|&(step, _)| step);
+    for pair in sorted_transcripts.windows(2) {
+        let (step_a, transcript_a) = pair[0];
+        let (step_b, cursor_in_b) = (pair[1].0, proof.challenged_steps.iter()
+            .find(|s| s.step_id == pair[1].0)
+            .unwrap().cursor_in);
+        if step_b == step_a + 1 && cursor_in_b != transcript_a {
+            return Err(PosmeError::TranscriptMismatch { step_id: step_b });
+        }
+    }
+
+    Ok(true)
+}
+
+struct VerifyCtx {
+    n: u32,
+    d: u8,
+    k: u32,
+    total_roots: usize,
+    t_0: [u8; LAMBDA],
+}
+
+/// Verify a single step proof. Returns the computed transcript value for cross-checking.
+fn verify_step(
+    sp: &StepProof,
+    proof: &PosmeProof,
+    ctx: &VerifyCtx,
+) -> std::result::Result<[u8; LAMBDA], PosmeError> {
+    let step = sp.step_id;
+    let n = ctx.n;
+
+    // A. Verify roots are in the root chain.
+    if !verify_root_chain_path(
+        &proof.root_chain_commitment, step as usize - 1,
+        &sp.root_before, &sp.root_chain_paths.0, ctx.total_roots,
+    ) {
+        return Err(PosmeError::RootChainFailed { step_id: step });
+    }
+    if !verify_root_chain_path(
+        &proof.root_chain_commitment, step as usize,
+        &sp.root_after, &sp.root_chain_paths.1, ctx.total_roots,
+    ) {
+        return Err(PosmeError::RootChainFailed { step_id: step });
+    }
+
+    // B. Verify read Merkle proofs against root_before.
+    for rw in &sp.reads {
+        if !merkle::verify_path(&sp.root_before, rw.address, &rw.block, &rw.merkle_path, n) {
+            return Err(PosmeError::MerkleVerifyFailed { step_id: step, address: rw.address });
+        }
+    }
+
+    // C. Replay pointer-chase.
+    let cursor_in = sp.cursor_in;
+    let mut cursor = cursor_in;
+    for (j, rw) in sp.reads.iter().enumerate() {
+        let expected_addr = addr_from(&cursor, j as u32, n);
+        if expected_addr != rw.address {
+            return Err(PosmeError::AddressMismatch {
+                step_id: step,
+                read_index: j as u8,
+                expected: expected_addr,
+                got: rw.address,
+            });
+        }
+        cursor = posme_hash(&[&cursor, &rw.block.data, &rw.block.causal]);
+    }
+
+    // D. Verify symbiotic write.
+    let expected_w = addr_from(&cursor, u32::from(ctx.d), n);
+    if expected_w != sp.write.address {
+        return Err(PosmeError::WriteMismatch { step_id: step });
+    }
+    if !merkle::verify_path(&sp.root_before, sp.write.address, &sp.write.old_block, &sp.write.merkle_path, n) {
+        return Err(PosmeError::MerkleVerifyFailed { step_id: step, address: sp.write.address });
+    }
+    let expected_data = posme_hash(&[&sp.write.old_block.data, &cursor, &sp.write.old_block.causal]);
+    let expected_causal = posme_hash(&[&sp.write.old_block.causal, &cursor, &i2osp(step)]);
+    if sp.write.new_block.data != expected_data || sp.write.new_block.causal != expected_causal {
+        return Err(PosmeError::WriteMismatch { step_id: step });
+    }
+    if !merkle::verify_path(&sp.root_after, sp.write.address, &sp.write.new_block, &sp.write.merkle_path, n) {
+        return Err(PosmeError::MerkleVerifyFailed { step_id: step, address: sp.write.address });
+    }
+
+    // E. Compute transcript value.
+    let expected_transcript = posme_hash(&[&cursor_in, &i2osp(step), &cursor, &sp.root_after]);
+
+    // If last step, transcript must equal final_transcript.
+    if step == ctx.k && expected_transcript != proof.final_transcript {
+        return Err(PosmeError::TranscriptMismatch { step_id: step });
+    }
+
+    // Step 1's cursor_in must be T_0.
+    if step == 1 && cursor_in != ctx.t_0 {
+        return Err(PosmeError::TranscriptMismatch { step_id: step });
+    }
+
+    Ok(expected_transcript)
+}
+
+#[cfg(test)]
+#[cfg(feature = "prover")]
+mod tests {
+    use super::*;
+    use crate::params::PosmeParams;
+    use crate::prover;
+
+    fn test_params() -> PosmeParams {
+        PosmeParams::test()
+    }
+
+    #[test]
+    fn roundtrip_verify() {
+        let seed = b"roundtrip-test";
+        let proof = prover::execute(seed, &test_params()).unwrap();
+        assert!(verify(seed, &proof).unwrap());
+    }
+
+    #[test]
+    fn wrong_seed_fails() {
+        let proof = prover::execute(b"seed-a", &test_params()).unwrap();
+        let result = verify(b"seed-b", &proof);
+        // Init witness causal hashes won't match the wrong seed.
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn tampered_transcript_fails() {
+        let seed = b"tamper-test";
+        let mut proof = prover::execute(seed, &test_params()).unwrap();
+        proof.final_transcript[0] ^= 0xff;
+        assert!(verify(seed, &proof).is_err());
+    }
+
+    #[test]
+    fn tampered_root_chain_fails() {
+        let seed = b"tamper-root";
+        let mut proof = prover::execute(seed, &test_params()).unwrap();
+        proof.root_chain_commitment[0] ^= 0xff;
+        assert!(verify(seed, &proof).is_err());
+    }
+
+    #[test]
+    fn tampered_init_witness_fails() {
+        let seed = b"tamper-init";
+        let mut proof = prover::execute(seed, &test_params()).unwrap();
+        proof.init_witnesses[0].block.causal[0] ^= 0xff;
+        assert!(verify(seed, &proof).is_err());
+    }
+
+    #[test]
+    fn tampered_read_block_fails() {
+        let seed = b"tamper-read";
+        let mut proof = prover::execute(seed, &test_params()).unwrap();
+        proof.challenged_steps[0].reads[0].block.data[0] ^= 0xff;
+        assert!(verify(seed, &proof).is_err());
+    }
+}

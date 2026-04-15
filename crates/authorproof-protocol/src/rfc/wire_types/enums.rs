@@ -54,6 +54,10 @@ pub enum ProofAlgorithm {
     SwfArgon2id = 20,
     /// swf-argon2id-entangled (21): Argon2id with jitter entanglement
     SwfArgon2idEntangled = 21,
+    /// swf-posme (30): PoSME sequential memory execution (draft-condrey-cfrg-posme)
+    SwfPosme = 30,
+    /// swf-posme-entangled (31): PoSME with jitter entanglement
+    SwfPosmeEntangled = 31,
 }
 
 /// Appraisal verdict per CDDL `verdict`.
@@ -215,6 +219,8 @@ impl fmt::Display for ProofAlgorithm {
             Self::SwfSha256 => f.write_str("swf-sha256"),
             Self::SwfArgon2id => f.write_str("swf-argon2id"),
             Self::SwfArgon2idEntangled => f.write_str("swf-argon2id-entangled"),
+            Self::SwfPosme => f.write_str("swf-posme"),
+            Self::SwfPosmeEntangled => f.write_str("swf-posme-entangled"),
         }
     }
 }

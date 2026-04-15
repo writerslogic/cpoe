@@ -534,6 +534,7 @@ dependencies = [
  "hex",
  "hmac 0.12.1",
  "log",
+ "posme",
  "rand 0.8.5",
  "ratchet",
  "serde",
@@ -3797,6 +3798,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c972d8f86e943ad532d0b04e8965a749ad1d18bb981a9c7b3ae72fe7fd7744b"
 dependencies = [
  "bstr",
+]
+
+[[package]]
+name = "posme"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "serde",
 ]
 
 [[package]]
