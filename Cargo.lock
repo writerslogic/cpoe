@@ -1203,6 +1203,7 @@ dependencies = [
  "notify",
  "objc",
  "p256",
+ "posme",
  "printpdf",
  "qrcode",
  "rand 0.9.2",

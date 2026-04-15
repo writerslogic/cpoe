@@ -158,15 +158,21 @@ pub fn verify(seed: &[u8], proof: &PosmeProof) -> Result<bool> {
     }
 
     // Step 6: Cross-check transcript chain between consecutive challenged steps.
-    // If step c produces T_c, and a later challenged step c' has cursor_in,
-    // and c' = c+1, then cursor_in of c' must equal T_c.
+    // If step c produces T_c, and step c' = c+1 is also challenged,
+    // then cursor_in of c' must equal T_c (possibly after entanglement).
+    let entangle_map: std::collections::HashMap<u32, [u8; 32]> = proof.entanglement_points
+        .iter().copied().collect();
     let mut sorted_transcripts = step_transcripts.clone();
     sorted_transcripts.sort_by_key(|&(step, _)| step);
     for pair in sorted_transcripts.windows(2) {
-        let (step_a, transcript_a) = pair[0];
+        let (step_a, mut transcript_a) = pair[0];
         let (step_b, cursor_in_b) = (pair[1].0, proof.challenged_steps.iter()
             .find(|s| s.step_id == pair[1].0)
             .unwrap().cursor_in);
+        // Apply entanglement if step_a is an injection point.
+        if let Some(jh) = entangle_map.get(&step_a) {
+            transcript_a = posme_hash(&[b"PoSME-entangle-v1", &transcript_a, jh]);
+        }
         if step_b == step_a + 1 && cursor_in_b != transcript_a {
             return Err(PosmeError::TranscriptMismatch { step_id: step_b });
         }
@@ -249,9 +255,18 @@ fn verify_step(
     // E. Compute transcript value.
     let expected_transcript = posme_hash(&[&cursor_in, &i2osp(step), &cursor, &sp.root_after]);
 
-    // If last step, transcript must equal final_transcript.
-    if step == ctx.k && expected_transcript != proof.final_transcript {
-        return Err(PosmeError::TranscriptMismatch { step_id: step });
+    // If last step, transcript must equal final_transcript (accounting for entanglement).
+    if step == ctx.k {
+        let mut final_expected = expected_transcript;
+        // Apply entanglement if this step is an injection point.
+        for &(ep_step, ref jh) in &proof.entanglement_points {
+            if ep_step == step {
+                final_expected = posme_hash(&[b"PoSME-entangle-v1", &final_expected, jh]);
+            }
+        }
+        if final_expected != proof.final_transcript {
+            return Err(PosmeError::TranscriptMismatch { step_id: step });
+        }
     }
 
     // Step 1's cursor_in must be T_0.
@@ -318,5 +333,36 @@ mod tests {
         let mut proof = prover::execute(seed, &test_params()).unwrap();
         proof.challenged_steps[0].reads[0].block.data[0] ^= 0xff;
         assert!(verify(seed, &proof).is_err());
+    }
+
+    #[test]
+    fn entangled_roundtrip() {
+        let seed = b"entangle-verify";
+        let jitter = [[0xAAu8; 32], [0xBBu8; 32]];
+        let proof = prover::execute_entangled(seed, &test_params(), &jitter).unwrap();
+        assert!(verify(seed, &proof).unwrap());
+    }
+
+    #[test]
+    fn entangled_wrong_seed_fails() {
+        let jitter = [[0xAAu8; 32]];
+        let proof = prover::execute_entangled(b"seed-a", &test_params(), &jitter).unwrap();
+        assert!(verify(b"seed-b", &proof).is_err());
+    }
+
+    #[test]
+    fn entangled_tampered_jitter_changes_transcript() {
+        let seed = b"tamper-jitter";
+        let jitter = [[0xAAu8; 32]];
+        let proof = prover::execute_entangled(seed, &test_params(), &jitter).unwrap();
+        // Verify the original passes.
+        assert!(verify(seed, &proof).unwrap());
+        // Tampering the entanglement hash would change the transcript chain,
+        // but detection depends on whether adjacent challenged steps straddle
+        // the injection point. With Q=4 out of K=4096, this is probabilistic.
+        // Verify that different jitter produces a different final_transcript.
+        let jitter2 = [[0xBBu8; 32]];
+        let proof2 = prover::execute_entangled(seed, &test_params(), &jitter2).unwrap();
+        assert_ne!(proof.final_transcript, proof2.final_transcript);
     }
 }

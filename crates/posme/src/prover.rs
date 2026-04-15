@@ -94,23 +94,16 @@ impl WriteIndex {
     }
 }
 
-/// Lightweight per-step metadata collected during the initial pass.
-/// 32 bytes per step vs ~640+ bytes for a full StepLog.
-struct StepMeta {
-    transcript: [u8; LAMBDA],
-}
-
 struct ProofBuildCtx<'a> {
     root_chain: &'a RootChain,
     write_index: &'a WriteIndex,
     init_tree: &'a MerkleTree,
-    /// Transcripts from the initial pass, indexed by step-1.
-    transcripts: &'a [StepMeta],
 }
 
 fn build_step_proof(
     log: &StepLog,
     tree_before: &MerkleTree,
+    cursor_in: [u8; LAMBDA],
     ctx: &ProofBuildCtx<'_>,
     depth: u8,
 ) -> StepProof {
@@ -161,12 +154,6 @@ fn build_step_proof(
             }
         }
     }).collect();
-
-    let cursor_in = if log.step_id == 1 {
-        [0u8; LAMBDA] // Patched by caller
-    } else {
-        ctx.transcripts[log.step_id as usize - 2].transcript
-    };
 
     StepProof {
         step_id: log.step_id,
@@ -226,11 +213,10 @@ pub fn execute(seed: &[u8], params: &PosmeParams) -> Result<PosmeProof> {
     let init_tree = MerkleTree::build(&arena);
     let init_witnesses = generate_init_witnesses(seed, &init_tree, &arena, n);
 
-    // Phase 2: Execute K steps, storing only lightweight metadata.
+    // Phase 2: Execute K steps, storing only roots and write index.
     let mut write_index = WriteIndex::new(n);
     let mut transcript = t_0;
     let mut roots: Vec<[u8; LAMBDA]> = Vec::with_capacity(k as usize + 1);
-    let mut metas: Vec<StepMeta> = Vec::with_capacity(k as usize);
     roots.push(root_0);
 
     let start = Instant::now();
@@ -239,9 +225,6 @@ pub fn execute(seed: &[u8], params: &PosmeParams) -> Result<PosmeProof> {
         transcript = log.transcript;
         roots.push(log.root_after);
         write_index.record(log.write_addr, t);
-        metas.push(StepMeta {
-            transcript: log.transcript,
-        });
     }
     let elapsed = start.elapsed();
     let final_transcript = transcript;
@@ -260,18 +243,17 @@ pub fn execute(seed: &[u8], params: &PosmeParams) -> Result<PosmeProof> {
 
     // Phase 5: Replay challenged steps to build proofs.
     // Sort challenges so we replay forward once, stopping at each.
+    // cursor_in for each step is known from the replay transcript.
     let mut sorted_challenges: Vec<(usize, u32)> = challenges.iter().enumerate().map(|(i, &s)| (i, s)).collect();
     sorted_challenges.sort_by_key(|&(_, step)| step);
 
     let mut step_proofs: Vec<(usize, StepProof)> = Vec::with_capacity(challenges.len());
 
-    // Replay from init, advancing to each challenged step in order.
     let (mut replay_arena, mut replay_tree, _, mut replay_t) = initialize(seed, n);
     let mut replay_wi = WriteIndex::new(n);
     let mut current_step = 0u32;
 
     for &(orig_idx, target_step) in &sorted_challenges {
-        // Advance to step before target.
         while current_step < target_step - 1 {
             current_step += 1;
             let log = posme_step(&mut replay_arena, &mut replay_tree, &replay_t, current_step, d);
@@ -279,10 +261,9 @@ pub fn execute(seed: &[u8], params: &PosmeParams) -> Result<PosmeProof> {
             replay_wi.record(log.write_addr, current_step);
         }
 
-        // Snapshot tree state before the challenged step.
         let tree_before = replay_tree.clone();
+        let cursor_in = replay_t; // transcript before this step = cursor_in
 
-        // Execute the challenged step.
         current_step += 1;
         debug_assert_eq!(current_step, target_step);
         let log = posme_step(&mut replay_arena, &mut replay_tree, &replay_t, current_step, d);
@@ -293,15 +274,8 @@ pub fn execute(seed: &[u8], params: &PosmeParams) -> Result<PosmeProof> {
             root_chain: &root_chain,
             write_index: &replay_wi,
             init_tree: &init_tree,
-            transcripts: &metas,
         };
-        let mut sp = build_step_proof(&log, &tree_before, &build_ctx, params.recursion_depth);
-
-        // Patch cursor_in for step 1.
-        if target_step == 1 {
-            sp.cursor_in = t_0;
-        }
-
+        let sp = build_step_proof(&log, &tree_before, cursor_in, &build_ctx, params.recursion_depth);
         step_proofs.push((orig_idx, sp));
     }
 
@@ -322,6 +296,130 @@ pub fn execute(seed: &[u8], params: &PosmeParams) -> Result<PosmeProof> {
         claimed_duration: elapsed,
         proof_algorithm: PROOF_ALGORITHM_POSME,
         entanglement_points: Vec::new(),
+    })
+}
+
+const ENTANGLE_DST: &[u8] = b"PoSME-entangle-v1";
+
+/// Execute PoSME with jitter entanglement (algorithm 31).
+///
+/// At evenly-spaced intervals during execution, a jitter sample hash is mixed
+/// into the transcript chain: `T_t = H("PoSME-entangle-v1" || T_t || jitter_hash)`.
+/// The injection points and hashes are recorded in the proof for verification.
+///
+/// `jitter_samples`: one or more 32-byte jitter hashes collected during the session.
+/// Injection occurs every `K / jitter_samples.len()` steps.
+pub fn execute_entangled(
+    seed: &[u8],
+    params: &PosmeParams,
+    jitter_samples: &[[u8; 32]],
+) -> Result<PosmeProof> {
+    if jitter_samples.is_empty() {
+        return execute(seed, params);
+    }
+    params.validate()?;
+
+    let n = params.arena_blocks;
+    let k = params.total_steps;
+    let d = params.reads_per_step;
+    let interval = (k as usize) / jitter_samples.len();
+
+    let (mut arena, mut tree, root_0, t_0) = initialize(seed, n);
+    let init_tree = MerkleTree::build(&arena);
+    let init_witnesses = generate_init_witnesses(seed, &init_tree, &arena, n);
+
+    let mut write_index = WriteIndex::new(n);
+    let mut transcript = t_0;
+    let mut roots: Vec<[u8; LAMBDA]> = Vec::with_capacity(k as usize + 1);
+    let mut entanglement_points: Vec<(u32, [u8; 32])> = Vec::new();
+    roots.push(root_0);
+
+    let start = Instant::now();
+    let mut jitter_idx = 0usize;
+    for t in 1..=k {
+        let log = posme_step(&mut arena, &mut tree, &transcript, t, d);
+        transcript = log.transcript;
+
+        if interval > 0 && (t as usize).is_multiple_of(interval) && jitter_idx < jitter_samples.len() {
+            let jh = jitter_samples[jitter_idx];
+            transcript = posme_hash(&[ENTANGLE_DST, &transcript, &jh]);
+            entanglement_points.push((t, jh));
+            jitter_idx += 1;
+        }
+
+        roots.push(log.root_after);
+        write_index.record(log.write_addr, t);
+    }
+    let elapsed = start.elapsed();
+    let final_transcript = transcript;
+
+    let root_chain = RootChain::build(&roots);
+    let root_chain_commitment = root_chain.root();
+
+    let challenges = derive_challenges(
+        &final_transcript,
+        &root_chain_commitment,
+        params.challenges,
+        k,
+    );
+
+    let mut sorted_challenges: Vec<(usize, u32)> = challenges.iter().enumerate().map(|(i, &s)| (i, s)).collect();
+    sorted_challenges.sort_by_key(|&(_, step)| step);
+
+    let mut step_proofs: Vec<(usize, StepProof)> = Vec::with_capacity(challenges.len());
+    let (mut replay_arena, mut replay_tree, _, mut replay_t) = initialize(seed, n);
+    let mut replay_wi = WriteIndex::new(n);
+    let mut current_step = 0u32;
+    let mut replay_jitter_idx = 0usize;
+
+    for &(orig_idx, target_step) in &sorted_challenges {
+        while current_step < target_step - 1 {
+            current_step += 1;
+            let log = posme_step(&mut replay_arena, &mut replay_tree, &replay_t, current_step, d);
+            replay_t = log.transcript;
+            if interval > 0 && (current_step as usize).is_multiple_of(interval) && replay_jitter_idx < jitter_samples.len() {
+                replay_t = posme_hash(&[ENTANGLE_DST, &replay_t, &jitter_samples[replay_jitter_idx]]);
+                replay_jitter_idx += 1;
+            }
+            replay_wi.record(log.write_addr, current_step);
+        }
+
+        let tree_before = replay_tree.clone();
+        let cursor_in = replay_t;
+
+        current_step += 1;
+        let log = posme_step(&mut replay_arena, &mut replay_tree, &replay_t, current_step, d);
+        replay_t = log.transcript;
+        if interval > 0 && (current_step as usize).is_multiple_of(interval) && replay_jitter_idx < jitter_samples.len() {
+            replay_t = posme_hash(&[ENTANGLE_DST, &replay_t, &jitter_samples[replay_jitter_idx]]);
+            replay_jitter_idx += 1;
+        }
+        replay_wi.record(log.write_addr, current_step);
+
+        let build_ctx = ProofBuildCtx {
+            root_chain: &root_chain,
+            write_index: &replay_wi,
+            init_tree: &init_tree,
+        };
+        let sp = build_step_proof(&log, &tree_before, cursor_in, &build_ctx, params.recursion_depth);
+        step_proofs.push((orig_idx, sp));
+    }
+
+    step_proofs.sort_by_key(|&(orig_idx, _)| orig_idx);
+    let challenged_steps: Vec<StepProof> = step_proofs.into_iter().map(|(_, sp)| sp).collect();
+    let root_0_path = root_chain.prove(0);
+
+    Ok(PosmeProof {
+        params: *params,
+        final_transcript,
+        root_chain_commitment,
+        root_0,
+        root_0_path,
+        init_witnesses,
+        challenged_steps,
+        claimed_duration: elapsed,
+        proof_algorithm: PROOF_ALGORITHM_POSME_ENTANGLED,
+        entanglement_points,
     })
 }
 
@@ -388,5 +486,39 @@ mod tests {
         for w in &proof.init_witnesses {
             assert!(w.index < params.arena_blocks);
         }
+    }
+
+    #[test]
+    fn entangled_produces_proof() {
+        let jitter = [[0xAAu8; 32], [0xBBu8; 32], [0xCCu8; 32]];
+        let proof = execute_entangled(b"entangle-test", &test_params(), &jitter).unwrap();
+        assert_eq!(proof.proof_algorithm, PROOF_ALGORITHM_POSME_ENTANGLED);
+        assert_eq!(proof.entanglement_points.len(), 3);
+    }
+
+    #[test]
+    fn entangled_differs_from_standard() {
+        let seed = b"compare";
+        let standard = execute(seed, &test_params()).unwrap();
+        let jitter = [[0x11u8; 32]];
+        let entangled = execute_entangled(seed, &test_params(), &jitter).unwrap();
+        assert_ne!(standard.final_transcript, entangled.final_transcript);
+    }
+
+    #[test]
+    fn entangled_deterministic() {
+        let jitter = [[0x42u8; 32], [0x43u8; 32]];
+        let p1 = execute_entangled(b"det", &test_params(), &jitter).unwrap();
+        let p2 = execute_entangled(b"det", &test_params(), &jitter).unwrap();
+        assert_eq!(p1.final_transcript, p2.final_transcript);
+        assert_eq!(p1.entanglement_points, p2.entanglement_points);
+    }
+
+    #[test]
+    fn empty_jitter_falls_back_to_standard() {
+        let standard = execute(b"fb", &test_params()).unwrap();
+        let entangled = execute_entangled(b"fb", &test_params(), &[]).unwrap();
+        assert_eq!(standard.final_transcript, entangled.final_transcript);
+        assert_eq!(entangled.proof_algorithm, PROOF_ALGORITHM_POSME);
     }
 }

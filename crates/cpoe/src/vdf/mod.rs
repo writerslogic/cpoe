@@ -5,6 +5,8 @@ pub mod params;
 pub mod proof;
 pub mod roughtime_client;
 pub mod swf_argon2;
+#[cfg(feature = "posme")]
+pub mod swf_posme;
 pub mod timekeeper;
 
 pub use aggregation::{

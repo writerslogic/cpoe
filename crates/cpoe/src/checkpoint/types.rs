@@ -61,6 +61,8 @@ pub enum HashDomainVersion {
     V3,
     /// Argon2id SWF proof (draft-condrey-rats-pop algorithm=20)
     V4,
+    /// PoSME SWF proof (draft-condrey-cfrg-posme algorithm=30)
+    V5,
 }
 
 impl HashDomainVersion {
@@ -70,6 +72,7 @@ impl HashDomainVersion {
             Self::V2 => b"cpoe-checkpoint-v2",
             Self::V3 => b"cpoe-checkpoint-v3",
             Self::V4 => b"cpoe-checkpoint-v4",
+            Self::V5 => b"cpoe-checkpoint-v5",
         }
     }
 }
@@ -169,6 +172,10 @@ pub struct Checkpoint {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub argon2_swf: Option<Argon2SwfProof>,
 
+    /// PoSME SWF proof bytes (draft-condrey-cfrg-posme, algorithm=30)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub posme_swf: Option<Vec<u8>>,
+
     /// Timeline challenge nonce from WritersProof CA (30s TTL).
     /// When present, this nonce was bound into the checkpoint hash preimage,
     /// proving the checkpoint was built within the challenge window.
@@ -231,6 +238,7 @@ impl Checkpoint {
             mmr_inclusion_proof: None,
             mmr_root: None,
             argon2_swf: None,
+            posme_swf: None,
             challenge_nonce: None,
             explicit_hash_version: None,
         }
@@ -242,7 +250,9 @@ impl Checkpoint {
         if let Some(v) = self.explicit_hash_version {
             return v;
         }
-        if self.argon2_swf.is_some() {
+        if self.posme_swf.is_some() {
+            HashDomainVersion::V5
+        } else if self.argon2_swf.is_some() {
             HashDomainVersion::V4
         } else if self.rfc_vdf.is_some()
             || self.rfc_jitter.is_some()
@@ -351,6 +361,11 @@ impl Checkpoint {
             hasher.update(swf.challenge);
             hasher.update(swf.proof_algorithm.to_be_bytes());
             hasher.update((crate::utils::duration_to_ms(swf.claimed_duration)).to_be_bytes());
+        }
+
+        if let Some(posme) = &self.posme_swf {
+            hasher.update(b"cpoe-posme-v1");
+            hasher.update(posme);
         }
 
         if let Some(nonce) = &self.challenge_nonce {
