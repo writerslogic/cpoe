@@ -101,6 +101,10 @@ pub struct Sentinel {
     pub(crate) sessions: Arc<RwLock<HashMap<String, DocumentSession>>>,
     pub(crate) shadow: Arc<ShadowManager>,
     pub(crate) current_focus: Arc<RwLock<Option<String>>>,
+    /// When set, only this document path is monitored; focus events for other
+    /// documents are silently ignored. Set by `start_witnessing()`, cleared by
+    /// `stop_witnessing()` or `clear_targeted_mode()`.
+    pub(crate) targeted_path: Arc<RwLock<Option<String>>>,
     pub(crate) running: Arc<AtomicBool>,
     pub(crate) signing_key: Arc<RwLock<super::behavioral_key::BehavioralKey>>,
     pub(crate) activity_accumulator:
@@ -184,6 +188,7 @@ impl Sentinel {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             shadow: Arc::new(shadow),
             current_focus: Arc::new(RwLock::new(None)),
+            targeted_path: Arc::new(RwLock::new(None)),
             running: Arc::new(AtomicBool::new(false)),
             signing_key: Arc::new(RwLock::new(super::behavioral_key::BehavioralKey::new(
                 std::time::Duration::from_secs(30),
@@ -392,6 +397,7 @@ impl Sentinel {
 
         let sessions = Arc::clone(&self.sessions);
         let current_focus = Arc::clone(&self.current_focus);
+        let targeted_path = Arc::clone(&self.targeted_path);
         let config = self.config.clone();
         let shadow = Arc::clone(&self.shadow);
         let signing_key = Arc::clone(&self.signing_key);
@@ -701,6 +707,7 @@ impl Sentinel {
                             &shadow,
                             &signing_key,
                             &current_focus,
+                            &targeted_path,
                             &wal_dir,
                             &session_events_tx,
                         );
@@ -1328,6 +1335,16 @@ impl Sentinel {
     /// Return the path of the currently focused document, if any.
     pub fn current_focus(&self) -> Option<String> {
         self.current_focus.read_recover().clone()
+    }
+
+    /// Returns the targeted document path, if set.
+    pub fn targeted_path(&self) -> Option<String> {
+        self.targeted_path.read_recover().clone()
+    }
+
+    /// Exit targeted mode so the sentinel resumes tracking all focused documents.
+    pub fn clear_targeted_mode(&self) {
+        *self.targeted_path.write_recover() = None;
     }
 
     /// Subscribe to session lifecycle events (started, ended, idle).

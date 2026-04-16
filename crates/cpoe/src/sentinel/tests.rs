@@ -230,6 +230,7 @@ type FocusTestHarness = (
     Arc<ShadowManager>,
     Arc<RwLock<super::behavioral_key::BehavioralKey>>,
     Arc<RwLock<Option<String>>>,
+    Arc<RwLock<Option<String>>>,
     tempfile::TempDir,
     broadcast::Sender<SessionEvent>,
 );
@@ -243,6 +244,7 @@ fn make_focus_test_harness() -> FocusTestHarness {
         std::time::Duration::from_secs(30),
     )));
     let current_focus: Arc<RwLock<Option<String>>> = Arc::new(RwLock::new(None));
+    let targeted_path: Arc<RwLock<Option<String>>> = Arc::new(RwLock::new(None));
     let (tx, _rx) = broadcast::channel(16);
     (
         sessions,
@@ -250,6 +252,7 @@ fn make_focus_test_harness() -> FocusTestHarness {
         shadow,
         signing_key,
         current_focus,
+        targeted_path,
         temp_dir,
         tx,
     )
@@ -275,7 +278,7 @@ fn make_focus_event(
 
 #[test]
 fn test_handle_focus_gained_creates_session() {
-    let (sessions, config, shadow, signing_key, current_focus, temp_dir, tx) =
+    let (sessions, config, shadow, signing_key, current_focus, targeted_path, temp_dir, tx) =
         make_focus_test_harness();
 
     let event = make_focus_event(
@@ -293,6 +296,7 @@ fn test_handle_focus_gained_creates_session() {
         &shadow,
         &signing_key,
         &current_focus,
+        &targeted_path,
         temp_dir.path(),
         &tx,
     );
@@ -306,7 +310,7 @@ fn test_handle_focus_gained_creates_session() {
 
 #[test]
 fn test_handle_focus_gained_empty_path_skipped() {
-    let (sessions, config, shadow, signing_key, current_focus, temp_dir, tx) =
+    let (sessions, config, shadow, signing_key, current_focus, targeted_path, temp_dir, tx) =
         make_focus_test_harness();
 
     // Empty path, empty shadow_id: no document to track, should be skipped.
@@ -325,6 +329,7 @@ fn test_handle_focus_gained_empty_path_skipped() {
         &shadow,
         &signing_key,
         &current_focus,
+        &targeted_path,
         temp_dir.path(),
         &tx,
     );
@@ -335,7 +340,7 @@ fn test_handle_focus_gained_empty_path_skipped() {
 
 #[test]
 fn test_handle_focus_gained_with_real_path() {
-    let (sessions, config, shadow, signing_key, current_focus, temp_dir, tx) =
+    let (sessions, config, shadow, signing_key, current_focus, targeted_path, temp_dir, tx) =
         make_focus_test_harness();
 
     let real_path = temp_dir.path().join("saved_doc.txt");
@@ -354,6 +359,7 @@ fn test_handle_focus_gained_with_real_path() {
         &shadow,
         &signing_key,
         &current_focus,
+        &targeted_path,
         temp_dir.path(),
         &tx,
     );
@@ -366,7 +372,7 @@ fn test_handle_focus_gained_with_real_path() {
 
 #[test]
 fn test_handle_focus_lost_clears_current() {
-    let (sessions, config, shadow, signing_key, current_focus, temp_dir, tx) =
+    let (sessions, config, shadow, signing_key, current_focus, targeted_path, temp_dir, tx) =
         make_focus_test_harness();
 
     // First, gain focus on a document
@@ -384,6 +390,7 @@ fn test_handle_focus_lost_clears_current() {
         &shadow,
         &signing_key,
         &current_focus,
+        &targeted_path,
         temp_dir.path(),
         &tx,
     );
@@ -404,6 +411,7 @@ fn test_handle_focus_lost_clears_current() {
         &shadow,
         &signing_key,
         &current_focus,
+        &targeted_path,
         temp_dir.path(),
         &tx,
     );
@@ -413,7 +421,7 @@ fn test_handle_focus_lost_clears_current() {
 
 #[test]
 fn test_handle_focus_blocked_app_ignored() {
-    let (sessions, config, shadow, signing_key, current_focus, temp_dir, tx) =
+    let (sessions, config, shadow, signing_key, current_focus, targeted_path, temp_dir, tx) =
         make_focus_test_harness();
 
     let event = make_focus_event(
@@ -431,6 +439,7 @@ fn test_handle_focus_blocked_app_ignored() {
         &shadow,
         &signing_key,
         &current_focus,
+        &targeted_path,
         temp_dir.path(),
         &tx,
     );

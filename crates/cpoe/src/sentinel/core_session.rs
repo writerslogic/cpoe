@@ -195,10 +195,11 @@ impl Sentinel {
         sessions.insert(path_str.clone(), session);
         drop(sessions);
         super::trace!(
-            "[START_WITNESSING] session created, setting current_focus={:?}",
+            "[START_WITNESSING] session created, setting current_focus={:?} targeted=true",
             path_str
         );
-        *self.current_focus.write_recover() = Some(path_str);
+        *self.current_focus.write_recover() = Some(path_str.clone());
+        *self.targeted_path.write_recover() = Some(path_str);
         Ok(())
     }
 
@@ -404,6 +405,7 @@ impl Sentinel {
                 log::error!("Failed to update baseline: {}", e);
             }
 
+            self.clear_targeted_mode();
             Ok(())
         } else {
             Err((

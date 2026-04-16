@@ -23,9 +23,18 @@ pub fn handle_focus_event_sync(
     shadow: &Arc<ShadowManager>,
     signing_key: &Arc<RwLock<super::behavioral_key::BehavioralKey>>,
     current_focus: &Arc<RwLock<Option<String>>>,
+    targeted_path: &Arc<RwLock<Option<String>>>,
     wal_dir: &Path,
     session_events_tx: &broadcast::Sender<SessionEvent>,
 ) {
+    // Targeted mode: only process focus events for the pinned document.
+    if let Some(ref target) = *targeted_path.read_recover() {
+        let event_path = if event.path.is_empty() { String::new() } else { event.path.clone() };
+        if !event_path.is_empty() && event_path != *target {
+            super::trace!("[FOCUS] targeted mode: ignoring {:?} (target={:?})", event_path, target);
+            return;
+        }
+    }
     #[cfg(debug_assertions)]
     {
         use std::io::Write;
