@@ -28,10 +28,11 @@ pub fn handle_focus_event_sync(
     session_events_tx: &broadcast::Sender<SessionEvent>,
 ) {
     // Targeted mode: only process focus events for the pinned document.
+    // Empty-path events (FocusLost from apps that don't report paths) are
+    // allowed through so the targeted document's focus state updates correctly.
     if let Some(ref target) = *targeted_path.read_recover() {
-        let event_path = if event.path.is_empty() { String::new() } else { event.path.clone() };
-        if !event_path.is_empty() && event_path != *target {
-            super::trace!("[FOCUS] targeted mode: ignoring {:?} (target={:?})", event_path, target);
+        if !event.path.is_empty() && event.path != *target {
+            super::trace!("[FOCUS] targeted mode: ignoring {:?} (target={:?})", event.path, target);
             return;
         }
     }

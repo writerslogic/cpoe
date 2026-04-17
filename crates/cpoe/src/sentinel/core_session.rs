@@ -381,6 +381,7 @@ impl Sentinel {
                 }
             }
 
+            let session_path = path_str.clone();
             if self
                 .session_events_tx
                 .send(SessionEvent {
@@ -405,7 +406,11 @@ impl Sentinel {
                 log::error!("Failed to update baseline: {}", e);
             }
 
-            self.clear_targeted_mode();
+            // Only clear targeted mode if the stopped session is the targeted one.
+            // Compare against the path sent in the Ended event (path_str was moved).
+            if self.targeted_path().as_deref() == Some(session_path.as_str()) {
+                self.clear_targeted_mode();
+            }
             Ok(())
         } else {
             Err((

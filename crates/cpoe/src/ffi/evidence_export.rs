@@ -444,7 +444,10 @@ pub fn ffi_extract_document(cpoe_path: String, output_path: String) -> FfiResult
 
     // Verify content hash matches
     let hash: [u8; 32] = Sha256::digest(&content).into();
-    if wire.document.content_hash.digest.len() == 32 && hash[..] != wire.document.content_hash.digest[..] {
+    if wire.document.content_hash.digest.len() != 32 {
+        return FfiResult::err("Invalid content hash length in evidence packet.".to_string());
+    }
+    if hash[..] != wire.document.content_hash.digest[..] {
         return FfiResult::err("Document content hash mismatch — file may be corrupted.".to_string());
     }
 
