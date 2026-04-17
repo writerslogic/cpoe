@@ -14,7 +14,8 @@ pub use stats::{
     coefficient_of_variation, lerp_score, mean, mean_and_sample_std_dev, mean_and_sample_variance,
     mean_and_std_dev, mean_and_variance, median, std_dev,
 };
-pub use time::{duration_to_ms, now_ns, now_secs, ns_elapsed, ns_to_ms, ns_to_secs, DateTimeNanosExt};
+pub use time::{duration_to_ms, now_ns, now_secs, ns_elapsed, ns_to_ms, ns_to_secs};
+pub(crate) use time::DateTimeNanosExt;
 pub(crate) use lock::{MutexRecover, RwLockRecover};
 
 /// Hash a filesystem path (its UTF-8 string representation) with SHA-256.

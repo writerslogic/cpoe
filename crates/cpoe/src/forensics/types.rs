@@ -395,6 +395,7 @@ impl ForensicMetrics {
     pub fn to_protocol_analysis(&self) -> ProtocolForensicAnalysis {
         ProtocolForensicAnalysis {
             verdict: self.map_to_protocol_verdict(),
+            flags: Vec::new(),
             coefficient_of_variation: self.cadence.coefficient_of_variation,
             linearity_score: Some(self.primary.monotonic_append_ratio.get()),
             hurst_exponent: self.hurst_exponent,

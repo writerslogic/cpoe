@@ -101,6 +101,17 @@ pub struct EvidencePacketWire {
     /// Author DID URI (e.g., "did:webvh:..." or "did:key:...").
     #[serde(rename = "20", default, skip_serializing_if = "Option::is_none")]
     pub author_did: Option<String>,
+
+    /// Original document content embedded in the evidence packet.
+    /// When present, the .cpoe file is a self-contained archive: evidence
+    /// plus the document it attests. The content hash in `document` (key 5)
+    /// must match SHA-256 of this field.
+    #[serde(rename = "21", default, skip_serializing_if = "Option::is_none")]
+    pub document_content: Option<serde_bytes::ByteBuf>,
+
+    /// Original document filename (for extraction).
+    #[serde(rename = "22", default, skip_serializing_if = "Option::is_none")]
+    pub document_filename: Option<String>,
 }
 
 /// Minimum number of checkpoints per CDDL: `6 => [3* checkpoint]`.

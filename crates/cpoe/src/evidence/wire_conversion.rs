@@ -144,6 +144,8 @@ pub fn chain_to_wire_with_signatures(
                 None
             }
         },
+        document_content: None,
+        document_filename: None,
     })
 }
 

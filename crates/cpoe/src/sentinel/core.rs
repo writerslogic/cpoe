@@ -382,7 +382,7 @@ impl Sentinel {
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
         *self.shutdown_tx.lock_recover() = Some(shutdown_tx);
 
-        let (focus_monitor, mut focus_rx, mut change_rx) = match self.setup_focus() {
+        let (focus_monitor, mut focus_rx, mut change_rx) = match self.setup_focus_tracker() {
             Ok(f) => f,
             Err(e) => {
                 self.running.store(false, Ordering::SeqCst);

@@ -218,23 +218,35 @@ pub fn ffi_export_evidence(path: String, tier: String, output: String) -> FfiRes
         id
     };
 
-    // Compute character count by reading the file as UTF-8.
-    // Falls back to byte count for non-UTF-8 files.
-    // Read once and verify the content hash matches to avoid TOCTOU (M-038).
+    // Read file content once for char count, hash verification, and embedding.
     let byte_length = latest.file_size.max(0) as u64;
-    let char_count = std::fs::read(&file_path)
-        .map_err(|e| log::warn!("read file for char count failed: {e}"))
-        .ok()
-        .and_then(|bytes| {
-            let hash: [u8; 32] = Sha256::digest(&bytes).into();
-            if hash != latest.content_hash {
-                log::warn!("file changed since last checkpoint; using byte length for char_count");
-                return None;
-            }
-            String::from_utf8(bytes).ok()
-        })
+    let file_bytes = std::fs::read(&file_path)
+        .map_err(|e| log::warn!("read file for export failed: {e}"))
+        .ok();
+    let content_verified = file_bytes.as_ref().map_or(false, |bytes| {
+        let hash: [u8; 32] = Sha256::digest(bytes).into();
+        hash == latest.content_hash
+    });
+    let char_count = file_bytes
+        .as_ref()
+        .filter(|_| content_verified)
+        .and_then(|bytes| String::from_utf8(bytes.clone()).ok())
         .map(|s| s.chars().count() as u64)
         .unwrap_or(byte_length);
+    let is_maximum = matches!(
+        content_tier,
+        Some(authorproof_protocol::rfc::wire_types::ContentTier::Maximum)
+    );
+    let embedded_content = if is_maximum && content_verified {
+        file_bytes.map(serde_bytes::ByteBuf::from)
+    } else {
+        None
+    };
+    let embedded_filename = if embedded_content.is_some() {
+        file_path.file_name().and_then(|n| n.to_str()).map(|s| s.to_string())
+    } else {
+        None
+    };
 
     // Load the signing key once for both public key embedding and COSE signing.
     let signing_key = crate::ffi::helpers::load_signing_key()
@@ -282,6 +294,8 @@ pub fn ffi_export_evidence(path: String, tier: String, output: String) -> FfiRes
                 None
             }
         },
+        document_content: embedded_content,
+        document_filename: embedded_filename,
     };
 
     match wire_packet.encode_cbor() {
@@ -399,4 +413,44 @@ pub fn ffi_get_compact_ref(path: String) -> String {
         &hash_hex[..hash_hex.len().min(12)],
         events.len()
     )
+}
+
+/// Extract the embedded document from a .cpoe evidence package.
+/// Returns an FfiResult with the output path on success.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn ffi_extract_document(cpoe_path: String, output_path: String) -> FfiResult {
+    let data = match std::fs::read(&cpoe_path) {
+        Ok(d) => d,
+        Err(e) => return FfiResult::err(format!("Failed to read .cpoe file: {e}")),
+    };
+
+    let cbor_payload = crate::ffi::helpers::unwrap_cose_or_raw(&data);
+    let wire: EvidencePacketWire = match authorproof_protocol::codec::cbor::decode_tagged(
+        &cbor_payload,
+        authorproof_protocol::codec::CBOR_TAG_CPOE,
+    ) {
+        Ok(w) => w,
+        Err(_) => match authorproof_protocol::codec::cbor::decode(&cbor_payload) {
+            Ok(w) => w,
+            Err(e) => return FfiResult::err(format!("Invalid .cpoe file: {e}")),
+        },
+    };
+
+    let content = match wire.document_content {
+        Some(c) => c,
+        None => return FfiResult::err("This .cpoe file does not contain an embedded document.".to_string()),
+    };
+
+    // Verify content hash matches
+    let hash: [u8; 32] = Sha256::digest(&content).into();
+    if wire.document.content_hash.digest.len() == 32 && hash[..] != wire.document.content_hash.digest[..] {
+        return FfiResult::err("Document content hash mismatch — file may be corrupted.".to_string());
+    }
+
+    let out = std::path::Path::new(&output_path);
+    if let Err(e) = std::fs::write(out, &*content) {
+        return FfiResult::err(format!("Failed to write document: {e}"));
+    }
+
+    FfiResult::ok(format!("Document extracted to {}", out.display()))
 }

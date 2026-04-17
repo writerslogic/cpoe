@@ -65,8 +65,7 @@ impl Sentinel {
             Ok(mut keystroke_capture) => match keystroke_capture.start() {
                 Ok(sync_rx) => {
                     keystroke_active.store(true, Ordering::SeqCst);
-                    *keystroke_capture_store.lock_recover() =
-                        Some(Box::new(keystroke_capture) as Box<dyn KeystrokeCapture>);
+                    *keystroke_capture_store.lock_recover() = Some(keystroke_capture);
                     let sync_rx: std::sync::mpsc::Receiver<crate::platform::KeystrokeEvent> =
                         sync_rx;
                     let handle = std::thread::spawn(move || {
@@ -93,7 +92,7 @@ impl Sentinel {
                                                     || dropped_count.is_power_of_two()
                                                 {
                                                     log::warn!(
-                                                        "keystroke channel full, \ 
+                                                        "keystroke channel full, \
                                                          {} events dropped",
                                                         dropped_count
                                                     );
@@ -119,7 +118,7 @@ impl Sentinel {
             },
             Err(e) => {
                 log::warn!(
-                    "Keystroke capture unavailable: {e}; \ 
+                    "Keystroke capture unavailable: {e}; \
                      running in degraded mode (focus-only)"
                 );
             }
@@ -148,8 +147,7 @@ impl Sentinel {
         match capture_result {
             Ok(mut mouse_capture) => match mouse_capture.start() {
                 Ok(sync_rx) => {
-                    *mouse_capture_store.lock_recover() =
-                        Some(Box::new(mouse_capture) as Box<dyn MouseCapture>);
+                    *mouse_capture_store.lock_recover() = Some(mouse_capture);
                     let sync_rx: std::sync::mpsc::Receiver<crate::platform::MouseEvent> = sync_rx;
                     let handle = std::thread::spawn(move || {
                         while mouse_running.load(Ordering::SeqCst) {
@@ -180,7 +178,7 @@ impl Sentinel {
             },
             Err(e) => {
                 log::warn!(
-                    "Mouse capture unavailable: {e}; \ 
+                    "Mouse capture unavailable: {e}; \
                      running in degraded mode"
                 );
             }
