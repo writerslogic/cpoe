@@ -296,6 +296,7 @@ pub fn ffi_export_evidence(path: String, tier: String, output: String) -> FfiRes
         },
         document_content: embedded_content,
         document_filename: embedded_filename,
+        project_files: collect_project_files(&file_path, &store),
     };
 
     match wire_packet.encode_cbor() {
@@ -453,4 +454,57 @@ pub fn ffi_extract_document(cpoe_path: String, output_path: String) -> FfiResult
     }
 
     FfiResult::ok(format!("Document extracted to {}", out.display()))
+}
+
+/// Collect project file references for all tracked files in the same directory
+/// as the primary document. Returns None if no sibling files are tracked.
+fn collect_project_files(
+    primary_path: &std::path::Path,
+    store: &crate::store::SecureStore,
+) -> Option<Vec<authorproof_protocol::rfc::wire_types::ProjectFileRef>> {
+    let parent = primary_path.parent()?;
+    let parent_str = parent.to_string_lossy();
+    let primary_str = primary_path.to_string_lossy();
+
+    let all_files = match store.list_files() {
+        Ok(files) => files,
+        Err(e) => {
+            log::debug!("Failed to list project files: {e}");
+            return None;
+        }
+    };
+
+    // Filter to sibling files in the same directory (or subdirectories)
+    let siblings: Vec<_> = all_files
+        .into_iter()
+        .filter(|(path, _, _)| path != primary_str.as_ref() && path.starts_with(parent_str.as_ref()))
+        .collect();
+
+    if siblings.is_empty() {
+        return None;
+    }
+
+    let refs: Vec<_> = siblings
+        .iter()
+        .map(|(path, _last_ts, event_count)| {
+            let filename = std::path::Path::new(path)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| path.clone());
+            // Get content hash from latest event for this file
+            let content_hash = store
+                .get_events_for_file(path)
+                .ok()
+                .and_then(|events| events.last().map(|e| hex::encode(e.content_hash)))
+                .unwrap_or_default();
+            authorproof_protocol::rfc::wire_types::ProjectFileRef {
+                filename,
+                content_hash,
+                checkpoint_count: *event_count as u64,
+                keystroke_count: 0, // aggregate not available per-file from store
+            }
+        })
+        .collect();
+
+    Some(refs)
 }

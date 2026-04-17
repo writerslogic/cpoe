@@ -112,6 +112,29 @@ pub struct EvidencePacketWire {
     /// Original document filename (for extraction).
     #[serde(rename = "22", default, skip_serializing_if = "Option::is_none")]
     pub document_filename: Option<String>,
+
+    /// Project files: other documents in the same writing project.
+    /// Each entry has filename, content hash, and checkpoint count.
+    /// Enables project-level evidence for multi-file workflows (Scrivener, LaTeX).
+    #[serde(rename = "23", default, skip_serializing_if = "Option::is_none")]
+    pub project_files: Option<Vec<ProjectFileRef>>,
+}
+
+/// Reference to a file within a writing project.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectFileRef {
+    /// Relative filename within the project.
+    #[serde(rename = "1")]
+    pub filename: String,
+    /// SHA-256 content hash.
+    #[serde(rename = "2")]
+    pub content_hash: String,
+    /// Number of checkpoints for this file.
+    #[serde(rename = "3")]
+    pub checkpoint_count: u64,
+    /// Total keystrokes recorded for this file.
+    #[serde(rename = "4")]
+    pub keystroke_count: u64,
 }
 
 /// Minimum number of checkpoints per CDDL: `6 => [3* checkpoint]`.
