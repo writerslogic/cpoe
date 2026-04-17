@@ -456,14 +456,16 @@ pub fn ffi_extract_document(cpoe_path: String, output_path: String) -> FfiResult
     FfiResult::ok(format!("Document extracted to {}", out.display()))
 }
 
-/// Collect project file references for all tracked files in the same directory
-/// as the primary document. Returns None if no sibling files are tracked.
+/// Collect project file references for all tracked files under the same
+/// root directory as the primary document. Walks up to find the project
+/// root (looks for .scriv, .git, or stops at the parent of the source).
+/// Scans recursively so subdirectories (Draft/, Research/) are included.
 fn collect_project_files(
     primary_path: &std::path::Path,
     store: &crate::store::SecureStore,
 ) -> Option<Vec<authorproof_protocol::rfc::wire_types::ProjectFileRef>> {
-    let parent = primary_path.parent()?;
-    let parent_str = parent.to_string_lossy();
+    let project_root = find_project_root(primary_path);
+    let root_str = project_root.to_string_lossy();
     let primary_str = primary_path.to_string_lossy();
 
     let all_files = match store.list_files() {
@@ -474,10 +476,9 @@ fn collect_project_files(
         }
     };
 
-    // Filter to sibling files in the same directory (or subdirectories)
     let siblings: Vec<_> = all_files
         .into_iter()
-        .filter(|(path, _, _)| path != primary_str.as_ref() && path.starts_with(parent_str.as_ref()))
+        .filter(|(path, _, _)| path != primary_str.as_ref() && path.starts_with(root_str.as_ref()))
         .collect();
 
     if siblings.is_empty() {
@@ -487,24 +488,59 @@ fn collect_project_files(
     let refs: Vec<_> = siblings
         .iter()
         .map(|(path, _last_ts, event_count)| {
-            let filename = std::path::Path::new(path)
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| path.clone());
-            // Get content hash from latest event for this file
-            let content_hash = store
-                .get_events_for_file(path)
-                .ok()
-                .and_then(|events| events.last().map(|e| hex::encode(e.content_hash)))
+            // Relative path from project root for cleaner display
+            let rel_path = std::path::Path::new(path)
+                .strip_prefix(&project_root)
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|_| {
+                    std::path::Path::new(path)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| path.clone())
+                });
+
+            // Get content hash and keystroke count from events
+            let events = store.get_events_for_file(path).unwrap_or_default();
+            let content_hash = events
+                .last()
+                .map(|e| hex::encode(e.content_hash))
                 .unwrap_or_default();
+            let keystroke_count: u64 = events
+                .iter()
+                .map(|e| e.size_delta.unsigned_abs() as u64)
+                .sum();
+
             authorproof_protocol::rfc::wire_types::ProjectFileRef {
-                filename,
+                filename: rel_path,
                 content_hash,
                 checkpoint_count: *event_count as u64,
-                keystroke_count: 0, // aggregate not available per-file from store
+                keystroke_count,
             }
         })
         .collect();
 
     Some(refs)
+}
+
+/// Walk up from the file to find the project root directory.
+/// Looks for common project markers; falls back to the file's parent.
+fn find_project_root(file_path: &std::path::Path) -> std::path::PathBuf {
+    let markers = [".git", ".scriv", "Package.swift", "Cargo.toml", ".writerslogic"];
+    let mut dir = file_path.parent().unwrap_or(file_path).to_path_buf();
+
+    // Walk up at most 5 levels looking for a project marker
+    for _ in 0..5 {
+        for marker in &markers {
+            if dir.join(marker).exists() {
+                return dir;
+            }
+        }
+        match dir.parent() {
+            Some(p) if p != dir => dir = p.to_path_buf(),
+            _ => break,
+        }
+    }
+
+    // No marker found — use the immediate parent directory
+    file_path.parent().unwrap_or(file_path).to_path_buf()
 }
