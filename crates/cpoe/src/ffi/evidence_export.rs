@@ -451,8 +451,11 @@ pub fn ffi_extract_document(cpoe_path: String, output_path: String) -> FfiResult
         return FfiResult::err("Document content hash mismatch — file may be corrupted.".to_string());
     }
 
-    let out = std::path::Path::new(&output_path);
-    if let Err(e) = std::fs::write(out, &*content) {
+    let out = match crate::sentinel::helpers::validate_path(&output_path) {
+        Ok(p) => p,
+        Err(e) => return FfiResult::err(format!("Invalid output path: {e}")),
+    };
+    if let Err(e) = std::fs::write(&out, &*content) {
         return FfiResult::err(format!("Failed to write document: {e}"));
     }
 
