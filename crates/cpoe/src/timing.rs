@@ -102,10 +102,10 @@ pub struct CheckpointTrigger {
     last_checkpoint: Instant,
     last_checkpoint_size: i64,
     entropy_hash: [u8; 32],
-    // Sliding window state for O(1) variance calculation
+    // Sliding window state for numerically stable variance (Welford's)
     window: VecDeque<u32>,
-    window_sum: f64,
-    window_sum_sq: f64,
+    window_mean: f64,
+    window_m2: f64,
 }
 
 impl CheckpointTrigger {
@@ -124,8 +124,8 @@ impl CheckpointTrigger {
             last_checkpoint_size: 0,
             entropy_hash: [0u8; 32],
             window: VecDeque::with_capacity(JITTER_WINDOW_SIZE),
-            window_sum: 0.0,
-            window_sum_sq: 0.0,
+            window_mean: 0.0,
+            window_m2: 0.0,
         }
     }
 
@@ -272,18 +272,37 @@ impl CheckpointTrigger {
         self.accumulated_entropy += self.windowed_entropy_estimate();
     }
 
+    /// Welford's online algorithm for numerically stable sliding-window variance.
+    /// Immune to catastrophic cancellation that affects the naive sum-of-squares
+    /// formula when values are large and close together.
     fn update_window_stats(&mut self, val: u32) {
         let val_f = val as f64;
+        let n = self.window.len() as f64;
+
         if self.window.len() >= JITTER_WINDOW_SIZE {
             if let Some(old) = self.window.pop_front() {
+                // Remove old value from running stats (inverse Welford step)
                 let old_f = old as f64;
-                self.window_sum -= old_f;
-                self.window_sum_sq -= old_f * old_f;
+                let new_n = self.window.len() as f64; // after pop, before push
+                if new_n > 0.0 {
+                    let old_mean = self.window_mean;
+                    self.window_mean = (old_mean * (new_n + 1.0) - old_f) / new_n;
+                    self.window_m2 -= (old_f - self.window_mean) * (old_f - old_mean);
+                    self.window_m2 = self.window_m2.max(0.0);
+                } else {
+                    self.window_mean = 0.0;
+                    self.window_m2 = 0.0;
+                }
             }
         }
+
+        // Add new value (standard Welford step)
         self.window.push_back(val);
-        self.window_sum += val_f;
-        self.window_sum_sq += val_f * val_f;
+        let new_n = self.window.len() as f64;
+        let delta = val_f - self.window_mean;
+        self.window_mean += delta / new_n;
+        let delta2 = val_f - self.window_mean;
+        self.window_m2 += delta * delta2;
     }
 
     /// Estimate per-keystroke entropy from the coefficient of variation (CV)
@@ -295,14 +314,12 @@ impl CheckpointTrigger {
         if n < 4.0 {
             return 0.0;
         }
-
-        let mean = self.window_sum / n;
-        if mean < 1.0 {
+        if self.window_mean < 1.0 {
             return 0.0;
         }
 
-        let var = (self.window_sum_sq / n) - (mean * mean);
-        let cv = var.max(0.0).sqrt() / mean;
+        let var = self.window_m2 / n;
+        let cv = var.max(0.0).sqrt() / self.window_mean;
         crate::utils::Probability::clamp((1.0 + cv).log2()).get()
     }
 }

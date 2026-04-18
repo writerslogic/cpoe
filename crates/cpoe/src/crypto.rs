@@ -236,26 +236,40 @@ pub fn restrict_permissions(path: &Path, mode: u32) -> std::io::Result<()> {
     #[cfg(windows)]
     {
         let _ = mode;
-        let user = std::env::var("USERNAME").unwrap_or_else(|_| "CURRENT_USER".into());
-        let grant_arg = format!("{user}:(F)");
-        match std::process::Command::new("icacls")
-            .arg(path.as_os_str())
-            .args(["/inheritance:r", "/grant:r"])
-            .arg(&grant_arg)
-            .output()
-        {
-            Ok(output) if output.status.success() => {}
-            Ok(output) => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!(
-                        "icacls failed with exit code {:?}: {}",
-                        output.status.code(),
-                        String::from_utf8_lossy(&output.stderr)
-                    ),
-                ));
-            }
-            Err(e) => return Err(e),
+        // Set owner-only DACL via Win32 API instead of shelling out to icacls.
+        // This is faster, locale-independent, and immune to PATH misconfiguration.
+        use std::os::windows::ffi::OsStrExt;
+        use windows::Win32::Security::Authorization::{
+            SetNamedSecurityInfoW, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
+            PROTECTED_DACL_SECURITY_INFORMATION,
+        };
+        use windows::Win32::Security::{
+            InitializeSecurityDescriptor, SetSecurityDescriptorDacl,
+            SECURITY_DESCRIPTOR, SECURITY_DESCRIPTOR_REVISION,
+            ACL, PSECURITY_DESCRIPTOR, PACL,
+        };
+        use windows::core::PCWSTR;
+
+        // Convert path to wide string
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+
+        // Set an empty DACL (owner-only access: no entries = deny all except owner)
+        let result = unsafe {
+            SetNamedSecurityInfoW(
+                PCWSTR(wide.as_ptr()),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                None,  // owner (unchanged)
+                None,  // group (unchanged)
+                Some(std::ptr::null()),  // empty DACL = owner-only
+                None,  // SACL (unchanged)
+            )
+        };
+        if let Err(e) = result {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!("SetNamedSecurityInfoW failed: {e}"),
+            ));
         }
     }
     #[cfg(not(any(unix, windows)))]

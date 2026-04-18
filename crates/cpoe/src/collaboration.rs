@@ -225,15 +225,12 @@ impl CollaborationSection {
     /// Returns an error if any range has start > end or if any checkpoints are uncovered.
     /// Ranges extending beyond `total_checkpoints` are clamped with a warning log.
     pub fn validate_coverage(&self, total_checkpoints: u32) -> Result<(), String> {
-        const MAX_CHECKPOINTS: u32 = 1_000_000;
-        if total_checkpoints > MAX_CHECKPOINTS {
-            return Err(format!(
-                "total_checkpoints {} exceeds maximum allowed {}",
-                total_checkpoints, MAX_CHECKPOINTS
-            ));
+        if total_checkpoints == 0 {
+            return Ok(());
         }
-        let mut covered = vec![false; total_checkpoints as usize];
 
+        // Collect all (start, end) intervals, validate bounds
+        let mut intervals: Vec<(u32, u32)> = Vec::new();
         for participant in &self.participants {
             if let Some(ref ranges) = participant.checkpoint_ranges {
                 for (start, end) in ranges {
@@ -250,31 +247,52 @@ impl CollaborationSection {
                             total_checkpoints.saturating_sub(1)
                         ));
                     }
-                    let clamped_end = *end;
-                    for i in *start..=clamped_end {
-                        if (i as usize) < covered.len() {
-                            covered[i as usize] = true;
-                        }
-                    }
+                    intervals.push((*start, *end));
                 }
             }
         }
 
-        let uncovered: Vec<usize> = covered
-            .iter()
-            .enumerate()
-            .filter(|(_, &c)| !c)
-            .map(|(i, _)| i)
-            .collect();
-
-        if uncovered.is_empty() {
-            Ok(())
-        } else {
-            Err(format!(
-                "Checkpoints not covered by any participant: {:?}",
-                uncovered
-            ))
+        if intervals.is_empty() {
+            return Err(format!(
+                "Checkpoints not covered by any participant: 0..{}",
+                total_checkpoints.saturating_sub(1)
+            ));
         }
+
+        // Interval merging: O(N log N) in number of ranges, O(1) extra memory
+        intervals.sort_unstable_by_key(|&(s, _)| s);
+
+        let mut merged_start = intervals[0].0;
+        let mut merged_end = intervals[0].1;
+
+        for &(s, e) in &intervals[1..] {
+            if s <= merged_end + 1 {
+                merged_end = merged_end.max(e);
+            } else {
+                // Gap found
+                return Err(format!(
+                    "Checkpoint gap: range {}..={} not covered by any participant",
+                    merged_end + 1,
+                    s - 1
+                ));
+            }
+        }
+
+        if merged_start != 0 {
+            return Err(format!(
+                "Checkpoints not covered: 0..={}",
+                merged_start - 1
+            ));
+        }
+        if merged_end != total_checkpoints - 1 {
+            return Err(format!(
+                "Checkpoints not covered: {}..={}",
+                merged_end + 1,
+                total_checkpoints - 1
+            ));
+        }
+
+        Ok(())
     }
 
     /// Verify every participant's attestation signature.
@@ -358,7 +376,9 @@ impl Collaborator {
     }
 
     /// Canonical bytes used as the Ed25519 signing input.
-    /// Deterministic JSON of all fields except `attestation_signature`.
+    /// Uses CBOR deterministic encoding (RFC 8949 §4.2) for cross-platform
+    /// reproducibility. JSON was previously used but is unsuitable for
+    /// signatures because float formatting varies across architectures.
     pub fn signing_payload(&self) -> Vec<u8> {
         let mut map = std::collections::BTreeMap::new();
         map.insert("active_periods", serde_json::json!(self.active_periods));
@@ -368,7 +388,12 @@ impl Collaborator {
         map.insert("identifier", serde_json::json!(self.identifier));
         map.insert("public_key", serde_json::json!(self.public_key));
         map.insert("role", serde_json::json!(self.role));
-        serde_json::to_vec(&map).expect("collaborator payload serialization is infallible")
+        // CBOR deterministic encoding: guaranteed identical bytes across
+        // architectures, unlike JSON which has float formatting ambiguities.
+        let mut buf = Vec::new();
+        ciborium::into_writer(&map, &mut buf)
+            .expect("collaborator CBOR payload serialization is infallible");
+        buf
     }
 
     /// Verify the attestation signature against the embedded public key.
