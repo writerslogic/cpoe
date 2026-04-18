@@ -125,6 +125,7 @@ fn build_step_proof(
         merkle_path: tree_before.prove(log.write_addr),
     };
 
+    let _depth = depth; // reserved for future recursive provenance replay
     let writers: Vec<WriterProof> = log.read_addrs.iter().map(|&addr| {
         let ws = ctx.write_index.last_writer_of(addr);
         if ws == 0 {
@@ -133,17 +134,6 @@ fn build_step_proof(
                 writer_step_id: 0,
                 step_witness: None,
                 init_merkle_path: Some(ctx.init_tree.prove(addr)),
-            }
-        } else if depth > 0 {
-            // Recursive provenance requires replaying the writer step.
-            // For depth > 0, we'd need the tree state at the writer step.
-            // This is expensive; for now we include the writer step ID
-            // without a full recursive witness beyond depth 1.
-            WriterProof {
-                proof_type: 1,
-                writer_step_id: ws,
-                step_witness: None,
-                init_merkle_path: None,
             }
         } else {
             WriterProof {
@@ -213,8 +203,8 @@ pub fn execute(seed: &[u8], params: &PosmeParams) -> Result<PosmeProof> {
     let init_tree = MerkleTree::build(&arena);
     let init_witnesses = generate_init_witnesses(seed, &init_tree, &arena, n);
 
-    // Phase 2: Execute K steps, storing only roots and write index.
-    let mut write_index = WriteIndex::new(n);
+    // Phase 2: Execute K steps, storing only roots.
+    // write_index is not needed here -- rebuilt during replay.
     let mut transcript = t_0;
     let mut roots: Vec<[u8; LAMBDA]> = Vec::with_capacity(k as usize + 1);
     roots.push(root_0);
@@ -224,7 +214,6 @@ pub fn execute(seed: &[u8], params: &PosmeParams) -> Result<PosmeProof> {
         let log = posme_step(&mut arena, &mut tree, &transcript, t, d);
         transcript = log.transcript;
         roots.push(log.root_after);
-        write_index.record(log.write_addr, t);
     }
     let elapsed = start.elapsed();
     let final_transcript = transcript;
@@ -328,7 +317,6 @@ pub fn execute_entangled(
     let init_tree = MerkleTree::build(&arena);
     let init_witnesses = generate_init_witnesses(seed, &init_tree, &arena, n);
 
-    let mut write_index = WriteIndex::new(n);
     let mut transcript = t_0;
     let mut roots: Vec<[u8; LAMBDA]> = Vec::with_capacity(k as usize + 1);
     let mut entanglement_points: Vec<(u32, [u8; 32])> = Vec::new();
@@ -348,7 +336,6 @@ pub fn execute_entangled(
         }
 
         roots.push(log.root_after);
-        write_index.record(log.write_addr, t);
     }
     let elapsed = start.elapsed();
     let final_transcript = transcript;

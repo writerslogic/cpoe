@@ -70,127 +70,129 @@ impl BehavioralFingerprint {
             samples
         };
 
-        // Note: We collect the main intervals once because they are reused
-        // heavily across multiple statistical passes.
-        let intervals: Vec<f64> = samples
-            .windows(2)
-            .map(|w| interval_ms(&w[0], &w[1]))
-            .filter(|&i| i > 0.0 && i < MAX_PAUSE_FILTER_MS)
-            .collect();
+        let mut intervals = Vec::with_capacity(samples.len().saturating_sub(1));
+        let bucket_edges: &[f64] = &[0.0, 50.0, 100.0, 150.0, 200.0, 300.0, 500.0, 1000.0, 2000.0];
+        let mut interval_buckets = vec![0.0f64; bucket_edges.len()];
 
-        if intervals.is_empty() {
-            return Self::default();
-        }
+        // Global stats (Welford)
+        let mut welford_count = 0usize;
+        let mut welford_mean = 0.0;
+        let mut welford_m2 = 0.0;
 
-        let (mean, std) = crate::utils::stats::mean_and_sample_std_dev(&intervals);
+        // Pauses
+        let mut sentence_sum = 0.0;
+        let mut sentence_count = 0usize;
+        let mut para_sum = 0.0;
+        let mut para_count = 0usize;
 
-        let skewness = stats::skewness(&intervals, mean, std);
-        let kurtosis = stats::kurtosis(&intervals, mean, std);
+        // Burst speed variance (Welford)
+        let mut burst_speed_count = 0usize;
+        let mut burst_speed_mean = 0.0;
+        let mut burst_speed_m2 = 0.0;
 
-        let long_pauses = intervals
-            .iter()
-            .filter(|&&i| i > PARAGRAPH_PAUSE_MS)
-            .count();
+        // Burst length (Zero-allocation)
+        let mut current_burst_len = 0usize;
+        let mut total_burst_len = 0usize;
+        let mut total_bursts = 0usize;
 
-        let thinking_freq = long_pauses as f64 / samples.len() as f64;
-
-        let mut bursts = Vec::new();
-        let mut current_burst_len = 0;
+        // Single monolithic scan
         for w in samples.windows(2) {
-            let interval = interval_ms(&w[0], &w[1]);
-            if interval > BURST_SEPARATOR_MS {
+            let iv = interval_ms(&w[0], &w[1]);
+
+            // Burst length logic spans all intervals (including > MAX_PAUSE_FILTER_MS)
+            if iv > BURST_SEPARATOR_MS {
                 if current_burst_len > 0 {
-                    bursts.push(current_burst_len as f64);
+                    total_burst_len += current_burst_len;
+                    total_bursts += 1;
                 }
                 current_burst_len = 0;
             } else {
                 current_burst_len += 1;
             }
-        }
-        if current_burst_len > 0 {
-            bursts.push(current_burst_len as f64);
-        }
 
-        let burst_mean = crate::utils::stats::mean(&bursts);
+            // Filtered metric logic
+            if iv > 0.0 && iv < MAX_PAUSE_FILTER_MS {
+                intervals.push(iv);
 
-        let bucket_edges: &[f64] = &[0.0, 50.0, 100.0, 150.0, 200.0, 300.0, 500.0, 1000.0, 2000.0];
-        let mut interval_buckets = vec![0.0f64; bucket_edges.len()];
-        for &iv in &intervals {
-            let mut placed = false;
-            for i in (0..bucket_edges.len()).rev() {
-                if iv >= bucket_edges[i] {
-                    interval_buckets[i] += 1.0;
-                    placed = true;
-                    break;
+                // 1. Global Mean & Variance
+                welford_count += 1;
+                let delta = iv - welford_mean;
+                welford_mean += delta / welford_count as f64;
+                let delta2 = iv - welford_mean;
+                welford_m2 += delta * delta2;
+
+                // 2. Pause Means
+                if iv > BURST_SEPARATOR_MS {
+                    sentence_sum += iv;
+                    sentence_count += 1;
                 }
-            }
-            if !placed {
-                interval_buckets[0] += 1.0;
+                if iv > PARAGRAPH_PAUSE_MS {
+                    para_sum += iv;
+                    para_count += 1;
+                }
+
+                // 3. Burst Speed Variance
+                if iv < BURST_INTERVAL_MS {
+                    burst_speed_count += 1;
+                    let b_delta = iv - burst_speed_mean;
+                    burst_speed_mean += b_delta / burst_speed_count as f64;
+                    let b_delta2 = iv - burst_speed_mean;
+                    burst_speed_m2 += b_delta * b_delta2;
+                }
+
+                // 4. Bucketing
+                let idx = bucket_edges.partition_point(|&x| x <= iv).saturating_sub(1);
+                interval_buckets[idx] += 1.0;
             }
         }
+
+        // Close out any trailing burst length
+        if current_burst_len > 0 {
+            total_burst_len += current_burst_len;
+            total_bursts += 1;
+        }
+
+        if intervals.is_empty() {
+            return Self::default();
+        }
+
+        // Finalize metrics
+        let std = if welford_count > 1 {
+            (welford_m2 / (welford_count - 1) as f64).sqrt()
+        } else {
+            0.0
+        };
+
+        let skewness = stats::skewness(&intervals, welford_mean, std);
+        let kurtosis = stats::kurtosis(&intervals, welford_mean, std);
+        
+        let thinking_freq = para_count as f64 / samples.len() as f64;
         let total = intervals.len() as f64;
+        
         if total > 0.0 {
             for b in &mut interval_buckets {
                 *b /= total;
             }
         }
 
-        // Avoid allocating a new Vec just to get the mean
-        let (sentence_sum, sentence_count) = intervals
-            .iter()
-            .copied()
-            .filter(|&i| i > BURST_SEPARATOR_MS)
-            .fold((0.0, 0usize), |(sum, count), i| (sum + i, count + 1));
+        let sentence_pause_mean = if sentence_count > 0 { sentence_sum / sentence_count as f64 } else { 0.0 };
+        let paragraph_pause_mean = if para_count > 0 { para_sum / para_count as f64 } else { 0.0 };
 
-        let sentence_pause_mean = if sentence_count > 0 {
-            sentence_sum / sentence_count as f64
+        let burst_speed_variance = if burst_speed_count >= 2 {
+            let v = burst_speed_m2 / (burst_speed_count - 1) as f64;
+            if v.is_finite() { v } else { 0.0 }
         } else {
             0.0
         };
 
-        // Avoid allocating a new Vec just to get the mean
-        let (para_sum, para_count) = intervals
-            .iter()
-            .copied()
-            .filter(|&i| i > PARAGRAPH_PAUSE_MS)
-            .fold((0.0, 0usize), |(sum, count), i| (sum + i, count + 1));
-
-        let paragraph_pause_mean = if para_count > 0 {
-            para_sum / para_count as f64
-        } else {
-            0.0
-        };
-
-        // Two-pass burst variance calculation without intermediate allocation
-        let mut burst_int_sum = 0.0;
-        let mut burst_int_count = 0usize;
-        for &i in &intervals {
-            if i < BURST_INTERVAL_MS {
-                burst_int_sum += i;
-                burst_int_count += 1;
-            }
-        }
-
-        let burst_speed_variance = if burst_int_count >= 2 {
-            let burst_mean_val = burst_int_sum / burst_int_count as f64;
-            let mut var_sum = 0.0;
-            for &i in &intervals {
-                if i < BURST_INTERVAL_MS {
-                    var_sum += (i - burst_mean_val).powi(2);
-                }
-            }
-            let v = var_sum / (burst_int_count - 1) as f64;
-            if v.is_finite() {
-                v
-            } else {
-                0.0
-            }
+        let burst_length_mean = if total_bursts > 0 {
+            total_burst_len as f64 / total_bursts as f64
         } else {
             0.0
         };
 
         Self {
-            keystroke_interval_mean: mean,
+            keystroke_interval_mean: welford_mean,
             keystroke_interval_std: std,
             keystroke_interval_skewness: skewness,
             keystroke_interval_kurtosis: kurtosis,
@@ -198,7 +200,7 @@ impl BehavioralFingerprint {
             sentence_pause_mean,
             paragraph_pause_mean,
             thinking_pause_frequency: thinking_freq,
-            burst_length_mean: burst_mean,
+            burst_length_mean,
             burst_speed_variance,
         }
     }
@@ -217,55 +219,78 @@ impl BehavioralFingerprint {
             samples
         };
 
-        let intervals: Vec<f64> = samples
-            .windows(2)
-            .map(|w| interval_ms(&w[0], &w[1]))
-            .filter(|&i| i > 0.0 && i < MAX_PAUSE_FILTER_MS)
-            .collect();
-
+        let mut intervals = Vec::with_capacity(samples.len().saturating_sub(1));
         let mut flags = Vec::new();
 
-        let (mean, std) = crate::utils::stats::mean_and_sample_std_dev(&intervals);
+        let mut micro_pauses = 0usize;
+        let mut impossibly_fast = 0usize;
+        let mut welford_count = 0usize;
+        let mut welford_mean = 0.0;
+        let mut welford_m2 = 0.0;
 
-        if mean > 0.0 {
-            let cv = std / mean;
+        for w in samples.windows(2) {
+            let iv = interval_ms(&w[0], &w[1]);
+            
+            if iv > 0.0 && iv < MAX_PAUSE_FILTER_MS {
+                intervals.push(iv);
+
+                // Fuse micro pause and speed checks
+                if iv > MICRO_PAUSE_MIN_MS && iv < MICRO_PAUSE_MAX_MS {
+                    micro_pauses += 1;
+                }
+                if iv < IMPOSSIBLY_FAST_MS {
+                    impossibly_fast += 1;
+                }
+
+                // Global mean & variance
+                welford_count += 1;
+                let delta = iv - welford_mean;
+                welford_mean += delta / welford_count as f64;
+                let delta2 = iv - welford_mean;
+                welford_m2 += delta * delta2;
+            }
+        }
+
+        if intervals.is_empty() {
+            return ForgeryAnalysis {
+                is_suspicious: false,
+                confidence: 0.0,
+                flags: vec![],
+            };
+        }
+
+        let std = if welford_count > 1 {
+            (welford_m2 / (welford_count - 1) as f64).sqrt()
+        } else {
+            0.0
+        };
+
+        if welford_mean > 0.0 {
+            let cv = std / welford_mean;
             if cv.is_finite() && cv < CV_FORGERY_THRESHOLD {
                 flags.push(ForgeryFlag::TooRegular { cv });
             }
         }
 
-        let skewness = stats::skewness(&intervals, mean, std);
+        let skewness = stats::skewness(&intervals, welford_mean, std);
         if skewness < SKEWNESS_FORGERY_THRESHOLD {
             flags.push(ForgeryFlag::WrongSkewness { skewness });
         }
 
-        let micro_pauses = intervals
-            .iter()
-            .filter(|&&i| i > MICRO_PAUSE_MIN_MS && i < MICRO_PAUSE_MAX_MS)
-            .count();
-        if !intervals.is_empty()
-            && (micro_pauses as f64 / intervals.len() as f64) < MICRO_PAUSE_RATIO_THRESHOLD
-        {
+        if (micro_pauses as f64 / intervals.len() as f64) < MICRO_PAUSE_RATIO_THRESHOLD {
             flags.push(ForgeryFlag::MissingMicroPauses);
         }
 
-        let impossibly_fast = intervals
-            .iter()
-            .filter(|&&i| i < IMPOSSIBLY_FAST_MS)
-            .count();
         if impossibly_fast * SUSPICIOUS_FAST_PERCENT > intervals.len() {
-            flags.push(ForgeryFlag::SuperhumanSpeed {
-                count: impossibly_fast,
-            });
+            flags.push(ForgeryFlag::SuperhumanSpeed { count: impossibly_fast });
         }
 
+        // Fatigue pattern analysis directly operates on the single allocated interval slice
         if intervals.len() >= MIN_FATIGUE_SAMPLES {
             let quarter = intervals.len() / 4;
-            // Slicing doesn't allocate, this remains extremely fast
-            let first_q = &intervals[..quarter];
-            let last_q = &intervals[intervals.len() - quarter..];
-            let first_mean = crate::utils::stats::mean(first_q);
-            let last_mean = crate::utils::stats::mean(last_q);
+            let first_mean = crate::utils::stats::mean(&intervals[..quarter]);
+            let last_mean = crate::utils::stats::mean(&intervals[intervals.len() - quarter..]);
+            
             if first_mean > 0.0 && last_mean <= first_mean * FATIGUE_SLOWDOWN_RATIO {
                 flags.push(ForgeryFlag::NoFatiguePattern);
             }

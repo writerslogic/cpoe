@@ -121,8 +121,8 @@ pub fn compute_hurst_rs(data: &[f64]) -> Result<HurstAnalysis, HurstError> {
         return Err(HurstError::NonFiniteValues);
     }
 
-    let mut log_n_vec = Vec::new();
-    let mut log_rs_vec = Vec::new();
+    let mut log_n_vec = Vec::with_capacity(16);
+    let mut log_rs_vec = Vec::with_capacity(16);
 
     let min_window = RS_MIN_WINDOW.min(n / 8).max(4);
     let max_window = n / 4;
@@ -237,8 +237,8 @@ pub fn compute_hurst_dfa(data: &[f64]) -> Result<HurstAnalysis, HurstError> {
         profile.push(cumsum);
     }
 
-    let mut log_scales = Vec::new();
-    let mut log_fluct = Vec::new();
+    let mut log_scales = Vec::with_capacity(16);
+    let mut log_fluct = Vec::with_capacity(16);
 
     let min_scale = DFA_MIN_SCALE;
     let max_scale = n / 4;
@@ -303,35 +303,41 @@ fn compute_dfa_fluctuation(profile: &[f64], scale: usize) -> f64 {
     (total_variance / num_segments as f64).sqrt()
 }
 
+/// Computes the variance of the residuals of a linear regression over the segment.
+/// Uses mathematical expansion of Residual Sum of Squares (RSS) to compute slope 
+/// and variance simultaneously in a single highly-optimized O(N) pass.
 fn detrend_variance(segment: &[f64]) -> f64 {
     let n = segment.len();
     if n < 2 {
         return 0.0;
     }
 
-    // Use mathematical identity for the mean of indices [0, 1, ..., n-1]
-    // to completely avoid O(N) allocation of an x-axis vector.
-    let x_mean = (n - 1) as f64 / 2.0;
-    let y_mean: f64 = segment.iter().sum::<f64>() / n as f64;
+    let n_f = n as f64;
+    let mut sum_y = 0.0;
+    let mut sum_iy = 0.0;
+    let mut sum_y2 = 0.0;
 
-    let mut num = 0.0;
-    let mut denom = 0.0;
+    // Single pass accumulation for linear regression components
     for (i, &y) in segment.iter().enumerate() {
-        let x_diff = i as f64 - x_mean;
-        num += x_diff * (y - y_mean);
-        denom += x_diff * x_diff;
+        sum_y += y;
+        sum_iy += (i as f64) * y;
+        sum_y2 += y * y;
     }
 
-    let a = if denom > 0.0 { num / denom } else { 0.0 };
-    let b = y_mean - a * x_mean;
+    let mean_x = (n_f - 1.0) / 2.0;
 
-    let mut variance = 0.0;
-    for (i, &y) in segment.iter().enumerate() {
-        let predicted = a * i as f64 + b;
-        variance += (y - predicted).powi(2);
-    }
+    // S_xx is mathematically constant for indices [0, 1, ..., n-1]
+    let s_xx = n_f * (n_f * n_f - 1.0) / 12.0;
+    let s_xy = sum_iy - mean_x * sum_y;
+    let s_yy = sum_y2 - (sum_y * sum_y) / n_f;
 
-    variance / n as f64
+    let a = if s_xx > 0.0 { s_xy / s_xx } else { 0.0 };
+
+    // Residual Sum of Squares = S_yy - a * S_xy
+    // `.max(0.0)` defends against slight floating-point underflow for perfect collinearity
+    let rss = (s_yy - a * s_xy).max(0.0);
+
+    rss / n_f
 }
 
 use super::stats::linear_regression;

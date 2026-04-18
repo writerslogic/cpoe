@@ -104,7 +104,7 @@ pub fn analyze_galton_invariant(
 
     let threshold = baseline_interval_ms * PERTURBATION_THRESHOLD_FRACTION;
 
-    // Identify perturbations using an iterator chain
+    // Identify perturbations
     let perturbations: Vec<(usize, f64)> = samples
         .iter()
         .enumerate()
@@ -125,19 +125,21 @@ pub fn analyze_galton_invariant(
         });
     }
 
-    let mut absorption_rates = Vec::new();
-    let mut acceleration_recoveries = Vec::new();
-    let mut deceleration_recoveries = Vec::new();
+    let mut absorption_rates = Vec::with_capacity(perturbations.len());
+    let mut acceleration_recoveries = Vec::with_capacity(perturbations.len());
+    let mut deceleration_recoveries = Vec::with_capacity(perturbations.len());
 
     for &(pert_idx, deviation) in &perturbations {
         let end_idx = samples.len().min(pert_idx + RECOVERY_WINDOW_SIZE + 1);
-        let recovery_samples: Vec<f64> = samples[pert_idx + 1..end_idx]
-            .iter()
-            .map(|s| s.interval_ms - baseline_interval_ms)
-            .collect();
+        let recovery_len = end_idx.saturating_sub(pert_idx + 1);
 
-        if recovery_samples.len() >= MIN_RECOVERY_SAMPLES {
-            let decay_rate = estimate_decay_rate(&recovery_samples);
+        // Zero-allocation inner loop via lazy iterator mapping
+        if recovery_len >= MIN_RECOVERY_SAMPLES {
+            let recovery_iter = samples[pert_idx + 1..end_idx]
+                .iter()
+                .map(|s| s.interval_ms - baseline_interval_ms);
+
+            let decay_rate = estimate_decay_rate(recovery_iter);
             absorption_rates.push(decay_rate);
 
             if deviation > 0.0 {
@@ -200,20 +202,22 @@ pub fn analyze_galton_invariant(
     })
 }
 
-fn estimate_decay_rate(deviations: &[f64]) -> f64 {
-    if deviations.len() < 2 {
-        return DEFAULT_DECAY_RATE;
-    }
+/// Calculates the exponential decay rate using an iterator, entirely preventing heap allocations.
+fn estimate_decay_rate(mut deviations: impl Iterator<Item = f64>) -> f64 {
+    let first_dev = match deviations.next() {
+        Some(dev) => dev,
+        None => return DEFAULT_DECAY_RATE,
+    };
 
     // Exponential decay fit: ln(y/y0) = -α * t
-    let y0 = deviations[0].abs().max(MIN_DEVIATION_FLOOR);
-
+    let y0 = first_dev.abs().max(MIN_DEVIATION_FLOOR);
     let mut sum_rate = 0.0;
     let mut count = 0;
 
-    for (i, &dev) in deviations.iter().enumerate().skip(1) {
+    // Enumerate acts as time `t` starting at 1 since we already consumed the 0th item
+    for (i, dev) in deviations.enumerate() {
         let y = dev.abs().max(MIN_DEVIATION_FLOOR);
-        let t = i as f64;
+        let t = (i + 1) as f64;
         let rate = -(y / y0).ln() / t;
 
         if rate.is_finite() && rate > 0.0 {
@@ -275,7 +279,7 @@ pub fn analyze_reflex_gate(samples: &[ProbeSample]) -> Result<ReflexGateResult, 
         });
     }
 
-    let min_latency_ms = responses.iter().copied().fold(f64::INFINITY, f64::min);
+    let min_latency_ms = responses.iter().copied().reduce(f64::min).unwrap_or(f64::INFINITY);
     let (mean_latency_ms, variance) = crate::utils::stats::mean_and_variance(&responses);
     let std_latency_ms = variance.sqrt();
 
@@ -311,10 +315,10 @@ fn compute_lag1_autocorrelation(data: &[f64], mean: f64) -> f64 {
         return 0.0;
     }
 
+    // Windows naturally processes adjacent pairs efficiently without offset index checking
     let numerator: f64 = data
-        .iter()
-        .zip(data.iter().skip(1))
-        .map(|(&current, &next)| (current - mean) * (next - mean))
+        .windows(2)
+        .map(|w| (w[0] - mean) * (w[1] - mean))
         .sum();
 
     let denominator: f64 = data.iter().map(|&x| (x - mean).powi(2)).sum();
@@ -342,39 +346,32 @@ impl ActiveProbeResults {
         galton: Option<GaltonInvariantResult>,
         reflex: Option<ReflexGateResult>,
     ) -> Self {
-        let mut score_sum = 0.0;
         let mut score_count = 0;
-        let mut all_valid = true;
+        let mut valid_count = 0;
 
         if let Some(ref g) = galton {
             score_count += 1;
             if g.is_valid {
-                score_sum += 1.0;
-            } else {
-                all_valid = false;
+                valid_count += 1;
             }
         }
 
         if let Some(ref r) = reflex {
             score_count += 1;
             if r.is_valid {
-                score_sum += 1.0;
-            } else {
-                all_valid = false;
+                valid_count += 1;
             }
         }
-
-        let combined_score = if score_count > 0 {
-            score_sum / score_count as f64
-        } else {
-            0.0
-        };
 
         Self {
             galton,
             reflex,
-            combined_score,
-            all_valid,
+            combined_score: if score_count > 0 {
+                valid_count as f64 / score_count as f64
+            } else {
+                0.0
+            },
+            all_valid: valid_count > 0 && valid_count == score_count,
         }
     }
 }

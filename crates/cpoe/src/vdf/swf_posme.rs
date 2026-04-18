@@ -32,6 +32,17 @@ pub fn verify(seed: [u8; 32], proof_bytes: &[u8]) -> Result<bool> {
         .map_err(|e| Error::crypto(format!("PoSME verification failed: {e}")))
 }
 
+/// Compute a PoSME proof with jitter entanglement (algorithm 31).
+///
+/// `jitter_hashes`: behavioral jitter sample hashes collected during the session.
+pub fn compute_entangled(seed: [u8; 32], tier: u8, jitter_hashes: &[[u8; 32]]) -> Result<Vec<u8>> {
+    let params = posme::PosmeParams::for_tier(tier);
+    let proof = posme::prover::execute_entangled(&seed, &params, jitter_hashes)
+        .map_err(|e| Error::crypto(format!("PoSME entangled execution failed: {e}")))?;
+    ciborium_encode(&proof)
+        .map_err(|e| Error::crypto(format!("PoSME proof serialization failed: {e}")))
+}
+
 /// Select PoSME parameters for a content tier.
 pub fn params_for_tier(tier: u8) -> posme::PosmeParams {
     posme::PosmeParams::for_tier(tier)

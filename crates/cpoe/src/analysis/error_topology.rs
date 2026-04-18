@@ -15,7 +15,6 @@
 //! score. Consider wiring `analysis/hurst.rs` here for a future improvement.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use std::fmt;
 
 /// Comprehensive error type for Error Topology analysis.
@@ -140,6 +139,8 @@ pub fn analyze_error_topology(
         .collect();
 
     let error_count = error_indices.len();
+    let error_rate = (error_count as f64 / events.len() as f64) * 100.0;
+
     if error_count < 3 {
         return Ok(ErrorTopology {
             gap_correlation: 0.0,
@@ -148,7 +149,7 @@ pub fn analyze_error_topology(
             score: 0.0,
             is_valid: false,
             error_count,
-            error_rate: (error_count as f64 / events.len() as f64) * 100.0,
+            error_rate,
             error_distribution: ErrorDistribution::default(),
         });
     }
@@ -160,8 +161,6 @@ pub fn analyze_error_topology(
     let score = ErrorTopology::compute_score(gap_correlation, error_hurst, adjacency_correlation);
     let is_valid = score >= ErrorTopology::VALIDITY_THRESHOLD;
     let error_distribution = compute_error_distribution(events, &error_indices);
-
-    let error_rate = (error_count as f64 / events.len() as f64) * 100.0;
 
     Ok(ErrorTopology {
         gap_correlation,
@@ -180,9 +179,6 @@ fn compute_gap_correlation(events: &[TopologyEvent], error_indices: &[usize]) ->
         return 0.0;
     }
 
-    let error_set: HashSet<usize> = error_indices.iter().copied().collect();
-
-    // Replaced three separate Vec allocations with inline accumulators
     let mut pre_error_sum = 0.0;
     let mut pre_error_count = 0;
 
@@ -192,19 +188,32 @@ fn compute_gap_correlation(events: &[TopologyEvent], error_indices: &[usize]) ->
     let mut normal_sum = 0.0;
     let mut normal_count = 0;
 
+    let mut err_ptr = 0;
+    let mut prev_was_error = false;
+
+    // Zero-allocation, single-pass linear scan using two pointers
     for (i, event) in events.iter().enumerate() {
         let gap_ms = crate::utils::ns_to_ms(event.gap_ns as i64);
 
-        if error_set.contains(&i) {
+        let is_error = if err_ptr < error_indices.len() && error_indices[err_ptr] == i {
+            err_ptr += 1;
+            true
+        } else {
+            false
+        };
+
+        if is_error {
             pre_error_sum += gap_ms;
             pre_error_count += 1;
-        } else if i > 0 && error_set.contains(&(i - 1)) {
+        } else if prev_was_error {
             post_error_sum += gap_ms;
             post_error_count += 1;
         } else {
             normal_sum += gap_ms;
             normal_count += 1;
         }
+
+        prev_was_error = is_error;
     }
 
     if normal_count == 0 || pre_error_count == 0 {
@@ -240,7 +249,8 @@ fn compute_error_hurst(events: &[TopologyEvent], error_indices: &[usize]) -> f64
         return 0.5;
     }
 
-    let mut intervals = Vec::new();
+    // Pre-allocate to prevent dynamic heap resizing
+    let mut intervals = Vec::with_capacity(error_indices.len().saturating_sub(1));
     for i in 1..error_indices.len() {
         let prev_idx = error_indices[i - 1];
         let curr_idx = error_indices[i];
@@ -326,12 +336,9 @@ fn compute_adjacency_correlation(events: &[TopologyEvent], error_indices: &[usiz
 }
 
 fn are_keys_adjacent(key1: u16, key2: u16) -> bool {
-    let pos1 = key_to_position(key1);
-    let pos2 = key_to_position(key2);
-
-    if let (Some((r1, c1)), Some((r2, c2))) = (pos1, pos2) {
-        let row_diff = (r1 as i32 - r2 as i32).abs();
-        let col_diff = (c1 as i32 - c2 as i32).abs();
+    if let (Some((r1, c1)), Some((r2, c2))) = (key_to_position(key1), key_to_position(key2)) {
+        let row_diff = r1.abs_diff(r2);
+        let col_diff = c1.abs_diff(c2);
 
         row_diff <= 1 && col_diff <= 1 && (row_diff + col_diff) > 0
     } else {
@@ -381,8 +388,9 @@ fn compute_error_distribution(
     error_indices: &[usize],
 ) -> ErrorDistribution {
     let mut dist = ErrorDistribution::default();
+    let mut prev_timestamp = None;
 
-    for (i, &error_idx) in error_indices.iter().enumerate() {
+    for &error_idx in error_indices {
         let event = &events[error_idx];
         let gap_ms = crate::utils::ns_to_ms(event.gap_ns as i64);
 
@@ -394,14 +402,13 @@ fn compute_error_distribution(
             dist.long_delayed_corrections += 1;
         }
 
-        let is_burst = if i > 0 {
-            let prev_idx = error_indices[i - 1];
-            let time_diff = events[error_idx]
-                .timestamp_ns
-                .saturating_sub(events[prev_idx].timestamp_ns);
-            time_diff > 0 && (crate::utils::ns_to_secs(time_diff)) < 1.0
-        } else {
-            false
+        let is_burst = match prev_timestamp {
+            Some(pt) => {
+                let time_diff = event.timestamp_ns.saturating_sub(pt);
+                // 1_000_000_000 ns == 1 second
+                time_diff > 0 && time_diff < 1_000_000_000
+            }
+            None => false,
         };
 
         if is_burst {
@@ -409,6 +416,8 @@ fn compute_error_distribution(
         } else {
             dist.isolated_errors += 1;
         }
+        
+        prev_timestamp = Some(event.timestamp_ns);
     }
 
     dist
