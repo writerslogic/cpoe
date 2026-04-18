@@ -67,10 +67,9 @@ impl Mmr {
         loop {
             let peak_indices = find_peaks(state.size);
             if peak_indices.len() < 2 {
-                // If only one peak remains, we need its hash.
-                // It's either the leaf we just added or a new internal node.
-                // For simplicity, we just rebuild the peak list here if it changed size or if we are at size 1.
-                if state.peaks.len() != peak_indices.len() || state.size == 1 {
+                let peaks_changed = state.peaks.len() != peak_indices.len()
+                    || state.peaks.iter().zip(&peak_indices).any(|(p, &i)| p.index != i);
+                if peaks_changed || state.size == 1 {
                     let mut new_peaks = Vec::with_capacity(peak_indices.len());
                     for idx in peak_indices {
                         // If it's the leaf we just appended, we have its hash.

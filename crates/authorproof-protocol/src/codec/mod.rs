@@ -254,8 +254,8 @@ mod tests {
 
     #[test]
     fn test_format_mime_type() {
-        assert_eq!(Format::Cbor.mime_type(), "application/cpoe+cbor");
-        assert_eq!(Format::CborWar.mime_type(), "application/cwar+cbor");
+        assert_eq!(Format::Cbor.mime_type(), "application/vnd.writersproof.cpoe+cbor");
+        assert_eq!(Format::CborWar.mime_type(), "application/vnd.writersproof.cwar+cbor");
         assert_eq!(Format::Json.mime_type(), "application/json");
     }
 

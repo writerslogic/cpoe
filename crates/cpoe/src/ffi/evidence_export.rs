@@ -223,7 +223,7 @@ pub fn ffi_export_evidence(path: String, tier: String, output: String) -> FfiRes
     let file_bytes = std::fs::read(&file_path)
         .map_err(|e| log::warn!("read file for export failed: {e}"))
         .ok();
-    let content_verified = file_bytes.as_ref().map_or(false, |bytes| {
+    let content_verified = file_bytes.as_ref().is_some_and(|bytes| {
         let hash: [u8; 32] = Sha256::digest(bytes).into();
         hash == latest.content_hash
     });

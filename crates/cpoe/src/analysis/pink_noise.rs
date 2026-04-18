@@ -227,8 +227,7 @@ fn fft_radix2(real: &mut [f64], imag: &mut [f64]) {
             })
             .collect();
         for start in (0..n).step_by(len) {
-            for k in 0..half {
-                let (cos_a, sin_a) = twiddle[k];
+            for (k, &(cos_a, sin_a)) in twiddle.iter().enumerate() {
                 let i = start + k;
                 let j = start + k + half;
                 let tr = real[j] * cos_a - imag[j] * sin_a;

@@ -966,7 +966,7 @@ impl Sentinel {
                                     if let Some(ref sk) = sk_opt {
                                         let db = writersproof_dir.join("events.db");
                                         if let Ok(store) =
-                                            crate::store::open_store_with_signing_key(&sk, &db)
+                                            crate::store::open_store_with_signing_key(sk, &db)
                                         {
                                             let stats = crate::store::DocumentStats {
                                                 file_path: path.clone(),
