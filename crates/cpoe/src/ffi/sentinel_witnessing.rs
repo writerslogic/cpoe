@@ -130,7 +130,6 @@ fn fallback_score(cadence_score: f64, focus_penalty: f64) -> f64 {
 struct StoreMetrics {
     event_count: u64,
     forensic_score: f64,
-    paste_chars: i64,
     error: Option<String>,
 }
 
@@ -144,7 +143,6 @@ fn query_store_metrics(path: &str, cadence_score: f64, focus_penalty: f64) -> St
             return StoreMetrics {
                 event_count: 0,
                 forensic_score: fallback_score(cadence_score, focus_penalty),
-                paste_chars: 0,
                 error: Some(format!("store unavailable: {e}")),
             };
         }
@@ -157,7 +155,6 @@ fn query_store_metrics(path: &str, cadence_score: f64, focus_penalty: f64) -> St
             return StoreMetrics {
                 event_count: 0,
                 forensic_score: fallback_score(cadence_score, focus_penalty),
-                paste_chars: 0,
                 error: Some(format!("event query failed: {e}")),
             };
         }
@@ -177,16 +174,9 @@ fn query_store_metrics(path: &str, cadence_score: f64, focus_penalty: f64) -> St
         fallback_score(cadence_score, focus_penalty)
     };
 
-    let paste_chars = events
-        .last()
-        .filter(|e| e.is_paste)
-        .map(|e| e.size_delta as i64)
-        .unwrap_or(0);
-
     StoreMetrics {
         event_count: count,
         forensic_score: score,
-        paste_chars,
         error: None,
     }
 }
@@ -287,11 +277,7 @@ pub fn ffi_sentinel_witnessing_status() -> FfiWitnessingStatus {
 
     let metrics = query_store_metrics(&session.path, cadence_score, focus_penalty);
 
-    let last_paste_chars = if host_paste_chars > 0 {
-        host_paste_chars
-    } else {
-        metrics.paste_chars
-    };
+    let last_paste_chars = host_paste_chars;
 
     FfiWitnessingStatus {
         is_tracking: true,
