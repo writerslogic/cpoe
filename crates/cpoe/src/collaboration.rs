@@ -262,7 +262,7 @@ impl CollaborationSection {
         // Interval merging: O(N log N) in number of ranges, O(1) extra memory
         intervals.sort_unstable_by_key(|&(s, _)| s);
 
-        let mut merged_start = intervals[0].0;
+        let merged_start = intervals[0].0;
         let mut merged_end = intervals[0].1;
 
         for &(s, e) in &intervals[1..] {

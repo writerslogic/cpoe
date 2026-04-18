@@ -5,6 +5,7 @@ use super::error::{Result, SentinelError};
 use super::focus::SentinelFocusTracker;
 use super::types::{ChangeEvent, FocusEvent};
 use super::Sentinel;
+#[allow(unused_imports)]
 use crate::platform::{KeystrokeCapture, MouseCapture};
 use crate::MutexRecover;
 use std::sync::atomic::{AtomicBool, Ordering};

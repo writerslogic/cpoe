@@ -23,6 +23,7 @@ impl std::fmt::Debug for Mmr {
 
 #[derive(Debug, Clone)]
 struct Peak {
+    #[allow(dead_code)]
     index: u64,
     hash: [u8; 32],
 }

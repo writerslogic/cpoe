@@ -277,7 +277,6 @@ impl CheckpointTrigger {
     /// formula when values are large and close together.
     fn update_window_stats(&mut self, val: u32) {
         let val_f = val as f64;
-        let n = self.window.len() as f64;
 
         if self.window.len() >= JITTER_WINDOW_SIZE {
             if let Some(old) = self.window.pop_front() {

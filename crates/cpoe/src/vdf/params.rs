@@ -203,6 +203,7 @@ pub fn swf_seed_core(prev_hash: &[u8; 32], local_nonce: &[u8; 32]) -> [u8; 32] {
 }
 
 // PoSME seed derivation (draft-condrey-cfrg-posme)
+#[cfg(feature = "posme")]
 const POSME_SEED_DST: &[u8] = b"PoP-PoSME-Seed-v1";
 
 /// Genesis PoSME seed: `H("PoP-PoSME-Seed-v1" || doc_ref_cbor || jitter_or_nonce)`.

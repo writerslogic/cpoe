@@ -6,11 +6,9 @@
 //! document metadata (PDF, EXIF, Office), QR codes, git commit messages,
 //! or protocol headers with size constraints.
 
-use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use uuid::Uuid;
 
 /// Summary statistics for compact representation.

@@ -5,6 +5,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Global engine telemetry counters.
+#[allow(missing_debug_implementations)]
 pub struct Telemetry {
     pub vdf_verify_time_ms: AtomicU64,
     pub checkpoint_count: AtomicU64,
