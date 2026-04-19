@@ -664,22 +664,26 @@ pub(crate) fn handle_snapshot_save(
             char_count
         );
         let wal_path = session.evidence_path.join("browser_snapshots.jsonl");
-        if let Ok(mut f) = std::fs::OpenOptions::new()
+        let entry = serde_json::json!({
+            "document_url": document_url,
+            "content_hash": content_hash,
+            "char_count": char_count,
+            "timestamp": now_nanos(),
+            "session_id": session.id,
+            "checkpoint_count": session.checkpoint_count,
+        });
+        match std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(&wal_path)
+            .and_then(|mut f| writeln!(f, "{}", entry))
         {
-            let entry = serde_json::json!({
-                "document_url": document_url,
-                "content_hash": content_hash,
-                "char_count": char_count,
-                "timestamp": now_nanos(),
-                "session_id": session.id,
-                "checkpoint_count": session.checkpoint_count,
-            });
-            let _ = writeln!(f, "{}", entry);
+            Ok(()) => Response::SnapshotSaved { message: note },
+            Err(e) => Response::Error {
+                message: format!("Snapshot write failed: {e}"),
+                code: "IO_ERROR".into(),
+            },
         }
-        Response::SnapshotSaved { message: note }
     } else {
         Response::Error {
             message: "No active session".into(),
@@ -697,29 +701,30 @@ pub(crate) fn handle_ai_content_copied(
     char_count: u64,
     timestamp: u64,
 ) -> Response {
-    let sanitized_source = if KNOWN_AI_SOURCES.iter().any(|s| source.eq_ignore_ascii_case(s)) {
-        source
-    } else {
-        "unknown".to_string()
-    };
+    let sanitized_source = KNOWN_AI_SOURCES
+        .iter()
+        .find(|s| source.eq_ignore_ascii_case(s))
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
     let guard = session().lock().unwrap_or_else(|p| p.into_inner());
     if let Some(ref session) = *guard {
         // Write to session evidence directory (included in evidence export)
         let wal_path = session.evidence_path.join("tool_usage.jsonl");
-        if let Ok(mut f) = std::fs::OpenOptions::new()
+        let entry = serde_json::json!({
+            "type": "ai_content_copied",
+            "source": sanitized_source,
+            "char_count": char_count,
+            "timestamp": timestamp,
+            "session_id": session.id,
+            "checkpoint_ordinal": session.checkpoint_count,
+        });
+        if let Err(e) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(&wal_path)
+            .and_then(|mut f| writeln!(f, "{}", entry))
         {
-            let entry = serde_json::json!({
-                "type": "ai_content_copied",
-                "source": sanitized_source,
-                "char_count": char_count,
-                "timestamp": timestamp,
-                "session_id": session.id,
-                "checkpoint_ordinal": session.checkpoint_count,
-            });
-            let _ = writeln!(f, "{}", entry);
+            eprintln!("Failed to write tool usage: {e}");
         }
 
         // Notify the sentinel for real-time tracking
