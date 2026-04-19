@@ -642,6 +642,12 @@ pub(crate) fn handle_snapshot_save(
     content_hash: String,
     char_count: u64,
 ) -> Response {
+    if !is_domain_allowed(&document_url) {
+        return Response::Error {
+            message: "Unsupported domain".into(),
+            code: "DOMAIN_NOT_ALLOWED".into(),
+        };
+    }
     if let Err(e) = validate_content_hash(&content_hash) {
         return Response::Error {
             message: e,
@@ -649,10 +655,6 @@ pub(crate) fn handle_snapshot_save(
         };
     }
 
-    // Browser snapshots: we only have the hash, not the plaintext.
-    // Record the hash + char count + URL as a checkpoint context note
-    // in the active session's evidence chain, not the snapshot store
-    // (which requires plaintext for encryption and version diffing).
     let guard = session().lock().unwrap_or_else(|p| p.into_inner());
     if let Some(ref session) = *guard {
         let note = format!(
@@ -686,14 +688,20 @@ pub(crate) fn handle_snapshot_save(
     }
 }
 
+const KNOWN_AI_SOURCES: &[&str] = &[
+    "chatgpt", "claude", "gemini", "copilot", "jasper", "copy-ai", "unknown",
+];
+
 pub(crate) fn handle_ai_content_copied(
     source: String,
     char_count: u64,
     timestamp: u64,
 ) -> Response {
-    // Record AI tool usage as a context note in the next checkpoint.
-    // This is part of the creative control attestation: declaring tool use
-    // strengthens the author's claim of editorial control.
+    let sanitized_source = if KNOWN_AI_SOURCES.iter().any(|s| source.eq_ignore_ascii_case(s)) {
+        source
+    } else {
+        "unknown".to_string()
+    };
     let guard = session().lock().unwrap_or_else(|p| p.into_inner());
     if let Some(ref session) = *guard {
         // Write to session evidence directory (included in evidence export)
@@ -705,7 +713,7 @@ pub(crate) fn handle_ai_content_copied(
         {
             let entry = serde_json::json!({
                 "type": "ai_content_copied",
-                "source": source,
+                "source": sanitized_source,
                 "char_count": char_count,
                 "timestamp": timestamp,
                 "session_id": session.id,
@@ -716,14 +724,14 @@ pub(crate) fn handle_ai_content_copied(
 
         // Notify the sentinel for real-time tracking
         cpoe::ffi::sentinel_es::ffi_sentinel_es_ai_tool_detected(
-            source.clone(),
+            sanitized_source.clone(),
             0,
             0,
             String::new(),
         );
 
         Response::AiCopyRecorded {
-            message: format!("Tool usage recorded: {source} ({char_count} chars)"),
+            message: format!("Tool usage recorded: {sanitized_source} ({char_count} chars)"),
         }
     } else {
         Response::AiCopyRecorded {
@@ -732,8 +740,17 @@ pub(crate) fn handle_ai_content_copied(
     }
 }
 
+const ALLOWED_VIEWS: &[&str] = &[
+    "dashboard", "settings", "versionHistory", "history", "export", "checkpoint",
+];
+
 pub(crate) fn handle_open_view(view: String) -> Response {
-    // Open the desktop app to a specific view via URL scheme
+    if !ALLOWED_VIEWS.iter().any(|v| *v == view) {
+        return Response::Error {
+            message: format!("Unknown view: {view}"),
+            code: "INVALID_VIEW".into(),
+        };
+    }
     let url = format!("writersproof://view/{}", view);
     #[cfg(target_os = "macos")]
     {

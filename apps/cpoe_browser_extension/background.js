@@ -292,7 +292,7 @@ function handleNativeMessage(message) {
           .catch(() => { prevCommitment = null; });
       }
       updateBadge("\u2713", "#2ecc71");
-      broadcastToPopup({ type: "session_update", ...message });
+      broadcastToPopup({ type: "session_update", session_id: message.session_id, session_nonce: message.session_nonce, device_public_key: message.device_public_key, checkpoint_count: message.checkpoint_count });
       break;
 
     case "checkpoint_created":
@@ -308,7 +308,7 @@ function handleNativeMessage(message) {
         });
       }
       updateBadge(String(message.checkpoint_count), "#2ecc71");
-      broadcastToPopup({ type: "checkpoint_update", ...message });
+      broadcastToPopup({ type: "checkpoint_update", hash: message.hash, checkpoint_count: message.checkpoint_count, commitment: message.commitment });
       break;
 
     case "session_stopped":
@@ -323,7 +323,7 @@ function handleNativeMessage(message) {
       break;
 
     case "status":
-      broadcastToPopup({ type: "status_update", ...message });
+      broadcastToPopup({ type: "status_update", initialized: message.initialized, active_session: message.active_session, checkpoint_count: message.checkpoint_count, tracked_files: message.tracked_files });
       break;
 
     case "jitter_received":
@@ -486,8 +486,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendNativeMessage({
           type: "start_session",
           document_url: url,
-          document_title: message.title,
-          timer_resolution_ms: message.timerResolution,
+          document_title: typeof message.title === "string" ? message.title : "",
+          timer_resolution_ms: typeof message.timerResolution === "number" ? message.timerResolution : 0,
         });
         activeTabId = sender.tab?.id;
         startCheckpointTimer();

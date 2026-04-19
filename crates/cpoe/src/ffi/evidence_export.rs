@@ -230,7 +230,7 @@ pub fn ffi_export_evidence(path: String, tier: String, output: String) -> FfiRes
     let char_count = file_bytes
         .as_ref()
         .filter(|_| content_verified)
-        .and_then(|bytes| String::from_utf8(bytes.clone()).ok())
+        .and_then(|bytes| std::str::from_utf8(bytes).ok())
         .map(|s| s.chars().count() as u64)
         .unwrap_or(byte_length);
     let is_maximum = matches!(

@@ -95,7 +95,20 @@ impl SnapshotStore {
         let plaintext_bytes = plaintext.as_bytes();
         let content_hash: [u8; 32] = Sha256::digest(plaintext_bytes).into();
         let word_count = count_words(plaintext);
-        let timestamp_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        let mut timestamp_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+
+        // Ensure monotonicity: if clock went backward, use last timestamp + 1
+        let last_ts: i64 = self
+            .conn
+            .query_row(
+                "SELECT MAX(timestamp_ns) FROM snapshot_meta WHERE document_path = ?",
+                params![document_path],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        if timestamp_ns <= last_ts {
+            timestamp_ns = last_ts + 1;
+        }
 
         // Encrypt outside the transaction (CPU-bound, don't hold the DB lock)
         let blob_exists: bool = self
@@ -416,5 +429,5 @@ impl SnapshotStore {
 
 /// Count words by splitting on whitespace. Matches typical writer expectations.
 fn count_words(text: &str) -> i32 {
-    text.split_whitespace().count() as i32
+    text.split_whitespace().count().min(i32::MAX as usize) as i32
 }
