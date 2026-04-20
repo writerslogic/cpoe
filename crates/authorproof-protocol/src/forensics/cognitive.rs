@@ -188,6 +188,100 @@ pub fn word_frequency_tier(word: &str) -> u8 {
     super::word_frequency::lookup_tier(word)
 }
 
+// ---------------------------------------------------------------------------
+// Unified Writing Mode Classifier
+// ---------------------------------------------------------------------------
+
+/// Final verdict from the unified classifier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WritingMode {
+    /// Strong evidence of original cognitive composition.
+    Cognitive,
+    /// Strong evidence of transcription/copying.
+    Transcriptive,
+    /// Mixed or insufficient evidence to classify.
+    Indeterminate,
+}
+
+/// Complete classification result combining all signal layers.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WritingModeVerdict {
+    pub mode: WritingMode,
+    /// Overall cognitive probability [0, 1] from all available signals.
+    pub cognitive_score: f64,
+    /// Confidence in the verdict [0, 1] based on data sufficiency.
+    pub confidence: f64,
+    /// Which signal layers contributed to the verdict.
+    pub layers_used: Vec<String>,
+}
+
+/// Unified classifier combining temporal, content, and structural signals.
+///
+/// Takes outputs from all three analysis layers and produces a single verdict.
+/// Requires at least 2 of 3 layers to have usable data.
+pub fn classify_writing_mode(
+    temporal: Option<&cpoe_jitter::cognitive::CognitiveTemporalMetrics>,
+    content: Option<&CognitiveContentMetrics>,
+    transcription: Option<&super::transcription::TranscriptionAnalysis>,
+) -> WritingModeVerdict {
+    let mut weighted_sum = 0.0f64;
+    let mut total_weight = 0.0f64;
+    let mut layers = Vec::new();
+
+    // Layer 1: Temporal signals (sentence initiation + bigram fluency + IKI modality).
+    // Highest weight: hardest to fake, most granular.
+    if let Some(t) = temporal {
+        weighted_sum += t.cognitive_probability * 0.45;
+        total_weight += 0.45;
+        layers.push("temporal".into());
+    }
+
+    // Layer 2: Content signals (LRD + non-append ratio + deletion topology).
+    // Second weight: requires realistic revision patterns.
+    if let Some(c) = content {
+        weighted_sum += c.cognitive_probability * 0.35;
+        total_weight += 0.35;
+        layers.push("content".into());
+    }
+
+    // Layer 3: Structural signals (existing TranscriptionDetector: linearity, revision density).
+    // Third weight: coarsest signal, easiest to game.
+    if let Some(tr) = transcription {
+        // Invert: TranscriptionAnalysis.is_transcription → low cognitive score.
+        let structural_score = if tr.is_transcription { 0.1 } else { 0.85 };
+        weighted_sum += structural_score * 0.20;
+        total_weight += 0.20;
+        layers.push("structural".into());
+    }
+
+    if total_weight < 0.3 || layers.len() < 2 {
+        return WritingModeVerdict {
+            mode: WritingMode::Indeterminate,
+            cognitive_score: 0.5,
+            confidence: 0.0,
+            layers_used: layers,
+        };
+    }
+
+    let cognitive_score = weighted_sum / total_weight;
+    let confidence = (total_weight / 1.0).min(1.0) * (layers.len() as f64 / 3.0);
+
+    let mode = if cognitive_score > 0.65 && confidence > 0.4 {
+        WritingMode::Cognitive
+    } else if cognitive_score < 0.35 && confidence > 0.4 {
+        WritingMode::Transcriptive
+    } else {
+        WritingMode::Indeterminate
+    };
+
+    WritingModeVerdict {
+        mode,
+        cognitive_score,
+        confidence,
+        layers_used: layers,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,5 +408,68 @@ mod tests {
             metrics.cognitive_probability < 0.4,
             "prob={}", metrics.cognitive_probability
         );
+    }
+
+    #[test]
+    fn test_unified_cognitive_verdict() {
+        use cpoe_jitter::cognitive::CognitiveTemporalMetrics;
+
+        let temporal = CognitiveTemporalMetrics {
+            sentence_initiation_ratio: 12.0,
+            sentence_initiation_variance: 25.0,
+            bigram_fluency_ratio: 2.8,
+            iki_modality_score: 0.85,
+            cognitive_probability: 0.82,
+            sentence_count: 5,
+            bigram_pairs_analyzed: 100,
+        };
+        let content = CognitiveContentMetrics {
+            lrd_correlation: 0.45,
+            non_append_ratio: 0.22,
+            mean_deletion_length: 4.5,
+            cognitive_probability: 0.78,
+            word_boundary_count: 40,
+            total_edit_ops: 200,
+        };
+
+        let verdict = classify_writing_mode(Some(&temporal), Some(&content), None);
+        assert_eq!(verdict.mode, WritingMode::Cognitive);
+        assert!(verdict.cognitive_score > 0.7, "score={}", verdict.cognitive_score);
+        assert_eq!(verdict.layers_used.len(), 2);
+    }
+
+    #[test]
+    fn test_unified_transcriptive_verdict() {
+        use cpoe_jitter::cognitive::CognitiveTemporalMetrics;
+        use super::super::transcription::TranscriptionAnalysis;
+
+        let temporal = CognitiveTemporalMetrics {
+            sentence_initiation_ratio: 2.5,
+            sentence_initiation_variance: 1.0,
+            bigram_fluency_ratio: 1.2,
+            iki_modality_score: 0.15,
+            cognitive_probability: 0.12,
+            sentence_count: 4,
+            bigram_pairs_analyzed: 80,
+        };
+        let transcription = TranscriptionAnalysis {
+            linearity_score: 0.96,
+            revision_density: 1.2,
+            nonlinearity_index: 0.5,
+            avg_burst_length: 25.0,
+            is_transcription: true,
+            explanation: String::new(),
+        };
+
+        let verdict = classify_writing_mode(Some(&temporal), None, Some(&transcription));
+        assert_eq!(verdict.mode, WritingMode::Transcriptive);
+        assert!(verdict.cognitive_score < 0.3, "score={}", verdict.cognitive_score);
+    }
+
+    #[test]
+    fn test_unified_insufficient_data() {
+        let verdict = classify_writing_mode(None, None, None);
+        assert_eq!(verdict.mode, WritingMode::Indeterminate);
+        assert_eq!(verdict.confidence, 0.0);
     }
 }
