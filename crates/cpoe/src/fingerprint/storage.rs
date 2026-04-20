@@ -63,6 +63,8 @@ impl FingerprintStorage {
     /// Initialize storage, deriving encryption key and building index.
     pub fn new(storage_dir: &Path) -> Result<Self> {
         fs::create_dir_all(storage_dir)?;
+        #[cfg(unix)]
+        crate::crypto::restrict_permissions(storage_dir, 0o700)?;
 
         let encryption_key = Zeroizing::new(load_or_create_fingerprint_key(storage_dir)?);
 
@@ -132,6 +134,8 @@ impl FingerprintStorage {
         let plaintext = Zeroizing::new(serde_json::to_vec(fingerprint)?);
         let ciphertext = self.encrypt(&plaintext)?;
         fs::write(&path, &ciphertext)?;
+        #[cfg(unix)]
+        let _ = crate::crypto::restrict_permissions(&path, 0o600);
 
         let mtime = fs::metadata(&path)
             .and_then(|m| m.modified())

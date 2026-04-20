@@ -458,6 +458,7 @@ impl SealedIdentityStore {
         wrapped.extend_from_slice(&random_salt);
         wrapped.extend_from_slice(&nonce_bytes);
         wrapped.extend_from_slice(&ciphertext);
+        random_salt.zeroize();
         Ok(wrapped)
     }
 
