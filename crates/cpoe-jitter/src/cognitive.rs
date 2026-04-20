@@ -27,6 +27,9 @@ pub struct CognitiveTemporalMetrics {
     /// Cognitive: >2.5 (automated motor sequences vs novel planning).
     /// Transcriptive: <1.5 (uniform visual-motor transfer).
     pub bigram_fluency_ratio: f64,
+    /// IKI distribution modality score [0, 1].
+    /// Cognitive: multi-modal (>0.7), Transcriptive: unimodal (<0.3).
+    pub iki_modality_score: f64,
     /// Combined cognitive probability [0, 1].
     /// 0 = strongly transcriptive, 1 = strongly cognitive.
     pub cognitive_probability: f64,
@@ -69,6 +72,7 @@ pub fn analyze_cognitive_temporal(keystrokes: &[TimedKeystroke]) -> Option<Cogni
 
     let sentence_metrics = compute_sentence_initiation(keystrokes)?;
     let bigram_metrics = compute_bigram_fluency(keystrokes);
+    let modality = compute_iki_modality(keystrokes);
 
     let sid_score = sentence_initiation_to_probability(
         sentence_metrics.0,
@@ -76,17 +80,19 @@ pub fn analyze_cognitive_temporal(keystrokes: &[TimedKeystroke]) -> Option<Cogni
     );
     let bigram_score = bigram_fluency_to_probability(bigram_metrics.0);
 
-    // Weight: sentence initiation is the stronger signal (harder to fake).
-    // If bigram data is ambiguous (score near 0.5), rely more on sentence initiation.
+    // Combine all three temporal signals with confidence-adaptive weighting.
+    // Sentence initiation is the strongest (hardest to fake).
+    // Modality is second (requires realistic multi-modal timing).
+    // Bigram fluency is third (can be partially faked with practice).
     let cognitive_probability = if sentence_metrics.2 >= 3 && bigram_metrics.1 >= 30 {
-        let bigram_confidence = (bigram_score - 0.5).abs() * 2.0; // 0 = ambiguous, 1 = clear
-        let bigram_weight = 0.35 * bigram_confidence;
-        let sid_weight = 1.0 - bigram_weight;
-        sid_score * sid_weight + bigram_score * bigram_weight
+        let bigram_confidence = (bigram_score - 0.5).abs() * 2.0;
+        let bigram_weight = 0.2 * bigram_confidence;
+        sid_score * 0.45 + modality * 0.35 + bigram_score * bigram_weight
+            + sid_score * (0.2 - bigram_weight) // redistribute unused bigram weight to SID
     } else if sentence_metrics.2 >= 3 {
-        sid_score
+        sid_score * 0.6 + modality * 0.4
     } else if bigram_metrics.1 >= 30 {
-        bigram_score
+        bigram_score * 0.5 + modality * 0.5
     } else {
         return None; // Insufficient data
     };
@@ -95,6 +101,7 @@ pub fn analyze_cognitive_temporal(keystrokes: &[TimedKeystroke]) -> Option<Cogni
         sentence_initiation_ratio: sentence_metrics.0,
         sentence_initiation_variance: sentence_metrics.1,
         bigram_fluency_ratio: bigram_metrics.0,
+        iki_modality_score: modality,
         cognitive_probability,
         sentence_count: sentence_metrics.2,
         bigram_pairs_analyzed: bigram_metrics.1,
@@ -215,6 +222,77 @@ fn sentence_initiation_to_probability(mean_ratio: f64, variance: f64) -> f64 {
 fn bigram_fluency_to_probability(ratio: f64) -> f64 {
     // Sigmoid centered at 2.0 (transition zone between 1.5 and 2.5).
     1.0 / (1.0 + (-2.0 * (ratio - 2.0)).exp())
+}
+
+/// IKI distribution multi-modality analysis.
+///
+/// Cognitive writing produces a multi-modal IKI distribution:
+/// - Mode 1 (fast): 50-150ms — automated motor sequences within words
+/// - Mode 2 (medium): 150-400ms — word boundaries and common phrases
+/// - Mode 3 (slow): 400ms+ — thinking pauses (lexical retrieval, planning)
+///
+/// Transcription produces a unimodal distribution centered on the reading+typing speed.
+///
+/// Returns a modality score: 1.0 = clearly multi-modal (cognitive),
+/// 0.0 = unimodal (transcriptive).
+pub fn compute_iki_modality(keystrokes: &[TimedKeystroke]) -> f64 {
+    let ikis: Vec<u64> = keystrokes
+        .iter()
+        .map(|k| k.iki_us)
+        .filter(|&iki| iki > 0 && iki < 5_000_000)
+        .collect();
+
+    if ikis.len() < 50 {
+        return 0.5; // Insufficient data.
+    }
+
+    // Bin IKIs into 50ms buckets (0-50, 50-100, ..., up to 2000ms = 40 bins).
+    const BIN_WIDTH: u64 = 50_000; // 50ms in µs
+    const NUM_BINS: usize = 40;
+    let mut bins = [0u32; NUM_BINS];
+
+    for &iki in &ikis {
+        let bin = (iki / BIN_WIDTH).min(NUM_BINS as u64 - 1) as usize;
+        bins[bin] += 1;
+    }
+
+    // Find local maxima (peaks) in the histogram.
+    // A bin is a peak if it's higher than both neighbors by at least 5% of total.
+    let total = ikis.len() as f64;
+    let threshold = total * 0.03; // 3% of total to count as significant peak
+    let mut peaks = 0u32;
+
+    for i in 1..NUM_BINS - 1 {
+        let current = bins[i] as f64;
+        let left = bins[i - 1] as f64;
+        let right = bins[i + 1] as f64;
+        if current > left && current > right && current > threshold {
+            peaks += 1;
+        }
+    }
+    // Check edges.
+    if bins[0] as f64 > bins[1] as f64 && bins[0] as f64 > threshold {
+        peaks += 1;
+    }
+
+    // Also compute the coefficient of variation of the distribution.
+    // High CV = spread-out distribution (cognitive). Low CV = tight (transcriptive).
+    let mean = ikis.iter().sum::<u64>() as f64 / ikis.len() as f64;
+    let variance = ikis.iter().map(|&x| (x as f64 - mean).powi(2)).sum::<f64>()
+        / (ikis.len() - 1) as f64;
+    let cv = variance.sqrt() / mean;
+
+    // Combine: peaks indicate modes, CV indicates spread.
+    // Cognitive: 3+ peaks and CV > 0.8. Transcriptive: 1 peak and CV < 0.4.
+    let peak_score = match peaks {
+        0 | 1 => 0.1,
+        2 => 0.5,
+        3 => 0.8,
+        _ => 0.95,
+    };
+    let cv_score = 1.0 / (1.0 + (-5.0 * (cv - 0.6)).exp());
+
+    peak_score * 0.5 + cv_score * 0.5
 }
 
 #[cfg(test)]

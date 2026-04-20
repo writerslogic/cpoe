@@ -1,0 +1,212 @@
+// SPDX-License-Identifier: Apache-2.0
+
+//! English word frequency table for Lexical Retrieval Delay analysis.
+//!
+//! Top 2000 words from the Corpus of Contemporary American English (COCA),
+//! partitioned into 4 frequency tiers. Words are stored alphabetically within
+//! each tier for binary search lookup.
+
+/// Frequency tier for a word (lower = more common).
+/// Tier 1: ranks 1-100 (~50% of all running text).
+/// Tier 2: ranks 101-500 (~30% of text).
+/// Tier 3: ranks 501-2000 (~15% of text).
+/// Tier 4: not in top 2000 (~5% of text, rare/technical/literary).
+pub fn lookup_tier(word: &str) -> u8 {
+    let lower = word.to_ascii_lowercase();
+    let w = lower.as_str();
+    if TIER_1.binary_search(&w).is_ok() {
+        1
+    } else if TIER_2.binary_search(&w).is_ok() {
+        2
+    } else if TIER_3.binary_search(&w).is_ok() {
+        3
+    } else {
+        4
+    }
+}
+
+/// Top 100 English words (sorted alphabetically for binary search).
+const TIER_1: &[&str] = &[
+    "a", "about", "all", "also", "an", "and", "are", "as", "at", "be",
+    "because", "been", "but", "by", "can", "come", "could", "day", "did", "do",
+    "even", "find", "first", "for", "from", "get", "give", "go", "good", "had",
+    "has", "have", "he", "her", "him", "his", "how", "i", "if", "in",
+    "into", "is", "it", "its", "just", "know", "like", "look", "make", "man",
+    "many", "me", "more", "most", "my", "new", "no", "not", "now", "of",
+    "on", "one", "only", "or", "other", "our", "out", "over", "people", "say",
+    "she", "so", "some", "take", "tell", "than", "that", "the", "their", "them",
+    "then", "there", "these", "they", "thing", "think", "this", "time", "to", "two",
+    "up", "us", "use", "very", "want", "was", "we", "what", "when", "which",
+    "who", "will", "with", "would", "year", "you", "your",
+];
+
+/// Ranks 101-500 (sorted alphabetically).
+const TIER_2: &[&str] = &[
+    "able", "after", "again", "against", "ago", "air", "already", "always",
+    "american", "among", "another", "answer", "any", "anything", "area", "around",
+    "ask", "away", "back", "bad", "before", "begin", "being", "believe",
+    "best", "better", "between", "big", "black", "body", "book", "both",
+    "boy", "bring", "build", "business", "call", "came", "case", "change",
+    "child", "children", "city", "close", "company", "control", "country", "course",
+    "cut", "death", "decide", "door", "down", "during", "each", "early",
+    "earth", "eat", "end", "enough", "every", "example", "eye", "face",
+    "fact", "family", "far", "father", "feel", "few", "fight", "follow",
+    "food", "force", "form", "found", "four", "friend", "full", "game",
+    "girl", "got", "government", "great", "group", "grow", "hand", "happen",
+    "hard", "head", "hear", "help", "here", "high", "hold", "home",
+    "hope", "house", "human", "hundred", "idea", "important", "interest", "job",
+    "keep", "kind", "large", "last", "later", "lead", "learn", "leave",
+    "left", "less", "let", "life", "light", "line", "little", "live",
+    "long", "lose", "lot", "love", "low", "making", "matter", "mean",
+    "might", "mind", "miss", "money", "month", "mother", "move", "much",
+    "must", "name", "national", "need", "never", "next", "night", "nothing",
+    "number", "off", "often", "oh", "old", "once", "open", "order",
+    "own", "part", "pass", "pay", "place", "play", "point", "political",
+    "power", "president", "problem", "program", "public", "put", "question", "quite",
+    "read", "real", "really", "reason", "remember", "report", "right", "room",
+    "run", "same", "school", "see", "seem", "service", "set", "several",
+    "should", "show", "side", "since", "sit", "small", "social", "something",
+    "sometimes", "son", "sort", "speak", "stand", "start", "state", "still",
+    "story", "student", "study", "such", "sure", "system", "talk", "team",
+    "three", "through", "today", "together", "too", "top", "toward", "try",
+    "turn", "under", "understand", "until", "upon", "war", "water", "way",
+    "week", "well", "went", "where", "while", "white", "why", "without",
+    "woman", "word", "work", "world", "write", "wrong", "young",
+];
+
+/// Ranks 501-2000 (sorted alphabetically, representative sample).
+const TIER_3: &[&str] = &[
+    "above", "accept", "according", "account", "across", "act", "action",
+    "activity", "actually", "add", "address", "administration", "admit", "adult",
+    "affect", "age", "agency", "agree", "ahead", "allow", "almost", "alone",
+    "along", "although", "amount", "analysis", "animal", "appear", "apply",
+    "approach", "argue", "arm", "army", "arrive", "art", "article", "artist",
+    "assume", "attack", "attention", "audience", "authority", "available",
+    "avoid", "baby", "bag", "ball", "bank", "bar", "base", "beat", "beautiful",
+    "bed", "behavior", "behind", "benefit", "beyond", "bill", "bit", "blood",
+    "blue", "board", "born", "box", "break", "breath", "brother", "budget",
+    "building", "buy", "camera", "campaign", "candidate", "capital", "car",
+    "card", "care", "career", "carry", "catch", "cause", "center", "central",
+    "century", "certain", "certainly", "chair", "challenge", "chance", "character",
+    "charge", "check", "choice", "church", "citizen", "civil", "claim", "class",
+    "clear", "clearly", "coach", "cold", "collection", "college", "color",
+    "commercial", "common", "community", "condition", "conference", "congress",
+    "consider", "consumer", "contain", "continue", "cost", "cover", "create",
+    "crime", "cultural", "culture", "cup", "current", "customer", "dark", "data",
+    "daughter", "deal", "debate", "decade", "deep", "defense", "degree",
+    "democrat", "department", "describe", "design", "despite", "detail",
+    "determine", "develop", "development", "die", "difference", "different",
+    "difficult", "dinner", "direction", "director", "discover", "discuss",
+    "discussion", "disease", "doctor", "dog", "draw", "dream", "drink", "drive",
+    "drop", "drug", "east", "easy", "economic", "economy", "edge", "education",
+    "effect", "effort", "eight", "either", "election", "else", "employee",
+    "energy", "enjoy", "entire", "environment", "especially", "establish", "evening",
+    "event", "everyone", "everything", "evidence", "exactly", "examine", "executive",
+    "exist", "expect", "experience", "explain", "express", "fail", "fall",
+    "federal", "feeling", "field", "fill", "film", "final", "finally",
+    "financial", "finger", "finish", "fire", "firm", "fish", "five", "floor",
+    "fly", "focus", "foot", "foreign", "forget", "former", "forward", "free",
+    "front", "fund", "future", "garden", "gas", "general", "generation", "glass",
+    "goal", "green", "ground", "guess", "gun", "guy", "hair", "half", "hang",
+    "happy", "hat", "health", "heart", "heat", "heavy", "herself", "himself",
+    "history", "hit", "hospital", "hot", "hotel", "hour", "huge", "husband",
+    "identify", "image", "imagine", "impact", "improve", "include", "increase",
+    "indeed", "indicate", "individual", "industry", "information", "inside",
+    "instead", "institution", "interview", "investment", "involve", "issue",
+    "itself", "join", "judge", "key", "kid", "kill", "kitchen", "knowledge",
+    "land", "language", "late", "laugh", "law", "lawyer", "lay", "leader",
+    "least", "leg", "legal", "letter", "level", "likely", "list", "listen",
+    "local", "loss", "main", "maintain", "major", "majority", "manage",
+    "management", "manager", "market", "marriage", "material", "may", "maybe",
+    "measure", "media", "medical", "meet", "meeting", "member", "memory",
+    "mention", "message", "method", "middle", "might", "military", "million",
+    "minute", "model", "modern", "moment", "morning", "mouth", "movement",
+    "movie", "music", "myself", "natural", "nature", "near", "nearly",
+    "necessary", "network", "news", "newspaper", "nice", "none", "nor", "north",
+    "note", "notice", "official", "oil", "ok", "okay", "operation", "opportunity",
+    "option", "organization", "outside", "page", "pain", "painting", "paper",
+    "parent", "particular", "partner", "party", "patient", "pattern", "peace",
+    "per", "perform", "performance", "perhaps", "period", "person", "personal",
+    "phone", "physical", "pick", "picture", "piece", "plan", "plant", "player",
+    "please", "police", "policy", "poor", "popular", "population", "position",
+    "positive", "possible", "practice", "prepare", "present", "pressure", "pretty",
+    "prevent", "price", "private", "probably", "process", "produce", "product",
+    "production", "professional", "professor", "property", "protect", "prove",
+    "provide", "pull", "purpose", "push", "quality", "quickly", "race", "raise",
+    "range", "rate", "rather", "reach", "ready", "realize", "receive", "recent",
+    "recently", "recognize", "record", "red", "reduce", "reflect", "region",
+    "relate", "relationship", "religious", "remain", "remove", "represent",
+    "republican", "require", "research", "resource", "respond", "response",
+    "rest", "result", "return", "reveal", "rich", "rise", "risk", "road",
+    "rock", "role", "rule", "safe", "save", "scene", "science", "scientist",
+    "score", "sea", "season", "seat", "second", "section", "security", "seek",
+    "sell", "send", "senior", "sense", "series", "serious", "serve", "seven",
+    "sex", "shake", "share", "she", "shoot", "short", "shoulder", "shut",
+    "sign", "significant", "similar", "simple", "simply", "single", "sister",
+    "situation", "six", "size", "skill", "skin", "soldier", "song", "soon",
+    "source", "south", "southern", "space", "special", "specific", "spend",
+    "sport", "spring", "staff", "stage", "star", "statement", "station", "stay",
+    "step", "stock", "stop", "street", "strong", "structure", "success",
+    "successful", "suddenly", "suffer", "suggest", "summer", "support", "table",
+    "technology", "television", "ten", "tend", "term", "test", "thank",
+    "theory", "third", "those", "though", "thought", "thousand", "threat",
+    "throughout", "throw", "thus", "tonight", "total", "tough", "town", "trade",
+    "traditional", "training", "travel", "treat", "treatment", "tree", "trial",
+    "trip", "trouble", "truth", "type", "unit", "value", "various", "victim",
+    "view", "violence", "visit", "voice", "vote", "wait", "walk", "wall",
+    "watch", "weapon", "wear", "weight", "west", "western", "whatever", "wife",
+    "win", "window", "wish", "within", "wonder", "worker", "yeah", "yes",
+    "yet", "yourself",
+];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tier_1_lookup() {
+        assert_eq!(lookup_tier("the"), 1);
+        assert_eq!(lookup_tier("The"), 1);
+        assert_eq!(lookup_tier("AND"), 1);
+        assert_eq!(lookup_tier("people"), 1);
+        assert_eq!(lookup_tier("would"), 1);
+    }
+
+    #[test]
+    fn tier_2_lookup() {
+        assert_eq!(lookup_tier("family"), 2);
+        assert_eq!(lookup_tier("government"), 2);
+        assert_eq!(lookup_tier("understand"), 2);
+        assert_eq!(lookup_tier("question"), 2);
+    }
+
+    #[test]
+    fn tier_3_lookup() {
+        assert_eq!(lookup_tier("technology"), 3);
+        assert_eq!(lookup_tier("relationship"), 3);
+        assert_eq!(lookup_tier("environment"), 3);
+        assert_eq!(lookup_tier("administration"), 3);
+    }
+
+    #[test]
+    fn tier_4_rare_words() {
+        assert_eq!(lookup_tier("conflagration"), 4);
+        assert_eq!(lookup_tier("sesquipedalian"), 4);
+        assert_eq!(lookup_tier("obstreperous"), 4);
+        assert_eq!(lookup_tier("defenestration"), 4);
+    }
+
+    #[test]
+    fn tiers_are_sorted() {
+        // Verify binary search precondition.
+        for (i, w) in TIER_1.windows(2).enumerate() {
+            assert!(w[0] < w[1], "TIER_1 not sorted at index {i}: {:?} >= {:?}", w[0], w[1]);
+        }
+        for (i, w) in TIER_2.windows(2).enumerate() {
+            assert!(w[0] < w[1], "TIER_2 not sorted at index {i}: {:?} >= {:?}", w[0], w[1]);
+        }
+        for (i, w) in TIER_3.windows(2).enumerate() {
+            assert!(w[0] < w[1], "TIER_3 not sorted at index {i}: {:?} >= {:?}", w[0], w[1]);
+        }
+    }
+}

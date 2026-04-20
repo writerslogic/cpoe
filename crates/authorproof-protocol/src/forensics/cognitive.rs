@@ -179,51 +179,13 @@ pub fn analyze_cognitive_content(
     }
 }
 
-/// Classify a word into frequency tier based on rank.
-/// Tier 1: top 100 (the, of, and, to, a, in, is, ...).
-/// Tier 2: 101-1000 (common everyday words).
-/// Tier 3: 1001-5000 (educated vocabulary).
-/// Tier 4: 5001+ (rare/technical/literary).
+/// Classify a word into frequency tier using COCA-based lookup table.
+/// Tier 1: ranks 1-100 (~50% of running text).
+/// Tier 2: ranks 101-500 (~30% of text).
+/// Tier 3: ranks 501-2000 (~15% of text).
+/// Tier 4: not in top 2000 (rare/technical/literary).
 pub fn word_frequency_tier(word: &str) -> u8 {
-    let lower = word.to_ascii_lowercase();
-    let w = lower.as_str();
-
-    // Tier 1: Top 100 English words (covers ~50% of all text).
-    if matches!(w,
-        "the" | "of" | "and" | "to" | "a" | "in" | "is" | "it" | "that" | "was" |
-        "for" | "on" | "are" | "with" | "as" | "i" | "his" | "they" | "be" | "at" |
-        "one" | "have" | "this" | "from" | "or" | "had" | "by" | "not" | "but" | "what" |
-        "all" | "were" | "when" | "we" | "there" | "can" | "an" | "your" | "which" | "their" |
-        "said" | "if" | "do" | "will" | "each" | "about" | "how" | "up" | "out" | "them" |
-        "then" | "she" | "many" | "some" | "so" | "these" | "would" | "other" | "into" | "has" |
-        "her" | "two" | "like" | "him" | "see" | "time" | "could" | "no" | "make" | "than" |
-        "first" | "been" | "its" | "who" | "now" | "people" | "my" | "made" | "over" | "did" |
-        "down" | "only" | "way" | "find" | "use" | "may" | "long" | "very" | "after" | "words" |
-        "just" | "where" | "most" | "know" | "get" | "through" | "back" | "much" | "go" | "good"
-    ) {
-        return 1;
-    }
-
-    // Tier 2: Next 900 (common words most adults use daily).
-    // Approximate by word length + common suffixes heuristic.
-    if w.len() <= 5 {
-        return 2; // Short words tend to be common.
-    }
-
-    // Tier 3: Words 6-9 chars with common patterns.
-    if w.len() <= 9 && (w.ends_with("ing") || w.ends_with("tion") || w.ends_with("ment")
-        || w.ends_with("able") || w.ends_with("ness") || w.ends_with("ful"))
-    {
-        return 3;
-    }
-
-    // Tier 4: Long/unusual words.
-    if w.len() >= 10 {
-        return 4;
-    }
-
-    // Default tier 3 for medium-length words without common suffixes.
-    3
+    super::word_frequency::lookup_tier(word)
 }
 
 #[cfg(test)]
@@ -300,8 +262,8 @@ mod tests {
     fn test_word_frequency_tiers() {
         assert_eq!(word_frequency_tier("the"), 1);
         assert_eq!(word_frequency_tier("and"), 1);
-        assert_eq!(word_frequency_tier("cat"), 2);
-        assert_eq!(word_frequency_tier("running"), 3);
+        assert_eq!(word_frequency_tier("family"), 2);
+        assert_eq!(word_frequency_tier("technology"), 3);
         assert_eq!(word_frequency_tier("conflagration"), 4);
         assert_eq!(word_frequency_tier("sesquipedalian"), 4);
     }
