@@ -206,22 +206,15 @@ fn is_common_bigram(bigram: &[u8; 2]) -> bool {
 /// Cognitive: ratio 8-30 → high probability.
 /// Transcriptive: ratio 2-4 → low probability.
 fn sentence_initiation_to_probability(mean_ratio: f64, variance: f64) -> f64 {
-    // Ratio contribution: sigmoid centered at 6.0 (transition zone).
-    let ratio_score = 1.0 / (1.0 + (-0.5 * (mean_ratio - 6.0)).exp());
-
-    // Variance contribution: high variance = cognitive (some sentences easy, some hard).
-    // Normalize variance; cognitive typically > 20, transcriptive < 5.
-    let variance_score = 1.0 / (1.0 + (-0.2 * (variance - 10.0)).exp());
-
-    // Combine: ratio is primary, variance confirms.
+    let ratio_score = crate::sigmoid(mean_ratio, 0.5, 6.0);
+    let variance_score = crate::sigmoid(variance, 0.2, 10.0);
     ratio_score * 0.7 + variance_score * 0.3
 }
 
 /// Map bigram fluency ratio to [0, 1] cognitive probability.
 /// Cognitive: ratio > 2.5. Transcriptive: ratio < 1.5.
 fn bigram_fluency_to_probability(ratio: f64) -> f64 {
-    // Sigmoid centered at 2.0 (transition zone between 1.5 and 2.5).
-    1.0 / (1.0 + (-2.0 * (ratio - 2.0)).exp())
+    crate::sigmoid(ratio, 2.0, 2.0)
 }
 
 /// IKI distribution multi-modality analysis.
@@ -290,7 +283,7 @@ pub fn compute_iki_modality(keystrokes: &[TimedKeystroke]) -> f64 {
         3 => 0.8,
         _ => 0.95,
     };
-    let cv_score = 1.0 / (1.0 + (-5.0 * (cv - 0.6)).exp());
+    let cv_score = crate::sigmoid(cv, 5.0, 0.6);
 
     peak_score * 0.5 + cv_score * 0.5
 }

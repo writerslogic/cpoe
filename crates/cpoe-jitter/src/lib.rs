@@ -34,7 +34,15 @@ pub mod phys;
 pub mod pure;
 pub mod traits;
 
+pub use cognitive::CognitiveTemporalMetrics;
 pub use evidence::{Evidence, EvidenceChain, MAX_EVIDENCE_RECORDS};
+
+/// Logistic sigmoid: maps a real value to [0, 1] with steepness `k` around `midpoint`.
+/// Used throughout the forensic classifiers for score normalization.
+#[inline]
+pub fn sigmoid(x: f64, k: f64, midpoint: f64) -> f64 {
+    1.0 / (1.0 + libm::exp(-k * (x - midpoint)))
+}
 pub use model::{Anomaly, AnomalyKind, HumanModel, SequenceStats, ValidationResult};
 #[cfg(feature = "std")]
 pub use phys::PhysJitter;

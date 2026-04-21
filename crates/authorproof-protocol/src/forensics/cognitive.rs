@@ -149,14 +149,9 @@ pub fn analyze_cognitive_content(
     let lrd = compute_lrd_correlation(word_events).unwrap_or(0.0);
     let (non_append, mean_del) = compute_edit_topology(edit_ops);
 
-    // Map LRD correlation to probability: sigmoid centered at 0.15.
-    let lrd_prob = 1.0 / (1.0 + (-10.0 * (lrd - 0.15)).exp());
-
-    // Map non-append ratio to probability: sigmoid centered at 0.08.
-    let nar_prob = 1.0 / (1.0 + (-30.0 * (non_append - 0.08)).exp());
-
-    // Map mean deletion length: > 3 chars = thinking deletions.
-    let del_prob = 1.0 / (1.0 + (-1.5 * (mean_del - 2.5)).exp());
+    let lrd_prob = cpoe_jitter::sigmoid(lrd, 10.0, 0.15);
+    let nar_prob = cpoe_jitter::sigmoid(non_append, 30.0, 0.08);
+    let del_prob = cpoe_jitter::sigmoid(mean_del, 1.5, 2.5);
 
     // Weight: LRD is strongest signal, non-append is structural, deletion confirms.
     let combined = if word_events.len() >= 20 && edit_ops.len() >= 50 {
@@ -260,10 +255,9 @@ pub fn analyze_error_fingerprint(corrections: &[CorrectionEvent]) -> Option<Erro
     let typo_ratio = typo_count / total;
     let mean_correction_size = corrections.iter().map(|c| c.char_count as f64).sum::<f64>() / total;
 
-    // Cognitive: high semantic ratio + large corrections + few visual errors.
-    let semantic_score = 1.0 / (1.0 + (-8.0 * (semantic_ratio - 0.25)).exp());
-    let size_score = 1.0 / (1.0 + (-(mean_correction_size - 3.0)).exp());
-    let visual_penalty = 1.0 - (1.0 / (1.0 + (-10.0 * (visual_error_ratio - 0.1)).exp()));
+    let semantic_score = cpoe_jitter::sigmoid(semantic_ratio, 8.0, 0.25);
+    let size_score = cpoe_jitter::sigmoid(mean_correction_size, 1.0, 3.0);
+    let visual_penalty = 1.0 - cpoe_jitter::sigmoid(visual_error_ratio, 10.0, 0.1);
 
     let cognitive_probability = semantic_score * 0.45 + size_score * 0.30 + visual_penalty * 0.25;
 
@@ -339,7 +333,7 @@ pub fn compute_baseline_deviation(
     let max_z = deviations.iter().cloned().fold(0.0f64, f64::max);
 
     // Map z-score to [0, 1]: z < 1.5 = normal, z > 3.0 = extreme.
-    1.0 / (1.0 + (-2.0 * (max_z - 2.0)).exp())
+    cpoe_jitter::sigmoid(max_z, 2.0, 2.0)
 }
 
 // ---------------------------------------------------------------------------
@@ -494,7 +488,7 @@ fn compute_spoofing_penalty(
     if max_disagreement < 0.4 {
         0.0
     } else {
-        1.0 / (1.0 + (-8.0 * (max_disagreement - 0.6)).exp())
+        cpoe_jitter::sigmoid(max_disagreement, 8.0, 0.6)
     }
 }
 
