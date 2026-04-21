@@ -125,6 +125,32 @@ pub struct WritingModeAnalysis {
     pub thinking_pause_ratio: f64,
     /// Coefficient of variation of burst lengths (higher = more cognitive).
     pub burst_length_cv: f64,
+    /// Optional deep cognitive layer metrics (populated when word-level data available).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cognitive_layer: Option<CognitiveLayerMetrics>,
+}
+
+/// Deep cognitive analysis metrics from word-level and timing-level signals.
+/// These provide additional evidence beyond the event-level signals and are
+/// included in evidence packets and forensic reports.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CognitiveLayerMetrics {
+    /// Sentence Initiation Delay ratio (cognitive: 8-30x, transcriptive: 2-4x).
+    pub sentence_initiation_ratio: f64,
+    /// IKI histogram modality score (cognitive: multi-modal >0.7, transcriptive: <0.3).
+    pub iki_modality_score: f64,
+    /// Bigram fluency differential (cognitive: >2.5, transcriptive: <1.5).
+    pub bigram_fluency_ratio: f64,
+    /// Lexical Retrieval Delay Pearson correlation (cognitive: >0.25, transcriptive: ~0).
+    pub lrd_correlation: f64,
+    /// Non-append edit ratio (cognitive: >0.15, transcriptive: <0.03).
+    pub non_append_ratio: f64,
+    /// Error fingerprint: semantic correction ratio (cognitive: >0.4, transcriptive: <0.15).
+    pub semantic_correction_ratio: f64,
+    /// Joint signal consistency check (0 = consistent, >0.5 = spoofing suspected).
+    pub spoofing_indicator: f64,
+    /// Deviation from personal baseline (0 = normal, >0.6 = anomalous).
+    pub baseline_deviation: f64,
 }
 
 /// Analysis of revision patterns from consecutive size_delta sequences.
@@ -157,6 +183,7 @@ pub fn classify_writing_mode(
             revision_pattern: RevisionPattern::default(),
             thinking_pause_ratio: 0.0,
             burst_length_cv: 0.0,
+            cognitive_layer: None,
         };
     }
 
@@ -290,6 +317,7 @@ pub fn classify_writing_mode(
         revision_pattern: revision,
         thinking_pause_ratio,
         burst_length_cv,
+        cognitive_layer: None, // Populated by caller when word-level data available
     }
 }
 

@@ -38,6 +38,16 @@ pub struct FfiForensicBreakdown {
     pub burst_speed_cv: f64,
     /// Pause depth distribution: [sentence_fraction, paragraph_fraction, deep_fraction].
     pub pause_depth_distribution: Vec<f64>,
+    /// Joint signal consistency: 0.0 = consistent, >0.5 = possible spoofing.
+    pub spoofing_indicator: f64,
+    /// Sentence initiation delay ratio (cognitive: 8-30x, transcriptive: 2-4x).
+    pub sentence_initiation_ratio: f64,
+    /// Lexical retrieval delay correlation (cognitive: >0.25, transcriptive: ~0).
+    pub lrd_correlation: f64,
+    /// IKI distribution modality (cognitive: multi-modal >0.7, transcriptive: <0.3).
+    pub iki_modality_score: f64,
+    /// Deviation from personal writing baseline (0 = normal, >0.6 = anomalous).
+    pub baseline_deviation: f64,
     pub error_message: Option<String>,
 }
 
@@ -78,6 +88,11 @@ impl FfiForensicBreakdown {
             correction_ratio: 0.0,
             burst_speed_cv: 0.0,
             pause_depth_distribution: vec![0.0, 0.0, 0.0],
+            spoofing_indicator: 0.0,
+            sentence_initiation_ratio: 0.0,
+            lrd_correlation: 0.0,
+            iki_modality_score: 0.0,
+            baseline_deviation: 0.0,
             error_message: Some(msg),
         }
     }
@@ -171,6 +186,36 @@ pub fn ffi_get_forensic_breakdown(path: String) -> FfiForensicBreakdown {
         correction_ratio: metrics.cadence.correction_ratio.get(),
         burst_speed_cv: metrics.cadence.burst_speed_cv,
         pause_depth_distribution: metrics.cadence.pause_depth_distribution.to_vec(),
+        spoofing_indicator: metrics
+            .writing_mode
+            .as_ref()
+            .and_then(|wm| wm.cognitive_layer.as_ref())
+            .map(|cl| cl.spoofing_indicator)
+            .unwrap_or(0.0),
+        sentence_initiation_ratio: metrics
+            .writing_mode
+            .as_ref()
+            .and_then(|wm| wm.cognitive_layer.as_ref())
+            .map(|cl| cl.sentence_initiation_ratio)
+            .unwrap_or(0.0),
+        lrd_correlation: metrics
+            .writing_mode
+            .as_ref()
+            .and_then(|wm| wm.cognitive_layer.as_ref())
+            .map(|cl| cl.lrd_correlation)
+            .unwrap_or(0.0),
+        iki_modality_score: metrics
+            .writing_mode
+            .as_ref()
+            .and_then(|wm| wm.cognitive_layer.as_ref())
+            .map(|cl| cl.iki_modality_score)
+            .unwrap_or(0.0),
+        baseline_deviation: metrics
+            .writing_mode
+            .as_ref()
+            .and_then(|wm| wm.cognitive_layer.as_ref())
+            .map(|cl| cl.baseline_deviation)
+            .unwrap_or(0.0),
         error_message: None,
     }
 }

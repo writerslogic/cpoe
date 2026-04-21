@@ -95,6 +95,11 @@ pub struct PacketRfc {
     #[serde(rename = "19", default, skip_serializing_if = "Option::is_none")]
     pub key_rotation: Option<KeyRotationMetadata>,
 
+    /// Cognitive writing mode analysis.
+    /// Key 20 in CDDL.
+    #[serde(rename = "20", default, skip_serializing_if = "Option::is_none")]
+    pub cognitive_analysis: Option<CognitiveAnalysisWire>,
+
     /// Vendor extensions (string keys).
     /// Uses `serde_json::Value` because this internal type is only serialized
     /// to JSON; CBOR wire encoding uses the separate `EvidencePacket` type.
@@ -350,6 +355,55 @@ impl ProfileDeclaration {
     }
 }
 
+/// Cognitive writing mode analysis included in signed evidence.
+///
+/// ```cddl
+/// cognitive-analysis = {
+///     1 => uint,     ; mode: 1=cognitive, 2=transcriptive, 3=mixed, 4=insufficient
+///     2 => uint,     ; cognitive-score (millibits, 0-1000)
+///     3 => uint,     ; confidence (millibits, 0-1000)
+///     4 => uint,     ; spoofing-indicator (millibits, 0-1000)
+///     ? 5 => uint,   ; sentence-initiation-ratio (centibits, x100)
+///     ? 6 => int,    ; lrd-correlation (centibits, x100, signed)
+///     ? 7 => uint,   ; iki-modality (millibits, 0-1000)
+///     ? 8 => uint,   ; baseline-deviation (millibits, 0-1000)
+/// }
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CognitiveAnalysisWire {
+    /// Writing mode: 1=cognitive, 2=transcriptive, 3=mixed, 4=insufficient.
+    #[serde(rename = "1")]
+    pub mode: u8,
+
+    /// Cognitive score in millibits (0-1000 maps to 0.0-1.0).
+    #[serde(rename = "2")]
+    pub cognitive_score_millibits: u16,
+
+    /// Confidence in millibits (0-1000).
+    #[serde(rename = "3")]
+    pub confidence_millibits: u16,
+
+    /// Spoofing indicator in millibits (0-1000). >500 = suspected spoofing.
+    #[serde(rename = "4")]
+    pub spoofing_millibits: u16,
+
+    /// Sentence initiation delay ratio * 100 (e.g., 850 = 8.5x).
+    #[serde(rename = "5", default, skip_serializing_if = "Option::is_none")]
+    pub sentence_initiation_centibits: Option<u16>,
+
+    /// LRD correlation * 100, signed (e.g., 35 = 0.35, -5 = -0.05).
+    #[serde(rename = "6", default, skip_serializing_if = "Option::is_none")]
+    pub lrd_correlation_centibits: Option<i16>,
+
+    /// IKI modality in millibits (0-1000).
+    #[serde(rename = "7", default, skip_serializing_if = "Option::is_none")]
+    pub iki_modality_millibits: Option<u16>,
+
+    /// Baseline deviation in millibits (0-1000).
+    #[serde(rename = "8", default, skip_serializing_if = "Option::is_none")]
+    pub baseline_deviation_millibits: Option<u16>,
+}
+
 /// Privacy budget certificate from CDDL.
 ///
 /// Tracks differential privacy budget consumption per key period.
@@ -428,6 +482,7 @@ impl PacketRfc {
             profile: Some(ProfileDeclaration::core()),
             privacy_budget: None,
             key_rotation: None,
+            cognitive_analysis: None,
             extensions: BTreeMap::new(),
         }
     }
