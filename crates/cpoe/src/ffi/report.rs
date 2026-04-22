@@ -73,7 +73,7 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
         }
     };
     let score = (avg_forensic * 100.0).clamp(0.0, 100.0) as u32;
-    let mut verdict = Verdict::from_score(score);
+    let verdict = Verdict::from_score(score);
     let lr = compute_likelihood_ratio(score);
     let enfsi_tier = EnfsiTier::from_lr(lr);
 
@@ -120,8 +120,32 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
         0.0
     };
 
+    // Estimate total keystrokes from character insertions across all checkpoints.
+    // Positive size_delta = net characters added per checkpoint. Factor of 1.15
+    // accounts for the typical deletion overhead in prose editing (~15% of typed
+    // characters are deleted). Falls back to events.len() as a lower bound so
+    // the field is never zero for sessions with recorded checkpoints.
+    let size_delta_chars: i64 = events.iter().map(|e| e.size_delta.max(0) as i64).sum();
+    let keystroke_estimate =
+        ((size_delta_chars as f64 * 1.15).ceil() as u64).max(events.len() as u64);
+
+    // Paste ratio from actual paste-flagged events.
+    let paste_chars: i64 = events
+        .iter()
+        .filter(|e| e.is_paste)
+        .map(|e| e.size_delta.max(0) as i64)
+        .sum();
+    let paste_ratio_pct = if size_delta_chars > 0 {
+        Some(paste_chars as f64 / size_delta_chars as f64 * 100.0)
+    } else {
+        None
+    };
+
     let mut process = ProcessEvidence {
         paste_operations: Some(paste_count),
+        paste_ratio_pct,
+        // Always populated from size_delta estimate; overridden below if IKI data available.
+        total_keystrokes: Some(keystroke_estimate),
         swf_checkpoints: Some(events.len() as u64),
         swf_avg_compute_ms: Some(avg_compute_ms),
         swf_chain_verified: true,
@@ -168,6 +192,27 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
             flag: "Short Session".into(),
             detail: format!("{:.1} minutes — limited evidence window", total_min),
             signal: FlagSignal::Neutral,
+        });
+    }
+    {
+        let estimated_kpm = if total_min > 0.0 {
+            keystroke_estimate as f64 / total_min
+        } else {
+            0.0
+        };
+        flags.push(ReportFlag {
+            category: "Keystroke Activity".into(),
+            flag: format!("{} Estimated Keystrokes", keystroke_estimate),
+            detail: format!(
+                "{:.0} kpm average across {} checkpoint events",
+                estimated_kpm,
+                events.len()
+            ),
+            signal: if keystroke_estimate > 200 {
+                FlagSignal::Human
+            } else {
+                FlagSignal::Neutral
+            },
         });
     }
 
@@ -275,20 +320,25 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
         }
     };
 
-    // Populate behavioral fields from forensic metrics
+    // Populate behavioral fields from forensic metrics.
+    // IKI data is only available when jitter_samples are passed to the forensics pipeline
+    // (currently only during live analysis). For post-hoc report generation we use the
+    // size_delta estimates set above and skip the cadence-derived fields.
     let c = &metrics.cadence;
     if c.mean_iki_ns > 0.0 && c.mean_iki_ns.is_finite() {
         let cv = c.std_dev_iki_ns / c.mean_iki_ns;
         process.iki_cv = if cv.is_finite() { Some(cv) } else { None };
-        process.total_keystrokes = Some(c.burst_count as u64 + c.pause_count as u64);
         if c.percentiles[PERCENTILE_IDX_MEDIAN] > 0.0
             && c.percentiles[PERCENTILE_IDX_MEDIAN].is_finite()
         {
-            process.pause_median_sec = Some(c.percentiles[PERCENTILE_IDX_MEDIAN] / 1_000_000_000.0);
+            process.pause_median_sec =
+                Some(c.percentiles[PERCENTILE_IDX_MEDIAN] / 1_000_000_000.0);
         }
-        if c.percentiles[PERCENTILE_IDX_P95] > 0.0 && c.percentiles[PERCENTILE_IDX_P95].is_finite()
+        if c.percentiles[PERCENTILE_IDX_P95] > 0.0
+            && c.percentiles[PERCENTILE_IDX_P95].is_finite()
         {
-            process.pause_p95_sec = Some(c.percentiles[PERCENTILE_IDX_P95] / 1_000_000_000.0);
+            process.pause_p95_sec =
+                Some(c.percentiles[PERCENTILE_IDX_P95] / 1_000_000_000.0);
         }
     }
     let append_ratio = metrics.primary.monotonic_append_ratio.get();
@@ -298,15 +348,25 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
         None
     };
     let correction_ratio = c.correction_ratio.get();
-    if correction_ratio.is_finite() && correction_ratio > 0.0 {
-        let total_events = (c.burst_count + c.pause_count) as u64;
-        process.deletion_sequences = Some((correction_ratio * total_events as f64) as u64);
+    if correction_ratio.is_finite() && correction_ratio > 0.0 && keystroke_estimate > 0 {
+        process.deletion_sequences =
+            Some((correction_ratio * keystroke_estimate as f64) as u64);
     }
 
-    // Override verdict to Inconclusive when behavioral data is absent
-    if process.total_keystrokes.is_none() && process.iki_cv.is_none() && score < 60 {
-        verdict = Verdict::Inconclusive;
-    }
+    // Blend the stored per-checkpoint cadence scores with the post-hoc topology
+    // assessment (edit entropy, velocity, session structure). The topology score is
+    // more stable for short sessions where per-checkpoint cadence is noisy.
+    let topology_assessment = finite_or(metrics.assessment_score.get(), 0.0);
+    let (score, verdict, lr, enfsi_tier) = if topology_assessment > 0.0 && events.len() >= 5 {
+        let blended = (avg_forensic * 0.6 + topology_assessment * 0.4).clamp(0.0, 1.0);
+        let s = (blended * 100.0) as u32;
+        let v = Verdict::from_score(s);
+        let l = compute_likelihood_ratio(s);
+        let e = EnfsiTier::from_lr(l);
+        (s, v, l, e)
+    } else {
+        (score, verdict, lr, enfsi_tier)
+    };
 
     let edit_topology: Vec<EditRegion> = regions
         .values()

@@ -77,7 +77,7 @@ pub fn draw_page2(layer: &PdfLayerReference, r: &WarReport, fonts: &PdfFonts, fo
         (
             "Revision Intensity",
             p.revision_intensity
-                .map(|v| format!("{:.2} edits/sentence", v))
+                .map(|v| format!("{:.0}% non-append edits", v * 100.0))
                 .unwrap_or_else(|| "—".into()),
         ),
         (
