@@ -282,7 +282,8 @@ fn test_builder_with_presence() {
         challenge_interval: Duration::from_secs(1),
         interval_variance: 0.0,
         response_window: Duration::from_secs(60),
-    });
+    })
+    .unwrap();
     verifier.start_session().expect("start");
     let challenge = verifier.issue_challenge().expect("issue");
     let word = challenge

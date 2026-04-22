@@ -8,6 +8,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet, VecDeque};
+use unicode_normalization::UnicodeNormalization;
 
 const MAX_WORD_LENGTH: usize = 20;
 const MINHASH_FUNCTIONS: usize = 100;
@@ -154,9 +155,12 @@ impl PunctuationSignature {
 
     /// Weighted merge.
     pub fn merge(&mut self, other: &PunctuationSignature, self_weight: f64, other_weight: f64) {
+        for v in self.frequencies.values_mut() {
+            *v = (*v as f64 * self_weight) as f32;
+        }
         for (k, v) in &other.frequencies {
             let entry = self.frequencies.entry(*k).or_insert(0.0);
-            *entry = (*entry as f64 * self_weight + *v as f64 * other_weight) as f32;
+            *entry += (*v as f64 * other_weight) as f32;
         }
     }
 
@@ -175,7 +179,7 @@ impl PunctuationSignature {
         for k in &all_keys {
             let a = *self.frequencies.get(*k).unwrap_or(&0.0) as f64;
             let b = *other.frequencies.get(*k).unwrap_or(&0.0) as f64;
-            sim_sum += 1.0 - (a - b).abs();
+            sim_sum += (1.0 - (a - b).abs()).max(0.0);
         }
 
         sim_sum / all_keys.len() as f64
@@ -405,7 +409,7 @@ impl VoiceCollector {
 
     fn finish_word(&mut self) {
         if !self.current_word.is_empty() {
-            let len = self.current_word.len().min(MAX_WORD_LENGTH);
+            let len = self.current_word.chars().count().min(MAX_WORD_LENGTH);
             if len > 0 {
                 self.word_lengths[len - 1] += 1;
             }
@@ -418,8 +422,14 @@ impl VoiceCollector {
         if !self.fingerprint.consent_given {
             return;
         }
-        self.ngram_buffer
-            .push_back(c.to_lowercase().next().unwrap_or(c));
+        let nc = if c.is_ascii() {
+            c.to_ascii_lowercase()
+        } else {
+            let lowered = c.to_lowercase().next().unwrap_or(c);
+            let normalized = lowered.to_string().nfc().collect::<String>();
+            normalized.chars().next().unwrap_or(lowered)
+        };
+        self.ngram_buffer.push_back(nc);
         if self.ngram_buffer.len() > NGRAM_SIZE {
             self.ngram_buffer.pop_front();
         }
@@ -484,6 +494,7 @@ impl VoiceCollector {
     }
 
     pub fn reset(&mut self) {
+        let consent = self.fingerprint.consent_given;
         self.current_word.clear();
         self.ngram_buffer.clear();
         self.chars_since_backspace = 0;
@@ -492,7 +503,7 @@ impl VoiceCollector {
         self.quick_corrections = 0;
         self.total_chars = 0;
         self.word_lengths = [0; MAX_WORD_LENGTH];
-        self.fingerprint = VoiceFingerprint::new(false);
+        self.fingerprint = VoiceFingerprint::new(consent);
         self.chars_before_backspace_sum = 0;
         self.chars_before_backspace_count = 0;
         self.consecutive_run_sum = 0;
@@ -514,10 +525,12 @@ fn is_backspace_keycode(keycode: u16) -> bool {
 
 /// Bhattacharyya coefficient between two f32 histograms.
 pub fn histogram_similarity(a: &[f32], b: &[f32]) -> f64 {
-    a.iter()
+    let sum: f64 = a
+        .iter()
         .zip(b.iter())
-        .map(|(&x, &y)| ((x as f64) * (y as f64)).sqrt())
-        .sum()
+        .map(|(&x, &y)| ((x.max(0.0) as f64) * (y.max(0.0) as f64)).sqrt())
+        .sum();
+    sum.min(1.0)
 }
 
 #[cfg(test)]

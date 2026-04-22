@@ -91,7 +91,8 @@ pub(crate) fn cmd_presence(action: PresenceAction, out: &OutputMode) -> Result<(
                 ));
             }
 
-            let mut verifier = Verifier::new(PresenceConfig::default());
+            let mut verifier = Verifier::new(PresenceConfig::default())
+                .map_err(|e| anyhow!("Invalid presence config: {}", e))?;
             let session = verifier
                 .start_session()
                 .map_err(|e| anyhow!("Error starting session: {}", e))?;
@@ -239,7 +240,8 @@ pub(crate) fn cmd_presence(action: PresenceAction, out: &OutputMode) -> Result<(
             let lock_file = acquire_session_lock(&session_file)?;
             let session = load_session(&session_file)?;
 
-            let mut verifier = Verifier::new(PresenceConfig::default());
+            let mut verifier = Verifier::new(PresenceConfig::default())
+                .map_err(|e| anyhow!("Invalid presence config: {}", e))?;
             verifier
                 .restore_session(session)
                 .map_err(|e| anyhow!("Error restoring session: {}", e))?;

@@ -26,6 +26,9 @@ impl StreamingStatsExt for StreamingStats {
     }
 
     fn update(&mut self, value: f64) {
+        if !value.is_finite() {
+            return;
+        }
         self.count += 1;
         let delta = value - self.mean;
         let new_mean = self.mean + delta / self.count as f64;
@@ -45,7 +48,7 @@ impl StreamingStatsExt for StreamingStats {
         if self.count < 2 {
             0.0
         } else {
-            self.m2 / (self.count - 1) as f64
+            (self.m2 / (self.count - 1) as f64).max(0.0)
         }
     }
 

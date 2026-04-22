@@ -35,7 +35,7 @@ fn verify_sample_chain(samples: &[HybridSample]) -> Result<(), String> {
             if sample.keystroke_count <= prev.keystroke_count {
                 return Err(format!("sample {i}: keystroke count not monotonic"));
             }
-        } else if sample.previous_hash != [0u8; 32] {
+        } else if !bool::from(sample.previous_hash.ct_eq(&[0u8; 32])) {
             return Err("sample 0: non-zero previous hash".to_string());
         }
     }

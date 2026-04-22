@@ -31,7 +31,7 @@ pub fn compute_initial_digest(identity_fingerprint: Vec<u8>) -> BaselineDigest {
 /// Uses numerically stable running average: mu_n = mu_{n-1} + (x_n - mu_{n-1}) / n
 pub fn update_digest_in_place(digest: &mut BaselineDigest, summary: &SessionBehavioralSummary) {
     digest.session_count += 1;
-    digest.total_keystrokes += summary.keystroke_count;
+    digest.total_keystrokes = digest.total_keystrokes.saturating_add(summary.keystroke_count);
 
     let total_weight: f64 = summary.iki_histogram.iter().sum();
     let mean_iki = if total_weight > f64::EPSILON {
@@ -46,10 +46,18 @@ pub fn update_digest_in_place(digest: &mut BaselineDigest, summary: &SessionBeha
         0.0
     };
 
-    digest.iki_stats.update(mean_iki);
-    digest.cv_stats.update(summary.iki_cv);
-    digest.hurst_stats.update(summary.hurst);
-    digest.pause_stats.update(summary.pause_frequency);
+    if mean_iki.is_finite() {
+        digest.iki_stats.update(mean_iki);
+    }
+    if summary.iki_cv.is_finite() {
+        digest.cv_stats.update(summary.iki_cv);
+    }
+    if summary.hurst.is_finite() {
+        digest.hurst_stats.update(summary.hurst);
+    }
+    if summary.pause_frequency.is_finite() {
+        digest.pause_stats.update(summary.pause_frequency);
+    }
 
     let n_inv = 1.0 / (digest.session_count as f64);
     for (prev, &cur) in digest

@@ -21,7 +21,8 @@ fn test_challenge_lifecycle_type_word() {
     let mut verifier = Verifier::new(Config {
         enabled_challenges: vec![ChallengeType::TypeWord],
         ..Default::default()
-    });
+    })
+    .unwrap();
 
     let _session = verifier.start_session().expect("start session");
     let challenge = verifier.issue_challenge().expect("issue challenge");
@@ -46,7 +47,8 @@ fn test_challenge_lifecycle_type_phrase() {
     let mut verifier = Verifier::new(Config {
         enabled_challenges: vec![ChallengeType::TypePhrase],
         ..test_config()
-    });
+    })
+    .unwrap();
 
     let _session = verifier.start_session().expect("start session");
     let challenge = verifier.issue_challenge().expect("issue challenge");
@@ -69,7 +71,8 @@ fn test_challenge_lifecycle_simple_math() {
     let mut verifier = Verifier::new(Config {
         enabled_challenges: vec![ChallengeType::SimpleMath],
         ..test_config()
-    });
+    })
+    .unwrap();
 
     let _session = verifier.start_session().expect("start session");
     let challenge = verifier.issue_challenge().expect("issue challenge");
@@ -104,7 +107,7 @@ fn test_challenge_lifecycle_simple_math() {
 
 #[test]
 fn test_start_session_while_active() {
-    let mut verifier = Verifier::new(test_config());
+    let mut verifier = Verifier::new(test_config()).unwrap();
 
     verifier.start_session().expect("start session");
     let err = verifier.start_session().unwrap_err();
@@ -113,7 +116,7 @@ fn test_start_session_while_active() {
 
 #[test]
 fn test_end_session_no_active() {
-    let mut verifier = Verifier::new(test_config());
+    let mut verifier = Verifier::new(test_config()).unwrap();
 
     let err = verifier.end_session().unwrap_err();
     assert!(err.contains("no active session"));
@@ -121,7 +124,7 @@ fn test_end_session_no_active() {
 
 #[test]
 fn test_end_session_already_ended() {
-    let mut verifier = Verifier::new(test_config());
+    let mut verifier = Verifier::new(test_config()).unwrap();
 
     verifier.start_session().expect("start session");
     verifier.end_session().expect("end session");
@@ -131,7 +134,7 @@ fn test_end_session_already_ended() {
 
 #[test]
 fn test_issue_challenge_no_session() {
-    let mut verifier = Verifier::new(test_config());
+    let mut verifier = Verifier::new(test_config()).unwrap();
 
     let err = verifier.issue_challenge().unwrap_err();
     assert!(err.contains("no active session"));
@@ -139,7 +142,7 @@ fn test_issue_challenge_no_session() {
 
 #[test]
 fn test_respond_no_session() {
-    let mut verifier = Verifier::new(test_config());
+    let mut verifier = Verifier::new(test_config()).unwrap();
 
     let err = verifier
         .respond_to_challenge("some-id", "response")
@@ -149,7 +152,7 @@ fn test_respond_no_session() {
 
 #[test]
 fn test_respond_challenge_not_found() {
-    let mut verifier = Verifier::new(test_config());
+    let mut verifier = Verifier::new(test_config()).unwrap();
 
     verifier.start_session().expect("start session");
     let err = verifier
@@ -163,7 +166,8 @@ fn test_wrong_response_fails() {
     let mut verifier = Verifier::new(Config {
         enabled_challenges: vec![ChallengeType::TypeWord],
         ..test_config()
-    });
+    })
+    .unwrap();
 
     verifier.start_session().expect("start session");
     let challenge = verifier.issue_challenge().expect("issue challenge");
@@ -183,7 +187,8 @@ fn test_respond_twice_to_same_challenge() {
     let mut verifier = Verifier::new(Config {
         enabled_challenges: vec![ChallengeType::TypeWord],
         ..test_config()
-    });
+    })
+    .unwrap();
 
     verifier.start_session().expect("start session");
     let challenge = verifier.issue_challenge().expect("issue challenge");
@@ -207,7 +212,8 @@ fn test_multiple_challenges() {
     let mut verifier = Verifier::new(Config {
         enabled_challenges: vec![ChallengeType::TypeWord],
         ..test_config()
-    });
+    })
+    .unwrap();
 
     verifier.start_session().expect("start session");
 
@@ -233,7 +239,8 @@ fn test_verification_rate_calculation() {
     let mut verifier = Verifier::new(Config {
         enabled_challenges: vec![ChallengeType::TypeWord],
         ..test_config()
-    });
+    })
+    .unwrap();
 
     verifier.start_session().expect("start session");
 
@@ -264,7 +271,7 @@ fn test_verification_rate_calculation() {
 
 #[test]
 fn test_active_session() {
-    let mut verifier = Verifier::new(test_config());
+    let mut verifier = Verifier::new(test_config()).unwrap();
 
     assert!(verifier.active_session().is_none());
 
@@ -278,13 +285,13 @@ fn test_active_session() {
 
 #[test]
 fn test_next_challenge_time_no_session() {
-    let mut verifier = Verifier::new(test_config());
+    let mut verifier = Verifier::new(test_config()).unwrap();
     assert!(verifier.next_challenge_time().is_none());
 }
 
 #[test]
 fn test_next_challenge_time_with_session() {
-    let mut verifier = Verifier::new(test_config());
+    let mut verifier = Verifier::new(test_config()).unwrap();
     verifier.start_session().expect("start session");
 
     let next_time = verifier.next_challenge_time();
@@ -297,7 +304,8 @@ fn test_should_issue_challenge() {
         challenge_interval: Duration::from_millis(1),
         interval_variance: 0.0,
         ..test_config()
-    });
+    })
+    .unwrap();
 
     verifier.start_session().expect("start session");
     std::thread::sleep(Duration::from_millis(10));
@@ -306,7 +314,7 @@ fn test_should_issue_challenge() {
 
 #[test]
 fn test_should_issue_challenge_no_session() {
-    let mut verifier = Verifier::new(test_config());
+    let mut verifier = Verifier::new(test_config()).unwrap();
     assert!(!verifier.should_issue_challenge());
 }
 
@@ -315,7 +323,8 @@ fn test_case_insensitive_response() {
     let mut verifier = Verifier::new(Config {
         enabled_challenges: vec![ChallengeType::TypeWord],
         ..test_config()
-    });
+    })
+    .unwrap();
 
     verifier.start_session().expect("start session");
     let challenge = verifier.issue_challenge().expect("issue");
@@ -337,7 +346,8 @@ fn test_response_with_whitespace() {
     let mut verifier = Verifier::new(Config {
         enabled_challenges: vec![ChallengeType::TypeWord],
         ..test_config()
-    });
+    })
+    .unwrap();
 
     verifier.start_session().expect("start session");
     let challenge = verifier.issue_challenge().expect("issue");
@@ -359,7 +369,8 @@ fn test_session_encode_decode() {
     let mut verifier = Verifier::new(Config {
         enabled_challenges: vec![ChallengeType::TypeWord],
         ..test_config()
-    });
+    })
+    .unwrap();
 
     verifier.start_session().expect("start session");
     let challenge = verifier.issue_challenge().expect("issue");
@@ -393,7 +404,8 @@ fn test_compile_evidence_multiple_sessions() {
     let mut verifier1 = Verifier::new(Config {
         enabled_challenges: vec![ChallengeType::TypeWord],
         ..test_config()
-    });
+    })
+    .unwrap();
     verifier1.start_session().expect("start");
     let c1 = verifier1.issue_challenge().expect("issue");
     let w1 = c1.prompt.strip_prefix("Type the word: ").expect("prompt");
@@ -403,7 +415,8 @@ fn test_compile_evidence_multiple_sessions() {
     let mut verifier2 = Verifier::new(Config {
         enabled_challenges: vec![ChallengeType::TypeWord],
         ..test_config()
-    });
+    })
+    .unwrap();
     verifier2.start_session().expect("start");
     let c2 = verifier2.issue_challenge().expect("issue");
     verifier2
@@ -431,7 +444,8 @@ fn test_empty_enabled_challenges_falls_back() {
     let mut verifier = Verifier::new(Config {
         enabled_challenges: vec![],
         ..test_config()
-    });
+    })
+    .unwrap();
 
     verifier.start_session().expect("start session");
     let challenge = verifier.issue_challenge().expect("issue challenge");
@@ -444,7 +458,8 @@ fn test_challenge_status_transitions() {
     let mut verifier = Verifier::new(Config {
         enabled_challenges: vec![ChallengeType::TypeWord],
         ..test_config()
-    });
+    })
+    .unwrap();
 
     verifier.start_session().expect("start session");
     let challenge = verifier.issue_challenge().expect("issue");
@@ -464,7 +479,7 @@ fn test_challenge_status_transitions() {
 
 #[test]
 fn test_session_has_unique_id() {
-    let mut verifier = Verifier::new(test_config());
+    let mut verifier = Verifier::new(test_config()).unwrap();
 
     let session1 = verifier.start_session().expect("start 1");
     verifier.end_session().expect("end 1");
@@ -480,7 +495,8 @@ fn test_challenge_has_unique_id() {
     let mut verifier = Verifier::new(Config {
         enabled_challenges: vec![ChallengeType::TypeWord],
         ..test_config()
-    });
+    })
+    .unwrap();
 
     verifier.start_session().expect("start session");
     let c1 = verifier.issue_challenge().expect("issue 1");
@@ -495,7 +511,8 @@ fn test_challenge_timestamps() {
         enabled_challenges: vec![ChallengeType::TypeWord],
         response_window: Duration::from_secs(60),
         ..test_config()
-    });
+    })
+    .unwrap();
 
     verifier.start_session().expect("start session");
     let challenge = verifier.issue_challenge().expect("issue");
@@ -506,7 +523,7 @@ fn test_challenge_timestamps() {
 
 #[test]
 fn test_session_timestamps() {
-    let mut verifier = Verifier::new(test_config());
+    let mut verifier = Verifier::new(test_config()).unwrap();
 
     let session = verifier.start_session().expect("start");
     let start_time = session.start_time;
@@ -523,7 +540,8 @@ fn test_challenge_response_recorded() {
     let mut verifier = Verifier::new(Config {
         enabled_challenges: vec![ChallengeType::TypeWord],
         ..test_config()
-    });
+    })
+    .unwrap();
 
     verifier.start_session().expect("start session");
     let challenge = verifier.issue_challenge().expect("issue");
@@ -551,7 +569,8 @@ fn test_all_challenge_types_verifiable() {
         let mut verifier = Verifier::new(Config {
             enabled_challenges: vec![challenge_type.clone()],
             ..test_config()
-        });
+        })
+        .unwrap();
 
         verifier.start_session().expect("start session");
         let challenge = verifier.issue_challenge().expect("issue");

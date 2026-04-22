@@ -18,6 +18,8 @@ pub enum ContinuationError {
     SequenceOverflow,
     PacketsInSeriesOverflow,
     MissingPrevChainHash,
+    MissingPrevPacketId,
+    EmptyChainHash,
     UnexpectedPrevChainHash,
     PacketCountMismatch { expected: u32, found: u32 },
 }
@@ -31,6 +33,12 @@ impl fmt::Display for ContinuationError {
             }
             Self::MissingPrevChainHash => {
                 write!(f, "Non-first packet must have prev_packet_chain_hash")
+            }
+            Self::MissingPrevPacketId => {
+                write!(f, "Non-first packet must have prev_packet_id")
+            }
+            Self::EmptyChainHash => {
+                write!(f, "prev_packet_chain_hash must not be empty")
             }
             Self::UnexpectedPrevChainHash => write!(
                 f,
@@ -176,8 +184,12 @@ impl ContinuationSection {
             self.cumulative_summary.total_chars = u64::MAX;
         }
 
-        self.cumulative_summary.total_vdf_time_seconds += vdf_time;
-        self.cumulative_summary.total_entropy_bits += entropy_bits;
+        if vdf_time.is_finite() {
+            self.cumulative_summary.total_vdf_time_seconds += vdf_time;
+        }
+        if entropy_bits.is_finite() {
+            self.cumulative_summary.total_entropy_bits += entropy_bits;
+        }
     }
 
     /// Attach a series-binding signature.
@@ -195,8 +207,13 @@ impl ContinuationSection {
     /// and `packets_in_series` consistency.
     pub fn validate(&self) -> Result<(), ContinuationError> {
         if self.packet_sequence > 0 {
-            if self.prev_packet_chain_hash.is_none() {
-                return Err(ContinuationError::MissingPrevChainHash);
+            if self.prev_packet_id.is_none() {
+                return Err(ContinuationError::MissingPrevPacketId);
+            }
+            match &self.prev_packet_chain_hash {
+                None => return Err(ContinuationError::MissingPrevChainHash),
+                Some(h) if h.is_empty() => return Err(ContinuationError::EmptyChainHash),
+                _ => {}
             }
         } else if self.prev_packet_chain_hash.is_some() {
             return Err(ContinuationError::UnexpectedPrevChainHash);
@@ -233,6 +250,8 @@ impl ContinuationSection {
             let bytes = prev_hash.as_bytes();
             context.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
             context.extend_from_slice(bytes);
+        } else {
+            context.extend_from_slice(&0u32.to_be_bytes());
         }
 
         // Length-prefix content_hash to prevent boundary ambiguity if hash
@@ -324,7 +343,7 @@ mod tests {
         };
         assert!(matches!(
             section.validate(),
-            Err(ContinuationError::MissingPrevChainHash)
+            Err(ContinuationError::MissingPrevPacketId)
         ));
     }
 
@@ -334,8 +353,8 @@ mod tests {
         let ctx1 = section.generate_vdf_context(b"test_content_hash");
         let ctx2 = section.generate_vdf_context(b"test_content_hash");
         assert_eq!(ctx1, ctx2);
-        // content_hash length prefix (4) + content_hash (17) + series_id (16) + sequence (4) = 41
-        assert_eq!(ctx1.len(), 41);
+        // zero sentinel (4) + content_hash length prefix (4) + content_hash (17) + series_id (16) + sequence (4) = 45
+        assert_eq!(ctx1.len(), 45);
     }
 
     #[test]

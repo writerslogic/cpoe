@@ -13,6 +13,9 @@ use crate::ffi::types::FfiResult;
 /// `ffiAnchorToWritersProof` (capital P) matching the Swift call site.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn ffi_anchor_to_writers_proof(document_path: String) -> FfiResult {
+    if document_path.len() > 4096 {
+        return FfiResult::err("Document path too long".to_string());
+    }
     let doc_path = match crate::sentinel::helpers::validate_path(&document_path) {
         Ok(p) => p,
         Err(e) => {
@@ -75,6 +78,9 @@ pub fn ffi_anchor_to_writers_proof(document_path: String) -> FfiResult {
         }
     };
     let api_key = match load_api_key() {
+        Ok(k) if k.is_empty() => {
+            return FfiResult::err("WritersProof API key is empty".to_string());
+        }
         Ok(k) => k,
         Err(e) => {
             return FfiResult::err(format!("WritersProof API key not configured. {e}"));
@@ -160,6 +166,9 @@ pub fn ffi_publish_evidence(
         }
     }
 
+    if document_path.len() > 4096 {
+        return fail("Document path too long".to_string());
+    }
     let doc_path = match crate::sentinel::helpers::validate_path(&document_path) {
         Ok(p) => p,
         Err(e) => return fail(format!("Invalid document path: {e}")),
@@ -172,7 +181,9 @@ pub fn ffi_publish_evidence(
 
     // Flush a final checkpoint to capture the latest document state.
     if let Some(sentinel) = crate::ffi::sentinel::get_sentinel() {
-        sentinel.commit_checkpoint_for_path(&doc_path_str);
+        if !sentinel.commit_checkpoint_for_path(&doc_path_str) {
+            log::warn!("final checkpoint flush failed; publishing with existing data");
+        }
     }
 
     let store = match open_store() {

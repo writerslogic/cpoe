@@ -82,6 +82,17 @@ impl std::fmt::Debug for CheckpointMmr {
 impl CheckpointMmr {
     /// Open or create a file-backed MMR for the given chain.
     pub fn open(mmr_dir: &Path, chain_id: &str) -> Result<Self> {
+        if chain_id.is_empty()
+            || chain_id.contains('/')
+            || chain_id.contains('\\')
+            || chain_id.contains('\0')
+            || chain_id == "."
+            || chain_id == ".."
+        {
+            return Err(Error::config(format!(
+                "invalid MMR chain id: {chain_id:?}"
+            )));
+        }
         std::fs::create_dir_all(mmr_dir)?;
         let store_path = mmr_dir.join(format!("{chain_id}.mmr"));
         let store = FileStore::open(&store_path).map_err(Error::from)?;
@@ -189,9 +200,15 @@ impl CheckpointMmr {
 
     /// Replay all checkpoint hashes from a chain into this MMR.
     pub fn rebuild_from_chain(&self, chain: &Chain) -> Result<()> {
+        if self.leaf_count() != 0 {
+            return Err(Error::checkpoint(
+                "cannot rebuild MMR from chain: MMR is not empty",
+            ));
+        }
         for cp in &chain.checkpoints {
             self.mmr.append(&cp.hash).map_err(Error::from)?;
         }
+        self.mmr.sync().map_err(Error::from)?;
         Ok(())
     }
 

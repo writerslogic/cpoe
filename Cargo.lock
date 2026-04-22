@@ -1231,6 +1231,7 @@ dependencies = [
  "toml 0.8.23",
  "tss-esapi",
  "typeshare",
+ "unicode-normalization",
  "uniffi",
  "url",
  "urlencoding",

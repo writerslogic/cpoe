@@ -473,7 +473,10 @@ unsafe extern "system" fn keystroke_capture_hook(
         };
         if let Some(sender) = sender {
             let now = chrono::Utc::now().timestamp_nanos_safe();
-            let keycode = kbd.vkCode as u16;
+            let keycode = match u16::try_from(kbd.vkCode) {
+                Ok(k) => k,
+                Err(_) => return CallNextHookEx(None, code, wparam, lparam),
+            };
             let zone = crate::jitter::keycode_to_zone(keycode);
 
             let event = KeystrokeEvent {

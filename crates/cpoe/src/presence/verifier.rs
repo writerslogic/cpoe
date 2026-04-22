@@ -20,13 +20,43 @@ pub struct Verifier {
 }
 
 impl Verifier {
+    /// Maximum allowed response window (10 minutes).
+    const MAX_RESPONSE_WINDOW: Duration = Duration::from_secs(600);
+    /// Minimum allowed response window (5 seconds).
+    const MIN_RESPONSE_WINDOW: Duration = Duration::from_secs(5);
+
     /// Create a verifier with the given challenge configuration.
-    pub fn new(config: Config) -> Self {
-        Self {
+    ///
+    /// Returns an error if `response_window` is outside the valid range
+    /// (5 seconds to 10 minutes).
+    pub fn new(config: Config) -> Result<Self, String> {
+        if config.response_window < Self::MIN_RESPONSE_WINDOW
+            || config.response_window > Self::MAX_RESPONSE_WINDOW
+        {
+            return Err(format!(
+                "response_window {:?} outside valid range ({:?}..{:?})",
+                config.response_window,
+                Self::MIN_RESPONSE_WINDOW,
+                Self::MAX_RESPONSE_WINDOW,
+            ));
+        }
+        if config.challenge_interval.is_zero() {
+            return Err("challenge_interval must be > 0".to_string());
+        }
+        if !config.interval_variance.is_finite()
+            || config.interval_variance < 0.0
+            || config.interval_variance > 1.0
+        {
+            return Err(format!(
+                "interval_variance {} must be in 0.0..=1.0",
+                config.interval_variance,
+            ));
+        }
+        Ok(Self {
             config,
             session: None,
             rng: StdRng::from_os_rng(),
-        }
+        })
     }
 
     /// Begin a new presence verification session.
@@ -71,6 +101,7 @@ impl Verifier {
         session.end_time = Some(Utc::now());
         session.active = false;
 
+        Self::expire_pending(&mut session);
         session.challenges_issued = i32::try_from(session.challenges.len()).unwrap_or(i32::MAX);
         for challenge in &session.challenges {
             match challenge.status {
@@ -128,7 +159,7 @@ impl Verifier {
             issued_at: now,
             expires_at: now
                 + chrono::Duration::from_std(self.config.response_window)
-                    .unwrap_or(chrono::Duration::seconds(60)),
+                    .expect("response_window validated in Verifier::new"),
             window: self.config.response_window,
             prompt,
             expected_hash: hash_response(&expected),
