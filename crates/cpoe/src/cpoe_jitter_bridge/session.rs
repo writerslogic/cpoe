@@ -204,9 +204,16 @@ impl HybridJitterSession {
 
     pub fn duration(&self) -> Duration {
         let end = self.effective_end();
-        end.signed_duration_since(self.started_at)
-            .to_std()
-            .unwrap_or(Duration::from_secs(0))
+        match end.signed_duration_since(self.started_at).to_std() {
+            Ok(d) => d,
+            Err(_) => {
+                log::warn!(
+                    "negative session duration: started_at={} effective_end={}; returning 0",
+                    self.started_at, end
+                );
+                Duration::from_secs(0)
+            }
+        }
     }
 
     pub fn phys_ratio(&self) -> f64 {

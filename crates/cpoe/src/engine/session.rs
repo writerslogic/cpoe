@@ -40,24 +40,28 @@ impl Engine {
 
     /// Resume monitoring after a pause, restarting watchers and capture.
     pub fn resume(&self) -> Result<()> {
-        if self.inner.running.load(Ordering::SeqCst) {
-            return Ok(());
+        // Atomic swap prevents two concurrent resume() calls from both proceeding.
+        if self.inner.running.swap(true, Ordering::SeqCst) {
+            return Ok(()); // Was already running
         }
 
-        self.inner.running.store(true, Ordering::SeqCst);
-
+        // Keystroke monitor is best-effort; failure should not prevent file watching.
         #[cfg(target_os = "macos")]
         if std::env::var("CPOE_SKIP_PERMISSIONS").is_err() {
-            let monitor =
-                platform::macos::KeystrokeMonitor::start(Arc::clone(&self.inner.jitter_session))?;
-            *self.inner.keystroke_monitor.lock_recover() = Some(monitor);
+            match platform::macos::KeystrokeMonitor::start(Arc::clone(&self.inner.jitter_session)) {
+                Ok(monitor) => *self.inner.keystroke_monitor.lock_recover() = Some(monitor),
+                Err(e) => log::warn!("keystroke monitor unavailable: {e}; continuing with file watching only"),
+            }
         }
 
         let dirs = self.inner.watch_dirs.lock_recover().clone();
-        super::start_file_watcher(&self.inner, dirs)?;
+        if let Err(e) = super::start_file_watcher(&self.inner, dirs) {
+            // File watcher failed — roll back running state so caller knows resume failed.
+            self.inner.running.store(false, Ordering::SeqCst);
+            return Err(e);
+        }
 
-        let mut status = self.inner.status.lock_recover();
-        status.running = true;
+        self.inner.status.lock_recover().running = true;
         Ok(())
     }
 
@@ -107,11 +111,16 @@ impl Engine {
 impl Drop for Engine {
     fn drop(&mut self) {
         self.inner.running.store(false, Ordering::SeqCst);
-        // Drop the watcher first so the channel closes and the thread unblocks.
-        *self.inner.watcher.lock_recover() = None;
-        if let Some(handle) = self.inner.watcher_thread.lock_recover().take() {
-            if let Err(e) = handle.join() {
-                log::warn!("watcher thread panicked: {e:?}");
+        // Use try_lock to avoid deadlock if another thread holds these locks.
+        // If we can't acquire, the Arc refcount drop will clean up anyway.
+        if let Ok(mut watcher) = self.inner.watcher.try_lock() {
+            *watcher = None; // closes the channel, unblocking the thread
+        }
+        if let Ok(mut handle) = self.inner.watcher_thread.try_lock() {
+            if let Some(h) = handle.take() {
+                if let Err(e) = h.join() {
+                    log::warn!("watcher thread panicked during drop: {e:?}");
+                }
             }
         }
     }

@@ -171,10 +171,19 @@ fn process_file_event(inner: &Arc<EngineInner>, path: &Path) -> Result<()> {
 
     let size_delta = {
         let mut map = inner.file_sizes.lock_recover();
-        // Use entry so a rename migration (which already inserted the new path with the old size)
-        // is not overwritten here, preserving the correct previous size for delta computation.
-        let previous = *map.entry(resolved_path.clone()).or_insert(file_size);
-        map.insert(resolved_path.clone(), file_size);
+        // Get previous size (or current if first event), then update to current.
+        // Single entry operation avoids redundant lookup.
+        let previous = match map.entry(resolved_path.clone()) {
+            std::collections::hash_map::Entry::Occupied(mut e) => {
+                let prev = *e.get();
+                e.insert(file_size);
+                prev
+            }
+            std::collections::hash_map::Entry::Vacant(e) => {
+                e.insert(file_size);
+                file_size // first event: delta will be 0
+            }
+        };
         i32::try_from((file_size - previous).clamp(i32::MIN as i64, i32::MAX as i64)).unwrap_or(
             if file_size > previous {
                 i32::MAX
