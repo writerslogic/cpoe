@@ -90,7 +90,11 @@ fn process_file_event(inner: &Arc<EngineInner>, path: &Path) -> Result<()> {
     // the TOCTOU gap between symlink_metadata() and a separate open.
     let file = match std::fs::File::open(path) {
         Ok(f) => f,
-        Err(_) => return Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => {
+            log::warn!("cannot open tracked file {}: {e}", path.display());
+            return Ok(());
+        }
     };
     let meta = file.metadata().map_err(|e| anyhow!("fstat failed: {e}"))?;
     if !meta.is_file() {
@@ -154,6 +158,14 @@ fn process_file_event(inner: &Arc<EngineInner>, path: &Path) -> Result<()> {
         if hash_map.len() > CONTENT_HASH_MAP_MAX_ENTRIES {
             let cutoff = now - RENAME_WINDOW_NS;
             hash_map.retain(|_, (_, ts)| *ts >= cutoff);
+            // If still over limit after time-based eviction (many recent files),
+            // keep only the newest half to prevent unbounded growth.
+            if hash_map.len() > CONTENT_HASH_MAP_MAX_ENTRIES {
+                let mut entries: Vec<_> = hash_map.drain().collect();
+                entries.sort_by_key(|(_, (_, ts))| std::cmp::Reverse(*ts));
+                entries.truncate(CONTENT_HASH_MAP_MAX_ENTRIES / 2);
+                hash_map.extend(entries);
+            }
         }
     }
 
@@ -210,7 +222,7 @@ fn evaluate_checkpoint_forensics(inner: &Arc<EngineInner>, size_delta: i32) -> (
         0.0
     };
     let is_paste = (avg_bytes_per_key > 3.0 && size_delta > 20)
-        || (i64::from(size_delta) > (keystroke_count * 5) && size_delta > 50);
+        || (i64::from(size_delta) > keystroke_count.saturating_mul(5) && size_delta > 50);
     (score, is_paste)
 }
 

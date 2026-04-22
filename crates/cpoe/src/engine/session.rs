@@ -24,7 +24,9 @@ impl Engine {
         // Drop the watcher first so the channel closes and the thread unblocks.
         *self.inner.watcher.lock_recover() = None;
         if let Some(handle) = self.inner.watcher_thread.lock_recover().take() {
-            let _ = handle.join();
+            if let Err(e) = handle.join() {
+                log::warn!("watcher thread panicked: {e:?}");
+            }
         }
         #[cfg(target_os = "macos")]
         {
@@ -108,7 +110,9 @@ impl Drop for Engine {
         // Drop the watcher first so the channel closes and the thread unblocks.
         *self.inner.watcher.lock_recover() = None;
         if let Some(handle) = self.inner.watcher_thread.lock_recover().take() {
-            let _ = handle.join();
+            if let Err(e) = handle.join() {
+                log::warn!("watcher thread panicked: {e:?}");
+            }
         }
     }
 }

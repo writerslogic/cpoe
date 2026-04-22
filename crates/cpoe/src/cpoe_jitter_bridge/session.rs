@@ -140,7 +140,10 @@ impl HybridJitterSession {
 
         let doc_hash = self.document_tracker.hash()?;
         let now = Utc::now();
-        let zone_transition = self.zone_engine.record_keycode(keycode).unwrap_or(0xFF);
+        let zone_transition = self.zone_engine.record_keycode(keycode).unwrap_or_else(|| {
+            log::trace!("unknown zone for keycode {keycode}");
+            0xFF
+        });
 
         let mut input = Vec::with_capacity(64);
         input.extend_from_slice(&self.keystroke_count.to_be_bytes());
@@ -384,8 +387,11 @@ impl HybridJitterSession {
 
     pub fn load(path: impl AsRef<Path>, key_material: Option<[u8; 32]>) -> Result<Self, String> {
         let meta = fs::metadata(path.as_ref()).map_err(|e| e.to_string())?;
-        if meta.len() > 100 * 1024 * 1024 {
-            return Err("session file exceeds 100 MB size limit".into());
+        if meta.len() > 20 * 1024 * 1024 {
+            return Err(format!(
+                "session file is {} MB, exceeds 20 MB limit",
+                meta.len() / (1024 * 1024)
+            ));
         }
         let bytes = fs::read(path).map_err(|e| e.to_string())?;
         let data: HybridSessionData = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
