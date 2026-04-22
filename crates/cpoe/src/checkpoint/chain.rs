@@ -244,7 +244,7 @@ impl Chain {
         let data = fs::read(path)
             .map_err(|e| Error::checkpoint(format!("failed to read chain for MAC: {e}")))?;
         let mac = compute_chain_mac(mac_key, &data)?;
-        fs::write(mac_sidecar_path(path), &mac)
+        fs::write(mac_sidecar_path(path), mac)
             .map_err(|e| Error::checkpoint(format!("failed to write chain MAC: {e}")))?;
         Ok(())
     }

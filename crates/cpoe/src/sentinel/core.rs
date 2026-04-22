@@ -610,16 +610,12 @@ impl Sentinel {
                         }
 
                         // Only count keystrokes when a tracked document is focused.
-                        // Hold the focus read lock while acquiring the sessions write lock
-                        // so focus cannot change between the two acquisitions (H-001).
-                        // Lock ordering note: this acquires current_focus(3).read before
-                        // sessions(2).write, which inverts the declared numeric order.
-                        // This is safe because current_focus is only ever write-locked
-                        // from the focus event branch (single-threaded event loop), and
-                        // read-read does not conflict. No path holds sessions.write then
-                        // acquires current_focus.write.
-                        let focus_guard = current_focus.read_recover();
-                        if let Some(ref path) = *focus_guard {
+                        // Clone the path under a brief read lock, then drop focus_guard
+                        // before acquiring sessions.write to avoid nested lock acquisition.
+                        // H-001 TOCTOU is not a concern: the single-threaded tokio::select!
+                        // loop ensures focus cannot change between branches.
+                        let focused_path = current_focus.read_recover().clone();
+                        if let Some(ref path) = focused_path {
                             let mut map = sessions.write_recover();
                             super::trace!(
                                 "[KEYSTROKE] focus={:?} sessions={:?} kc={}",
@@ -627,13 +623,15 @@ impl Sentinel {
                                 map.keys(),
                                 event.keycode
                             );
-                            if let Some(session) = map.get_mut(path) {
+                            if let Some(session) = map.get_mut(path.as_str()) {
                                 session.keystroke_count += 1;
                                 super::trace!(
                                     "[KEYSTROKE] COUNTED {:?} total={}",
                                     path, session.keystroke_count
                                 );
-                                if session.jitter_samples.len() < MAX_DOCUMENT_JITTER_SAMPLES {
+                                let was_buffered =
+                                    session.jitter_samples.len() < MAX_DOCUMENT_JITTER_SAMPLES;
+                                if was_buffered {
                                     session.jitter_samples.push(sample.clone());
                                 }
                                 session.cognitive.record_keystroke(
@@ -655,30 +653,44 @@ impl Sentinel {
                                 );
                                 if validation.confidence < 0.1 {
                                     session.keystroke_count -= 1;
-                                    session.jitter_samples.pop();
+                                    if was_buffered {
+                                        session.jitter_samples.pop();
+                                    }
                                     super::trace!(
                                         "[KEYSTROKE] REJECTED conf={:.2}", validation.confidence
                                     );
-                                } else if let Some(ref tpm) = tpm_provider_for_loop {
-                                    // Lazily initialize scheduler on first accepted keystroke.
-                                    if session.hw_cosign_scheduler.is_none() {
-                                        match crate::evidence::hw_cosign::HwCosignScheduler::with_defaults(
-                                            tpm.as_ref(),
-                                            &session.session_id,
-                                        ) {
-                                            Ok(sched) => {
-                                                session.hw_cosign_scheduler = Some(sched);
-                                            }
-                                            Err(e) => {
-                                                log::trace!(
-                                                    "HW co-sign scheduler init failed: {e}"
-                                                );
+                                } else {
+                                    // Advance incremental jitter hash chain for each accepted sample.
+                                    // step: SHA256(prev || timestamp_ns_be || duration_ns_be || zone)
+                                    let mut h = sha2::Sha256::new();
+                                    use sha2::Digest as _;
+                                    h.update(session.jitter_hash_state);
+                                    h.update(sample.timestamp_ns.to_be_bytes());
+                                    h.update(sample.duration_since_last_ns.to_be_bytes());
+                                    h.update([sample.zone]);
+                                    session.jitter_hash_state = h.finalize().into();
+
+                                    if let Some(ref tpm) = tpm_provider_for_loop {
+                                        // Lazily initialize scheduler on first accepted keystroke.
+                                        if session.hw_cosign_scheduler.is_none() {
+                                            match crate::evidence::hw_cosign::HwCosignScheduler::with_defaults(
+                                                tpm.as_ref(),
+                                                &session.session_id,
+                                            ) {
+                                                Ok(sched) => {
+                                                    session.hw_cosign_scheduler = Some(sched);
+                                                }
+                                                Err(e) => {
+                                                    log::trace!(
+                                                        "HW co-sign scheduler init failed: {e}"
+                                                    );
+                                                }
                                             }
                                         }
-                                    }
-                                    if let Some(ref mut sched) = session.hw_cosign_scheduler {
-                                        let entropy = duration_since_last_ns.to_le_bytes();
-                                        sched.record_entropy(&entropy);
+                                        if let Some(ref mut sched) = session.hw_cosign_scheduler {
+                                            let entropy = duration_since_last_ns.to_le_bytes();
+                                            sched.record_entropy(&entropy);
+                                        }
                                     }
                                 }
                             } else {

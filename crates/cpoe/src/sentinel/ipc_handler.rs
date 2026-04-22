@@ -216,22 +216,18 @@ impl SentinelIpcHandler {
         let checkpoint =
             if chain.metadata.entanglement_mode == crate::checkpoint::EntanglementMode::Entangled {
                 let path_str = path.to_string_lossy().to_string();
-                let (samples, session_id) = {
+                let (jitter_hash, keystroke_count, session_id, samples) = {
                     let sessions = self.sentinel.sessions.read_recover();
                     match sessions.get(&path_str) {
-                        Some(s) => (s.jitter_samples.clone(), s.session_id.clone()),
-                        None => (Vec::new(), uuid::Uuid::new_v4().to_string()),
+                        Some(s) => (
+                            s.jitter_hash_state,
+                            s.jitter_samples.len() as u64,
+                            s.session_id.clone(),
+                            s.jitter_samples.clone(),
+                        ),
+                        None => ([0u8; 32], 0u64, uuid::Uuid::new_v4().to_string(), Vec::new()),
                     }
                 };
-                let keystroke_count = samples.len() as u64;
-
-                let mut jitter_hasher = Sha256::new();
-                jitter_hasher.update(b"cpoe-checkpoint-jitter-v1");
-                jitter_hasher.update(keystroke_count.to_be_bytes());
-                for s in &samples {
-                    jitter_hasher.update(s.duration_since_last_ns.to_be_bytes());
-                }
-                let jitter_hash: [u8; 32] = jitter_hasher.finalize().into();
 
                 let physics = crate::physics::PhysicalContext::capture(&samples);
 

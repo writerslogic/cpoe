@@ -258,6 +258,13 @@ pub struct DocumentSession {
     pub window_title: ObfuscatedString,
     /// Per-document jitter samples for forensic analysis.
     pub jitter_samples: Vec<crate::jitter::SimpleJitterSample>,
+    /// Incremental hash chain over accepted jitter samples.
+    ///
+    /// Updated on every validated keystroke:
+    ///   `state = SHA256(prev_state || timestamp_ns_be || duration_ns_be || zone)`
+    /// Initialized at session start from the session_id so the chain is
+    /// session-scoped.  Checkpoints read this directly — O(1), no allocation.
+    pub jitter_hash_state: [u8; 32],
     /// Cognitive writing signal accumulator (word boundaries, edit ops, corrections).
     pub cognitive: crate::forensics::cognitive_accumulator::CognitiveAccumulator,
     /// Focus loss events during this session (timestamps when user switched away).
@@ -308,6 +315,7 @@ impl Clone for DocumentSession {
             app_name: self.app_name.clone(),
             window_title: self.window_title.clone(),
             jitter_samples: self.jitter_samples.clone(),
+            jitter_hash_state: self.jitter_hash_state,
             cognitive: self.cognitive.clone(),
             focus_switches: self.focus_switches.clone(),
             ai_tools_detected: self.ai_tools_detected.clone(),
@@ -338,6 +346,14 @@ impl DocumentSession {
     ) -> Self {
         let session_id = generate_session_id();
         let now = SystemTime::now();
+        // Initialize the incremental hash chain with a session-scoped seed so that
+        // the chain is unforgeable without knowing the session_id at creation time.
+        let jitter_hash_state = {
+            let mut h = Sha256::new();
+            h.update(b"cpoe-jitter-chain-v2");
+            h.update(session_id.as_bytes());
+            h.finalize().into()
+        };
 
         Self {
             path,
@@ -356,6 +372,7 @@ impl DocumentSession {
             app_name,
             window_title,
             jitter_samples: Vec::new(),
+            jitter_hash_state,
             cognitive: crate::forensics::cognitive_accumulator::CognitiveAccumulator::new(),
             focus_switches: VecDeque::new(),
             ai_tools_detected: Vec::new(),
