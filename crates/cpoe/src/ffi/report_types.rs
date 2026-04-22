@@ -74,7 +74,10 @@ pub struct FfiProcessEvidence {
     pub pause_p95_sec: Option<f64>,
     pub paste_ratio_pct: Option<f64>,
     pub iki_cv: Option<f64>,
+    pub bigram_consistency: Option<f64>,
     pub total_keystrokes: Option<u64>,
+    pub deletion_sequences: Option<u64>,
+    pub avg_deletion_length: Option<f64>,
 }
 
 #[derive(Debug, Clone)]

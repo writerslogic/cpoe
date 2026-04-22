@@ -267,6 +267,98 @@ pub fn draw_page2(layer: &PdfLayerReference, r: &WarReport, fonts: &PdfFonts, fo
         }
     }
 
+    // ── 8. Forgery Resistance ──
+    if y > 60.0 && !r.forgery.tier.is_empty() {
+        y -= 7.0;
+        text(
+            layer,
+            "8. Forgery Resistance",
+            10.0,
+            MARGIN_LEFT,
+            y,
+            &fonts.bold,
+            BLACK,
+        );
+        y -= 6.0;
+
+        let tier_color = match r.forgery.tier.as_str() {
+            "Very High" | "High" => (0.18_f32, 0.49, 0.20),
+            "Moderate" => (0.96, 0.50, 0.09),
+            _ => (0.78, 0.16, 0.16),
+        };
+
+        // Tier badge + estimated time
+        fill_rect(layer, MARGIN_LEFT, y - 1.5, 28.0, 6.5, tier_color);
+        text(
+            layer,
+            &r.forgery.tier,
+            6.0,
+            MARGIN_LEFT + 1.5,
+            y,
+            &fonts.bold,
+            WHITE,
+        );
+        let forge_label = if r.forgery.estimated_forge_time_sec >= 86400.0 {
+            format!("{:.0} days to forge", r.forgery.estimated_forge_time_sec / 86400.0)
+        } else if r.forgery.estimated_forge_time_sec >= 3600.0 {
+            format!("{:.0} hours to forge", r.forgery.estimated_forge_time_sec / 3600.0)
+        } else if r.forgery.estimated_forge_time_sec >= 60.0 {
+            format!("{:.0} min to forge", r.forgery.estimated_forge_time_sec / 60.0)
+        } else {
+            format!("{:.0}s to forge", r.forgery.estimated_forge_time_sec)
+        };
+        text(
+            layer,
+            &forge_label,
+            7.0,
+            MARGIN_LEFT + 32.0,
+            y,
+            &fonts.regular,
+            BLACK,
+        );
+        if let Some(ref wl) = r.forgery.weakest_link {
+            text(
+                layer,
+                &format!("Weakest link: {}", wl),
+                6.0,
+                MARGIN_LEFT + 90.0,
+                y,
+                &fonts.regular,
+                GRAY,
+            );
+        }
+        y -= 8.0;
+
+        // Component rows
+        let comp_w = CONTENT_WIDTH / 2.0 - 1.0;
+        for (i, comp) in r.forgery.components.iter().enumerate() {
+            if y < 20.0 {
+                break;
+            }
+            let cx = MARGIN_LEFT + (i % 2) as f32 * (comp_w + 2.0);
+            let cy = y - (i / 2) as f32 * 11.0;
+            fill_rect(layer, cx, cy - 4.0, comp_w, 10.0, WHITE);
+            stroke_rect(layer, cx, cy - 4.0, comp_w, 10.0, BORDER_THICKNESS, BORDER_COLOR);
+            let present_color = if comp.present {
+                (0.18_f32, 0.49, 0.20)
+            } else {
+                (0.62, 0.62, 0.62)
+            };
+            let icon = if comp.present { "✓" } else { "○" };
+            text(layer, icon, 7.0, cx + 2.0, cy, &fonts.bold, present_color);
+            let name_display: String = comp.name.chars().take(22).collect();
+            text(layer, &name_display, 6.0, cx + 7.0, cy + 1.0, &fonts.bold, BLACK);
+            let cost_label = if comp.cost_cpu_sec.is_infinite() {
+                "∞ (hardware)".to_string()
+            } else if comp.cost_cpu_sec >= 3600.0 {
+                format!("{:.0}h CPU", comp.cost_cpu_sec / 3600.0)
+            } else {
+                format!("{:.0}s CPU", comp.cost_cpu_sec)
+            };
+            text(layer, &cost_label, 5.5, cx + 7.0, cy - 4.0, &fonts.regular, GRAY);
+        }
+    }
+
     // Footer
     text(layer, footer, 5.0, MARGIN_LEFT, 10.0, &fonts.regular, GRAY);
 }

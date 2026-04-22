@@ -98,6 +98,12 @@ pub fn ffi_export_evidence(path: String, tier: String, output: String) -> FfiRes
         .map(crate::utils::duration_to_ms)
         .unwrap_or(0);
 
+    let data_dir =
+        crate::ffi::helpers::get_data_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+    let ips = crate::config::CpopConfig::load_or_default(&data_dir)
+        .map(|c| c.vdf.iterations_per_second.max(1))
+        .unwrap_or(1);
+
     let content_tier = match tier.to_lowercase().as_str() {
         "basic" | "core" => Some(authorproof_protocol::rfc::wire_types::ContentTier::Core),
         "standard" | "enhanced" => {
@@ -177,7 +183,7 @@ pub fn ffi_export_evidence(path: String, tier: String, output: String) -> FfiRes
                     input: vdf_input_bytes,
                     merkle_root,
                     sampled_proofs: vec![],
-                    claimed_duration: 0,
+                    claimed_duration: ev.vdf_iterations.saturating_mul(1000) / ips as u64,
                 },
                 jitter_binding: None,
                 physical_state: None,

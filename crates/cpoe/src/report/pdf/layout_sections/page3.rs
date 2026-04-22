@@ -6,10 +6,10 @@ use crate::report::types::*;
 pub fn draw_page3(layer: &PdfLayerReference, r: &WarReport, fonts: &PdfFonts, footer: &str) {
     let mut y = PAGE_TOP;
 
-    // ── 8. Scope & Limitations ──
+    // ── 9. Scope & Limitations ──
     text(
         layer,
-        "8. Scope and Limitations",
+        "9. Scope and Limitations",
         10.0,
         MARGIN_LEFT,
         y,
@@ -78,10 +78,10 @@ pub fn draw_page3(layer: &PdfLayerReference, r: &WarReport, fonts: &PdfFonts, fo
     }
     y -= 7.0;
 
-    // ── 9. Verification Instructions ──
+    // ── 10. Verification Instructions ──
     text(
         layer,
-        "9. Independent Verification",
+        "10. Independent Verification",
         10.0,
         MARGIN_LEFT,
         y,
@@ -218,11 +218,11 @@ pub fn draw_page3(layer: &PdfLayerReference, r: &WarReport, fonts: &PdfFonts, fo
     }
     y -= 7.0;
 
-    // ── 10. Analyzed Text (if available) ──
+    // ── 11. Analyzed Text (if available) ──
     if let Some(ref analyzed) = r.analyzed_text {
         text(
             layer,
-            "10. Analyzed Text",
+            "11. Analyzed Text",
             10.0,
             MARGIN_LEFT,
             y,

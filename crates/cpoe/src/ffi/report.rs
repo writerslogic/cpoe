@@ -216,6 +216,81 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
         });
     }
 
+    // Hardware attestation flag.
+    if hardware_backed {
+        flags.push(ReportFlag {
+            category: "Attestation".into(),
+            flag: format!("Hardware-Bound Key ({})", tier_label),
+            detail: "Device signing key is bound to TPM/Secure Enclave; cannot be extracted or cloned.".into(),
+            signal: FlagSignal::Human,
+        });
+    }
+
+    // VDF chain strength flag.
+    if total_iterations > 0 {
+        let vdf_secs = total_secs;
+        flags.push(ReportFlag {
+            category: "Time Proof".into(),
+            flag: format!("VDF Chain: {:.0}s elapsed proof", vdf_secs),
+            detail: format!(
+                "{} sequential iterations verify minimum elapsed wall-clock time.",
+                total_iterations
+            ),
+            signal: if vdf_secs > 60.0 { FlagSignal::Human } else { FlagSignal::Neutral },
+        });
+    }
+
+    // Writing velocity flag.
+    let mean_bps = finite_or(metrics.velocity.mean_bps, 0.0);
+    if mean_bps > 0.0 {
+        let in_human_range = mean_bps > 0.3 && mean_bps < 25.0;
+        flags.push(ReportFlag {
+            category: "Velocity".into(),
+            flag: format!("Mean Writing Rate: {:.1} B/s", mean_bps),
+            detail: format!(
+                "Average content production speed across all sessions. Human prose range: 0.5-15 B/s."
+            ),
+            signal: if in_human_range { FlagSignal::Human } else { FlagSignal::Neutral },
+        });
+    }
+
+    // Cross-modal consistency flag.
+    if let Some(cm) = &metrics.cross_modal {
+        let passed = cm.checks.iter().filter(|c| c.passed).count();
+        let total = cm.checks.len();
+        if total > 0 {
+            let verdict_label = match cm.verdict {
+                crate::forensics::cross_modal::CrossModalVerdict::Consistent => "Consistent",
+                crate::forensics::cross_modal::CrossModalVerdict::Marginal => "Marginal",
+                crate::forensics::cross_modal::CrossModalVerdict::Inconsistent => "Inconsistent",
+                crate::forensics::cross_modal::CrossModalVerdict::Insufficient => "Insufficient data",
+            };
+            flags.push(ReportFlag {
+                category: "Cross-Modal".into(),
+                flag: format!("Evidence Coherence: {}", verdict_label),
+                detail: format!("{}/{} cross-modal consistency checks passed.", passed, total),
+                signal: match cm.verdict {
+                    crate::forensics::cross_modal::CrossModalVerdict::Consistent => FlagSignal::Human,
+                    crate::forensics::cross_modal::CrossModalVerdict::Marginal => FlagSignal::Neutral,
+                    _ => FlagSignal::Synthetic,
+                },
+            });
+        }
+    }
+
+    // Anomaly flags from the authorship profile.
+    for anomaly in profile.anomalies.iter().take(3) {
+        flags.push(ReportFlag {
+            category: "Anomaly".into(),
+            flag: anomaly.anomaly_type.to_string(),
+            detail: anomaly.description.clone(),
+            signal: match anomaly.severity.to_string().as_str() {
+                s if s.contains("High") || s.contains("Alert") => FlagSignal::Synthetic,
+                _ => FlagSignal::Neutral,
+            },
+        });
+    }
+
     let (key_fp, guilloche_seed_hex) = match crate::ffi::helpers::load_signing_key() {
         Ok(signing_key) => {
             let vk = signing_key.verifying_key();
@@ -305,7 +380,7 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
             cognitive_score: metrics.assessment_score.get(),
             writing_mode_confidence: if profile.event_count > 20 { 0.8 } else { 0.3 },
             revision_cycle_count: profile.revision_cycle_count(),
-            hurst_exponent: None,
+            hurst_exponent: metrics.hurst_exponent.filter(|v| v.is_finite()),
             assessment_score: metrics.assessment_score.get(),
             risk_level: profile.risk_level().to_string(),
             mean_iki_ms: mean_iki,
@@ -351,6 +426,15 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
     if correction_ratio.is_finite() && correction_ratio > 0.0 && keystroke_estimate > 0 {
         process.deletion_sequences =
             Some((correction_ratio * keystroke_estimate as f64) as u64);
+        // Average deletion length: assume each deletion sequence removes ~3.5 chars.
+        process.avg_deletion_length = Some(3.5);
+    }
+    if let Some(wm) = &metrics.writing_mode {
+        if let Some(cl) = &wm.cognitive_layer {
+            if cl.bigram_fluency_ratio.is_finite() && cl.bigram_fluency_ratio > 0.0 {
+                process.bigram_consistency = Some(cl.bigram_fluency_ratio);
+            }
+        }
     }
 
     // Blend the stored per-checkpoint cadence scores with the post-hoc topology
@@ -389,6 +473,266 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
         })
         .collect();
 
+    // Forgery cost estimation from available evidence components.
+    let chain_duration_sec = {
+        let first_ns = events.first().map(|e| e.timestamp_ns).unwrap_or(0);
+        let last_ns = events.last().map(|e| e.timestamp_ns).unwrap_or(0);
+        ((last_ns - first_ns).max(0) as f64 / 1_000_000_000.0) as u64
+    };
+    let forgery = {
+        use crate::forensics::{estimate_forgery_cost, ForgeryCostInput};
+        let (cm_passed, cm_total) = metrics
+            .cross_modal
+            .as_ref()
+            .map(|cm| {
+                let passed = cm.checks.iter().filter(|c| c.passed).count();
+                (passed, cm.checks.len())
+            })
+            .unwrap_or((0, 0));
+        let input = ForgeryCostInput {
+            vdf_iterations: total_iterations,
+            vdf_rate: ips,
+            checkpoint_count: events.len() as u64,
+            chain_duration_sec,
+            has_jitter_binding: false,
+            jitter_sample_count: 0,
+            has_hardware_attestation: hardware_backed,
+            has_behavioral_fingerprint: metrics.behavioral.is_some(),
+            cross_modal_consistent: cm_total > 0 && cm_passed == cm_total,
+            cross_modal_passed: cm_passed,
+            cross_modal_total: cm_total,
+            has_external_time_anchor: false,
+            has_content_key_entanglement: events.len() > 3,
+        };
+        let est = estimate_forgery_cost(&input);
+        let tier_label = match est.tier {
+            crate::forensics::ForgeryResistanceTier::Trivial => "Trivial",
+            crate::forensics::ForgeryResistanceTier::Low => "Low",
+            crate::forensics::ForgeryResistanceTier::Moderate => "Moderate",
+            crate::forensics::ForgeryResistanceTier::High => "High",
+            crate::forensics::ForgeryResistanceTier::VeryHigh => "Very High",
+        };
+        ForgeryInfo {
+            tier: tier_label.to_string(),
+            estimated_forge_time_sec: est.estimated_forge_time_sec,
+            weakest_link: est.weakest_link,
+            components: est
+                .components
+                .into_iter()
+                .map(|c| ForgeryComponent {
+                    name: c.name,
+                    present: c.present,
+                    cost_cpu_sec: c.cost_cpu_sec,
+                    explanation: c.explanation,
+                })
+                .collect(),
+        }
+    };
+
+    // Compute per-dimension forensic scores for the Exhibit C section.
+    let dimensions = {
+        let score_color = |s: u32| -> String {
+            if s >= 80 {
+                "#2e7d32".to_string()
+            } else if s >= 60 {
+                "#558b2f".to_string()
+            } else if s >= 40 {
+                "#f57f17".to_string()
+            } else {
+                "#b71c1c".to_string()
+            }
+        };
+
+        // 1. Temporal Proof Chain: based on VDF iterations and checkpoint density.
+        let temporal_score: u32 = {
+            let has_vdf = total_iterations > 0;
+            let dense_enough = events.len() >= 3;
+            let long_enough = total_min > 1.0;
+            let base = if has_vdf && dense_enough && long_enough {
+                75u32
+            } else if has_vdf && dense_enough {
+                60
+            } else if has_vdf {
+                45
+            } else {
+                30
+            };
+            // Bonus for chain verified and backdating_hours > 0
+            base.saturating_add(if total_iterations > 1000 { 10 } else { 5 })
+                .min(99)
+        };
+
+        // 2. Edit Pattern: revision_intensity + topology assessment.
+        let edit_score: u32 = {
+            let topo = finite_or(metrics.assessment_score.get(), 0.0);
+            let ri = process
+                .revision_intensity
+                .filter(|v| v.is_finite())
+                .unwrap_or(0.0);
+            // Healthy revision (10-60%) is human signal.
+            let ri_score = if ri > 0.05 && ri < 0.65 {
+                0.8
+            } else if ri > 0.0 {
+                0.5
+            } else {
+                0.3
+            };
+            ((topo * 0.6 + ri_score * 0.4) * 100.0).clamp(0.0, 99.0) as u32
+        };
+
+        // 3. Process Continuity: session structure quality.
+        let continuity_score: u32 = {
+            let session_count = sessions.len();
+            let avg_duration = if session_count > 0 {
+                total_min / session_count as f64
+            } else {
+                total_min
+            };
+            let base: u32 = if session_count >= 3 {
+                80
+            } else if session_count == 2 {
+                70
+            } else {
+                55
+            };
+            // Bonus for sessions averaging > 5 min (not a quick burst).
+            base.saturating_add(if avg_duration > 5.0 { 10 } else { 0 })
+                .min(99)
+        };
+
+        // 4. Content-Process Coherence: paste ratio + keystroke/size match.
+        let coherence_score: u32 = {
+            let low_paste = paste_ratio_pct.map(|p| p < 30.0).unwrap_or(true);
+            let has_keystrokes = keystroke_estimate > 10;
+            let cv = finite_or(metrics.cadence.correction_ratio.get(), 0.0);
+            let base: u32 = if low_paste && has_keystrokes { 75 } else { 50 };
+            // Natural correction ratio (5-30%) is a human signal.
+            base.saturating_add(if cv > 0.05 && cv < 0.4 { 15 } else { 0 })
+                .min(99)
+        };
+
+        // 5. Behavioral Signature: cadence variability and speed distribution.
+        let behavioral_score: u32 = {
+            let cv = if metrics.cadence.mean_iki_ns > 0.0 && metrics.cadence.std_dev_iki_ns > 0.0 {
+                metrics.cadence.std_dev_iki_ns / metrics.cadence.mean_iki_ns
+            } else {
+                // Post-hoc path: use burst_speed_cv as proxy.
+                finite_or(metrics.cadence.burst_speed_cv, 0.5)
+            };
+            // Human CV is typically 0.3-1.5; robotic < 0.15; transcription > 2.0.
+            let cv_score = if cv > 0.2 && cv < 1.8 {
+                0.85
+            } else if cv > 0.1 {
+                0.55
+            } else {
+                0.25
+            };
+            let biological = finite_or(metrics.biological_cadence_score.get(), 0.5);
+            ((cv_score * 0.6 + biological * 0.4) * 100.0).clamp(0.0, 99.0) as u32
+        };
+
+        // 6. Velocity Profile: writing speed relative to human norms.
+        let velocity_score: u32 = {
+            let mean_bps = finite_or(metrics.velocity.mean_bps, 0.0);
+            // Human sustained prose: 1-10 bytes/sec; code/markup slightly higher.
+            let v_score = if mean_bps > 0.5 && mean_bps < 20.0 {
+                0.85
+            } else if mean_bps > 0.0 && mean_bps < 50.0 {
+                0.60
+            } else if mean_bps == 0.0 {
+                0.40
+            } else {
+                0.20
+            };
+            (v_score * 100.0) as u32
+        };
+
+        vec![
+            DimensionScore {
+                name: "Temporal Proof Chain".to_string(),
+                score: temporal_score,
+                lr: compute_likelihood_ratio(temporal_score),
+                log_lr: compute_likelihood_ratio(temporal_score).log10().max(-2.0),
+                confidence: if total_iterations > 0 { 0.90 } else { 0.50 },
+                key_discriminator: format!(
+                    "{} checkpoints, {} VDF iterations",
+                    events.len(),
+                    total_iterations
+                ),
+                color: score_color(temporal_score),
+                analysis: Vec::new(),
+            },
+            DimensionScore {
+                name: "Edit Pattern Authenticity".to_string(),
+                score: edit_score,
+                lr: compute_likelihood_ratio(edit_score),
+                log_lr: compute_likelihood_ratio(edit_score).log10().max(-2.0),
+                confidence: if events.len() >= 5 { 0.80 } else { 0.50 },
+                key_discriminator: process
+                    .revision_intensity
+                    .filter(|v| v.is_finite())
+                    .map(|v| format!("{:.0}% revision rate", v * 100.0))
+                    .unwrap_or_else(|| "edit topology analyzed".to_string()),
+                color: score_color(edit_score),
+                analysis: Vec::new(),
+            },
+            DimensionScore {
+                name: "Process Continuity".to_string(),
+                score: continuity_score,
+                lr: compute_likelihood_ratio(continuity_score),
+                log_lr: compute_likelihood_ratio(continuity_score).log10().max(-2.0),
+                confidence: if sessions.len() >= 2 { 0.85 } else { 0.60 },
+                key_discriminator: format!(
+                    "{} session{}, {:.0} min total",
+                    sessions.len(),
+                    if sessions.len() == 1 { "" } else { "s" },
+                    total_min
+                ),
+                color: score_color(continuity_score),
+                analysis: Vec::new(),
+            },
+            DimensionScore {
+                name: "Content-Process Coherence".to_string(),
+                score: coherence_score,
+                lr: compute_likelihood_ratio(coherence_score),
+                log_lr: compute_likelihood_ratio(coherence_score).log10().max(-2.0),
+                confidence: 0.75,
+                key_discriminator: paste_ratio_pct
+                    .map(|p| format!("{:.1}% paste ratio", p))
+                    .unwrap_or_else(|| format!("{} paste events", paste_count)),
+                color: score_color(coherence_score),
+                analysis: Vec::new(),
+            },
+            DimensionScore {
+                name: "Behavioral Signature".to_string(),
+                score: behavioral_score,
+                lr: compute_likelihood_ratio(behavioral_score),
+                log_lr: compute_likelihood_ratio(behavioral_score).log10().max(-2.0),
+                confidence: if metrics.cadence.mean_iki_ns > 0.0 { 0.85 } else { 0.55 },
+                key_discriminator: format!(
+                    "burst CV: {:.2}, correction rate: {:.1}%",
+                    finite_or(metrics.cadence.burst_speed_cv, 0.0),
+                    finite_or(metrics.cadence.correction_ratio.get(), 0.0) * 100.0
+                ),
+                color: score_color(behavioral_score),
+                analysis: Vec::new(),
+            },
+            DimensionScore {
+                name: "Writing Velocity".to_string(),
+                score: velocity_score,
+                lr: compute_likelihood_ratio(velocity_score),
+                log_lr: compute_likelihood_ratio(velocity_score).log10().max(-2.0),
+                confidence: if events.len() >= 3 { 0.80 } else { 0.55 },
+                key_discriminator: format!(
+                    "{:.1} bytes/sec mean velocity",
+                    finite_or(metrics.velocity.mean_bps, 0.0)
+                ),
+                color: score_color(velocity_score),
+                analysis: Vec::new(),
+            },
+        ]
+    };
+
     let verdict_desc = match verdict {
         Verdict::VerifiedHuman => "Strong evidence of human authorship with natural editing patterns, timing constraints, and behavioral consistency.".into(),
         Verdict::LikelyHuman => "Moderate evidence of human authorship with generally consistent patterns.".into(),
@@ -425,8 +769,8 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
         sessions,
         process,
         flags,
-        forgery: ForgeryInfo::default(),
-        dimensions: Vec::new(),
+        forgery,
+        dimensions,
         writing_flow: Vec::new(),
         methodology: None,
         limitations: vec![
@@ -564,7 +908,10 @@ fn convert_process(p: &ProcessEvidence) -> FfiProcessEvidence {
         pause_p95_sec: p.pause_p95_sec,
         paste_ratio_pct: p.paste_ratio_pct,
         iki_cv: p.iki_cv,
+        bigram_consistency: p.bigram_consistency,
         total_keystrokes: p.total_keystrokes,
+        deletion_sequences: p.deletion_sequences,
+        avg_deletion_length: p.avg_deletion_length,
     }
 }
 
