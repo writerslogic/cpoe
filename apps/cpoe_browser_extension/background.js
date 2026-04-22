@@ -511,6 +511,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           char_count: message.charCount,
           delta: message.delta,
           ordinal,
+          tool_category: message.toolCategory || "none",
+          tool_host: message.toolHost || "",
         };
         checkpointOrdinal++;
         const ready = genesisReady || Promise.resolve();
@@ -723,7 +725,9 @@ async function handleStandaloneActionInner(message, sender, sendResponse) {
           standaloneSessionId,
           message.contentHash,
           message.charCount,
-          message.delta
+          message.delta,
+          message.toolCategory,
+          message.toolHost
         );
         if (result.type === "error") {
           sendResponse({ ok: false, error: result.message });

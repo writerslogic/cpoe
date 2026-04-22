@@ -36,6 +36,12 @@ pub(crate) enum Request {
         /// Checkpoint ordinal from the browser (optional for backward compat).
         #[serde(default)]
         ordinal: Option<u64>,
+        /// Tool category detected by the browser extension (e.g., "grammar", "ai", "writing", "none").
+        #[serde(default)]
+        tool_category: Option<String>,
+        /// Hostname of the tool site (e.g., "app.grammarly.com").
+        #[serde(default)]
+        tool_host: Option<String>,
     },
     StopSession,
     GetStatus,

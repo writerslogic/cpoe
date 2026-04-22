@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 use chrono::{DateTime, Utc};
+use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use subtle::ConstantTimeEq;
 
 use crate::error::{Error, Result};
 use crate::vdf::{self, Parameters};
@@ -43,6 +46,17 @@ pub struct Chain {
     /// `checkpoint.mmr_inclusion_proof` before finalizing the hash.
     #[serde(skip)]
     mmr: Option<crate::checkpoint_mmr::CheckpointMmr>,
+}
+
+fn mac_sidecar_path(chain_path: &Path) -> PathBuf {
+    PathBuf::from(format!("{}.mac", chain_path.display()))
+}
+
+fn compute_chain_mac(mac_key: &[u8], data: &[u8]) -> Result<[u8; 32]> {
+    let mut h = Hmac::<Sha256>::new_from_slice(mac_key)
+        .map_err(|_| Error::checkpoint("invalid chain MAC key length"))?;
+    h.update(data);
+    Ok(h.finalize().into_bytes().into())
 }
 
 impl Chain {
@@ -132,21 +146,31 @@ impl Chain {
             let duration = if ordinal == 0 {
                 // Genesis: no elapsed time; VDF uses min_iterations to prevent forgery.
                 vdf_duration.unwrap_or(Duration::from_secs(0))
+            } else if let Some(explicit) = vdf_duration {
+                explicit
             } else {
-                vdf_duration.unwrap_or_else(|| {
-                    let delta = checkpoint
-                        .timestamp
-                        .signed_duration_since(last_cp.unwrap().timestamp);
-                    delta.to_std().unwrap_or_else(|_| {
-                        if delta.num_seconds().abs() > MAX_CLOCK_DRIFT_SECS {
-                            log::warn!(
-                                "Clock regression of {}s detected",
-                                delta.num_seconds().abs()
-                            );
+                let delta = checkpoint
+                    .timestamp
+                    .signed_duration_since(last_cp.unwrap().timestamp);
+                match delta.to_std() {
+                    Ok(d) => d,
+                    Err(_) => {
+                        // delta is negative — the system clock moved backward.
+                        // Small regressions (≤ MAX_CLOCK_DRIFT_SECS) can be NTP
+                        // corrections; accept them with a zero-duration VDF so
+                        // min_iterations still applies.  Larger regressions are
+                        // refused entirely: they allow a forger to backdate a
+                        // checkpoint and produce a trivially-cheap VDF proof.
+                        let regression_secs = delta.num_seconds().abs();
+                        if regression_secs > MAX_CLOCK_DRIFT_SECS {
+                            return Err(Error::checkpoint(format!(
+                                "clock regression of {regression_secs}s detected; \
+                                 refusing to create checkpoint with zero-cost VDF proof"
+                            )));
                         }
                         Duration::from_secs(0)
-                    })
-                })
+                    }
+                }
             };
             let vdf_input = vdf::chain_input(content_hash, previous_hash, ordinal);
             checkpoint.vdf = Some(vdf::compute(vdf_input, duration, self.metadata.vdf_params)?);
@@ -205,6 +229,53 @@ impl Chain {
             return Err(Error::checkpoint("Chain file exceeds safety limit"));
         }
         let data = fs::read(path)?;
+        let mut chain: Chain = serde_json::from_slice(&data)
+            .map_err(|e| Error::checkpoint(format!("failed to deserialize chain: {e}")))?;
+        chain.storage_path = Some(path.to_path_buf());
+        Ok(chain)
+    }
+
+    /// Save the chain and write an HMAC-SHA256 sidecar (`{path}.mac`) over the
+    /// serialized bytes.  The sidecar lets `load_with_mac` detect offline edits
+    /// to the chain JSON before deserializing.
+    pub fn save_with_mac(&mut self, path: impl AsRef<Path>, mac_key: &[u8]) -> Result<()> {
+        let path = path.as_ref();
+        self.save(path)?;
+        let data = fs::read(path)
+            .map_err(|e| Error::checkpoint(format!("failed to read chain for MAC: {e}")))?;
+        let mac = compute_chain_mac(mac_key, &data)?;
+        fs::write(mac_sidecar_path(path), &mac)
+            .map_err(|e| Error::checkpoint(format!("failed to write chain MAC: {e}")))?;
+        Ok(())
+    }
+
+    /// Load the chain, verifying the HMAC sidecar when present.
+    ///
+    /// If no sidecar exists (chains written before this change), falls back to
+    /// `load()` for backward compatibility.  If the sidecar exists but the MAC
+    /// fails, returns an error immediately without deserializing.
+    pub fn load_with_mac(path: impl AsRef<Path>, mac_key: &[u8]) -> Result<Self> {
+        let path = path.as_ref();
+        let mac_path = mac_sidecar_path(path);
+        if !mac_path.exists() {
+            return Self::load(path);
+        }
+        let stored_mac: [u8; 32] = fs::read(&mac_path)
+            .map_err(|e| Error::checkpoint(format!("failed to read chain MAC: {e}")))?
+            .try_into()
+            .map_err(|_| Error::checkpoint("chain MAC file has wrong length (expected 32 bytes)"))?;
+        let file_len = fs::metadata(path)?.len();
+        if file_len > MAX_CHAIN_FILE_SIZE {
+            return Err(Error::checkpoint("chain file exceeds safety limit"));
+        }
+        let data = fs::read(path)
+            .map_err(|e| Error::checkpoint(format!("failed to read chain file: {e}")))?;
+        let computed = compute_chain_mac(mac_key, &data)?;
+        if !bool::from(computed.ct_eq(&stored_mac)) {
+            return Err(Error::checkpoint(
+                "chain file HMAC verification failed — file may have been tampered with",
+            ));
+        }
         let mut chain: Chain = serde_json::from_slice(&data)
             .map_err(|e| Error::checkpoint(format!("failed to deserialize chain: {e}")))?;
         chain.storage_path = Some(path.to_path_buf());

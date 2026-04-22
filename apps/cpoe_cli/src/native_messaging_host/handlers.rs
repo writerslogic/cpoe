@@ -203,6 +203,8 @@ pub(crate) fn handle_checkpoint(
     delta: i64,
     commitment: Option<String>,
     ordinal: Option<u64>,
+    tool_category: Option<String>,
+    tool_host: Option<String>,
 ) -> Response {
     if let Err(msg) = validate_content_hash(&content_hash) {
         return Response::Error {
@@ -299,9 +301,14 @@ pub(crate) fn handle_checkpoint(
         .document_title
         .replace("--", "\u{2014}")
         .replace('>', "\u{203A}");
+    let tool_cat = tool_category.as_deref().unwrap_or("none");
+    let tool_h = tool_host.as_deref().unwrap_or("");
+    // Sanitize tool fields for HTML comment context (strip -- and >)
+    let safe_tool_cat: String = tool_cat.chars().filter(|c| c.is_alphanumeric() || *c == '_').take(32).collect();
+    let safe_tool_host: String = tool_h.chars().filter(|c| c.is_alphanumeric() || *c == '.' || *c == '-').take(128).collect();
     let content = format!(
-        "<!-- {} -->\n<!-- hash: {} chars: {} delta: {} ordinal: {} -->\n",
-        safe_title, content_hash, char_count, delta, session.expected_ordinal
+        "<!-- {} -->\n<!-- hash: {} chars: {} delta: {} ordinal: {} tool: {}:{} -->\n",
+        safe_title, content_hash, char_count, delta, session.expected_ordinal, safe_tool_cat, safe_tool_host
     );
     if let Err(e) = std::fs::OpenOptions::new()
         .create(true)

@@ -193,9 +193,21 @@ impl SentinelIpcHandler {
             .join("chains")
             .join(format!("{doc_id}.json"));
 
+        let chain_mac_key = {
+            let guard = self.sentinel.signing_key.read_recover();
+            guard.key().map(|k| {
+                let bytes = Zeroizing::new(k.to_bytes());
+                crate::crypto::derive_hmac_key(bytes.as_ref())
+            })
+        };
+
         let mut chain = if chain_path.exists() {
-            crate::checkpoint::Chain::load(&chain_path)
-                .map_err(|e| format!("Failed to load chain: {e}"))?
+            match &chain_mac_key {
+                Some(key) => crate::checkpoint::Chain::load_with_mac(&chain_path, key)
+                    .map_err(|e| format!("Failed to load chain: {e}"))?,
+                None => crate::checkpoint::Chain::load(&chain_path)
+                    .map_err(|e| format!("Failed to load chain: {e}"))?,
+            }
         } else {
             crate::checkpoint::Chain::new(&path, vdf_params)
                 .map_err(|e| format!("Failed to create chain: {e}"))?
@@ -203,8 +215,14 @@ impl SentinelIpcHandler {
 
         let checkpoint =
             if chain.metadata.entanglement_mode == crate::checkpoint::EntanglementMode::Entangled {
-                let accumulator = self.sentinel.activity_accumulator.read_recover();
-                let samples = accumulator.samples();
+                let path_str = path.to_string_lossy().to_string();
+                let (samples, session_id) = {
+                    let sessions = self.sentinel.sessions.read_recover();
+                    match sessions.get(&path_str) {
+                        Some(s) => (s.jitter_samples.clone(), s.session_id.clone()),
+                        None => (Vec::new(), uuid::Uuid::new_v4().to_string()),
+                    }
+                };
                 let keystroke_count = samples.len() as u64;
 
                 let mut jitter_hasher = Sha256::new();
@@ -214,14 +232,6 @@ impl SentinelIpcHandler {
                     jitter_hasher.update(s.duration_since_last_ns.to_be_bytes());
                 }
                 let jitter_hash: [u8; 32] = jitter_hasher.finalize().into();
-
-                let session_id = self
-                    .sentinel
-                    .sessions
-                    .read_recover()
-                    .get(&path.to_string_lossy().to_string())
-                    .map(|s| s.session_id.clone())
-                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
                 let physics = crate::physics::PhysicalContext::capture(&samples);
 
@@ -240,9 +250,14 @@ impl SentinelIpcHandler {
                     .commit(Some(message))
                     .map_err(|e| format!("Commit failed: {e}"))?
             };
-        chain
-            .save(&chain_path)
-            .map_err(|e| format!("Failed to save chain: {e}"))?;
+        match &chain_mac_key {
+            Some(key) => chain
+                .save_with_mac(&chain_path, key)
+                .map_err(|e| format!("Failed to save chain: {e}"))?,
+            None => chain
+                .save(&chain_path)
+                .map_err(|e| format!("Failed to save chain: {e}"))?,
+        }
 
         Ok(IpcMessage::CheckpointResponse {
             success: true,
@@ -298,6 +313,9 @@ impl SentinelIpcHandler {
         if chain.checkpoints.is_empty() {
             return Err("Chain has no checkpoints".to_string());
         }
+        chain
+            .verify()
+            .map_err(|e| format!("Chain integrity check failed before export: {e}"))?;
 
         let title = path
             .file_name()

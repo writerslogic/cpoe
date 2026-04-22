@@ -104,7 +104,20 @@ impl ActivityFingerprintAccumulator {
     }
 
     /// Push a sample, evicting the oldest if at capacity.
+    ///
+    /// Enforces monotonic timestamps to prevent replay attacks: any sample
+    /// whose `timestamp_ns` is not strictly greater than the last accepted
+    /// sample is silently dropped.  This makes it impossible to flood the
+    /// accumulator with identical or out-of-order samples via any path.
     pub fn add_sample(&mut self, sample: &SimpleJitterSample) {
+        // Reject duplicate and out-of-order samples.  A replayed sample would
+        // share the same timestamp_ns as the original; a rewound sample would
+        // have a strictly smaller one.  Both are invalid and indicate injection.
+        if let Some(last) = self.samples.back() {
+            if sample.timestamp_ns <= last.timestamp_ns {
+                return;
+            }
+        }
         if self.samples.len() >= self.max_samples {
             self.samples.pop_front();
         }
