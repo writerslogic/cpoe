@@ -143,7 +143,11 @@ impl CognitiveAccumulator {
                 self.last_was_separator = false;
             }
 
-            self.last_was_sentence_end = is_sentence_end;
+            if is_sentence_end {
+                self.last_was_sentence_end = true;
+            } else if !is_separator {
+                self.last_was_sentence_end = false;
+            }
         }
 
         self.last_keystroke_ns = timestamp_ns;
