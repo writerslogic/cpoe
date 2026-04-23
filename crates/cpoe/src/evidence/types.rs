@@ -230,6 +230,10 @@ pub struct Packet {
     /// with a beacon attestation produces a different seal than evidence without one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub beacon_attestation: Option<WpBeaconAttestation>,
+    /// Reference to associated W3C Verifiable Credential (Phase 4).
+    /// Contains credential ID and issuer for wallet integration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential_reference: Option<CredentialReference>,
 }
 
 impl Default for Packet {
@@ -272,6 +276,7 @@ impl Default for Packet {
             claims: Vec::new(),
             limitations: Vec::new(),
             beacon_attestation: None,
+            credential_reference: None,
         }
     }
 }
@@ -335,6 +340,30 @@ pub struct WpBeaconAttestation {
     /// the verifier falls back to timestamp-based key selection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wp_key_id: Option<String>,
+}
+
+/// Reference to a W3C Verifiable Credential issued by WritersLogic.
+///
+/// Allows evidence packets to be linked to digital credentials for wallet export.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CredentialReference {
+    /// Unique credential identifier (UUID v4)
+    pub credential_id: String,
+
+    /// Issuer domain (always "writerslogic.com")
+    pub issuer: String,
+
+    /// Credential type (always "writersproof.authorship.v1")
+    pub credential_type: String,
+
+    /// ISO 8601 timestamp when credential was issued
+    pub issued_at: String,
+
+    /// ISO 8601 timestamp when credential expires
+    pub expires_at: String,
+
+    /// SHA-256 hash of the evidence packet this credential references
+    pub evidence_hash: String,
 }
 
 /// Classification of a context period within a writing session.
