@@ -656,6 +656,28 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
             (v_score * 100.0) as u32
         };
 
+        let kd_temporal = format!("{} checkpoints, {} VDF iterations", events.len(), total_iterations);
+        let kd_edit = process
+            .revision_intensity
+            .filter(|v| v.is_finite())
+            .map(|v| format!("{:.0}% revision rate", v * 100.0))
+            .unwrap_or_else(|| "edit topology analyzed".to_string());
+        let kd_continuity = format!(
+            "{} session{}, {:.0} min total",
+            sessions.len(),
+            if sessions.len() == 1 { "" } else { "s" },
+            total_min
+        );
+        let kd_coherence = paste_ratio_pct
+            .map(|p| format!("{:.1}% paste ratio", p))
+            .unwrap_or_else(|| format!("{} paste events", paste_count));
+        let kd_behavioral = format!(
+            "burst CV: {:.2}, correction rate: {:.1}%",
+            finite_or(metrics.cadence.burst_speed_cv, 0.0),
+            finite_or(metrics.cadence.correction_ratio.get(), 0.0) * 100.0
+        );
+        let kd_velocity = format!("{:.1} bytes/sec mean velocity", finite_or(metrics.velocity.mean_bps, 0.0));
+
         vec![
             DimensionScore {
                 name: "Temporal Proof Chain".to_string(),
@@ -663,13 +685,21 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
                 lr: compute_likelihood_ratio(temporal_score),
                 log_lr: compute_likelihood_ratio(temporal_score).log10().max(-2.0),
                 confidence: if total_iterations > 0 { 0.90 } else { 0.50 },
-                key_discriminator: format!(
-                    "{} checkpoints, {} VDF iterations",
-                    events.len(),
-                    total_iterations
-                ),
+                key_discriminator: kd_temporal.clone(),
                 color: score_color(temporal_score),
-                analysis: Vec::new(),
+                analysis: vec![
+                    DimensionDetail { label: "Observation".into(), text: kd_temporal },
+                    DimensionDetail {
+                        label: "Interpretation".into(),
+                        text: if temporal_score >= 75 {
+                            "Checkpoint density and VDF chain establish a credible minimum elapsed time consistent with organic composition.".into()
+                        } else if temporal_score >= 50 {
+                            "Chain is internally consistent but limited iterations reduce the provable elapsed-time bound.".into()
+                        } else {
+                            "Insufficient checkpoints or VDF proof to establish minimum elapsed time with confidence.".into()
+                        },
+                    },
+                ],
             },
             DimensionScore {
                 name: "Edit Pattern Authenticity".to_string(),
@@ -677,13 +707,21 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
                 lr: compute_likelihood_ratio(edit_score),
                 log_lr: compute_likelihood_ratio(edit_score).log10().max(-2.0),
                 confidence: if events.len() >= 5 { 0.80 } else { 0.50 },
-                key_discriminator: process
-                    .revision_intensity
-                    .filter(|v| v.is_finite())
-                    .map(|v| format!("{:.0}% revision rate", v * 100.0))
-                    .unwrap_or_else(|| "edit topology analyzed".to_string()),
+                key_discriminator: kd_edit.clone(),
                 color: score_color(edit_score),
-                analysis: Vec::new(),
+                analysis: vec![
+                    DimensionDetail { label: "Observation".into(), text: kd_edit },
+                    DimensionDetail {
+                        label: "Interpretation".into(),
+                        text: if edit_score >= 75 {
+                            "Revision patterns are consistent with iterative human composition including normal correction frequency and non-linear editing.".into()
+                        } else if edit_score >= 50 {
+                            "Some revision activity detected; patterns are ambiguous between original composition and light editing.".into()
+                        } else {
+                            "Low revision rate or anomalous editing patterns are inconsistent with typical human drafting behavior.".into()
+                        },
+                    },
+                ],
             },
             DimensionScore {
                 name: "Process Continuity".to_string(),
@@ -691,14 +729,21 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
                 lr: compute_likelihood_ratio(continuity_score),
                 log_lr: compute_likelihood_ratio(continuity_score).log10().max(-2.0),
                 confidence: if sessions.len() >= 2 { 0.85 } else { 0.60 },
-                key_discriminator: format!(
-                    "{} session{}, {:.0} min total",
-                    sessions.len(),
-                    if sessions.len() == 1 { "" } else { "s" },
-                    total_min
-                ),
+                key_discriminator: kd_continuity.clone(),
                 color: score_color(continuity_score),
-                analysis: Vec::new(),
+                analysis: vec![
+                    DimensionDetail { label: "Observation".into(), text: kd_continuity },
+                    DimensionDetail {
+                        label: "Interpretation".into(),
+                        text: if continuity_score >= 75 {
+                            "Multiple distinct writing sessions demonstrate sustained engagement consistent with extended human composition.".into()
+                        } else if continuity_score >= 50 {
+                            "Session structure is present but limited; fewer sessions reduce confidence in sustained engagement.".into()
+                        } else {
+                            "Single or very short session may indicate rapid entry rather than organic multi-session composition.".into()
+                        },
+                    },
+                ],
             },
             DimensionScore {
                 name: "Content-Process Coherence".to_string(),
@@ -706,11 +751,21 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
                 lr: compute_likelihood_ratio(coherence_score),
                 log_lr: compute_likelihood_ratio(coherence_score).log10().max(-2.0),
                 confidence: 0.75,
-                key_discriminator: paste_ratio_pct
-                    .map(|p| format!("{:.1}% paste ratio", p))
-                    .unwrap_or_else(|| format!("{} paste events", paste_count)),
+                key_discriminator: kd_coherence.clone(),
                 color: score_color(coherence_score),
-                analysis: Vec::new(),
+                analysis: vec![
+                    DimensionDetail { label: "Observation".into(), text: kd_coherence },
+                    DimensionDetail {
+                        label: "Interpretation".into(),
+                        text: if coherence_score >= 75 {
+                            "Content growth closely tracks keystroke activity with low paste ratio; process and content are well-aligned.".into()
+                        } else if coherence_score >= 50 {
+                            "Moderate alignment between content growth and editing activity; some paste operations detected.".into()
+                        } else {
+                            "High paste ratio or poor keystroke-to-content alignment; process evidence is partially decoupled from content.".into()
+                        },
+                    },
+                ],
             },
             DimensionScore {
                 name: "Behavioral Signature".to_string(),
@@ -718,13 +773,21 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
                 lr: compute_likelihood_ratio(behavioral_score),
                 log_lr: compute_likelihood_ratio(behavioral_score).log10().max(-2.0),
                 confidence: if metrics.cadence.mean_iki_ns > 0.0 { 0.85 } else { 0.55 },
-                key_discriminator: format!(
-                    "burst CV: {:.2}, correction rate: {:.1}%",
-                    finite_or(metrics.cadence.burst_speed_cv, 0.0),
-                    finite_or(metrics.cadence.correction_ratio.get(), 0.0) * 100.0
-                ),
+                key_discriminator: kd_behavioral.clone(),
                 color: score_color(behavioral_score),
-                analysis: Vec::new(),
+                analysis: vec![
+                    DimensionDetail { label: "Observation".into(), text: kd_behavioral },
+                    DimensionDetail {
+                        label: "Interpretation".into(),
+                        text: if behavioral_score >= 75 {
+                            "Inter-keystroke interval variability falls within human norms; cadence is consistent with biological typing.".into()
+                        } else if behavioral_score >= 50 {
+                            "Typing cadence shows some variability but the pattern is ambiguous; limited IKI data reduces certainty.".into()
+                        } else {
+                            "Keystroke cadence is atypical; may indicate automated input or transcription from an external source.".into()
+                        },
+                    },
+                ],
             },
             DimensionScore {
                 name: "Writing Velocity".to_string(),
@@ -732,12 +795,21 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
                 lr: compute_likelihood_ratio(velocity_score),
                 log_lr: compute_likelihood_ratio(velocity_score).log10().max(-2.0),
                 confidence: if events.len() >= 3 { 0.80 } else { 0.55 },
-                key_discriminator: format!(
-                    "{:.1} bytes/sec mean velocity",
-                    finite_or(metrics.velocity.mean_bps, 0.0)
-                ),
+                key_discriminator: kd_velocity.clone(),
                 color: score_color(velocity_score),
-                analysis: Vec::new(),
+                analysis: vec![
+                    DimensionDetail { label: "Observation".into(), text: kd_velocity },
+                    DimensionDetail {
+                        label: "Interpretation".into(),
+                        text: if velocity_score >= 75 {
+                            "Mean content production rate falls within human prose writing norms (0.5–15 B/s).".into()
+                        } else if velocity_score >= 50 {
+                            "Content production velocity is plausible but falls outside the core human prose range.".into()
+                        } else {
+                            "Content production rate is inconsistent with natural human writing; may indicate batch insertion.".into()
+                        },
+                    },
+                ],
             },
         ]
     };
@@ -748,6 +820,30 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
         Verdict::Inconclusive => "Insufficient evidence to make a determination about authorship.".into(),
         Verdict::Suspicious => "Anomalous patterns detected that are inconsistent with typical human authorship.".into(),
         Verdict::LikelySynthetic => "Strong indicators of synthetic or automated content generation.".into(),
+    };
+
+    let activity_contexts: Vec<ActivityContext> = sessions
+        .iter()
+        .map(|s| ActivityContext {
+            period_type: "writing_session".into(),
+            start: s.start,
+            end: s.start + chrono::Duration::seconds((s.duration_min * 60.0) as i64),
+            duration_min: s.duration_min,
+            note: Some(s.summary.clone()),
+        })
+        .collect();
+
+    let writing_flow: Vec<FlowDataPoint> = {
+        let first_ns = events.first().map(|e| e.timestamp_ns).unwrap_or(0);
+        let max_delta = events.iter().map(|e| e.size_delta.max(0)).max().unwrap_or(1).max(1);
+        events
+            .iter()
+            .map(|e| FlowDataPoint {
+                offset_min: e.timestamp_ns.saturating_sub(first_ns) as f64 / 60_000_000_000.0,
+                intensity: e.size_delta.max(0) as f64 / max_delta as f64,
+                phase: if e.size_delta > 0 { "active" } else { "pause" }.into(),
+            })
+            .collect()
     };
 
     let mut war_report = WarReport {
@@ -780,7 +876,7 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
         flags,
         forgery,
         dimensions,
-        writing_flow: Vec::new(),
+        writing_flow,
         methodology: None,
         limitations: vec![
             "Cannot prove cognitive origin of ideas".into(),
@@ -789,7 +885,7 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
         analyzed_text: None,
         forensic_metrics: Some(forensic_breakdown),
         edit_topology,
-        activity_contexts: Vec::new(),
+        activity_contexts,
         declaration_summary: None,
         key_hierarchy_summary: None,
         physical_context: None,
