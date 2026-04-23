@@ -78,3 +78,13 @@ staging/
 t.txt.*
 test.txt.*
 CLAUDE.md
+
+###############################################################################
+# Development planning documents (local reference only, not committed)
+###############################################################################
+DEVELOPMENT_PLAN_DETAILED.md
+ARCHITECTURE_IMPROVEMENTS.md
+IMPLEMENTATION_CHECKLIST.md
+PLANNING_SUMMARY.md
+DELIVERY_MANIFEST.md
+PHASE_2_1_BLOCKER.md
