@@ -37,13 +37,13 @@ impl TfidfModel {
         let mut models = HashMap::new();
         let total_docs = documents.len();
 
-        // Group documents by label
-        let mut label_docs: HashMap<String, Vec<String>> = HashMap::new();
+        // Group documents by label using references to avoid cloning
+        let mut label_docs: HashMap<&String, Vec<&String>> = HashMap::new();
         for (label, text) in documents {
             label_docs
-                .entry(label.clone())
+                .entry(label)
                 .or_insert_with(Vec::new)
-                .push(text.clone());
+                .push(text);
         }
 
         // Train a model for each label
@@ -54,7 +54,7 @@ impl TfidfModel {
             // Calculate IDF for each term
             let mut doc_frequencies = HashMap::new();
 
-            for doc in &docs {
+            for doc in docs {
                 let terms = Self::tokenize(doc);
                 let unique_terms: std::collections::HashSet<_> = terms.iter().cloned().collect();
 
@@ -63,13 +63,16 @@ impl TfidfModel {
                 }
             }
 
-            // Calculate IDF weights
+            // Calculate IDF weights with Laplace smoothing (add-one)
+            // Standard TF-IDF uses log(N/df), but add-one smoothing prevents
+            // rare terms from dominating scores. This is intentional for
+            // classification robustness.
             for (term, freq) in doc_frequencies {
                 let idf = ((total_docs as f64) / (freq as f64 + 1.0)).ln();
                 model.term_weights.insert(term, idf);
             }
 
-            models.insert(label, model);
+            models.insert(label.clone(), model);
         }
 
         models
@@ -89,12 +92,13 @@ impl TfidfModel {
     /// Computes TF-IDF score: higher score means better match to this class.
     pub fn score(&self, text: &str) -> f64 {
         let terms = Self::tokenize(text);
+        let term_count = terms.len();
         let mut total_score = 0.0;
 
-        // Count term frequencies
+        // Count term frequencies (consume terms vec to avoid cloning)
         let mut term_freqs = HashMap::new();
-        for term in &terms {
-            *term_freqs.entry(term.clone()).or_insert(0) += 1;
+        for term in terms {
+            *term_freqs.entry(term).or_insert(0) += 1;
         }
 
         // Calculate TF-IDF sum
@@ -106,8 +110,8 @@ impl TfidfModel {
         }
 
         // Normalize by document length
-        if !terms.is_empty() {
-            total_score / (terms.len() as f64).sqrt()
+        if term_count > 0 {
+            total_score / (term_count as f64).sqrt()
         } else {
             0.0
         }
@@ -167,9 +171,9 @@ impl LanguageClassifier {
             }
         }
 
-        // Normalize confidence to 0-1 range
-        // Clamp and convert to confidence percentage
-        let confidence = (best_score / (best_score + 1.0)).min(1.0);
+        // Normalize confidence to 0-1 range using sigmoid transformation
+        // Score/(score+1) always yields [0, 1) for non-negative scores
+        let confidence = best_score / (best_score + 1.0);
 
         (best_class, confidence)
     }

@@ -40,6 +40,8 @@ pub struct DevicePairingRecord {
 impl DevicePairingRecord {
     /// Create a new pairing record from a device's public key.
     pub fn new(device_id: String, public_key: [u8; 32]) -> Self {
+        // Note: timestamp_nanos_safe() returns clamped value on clock skew.
+        // This is acceptable for initial pairing timestamp (one-time use).
         DevicePairingRecord {
             device_id,
             public_key,
@@ -63,10 +65,12 @@ impl DevicePairingRecord {
         let verifying_key = VerifyingKey::from_bytes(&self.public_key)
             .map_err(|_| Error::crypto("Invalid public key"))?;
 
+        // Safety: length checked above guarantees exactly 64 bytes for Ed25519 signature
+        let sig_array: &[u8; 64] = signature.try_into()
+            .expect("signature length already verified as 64 bytes");
+
         verifying_key
-            .verify(message, &signature.try_into().map_err(|_| {
-                Error::crypto("Signature conversion failed")
-            })?)
+            .verify(message, sig_array)
             .map_err(|_| Error::crypto("Signature verification failed"))
     }
 
@@ -138,10 +142,6 @@ impl QRCodePayload {
 
     /// Deserialize from binary format.
     pub fn from_bytes(bytes: &[u8; 108]) -> Result<Self, Error> {
-        if bytes.len() < 100 {
-            return Err(Error::crypto("QR payload too short"));
-        }
-
         let device_id = String::from_utf8(
             bytes[0..32]
                 .iter()
@@ -185,7 +185,7 @@ pub enum PairingFlow {
     Paired,
 }
 
-/// Derive shared secret using ECDH from pairing tokens.
+/// Derive shared secret using HKDF-SHA256 from pairing tokens.
 ///
 /// **Input:**
 /// - Local pairing token (32 bytes)
@@ -194,24 +194,27 @@ pub enum PairingFlow {
 /// - Remote device ID
 ///
 /// **Output:**
-/// - Shared secret (32 bytes) derived via HKDF-SHA256
+/// - Shared secret (32 bytes) derived via HKDF-Expand-SHA256
 ///
 /// **Algorithm:**
 /// 1. Concatenate: local_token || remote_token || local_device_id || remote_device_id
-/// 2. Hash with SHA256 to get intermediate key
+/// 2. Use as HKDF input keying material (IKM)
 /// 3. HKDF-Expand with DST="witnessd-pairing-secret-v1" to get 32-byte shared secret
 ///
 /// **Security:**
 /// - Deterministic (same inputs always produce same secret)
 /// - Order-dependent (local || remote ≠ remote || local)
 /// - Includes device IDs to prevent cross-device key reuse
+/// - Domain-separated via info parameter to prevent secret reuse across contexts
 pub fn derive_shared_secret(
     local_token: &[u8; 32],
     remote_token: &[u8; 32],
     local_device_id: &str,
     remote_device_id: &str,
 ) -> [u8; 32] {
-    use sha2::Digest;
+    use hkdf::Hkdf;
+    use sha2::Sha256;
+    use zeroize::Zeroize;
 
     let mut material = Vec::new();
     material.extend_from_slice(local_token);
@@ -219,12 +222,17 @@ pub fn derive_shared_secret(
     material.extend_from_slice(local_device_id.as_bytes());
     material.extend_from_slice(remote_device_id.as_bytes());
 
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(&material);
-    let hash = hasher.finalize();
+    // HKDF with no salt, using material as input key material
+    let hk = Hkdf::<Sha256>::new(None, &material);
 
     let mut secret = [0u8; 32];
-    secret.copy_from_slice(&hash);
+    // Safe to unwrap: 32 bytes is valid output length for HKDF-Expand
+    hk.expand(b"witnessd-pairing-secret-v1", &mut secret)
+        .expect("HKDF expand succeeded for 32-byte output");
+
+    // Zero the input material
+    material.zeroize();
+
     secret
 }
 
@@ -279,12 +287,15 @@ mod tests {
     }
 
     #[test]
-    fn test_qr_code_payload_invalid_too_short() {
-        let bytes = [0u8; 50];
-        let result = QRCodePayload::from_bytes(
-            &[0u8; 108],
-        );
-        assert!(result.is_ok());
+    fn test_qr_code_payload_empty_device_id() {
+        let mut bytes = [0u8; 108];
+        // Zero device_id bytes [0..32], non-zero public key/token for validity
+        bytes[32..64].copy_from_slice(&[5u8; 32]); // public_key
+        bytes[64..96].copy_from_slice(&[6u8; 32]); // pairing_token
+        bytes[96..100].copy_from_slice(&1u32.to_be_bytes()); // version
+
+        let result = QRCodePayload::from_bytes(&bytes).unwrap();
+        assert_eq!(result.device_id, ""); // empty due to null padding
     }
 
     #[test]
