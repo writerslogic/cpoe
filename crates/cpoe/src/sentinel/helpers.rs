@@ -1085,7 +1085,7 @@ pub fn update_keystroke_context_window(
 ) {
     session.paste_context = Some(super::types::PasteContext {
         paste_time,
-        context_window_end: paste_time + (context_window_ms * 1_000_000),
+        context_window_end: paste_time + i64::try_from(context_window_ms * 1_000_000).unwrap_or(i64::MAX),
         keystroke_count_after_paste: 0,
     });
 }
@@ -1165,5 +1165,111 @@ pub(super) fn commit_checkpoint_for_path(
             log::warn!("Auto-checkpoint store write failed for {path}: {e}");
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_paste_detection_3_signals() {
+        let last_ts = 1000 * 1_000_000;
+        let current_ts = last_ts + 1000 * 1_000_000;
+        let hash1 = [0u8; 32];
+        let hash2 = [1u8; 32];
+
+        let (context, confidence) = detect_paste_boundary(
+            last_ts,
+            current_ts,
+            &hash1,
+            &hash2,
+            "com.app.new",
+            "com.app.old",
+        );
+
+        assert_eq!(context, KeystrokeContext::PastedContent);
+        assert!(confidence > 0.98);
+    }
+
+    #[test]
+    fn test_paste_detection_2_signals_long_silence() {
+        let last_ts = 2000 * 1_000_000;
+        let current_ts = last_ts + 2500 * 1_000_000;
+        let hash1 = [0u8; 32];
+        let hash2 = [1u8; 32];
+
+        let (context, confidence) = detect_paste_boundary(
+            last_ts,
+            current_ts,
+            &hash1,
+            &hash2,
+            "com.app.same",
+            "com.app.same",
+        );
+
+        assert_eq!(context, KeystrokeContext::PastedContent);
+        assert_eq!(confidence, 0.92);
+    }
+
+    #[test]
+    fn test_paste_detection_1_signal_app_transition() {
+        let last_ts = 3000 * 1_000_000;
+        let current_ts = last_ts + 50 * 1_000_000;
+        let hash = [0u8; 32];
+
+        let (context, confidence) = detect_paste_boundary(
+            last_ts,
+            current_ts,
+            &hash,
+            &hash,
+            "com.app.new",
+            "com.app.old",
+        );
+
+        assert_eq!(context, KeystrokeContext::PastedContent);
+        assert_eq!(confidence, 0.70);
+    }
+
+    #[test]
+    fn test_no_paste_signals_original() {
+        let last_ts = 4000 * 1_000_000;
+        let current_ts = last_ts + 100 * 1_000_000;
+        let hash = [0u8; 32];
+
+        let (context, confidence) = detect_paste_boundary(
+            last_ts,
+            current_ts,
+            &hash,
+            &hash,
+            "com.app.same",
+            "com.app.same",
+        );
+
+        assert_eq!(context, KeystrokeContext::OriginalComposition);
+        assert_eq!(confidence, 0.20);
+    }
+
+    #[test]
+    fn test_context_window_expiry() {
+        let mut session = DocumentSession::new(
+            "/test/doc.txt".to_string(),
+            "com.test.app".to_string(),
+            "TestApp".to_string(),
+            ObfuscatedString::new("Test Doc"),
+        );
+
+        let paste_time = 5000 * 1_000_000;
+        update_keystroke_context_window(&mut session, paste_time, 30_000);
+
+        assert!(session.paste_context.is_some());
+        let ctx = session.paste_context.unwrap();
+        assert_eq!(ctx.paste_time, paste_time);
+
+        let within_window = paste_time + 15_000 * 1_000_000;
+        assert!(is_within_paste_window(&session, within_window));
+
+        let past_window = paste_time + 31_000 * 1_000_000;
+        assert!(!is_within_paste_window(&session, past_window));
     }
 }
