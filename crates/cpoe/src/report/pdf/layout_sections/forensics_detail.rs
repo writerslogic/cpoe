@@ -38,10 +38,11 @@ pub fn draw_forensics_page(
         y -= 7.0;
 
         // Writing mode badge
+        // writing_mode is stored lowercase ("cognitive", "transcriptive", "mixed", "insufficient")
         let mode_color = match fm.writing_mode.as_str() {
-            "Cognitive" => (0.18, 0.49, 0.20),
-            "Transcriptive" => (0.78, 0.16, 0.16),
-            _ => (0.96, 0.50, 0.09), // Mixed / unknown
+            "cognitive" => (0.18, 0.49, 0.20),
+            "transcriptive" => (0.78, 0.16, 0.16),
+            _ => (0.96, 0.50, 0.09), // Mixed / insufficient / unknown
         };
         fill_rect(layer, MARGIN_LEFT, y - 1.5, 30.0, 7.0, mode_color);
         text(
@@ -55,10 +56,11 @@ pub fn draw_forensics_page(
         );
 
         // Risk level badge
+        // risk_level is stored lowercase ("low", "high", "undetermined")
         let risk_color = match fm.risk_level.as_str() {
-            "Low" => (0.18, 0.49, 0.20),
-            "Medium" => (0.96, 0.50, 0.09),
-            _ => (0.78, 0.16, 0.16), // High / Critical
+            "low" => (0.18, 0.49, 0.20),
+            "medium" => (0.96, 0.50, 0.09),
+            _ => (0.78, 0.16, 0.16), // High / Critical / undetermined
         };
         fill_rect(layer, MARGIN_LEFT + 34.0, y - 1.5, 24.0, 7.0, risk_color);
         text(

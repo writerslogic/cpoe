@@ -83,7 +83,16 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
     } else {
         0.0
     };
-    let total_min = total_secs / 60.0;
+    let total_min = {
+        let first_ns = events.first().map(|e| e.timestamp_ns).unwrap_or(0);
+        let last_ns = events.last().map(|e| e.timestamp_ns).unwrap_or(0);
+        let wall_ns = last_ns.saturating_sub(first_ns);
+        if wall_ns > 0 {
+            wall_ns as f64 / 60_000_000_000.0
+        } else {
+            total_secs / 60.0
+        }
+    };
 
     let sessions = detect_sessions_from_events(&events);
 
@@ -756,7 +765,7 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
         evidence_hash: None,
         evidence_cbor_b64: None,
         signing_key_fingerprint: key_fp,
-        document_words: None,
+        document_words: if doc_size > 0 { Some(doc_size.max(0) as u64 / 5) } else { None },
         document_chars: Some(doc_size.max(0) as u64),
         document_sentences: None,
         document_paragraphs: None,
