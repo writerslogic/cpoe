@@ -124,6 +124,12 @@ impl Packet {
                 cp.vdf_input.as_ref(),
                 cp.vdf_output.as_ref(),
             ) {
+                const MAX_VDF_ITERATIONS: u64 = 1_000_000_000;
+                if iterations > MAX_VDF_ITERATIONS {
+                    return Err(Error::evidence(format!(
+                        "checkpoint {i}: VDF iterations {iterations} exceeds safety limit"
+                    )));
+                }
                 let input = hex::decode(input_hex)
                     .map_err(|e| Error::evidence(format!("invalid hex: {e}")))?;
                 let output = hex::decode(output_hex)
@@ -175,8 +181,14 @@ impl Packet {
         if let Some(kh) = &self.key_hierarchy {
             let master_pub = hex::decode(&kh.master_public_key)
                 .map_err(|e| Error::evidence(format!("invalid master_public_key hex: {e}")))?;
+            if master_pub.len() != 32 {
+                return Err(Error::evidence("master_public_key must be 32 bytes"));
+            }
             let session_pub = hex::decode(&kh.session_public_key)
                 .map_err(|e| Error::evidence(format!("invalid session_public_key hex: {e}")))?;
+            if session_pub.len() != 32 {
+                return Err(Error::evidence("session_public_key must be 32 bytes"));
+            }
             let cert_raw = general_purpose::STANDARD
                 .decode(&kh.session_certificate)
                 .map_err(|e| Error::evidence(format!("invalid session_certificate base64: {e}")))?;
@@ -212,7 +224,8 @@ impl Packet {
                         sig.ratchet_index
                     )));
                 }
-                let ratchet_index = sig.ratchet_index as usize;
+                let ratchet_index = usize::try_from(sig.ratchet_index)
+                    .map_err(|_| Error::evidence("ratchet_index out of range"))?;
                 let ratchet_hex = kh.ratchet_public_keys.get(ratchet_index).ok_or_else(|| {
                     Error::evidence(format!(
                         "ratchet index {} out of range (have {} keys)",
@@ -222,11 +235,17 @@ impl Packet {
                 })?;
                 let ratchet_pub = hex::decode(ratchet_hex)
                     .map_err(|e| Error::evidence(format!("invalid ratchet key hex: {e}")))?;
+                if ratchet_pub.len() != 32 {
+                    return Err(Error::evidence("ratchet public key must be 32 bytes"));
+                }
                 let checkpoint_hash = hex::decode(&sig.checkpoint_hash)
                     .map_err(|e| Error::evidence(format!("invalid checkpoint_hash hex: {e}")))?;
                 let signature = general_purpose::STANDARD
                     .decode(&sig.signature)
                     .map_err(|e| Error::evidence(format!("invalid signature base64: {e}")))?;
+                if signature.len() != 64 {
+                    return Err(Error::evidence("ratchet signature must be 64 bytes"));
+                }
 
                 keyhierarchy::verify_ratchet_signature(&ratchet_pub, &checkpoint_hash, &signature)
                     .map_err(|e| {
@@ -392,8 +411,9 @@ impl Packet {
         {
             return Self::hash_content_cbor(self);
         }
-        // Post-signing path: temporarily clear the three Copy fields,
-        // serialize, then restore. Avoids cloning the entire 30-field Packet.
+        // Post-signing path (verify_signature only): clone with signature
+        // fields cleared. The fast path above covers sign() calls; this path
+        // runs once per verification, not per-keystroke.
         let mut copy = self.clone();
         copy.verifier_nonce = None;
         copy.packet_signature = None;

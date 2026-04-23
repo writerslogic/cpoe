@@ -18,6 +18,8 @@ pub use params::{
     default_parameters, swf_seed_core, swf_seed_enhanced, swf_seed_genesis, verify,
     verify_with_progress, Parameters, CALIBRATION_MAX_ITERS_PER_SEC, CALIBRATION_MIN_ITERS_PER_SEC,
 };
+#[cfg(feature = "posme")]
+pub use params::{posme_seed_core, posme_seed_enhanced, posme_seed_genesis};
 pub use proof::VdfProof;
 
 // CDDL spec calls this "Sequential Work Function (SWF)"; module stays `vdf` for compat

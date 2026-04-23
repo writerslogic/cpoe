@@ -195,19 +195,20 @@ impl SentinelIpcHandler {
 
         let chain_mac_key = {
             let guard = self.sentinel.signing_key.read_recover();
-            guard.key().map(|k| {
-                let bytes = Zeroizing::new(k.to_bytes());
-                crate::crypto::derive_hmac_key(bytes.as_ref())
-            })
+            match guard.key() {
+                Some(k) => {
+                    let bytes = Zeroizing::new(k.to_bytes());
+                    crate::crypto::derive_hmac_key(bytes.as_ref())
+                }
+                None => {
+                    return Err("Checkpoint requires an initialized signing key".to_string());
+                }
+            }
         };
 
         let mut chain = if chain_path.exists() {
-            match &chain_mac_key {
-                Some(key) => crate::checkpoint::Chain::load_with_mac(&chain_path, key)
-                    .map_err(|e| format!("Failed to load chain: {e}"))?,
-                None => crate::checkpoint::Chain::load(&chain_path)
-                    .map_err(|e| format!("Failed to load chain: {e}"))?,
-            }
+            crate::checkpoint::Chain::load_with_mac(&chain_path, &chain_mac_key)
+                .map_err(|e| format!("Failed to load chain: {e}"))?
         } else {
             crate::checkpoint::Chain::new(&path, vdf_params)
                 .map_err(|e| format!("Failed to create chain: {e}"))?
@@ -225,7 +226,17 @@ impl SentinelIpcHandler {
                             s.session_id.clone(),
                             s.jitter_samples.clone(),
                         ),
-                        None => ([0u8; 32], 0u64, uuid::Uuid::new_v4().to_string(), Vec::new()),
+                        None => {
+                            // No active session: derive a document-specific fallback
+                            // so the jitter binding is not a known constant.
+                            let fallback = {
+                                let mut h = Sha256::new();
+                                h.update(b"cpoe-jitter-fallback-v1");
+                                h.update(path_str.as_bytes());
+                                h.finalize().into()
+                            };
+                            (fallback, 0u64, uuid::Uuid::new_v4().to_string(), Vec::new())
+                        }
                     }
                 };
 
@@ -246,14 +257,9 @@ impl SentinelIpcHandler {
                     .commit(Some(message))
                     .map_err(|e| format!("Commit failed: {e}"))?
             };
-        match &chain_mac_key {
-            Some(key) => chain
-                .save_with_mac(&chain_path, key)
-                .map_err(|e| format!("Failed to save chain: {e}"))?,
-            None => chain
-                .save(&chain_path)
-                .map_err(|e| format!("Failed to save chain: {e}"))?,
-        }
+        chain
+            .save_with_mac(&chain_path, &chain_mac_key)
+            .map_err(|e| format!("Failed to save chain: {e}"))?;
 
         Ok(IpcMessage::CheckpointResponse {
             success: true,

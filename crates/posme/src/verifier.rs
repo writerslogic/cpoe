@@ -8,6 +8,7 @@ use crate::hash::{addr_from, i2osp, posme_hash, DST_CAUSAL, DST_FIAT_SHAMIR, DST
 use crate::merkle;
 use crate::params::PosmeParams;
 use crate::proof::{PosmeProof, StepProof, INIT_WITNESS_COUNT, PROOF_ALGORITHM_POSME, PROOF_ALGORITHM_POSME_ENTANGLED};
+use subtle::ConstantTimeEq;
 
 fn verify_root_chain_path(
     commitment: &[u8; LAMBDA],
@@ -31,7 +32,7 @@ fn verify_root_chain_path(
         };
         pos /= 2;
     }
-    current == *commitment
+    current.ct_eq(commitment).into()
 }
 
 fn derive_challenges(
@@ -73,7 +74,9 @@ pub fn verify(seed: &[u8], proof: &PosmeProof) -> Result<bool> {
     let n = proof.params.arena_blocks;
     let k = proof.params.total_steps;
     let d = proof.params.reads_per_step;
-    let total_roots = k as usize + 1;
+    let total_roots = (k as usize).checked_add(1).ok_or_else(|| {
+        PosmeError::InvalidParams("total_steps overflow in root count".into())
+    })?;
 
     // Step 1: Verify root_0 is in the root chain.
     if !verify_root_chain_path(
@@ -120,12 +123,12 @@ pub fn verify(seed: &[u8], proof: &PosmeProof) -> Result<bool> {
             w.block.data // trust data, verify causal + Merkle
         };
         let expected_causal = posme_hash(&[DST_CAUSAL, seed, &i2osp(w.index)]);
-        if w.index == 0 && w.block.data != expected_data {
+        if w.index == 0 && bool::from(w.block.data.ct_ne(&expected_data)) {
             return Err(PosmeError::VerificationFailed(
                 "init block 0 data mismatch".into()
             ));
         }
-        if w.block.causal != expected_causal {
+        if bool::from(w.block.causal.ct_ne(&expected_causal)) {
             return Err(PosmeError::VerificationFailed(format!(
                 "init block {} causal mismatch", w.index
             )));
@@ -169,14 +172,19 @@ pub fn verify(seed: &[u8], proof: &PosmeProof) -> Result<bool> {
     sorted_transcripts.sort_by_key(|&(step, _)| step);
     for pair in sorted_transcripts.windows(2) {
         let (step_a, mut transcript_a) = pair[0];
-        let (step_b, cursor_in_b) = (pair[1].0, proof.challenged_steps.iter()
-            .find(|s| s.step_id == pair[1].0)
-            .unwrap().cursor_in);
+        let step_b_id = pair[1].0;
+        let cursor_in_b = proof.challenged_steps.iter()
+            .find(|s| s.step_id == step_b_id)
+            .ok_or(PosmeError::VerificationFailed(format!(
+                "challenged step {step_b_id} missing from proof"
+            )))?
+            .cursor_in;
+        let step_b = step_b_id;
         // Apply entanglement if step_a is an injection point.
         if let Some(jh) = entangle_map.get(&step_a) {
             transcript_a = posme_hash(&[b"PoSME-entangle-v1", &transcript_a, jh]);
         }
-        if step_b == step_a + 1 && cursor_in_b != transcript_a {
+        if step_b == step_a + 1 && bool::from(cursor_in_b.ct_ne(&transcript_a)) {
             return Err(PosmeError::TranscriptMismatch { step_id: step_b });
         }
     }
@@ -210,7 +218,9 @@ fn verify_symbiotic_write(
     }
     let expected_data = posme_hash(&[&sp.write.old_block.data, cursor, &sp.write.old_block.causal]);
     let expected_causal = posme_hash(&[&sp.write.old_block.causal, cursor, &i2osp(step)]);
-    if sp.write.new_block.data != expected_data || sp.write.new_block.causal != expected_causal {
+    if sp.write.new_block.data.ct_ne(&expected_data).into()
+        || sp.write.new_block.causal.ct_ne(&expected_causal).into()
+    {
         return Err(PosmeError::WriteMismatch { step_id: step });
     }
     if !merkle::verify_path(&sp.root_after, sp.write.address, &sp.write.new_block, &sp.write.merkle_path, n) {
@@ -226,6 +236,11 @@ fn verify_step(
     ctx: &VerifyCtx,
 ) -> std::result::Result<[u8; LAMBDA], PosmeError> {
     let step = sp.step_id;
+    if step == 0 || step > ctx.k {
+        return Err(PosmeError::VerificationFailed(format!(
+            "step_id {step} out of valid range [1, {}]", ctx.k
+        )));
+    }
     let n = ctx.n;
 
     // A. Verify roots are in the root chain.
@@ -280,13 +295,13 @@ fn verify_step(
                 final_expected = posme_hash(&[b"PoSME-entangle-v1", &final_expected, jh]);
             }
         }
-        if final_expected != proof.final_transcript {
+        if final_expected.ct_ne(&proof.final_transcript).into() {
             return Err(PosmeError::TranscriptMismatch { step_id: step });
         }
     }
 
     // Step 1's cursor_in must be T_0.
-    if step == 1 && cursor_in != ctx.t_0 {
+    if step == 1 && bool::from(cursor_in.ct_ne(&ctx.t_0)) {
         return Err(PosmeError::TranscriptMismatch { step_id: step });
     }
 
@@ -380,5 +395,38 @@ mod tests {
         let jitter2 = [[0xBBu8; 32]];
         let proof2 = prover::execute_entangled(seed, &test_params(), &jitter2).unwrap();
         assert_ne!(proof.final_transcript, proof2.final_transcript);
+    }
+
+    // --- Regression tests for C-007, C-008, H-187 ---
+
+    #[test]
+    fn step_id_zero_rejected() {
+        let seed = b"c007-test";
+        let mut proof = prover::execute(seed, &test_params()).unwrap();
+        proof.challenged_steps[0].step_id = 0;
+        // Rejected either by ChallengeMismatch (Fiat-Shamir) or by the range check
+        // in verify_step — both prevent the underflow from occurring.
+        assert!(verify(seed, &proof).is_err());
+    }
+
+    #[test]
+    fn step_id_exceeds_k_rejected() {
+        let seed = b"c007-oob";
+        let mut proof = prover::execute(seed, &test_params()).unwrap();
+        proof.challenged_steps[0].step_id = proof.params.total_steps + 1;
+        let result = verify(seed, &proof);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn missing_challenged_step_returns_error() {
+        let seed = b"c008-test";
+        let mut proof = prover::execute(seed, &test_params()).unwrap();
+        // Remove a step that the cross-check loop would look up
+        if proof.challenged_steps.len() > 1 {
+            proof.challenged_steps.pop();
+        }
+        // Should return error (ChallengeMismatch or VerificationFailed), not panic
+        assert!(verify(seed, &proof).is_err());
     }
 }

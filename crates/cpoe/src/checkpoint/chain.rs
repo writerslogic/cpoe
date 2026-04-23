@@ -132,7 +132,8 @@ impl Chain {
         let (content_hash, content_size) =
             crate::crypto::hash_file_with_size(Path::new(&self.metadata.document_path))?;
 
-        let ordinal = u64::try_from(self.checkpoints.len()).unwrap_or(u64::MAX);
+        let ordinal = u64::try_from(self.checkpoints.len())
+            .map_err(|_| Error::checkpoint("checkpoint ordinal overflow"))?;
         let last_cp = self.checkpoints.last();
         let previous_hash = match last_cp {
             Some(cp) => cp.hash,
@@ -224,6 +225,9 @@ impl Chain {
 
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
+        if fs::symlink_metadata(path)?.file_type().is_symlink() {
+            return Err(Error::checkpoint("chain file must not be a symlink"));
+        }
         let file_len = fs::metadata(path)?.len();
         if file_len > MAX_CHAIN_FILE_SIZE {
             return Err(Error::checkpoint("Chain file exceeds safety limit"));
@@ -283,6 +287,9 @@ impl Chain {
     /// fails, returns an error immediately without deserializing.
     pub fn load_with_mac(path: impl AsRef<Path>, mac_key: &[u8]) -> Result<Self> {
         let path = path.as_ref();
+        if fs::symlink_metadata(path)?.file_type().is_symlink() {
+            return Err(Error::checkpoint("chain file must not be a symlink"));
+        }
         let mac_path = mac_sidecar_path(path);
         if !mac_path.exists() {
             return Self::load(path);
@@ -526,6 +533,38 @@ impl Chain {
         calibration: rfc::CalibrationAttestation,
         physics: Option<&crate::PhysicalContext>,
     ) -> Result<Checkpoint> {
+        self.commit_rfc_with_nonce(
+            message,
+            vdf_duration,
+            rfc_jitter,
+            time_evidence,
+            calibration,
+            physics,
+            None,
+            None,
+        )
+    }
+
+    /// Commit an RFC checkpoint with optional challenge nonce and jitter sample hashes.
+    ///
+    /// `challenge_nonce`: 32-byte freshness nonce from the WritersProof server.
+    /// Mixed into the PoSME seed to prevent pre-computation attacks.
+    ///
+    /// `jitter_sample_hashes`: per-sample BLAKE3 hashes for PoSME jitter entanglement.
+    /// When present, the PoSME proof commits to these specific behavioral samples,
+    /// making the proof inseparable from the keystroke timing evidence.
+    #[allow(clippy::too_many_arguments)]
+    pub fn commit_rfc_with_nonce(
+        &mut self,
+        message: Option<String>,
+        vdf_duration: Duration,
+        rfc_jitter: Option<rfc::JitterBinding>,
+        time_evidence: Option<TimeEvidence>,
+        calibration: rfc::CalibrationAttestation,
+        physics: Option<&crate::PhysicalContext>,
+        challenge_nonce: Option<[u8; 32]>,
+        jitter_sample_hashes: Option<&[[u8; 32]]>,
+    ) -> Result<Checkpoint> {
         let lock_file = fs::File::open(&self.metadata.document_path)?;
         Self::acquire_lock(&lock_file)?;
         let _guard = scopeguard::guard(&lock_file, Self::release_lock);
@@ -536,9 +575,12 @@ impl Chain {
             time_evidence,
             calibration,
             physics,
+            challenge_nonce,
+            jitter_sample_hashes,
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn commit_rfc_locked(
         &mut self,
         message: Option<String>,
@@ -547,6 +589,8 @@ impl Chain {
         time_evidence: Option<TimeEvidence>,
         calibration: rfc::CalibrationAttestation,
         physics: Option<&crate::PhysicalContext>,
+        challenge_nonce: Option<[u8; 32]>,
+        jitter_sample_hashes: Option<&[[u8; 32]]>,
     ) -> Result<Checkpoint> {
         if matches!(self.metadata.entanglement_mode, EntanglementMode::Entangled)
             && rfc_jitter.is_none()
@@ -630,7 +674,9 @@ impl Chain {
             physics_seed,
         });
 
-        let swf_seed = if ordinal == 0 {
+        // SWF seed derivation: shared between Argon2 and PoSME paths.
+        // The doc_ref CBOR is needed for genesis seed in both cases.
+        let doc_cbor_for_genesis = if ordinal == 0 {
             let doc_ref = DocumentRef {
                 content_hash: HashValue::try_sha256(content_hash.to_vec())
                     .map_err(Error::crypto)?,
@@ -642,36 +688,92 @@ impl Chain {
                 salt_mode: None,
                 salt_commitment: None,
             };
-            let doc_cbor = authorproof_protocol::codec::cbor::encode(&doc_ref)
-                .map_err(|e| Error::checkpoint(format!("genesis doc-ref CBOR: {e}")))?;
-            let jitter_or_nonce = rfc_jitter
-                .as_ref()
-                .map(|j| j.entropy_commitment.hash)
-                .unwrap_or(content_hash);
-            vdf::swf_seed_genesis(&doc_cbor, &jitter_or_nonce)
-        } else if let Some(ref jb) = rfc_jitter {
-            let intervals_cbor =
-                authorproof_protocol::codec::cbor::encode(&jb.summary.sample_count)
-                    .map_err(|e| Error::checkpoint(format!("SWF intervals CBOR: {e}")))?;
-            let phys_cbor = match physics {
-                Some(p) => authorproof_protocol::codec::cbor::encode(&p.combined_hash.to_vec())
-                    .map_err(|e| Error::checkpoint(format!("SWF physics CBOR: {e}")))?,
-                None => vec![],
-            };
-            vdf::swf_seed_enhanced(&previous_hash, &intervals_cbor, &phys_cbor)
+            Some(
+                authorproof_protocol::codec::cbor::encode(&doc_ref)
+                    .map_err(|e| Error::checkpoint(format!("genesis doc-ref CBOR: {e}")))?,
+            )
         } else {
-            vdf::swf_seed_core(&previous_hash, &content_hash)
+            None
         };
 
-        let argon2_swf = {
+        let jitter_or_nonce = rfc_jitter
+            .as_ref()
+            .map(|j| j.entropy_commitment.hash)
+            .unwrap_or(content_hash);
+
+        let intervals_cbor = rfc_jitter.as_ref().map(|jb| {
+            authorproof_protocol::codec::cbor::encode(&jb.summary.sample_count)
+        }).transpose()
+            .map_err(|e| Error::checkpoint(format!("SWF intervals CBOR: {e}")))?;
+
+        let phys_cbor = match physics {
+            Some(p) => authorproof_protocol::codec::cbor::encode(&p.combined_hash.to_vec())
+                .map_err(|e| Error::checkpoint(format!("SWF physics CBOR: {e}")))?,
+            None => vec![],
+        };
+
+        #[cfg(feature = "posme")]
+        let (argon2_swf, posme_swf) = {
+            let cn = challenge_nonce.as_ref();
+            let posme_seed = if ordinal == 0 {
+                vdf::posme_seed_genesis(
+                    doc_cbor_for_genesis.as_deref().unwrap_or(&[]),
+                    &jitter_or_nonce,
+                    cn,
+                )
+            } else if intervals_cbor.is_some() {
+                vdf::posme_seed_enhanced(
+                    &previous_hash,
+                    intervals_cbor.as_deref().unwrap_or(&[]),
+                    &phys_cbor,
+                    cn,
+                )
+            } else {
+                vdf::posme_seed_core(&previous_hash, &content_hash, cn)
+            };
+
+            // Tier selection: jitter available → ENHANCED (2), else CORE (1).
+            // Physics context presence does not increase tier (it's mixed into
+            // the seed regardless) but it does strengthen the proof.
+            let tier = if rfc_jitter.is_some() { 2u8 } else { 1u8 };
+
+            let proof_bytes = match jitter_sample_hashes {
+                Some(hashes) if !hashes.is_empty() => {
+                    vdf::swf_posme::compute_entangled(posme_seed, tier, hashes)
+                        .map_err(|e| Error::checkpoint(format!("PoSME entangled: {e}")))?
+                }
+                _ => {
+                    vdf::swf_posme::compute(posme_seed, tier)
+                        .map_err(|e| Error::checkpoint(format!("PoSME: {e}")))?
+                }
+            };
+            (None, Some(proof_bytes))
+        };
+
+        #[cfg(not(feature = "posme"))]
+        let (argon2_swf, posme_swf) = {
+            let _ = jitter_sample_hashes; // only used by posme feature
+            let swf_seed = if ordinal == 0 {
+                vdf::swf_seed_genesis(
+                    doc_cbor_for_genesis.as_deref().unwrap_or(&[]),
+                    &jitter_or_nonce,
+                )
+            } else if intervals_cbor.is_some() {
+                vdf::swf_seed_enhanced(
+                    &previous_hash,
+                    intervals_cbor.as_deref().unwrap_or(&[]),
+                    &phys_cbor,
+                )
+            } else {
+                vdf::swf_seed_core(&previous_hash, &content_hash)
+            };
             let swf_params = vdf::swf_argon2::Argon2SwfParams {
                 iterations: self.metadata.vdf_params.min_iterations.max(3),
                 ..vdf::swf_argon2::Argon2SwfParams::default()
             };
-            Some(
-                vdf::swf_argon2::compute(swf_seed, swf_params)
-                    .map_err(|e| Error::checkpoint(format!("Argon2id SWF: {e}")))?,
-            )
+            let proof = vdf::swf_argon2::compute(swf_seed, swf_params)
+                .map_err(|e| Error::checkpoint(format!("Argon2id SWF: {e}")))?;
+            (Some(proof), None::<Vec<u8>>)
         };
 
         let mut checkpoint =
@@ -682,6 +784,11 @@ impl Chain {
         checkpoint.rfc_jitter = rfc_jitter;
         checkpoint.time_evidence = time_evidence;
         checkpoint.argon2_swf = argon2_swf;
+        checkpoint.posme_swf = posme_swf;
+        if challenge_nonce.is_some() {
+            checkpoint.challenge_nonce =
+                challenge_nonce.map(hex::encode);
+        }
 
         self.commit_finish(checkpoint)
     }

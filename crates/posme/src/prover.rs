@@ -212,7 +212,10 @@ pub fn execute(seed: &[u8], params: &PosmeParams) -> Result<PosmeProof> {
     // Phase 2: Execute K steps, storing only roots.
     // write_index is not needed here -- rebuilt during replay.
     let mut transcript = t_0;
-    let mut roots: Vec<[u8; LAMBDA]> = Vec::with_capacity(k as usize + 1);
+    let root_cap = (k as usize).checked_add(1).ok_or_else(|| {
+        crate::error::PosmeError::InvalidParams("total_steps overflow in root count".into())
+    })?;
+    let mut roots: Vec<[u8; LAMBDA]> = Vec::with_capacity(root_cap);
     roots.push(root_0);
 
     let start = Instant::now();
@@ -323,7 +326,10 @@ pub fn execute_entangled(
     let init_witnesses = generate_init_witnesses(seed, &init_tree, &arena, n);
 
     let mut transcript = t_0;
-    let mut roots: Vec<[u8; LAMBDA]> = Vec::with_capacity(k as usize + 1);
+    let root_cap = (k as usize).checked_add(1).ok_or_else(|| {
+        crate::error::PosmeError::InvalidParams("total_steps overflow in root count".into())
+    })?;
+    let mut roots: Vec<[u8; LAMBDA]> = Vec::with_capacity(root_cap);
     let mut entanglement_points: Vec<(u32, [u8; 32])> = Vec::new();
     roots.push(root_0);
 

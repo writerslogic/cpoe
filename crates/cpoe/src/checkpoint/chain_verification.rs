@@ -328,6 +328,42 @@ impl Chain {
                 }
             }
 
+            // PoSME SWF verification: checks proof structure and param bounds.
+            // Full seed-binding verification requires session context (jitter data,
+            // challenge nonce) and is deferred to the evidence verification pipeline.
+            #[cfg(feature = "posme")]
+            if let Some(posme_bytes) = &checkpoint.posme_swf {
+                let proof: posme::PosmeProof = match ciborium::from_reader(posme_bytes.as_slice()) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        report.fail(format!(
+                            "checkpoint {i}: PoSME proof deserialization failed: {e}"
+                        ));
+                        return report;
+                    }
+                };
+                if let Err(e) = proof.params.validate() {
+                    report.fail(format!(
+                        "checkpoint {i}: PoSME params invalid: {e}"
+                    ));
+                    return report;
+                }
+                // Duration plausibility: reject proofs that claim to have run
+                // faster than physically possible for the tier's arena size.
+                // CORE (256 MiB) needs ~0.5s minimum on modern hardware;
+                // use 100ms floor as conservative lower bound.
+                let min_duration_ms = 100u128;
+                if proof.claimed_duration.as_millis() < min_duration_ms
+                    && checkpoint.ordinal > 0
+                {
+                    report.warnings.push(format!(
+                        "checkpoint {i}: PoSME claimed_duration {}ms below \
+                         plausibility floor ({min_duration_ms}ms)",
+                        proof.claimed_duration.as_millis()
+                    ));
+                }
+            }
+
             // H-007: Verify MMR inclusion proof if present. Cross-checkpoint anchor:
             // proof[N].root must equal checkpoint[N+1].mmr_root (the pre-append root
             // stored by finalize_checkpoint), detecting any MMR rollback or root swap.
