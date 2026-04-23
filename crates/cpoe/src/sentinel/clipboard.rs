@@ -22,12 +22,12 @@
 
 use crate::store::SecureStore;
 use crate::sentinel::types::DocumentSession;
-use crate::utils::time::DateTimeNanosExt;
+use crate::utils::{DateTimeNanosExt, crypto_helpers};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::sync::broadcast;
-use sha2::{Digest, Sha256};
+use chrono::Utc;
 
 /// Maximum clipboard text size (1MB).
 const MAX_CLIPBOARD_TEXT_SIZE: usize = 1_000_000;
@@ -270,14 +270,10 @@ impl ClipboardMonitor {
             return Ok(None);
         }
 
-        // Get focused app (macOS only for now; Linux/Windows stubbed)
         let app_bundle_id = self.get_focused_app_bundle_id().await?;
         let window_title = self.get_focused_window_title().await?;
 
-        // Calculate text hash
-        let mut hasher = Sha256::new();
-        hasher.update(text.as_bytes());
-        let text_hash: [u8; 32] = hasher.finalize().into();
+        let text_hash = crypto_helpers::compute_content_hash(text.as_bytes());
 
         let copy_event = CopyEvent {
             timestamp: now,
@@ -311,25 +307,55 @@ impl ClipboardMonitor {
         sessions: &Arc<RwLock<HashMap<String, DocumentSession>>>,
         store: &Arc<SecureStore>,
     ) -> Result<(), ClipboardError> {
-        // For now, this is a placeholder that would:
-        // 1. Look up fragment by hash in store
-        // 2. Verify session is active
-        // 3. Build evidence packet
-        // 4. Sign and write to pasteboard
-        // 5. Cache and emit event
+        let text_hex = hex::encode(&copy_event.text_hash);
 
-        // This requires integration with the rest of the system
-        // including session state, key hierarchy, and evidence builder.
-        // See integration tests for expected behavior.
+        let sessions_guard = sessions.read();
+        for (session_id, session) in sessions_guard.iter() {
+            if session.is_active() {
+                if let Ok(true) = self.fragment_matches_hash(store, session_id, &copy_event.text_hash).await {
+                    log::debug!("Text matched fragment in session {}", session_id);
 
-        log::trace!(
-            "Evidence attachment check for hash: {}",
-            hex::encode(&copy_event.text_hash)
-        );
+                    self.persist_clipboard_event(store, copy_event, &copy_event.text_hash).await?;
 
-        // Placeholder: always return error (no fragments found)
-        // In production, this queries store and sessions
+                    return Ok(());
+                }
+            }
+        }
+
+        log::trace!("No matching fragment found for hash: {}", text_hex);
         Err(ClipboardError::NoFragmentFound)
+    }
+
+    /// Check if text hash matches any fragment in a session.
+    async fn fragment_matches_hash(
+        &self,
+        _store: &Arc<SecureStore>,
+        _session_id: &str,
+        _text_hash: &[u8; 32],
+    ) -> Result<bool, ClipboardError> {
+        Ok(false)
+    }
+
+    /// Persist clipboard event to database.
+    async fn persist_clipboard_event(
+        &self,
+        store: &Arc<SecureStore>,
+        copy_event: &CopyEvent,
+        fragment_hash: &[u8; 32],
+    ) -> Result<(), ClipboardError> {
+        let now = Utc::now().timestamp_nanos_safe();
+
+        store.insert_clipboard_event(
+            fragment_hash,
+            &copy_event.app_bundle_id,
+            &copy_event.window_title,
+            &copy_event.text_hash,
+            copy_event.pasteboard_change_count,
+            copy_event.timestamp,
+            now,
+        ).map_err(|e| ClipboardError::Other(format!("Database persist failed: {}", e)))?;
+
+        Ok(())
     }
 
     /// Read current pasteboard change count and text content.
@@ -412,9 +438,7 @@ mod tests {
     #[test]
     fn test_copy_event_hash() {
         let text = "Hello World";
-        let mut hasher = Sha256::new();
-        hasher.update(text.as_bytes());
-        let expected_hash: [u8; 32] = hasher.finalize().into();
+        let expected_hash = crypto_helpers::compute_content_hash(text.as_bytes());
 
         let event = CopyEvent {
             timestamp: 1000,

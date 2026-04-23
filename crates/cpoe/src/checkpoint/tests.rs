@@ -1454,3 +1454,89 @@ fn test_mmr_tampered_root_rejected() {
     );
     drop(dir);
 }
+
+#[test]
+fn test_min_iterations_zero_rejected() {
+    let (_dir, path) = temp_document();
+    let mut chain = Chain::new(
+        &path,
+        Parameters {
+            iterations_per_second: 1000,
+            min_iterations: 0,
+            max_iterations: 100_000,
+        },
+    )
+    .expect("create chain")
+    .with_signature_policy(SignaturePolicy::Optional);
+
+    let err = chain.commit(None).expect_err("should reject zero min_iterations");
+    assert!(
+        err.to_string().contains("min_iterations=0"),
+        "expected min_iterations=0 error, got: {err}"
+    );
+}
+
+#[test]
+fn test_clock_tolerance_tracked_in_report() {
+    let (_dir, path) = temp_document();
+    let mut chain = test_chain(&path);
+
+    let cp0 = chain
+        .commit_with_vdf_duration(None, Duration::from_millis(10))
+        .expect("commit 0");
+
+    let mut cp1 = Checkpoint::new_base(1, cp0.hash, cp0.content_hash, 100, None);
+    cp1.timestamp = cp0.timestamp - chrono::Duration::milliseconds(500);
+
+    chain.checkpoints.push(cp1);
+
+    let report = chain.verify_detailed();
+    assert!(
+        report.valid,
+        "clock drift within 1s tolerance should pass"
+    );
+    assert!(
+        report.clock_tolerance_violations.len() > 0,
+        "should track tolerance violations"
+    );
+}
+
+#[test]
+fn test_mac_sidecar_legacy_fallback() {
+    let (dir, path) = temp_document();
+    let mut chain = test_chain(&path);
+    chain.commit(None).expect("commit");
+
+    let tmp_path = dir.path().join("test_chain.json");
+    chain.save(&tmp_path).expect("save without MAC");
+
+    let mac_key = b"test_key_32_bytes_padding_heree";
+    let loaded = Chain::load_with_mac(&tmp_path, mac_key).expect("fallback to unverified load");
+    assert_eq!(loaded.checkpoints.len(), 1, "should load legacy chain without MAC");
+}
+
+#[test]
+fn test_batch_verifier_no_silent_panics() {
+    use crate::vdf::Parameters;
+
+    let params = Parameters {
+        iterations_per_second: 1000,
+        min_iterations: 10,
+        max_iterations: 100_000,
+    };
+
+    let vdf1 = crate::vdf::compute_iterations([1u8; 32], 100);
+    let vdf2 = crate::vdf::compute_iterations([2u8; 32], 100);
+
+    let verifier = crate::vdf::params::BatchVerifier::new(2);
+    let results = verifier.verify_all(&[Some(vdf1), Some(vdf2), None]);
+
+    assert_eq!(results.len(), 3);
+    assert!(results[0].valid);
+    assert!(results[1].valid);
+    assert!(!results[2].valid);
+    assert!(
+        results[2].error.is_some(),
+        "nil proof should be marked with error"
+    );
+}

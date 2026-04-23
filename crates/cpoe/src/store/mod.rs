@@ -72,6 +72,34 @@ impl SecureStore {
 
         Ok(store)
     }
+
+    /// Persist a clipboard event to the database.
+    pub fn insert_clipboard_event(
+        &self,
+        fragment_hash: &[u8; 32],
+        app_bundle_id: &str,
+        window_title: &str,
+        text_hash: &[u8; 32],
+        pasteboard_change_count: i32,
+        timestamp: i64,
+        captured_at: i64,
+    ) -> anyhow::Result<()> {
+        self.conn.execute(
+            "INSERT INTO clipboard_events
+             (fragment_hash, app_bundle_id, window_title, text_hash, pasteboard_change_count, timestamp, captured_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+            rusqlite::params![
+                fragment_hash,
+                app_bundle_id,
+                window_title,
+                text_hash,
+                pasteboard_change_count,
+                timestamp,
+                captured_at
+            ]
+        )?;
+        Ok(())
+    }
 }
 
 /// Open a [`SecureStore`] by deriving the HMAC key from an Ed25519 signing key.
