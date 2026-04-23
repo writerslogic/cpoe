@@ -10,12 +10,14 @@ pub mod document_stats;
 pub mod events;
 pub mod fingerprints;
 pub mod integrity;
+pub mod text_fragments;
 pub mod types;
 
 #[cfg(test)]
 mod tests;
 
 pub use document_stats::DocumentStats;
+pub use text_fragments::{KeystrokeContext, TextFragment};
 pub use types::SecureEvent;
 
 /// SQLite busy timeout in milliseconds. Shared with `AccessLog` (see `access_log.rs`).
@@ -46,7 +48,12 @@ impl SecureStore {
         let path = path.as_ref();
         let conn = Connection::open(path)?;
         #[cfg(unix)]
-        crate::crypto::restrict_permissions(path, 0o600)?;
+        {
+            let path_str = path.to_string_lossy();
+            if path_str != ":memory:" {
+                crate::crypto::restrict_permissions(path, 0o600)?;
+            }
+        }
 
         let _: String = conn.query_row("PRAGMA journal_mode=WAL", [], |row| row.get(0))?;
         conn.execute_batch(&format!(

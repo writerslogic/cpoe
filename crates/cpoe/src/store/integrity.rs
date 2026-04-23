@@ -87,9 +87,46 @@ impl SecureStore {
                 last_tracked_at     INTEGER NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS text_fragments (
+                id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+                fragment_hash               BLOB NOT NULL UNIQUE,
+                session_id                  TEXT NOT NULL,
+                source_app_bundle_id        TEXT,
+                source_window_title         TEXT,
+                source_signature            BLOB NOT NULL,
+                nonce                       BLOB NOT NULL UNIQUE,
+                timestamp                   INTEGER NOT NULL,
+                keystroke_context           TEXT,
+                keystroke_confidence        REAL,
+                keystroke_sequence_hash     BLOB,
+                source_session_id           TEXT,
+                source_evidence_packet      BLOB,
+                wal_entry_hash              BLOB,
+                cloudkit_record_id          TEXT,
+                sync_state                  TEXT,
+                CONSTRAINT valid_signature CHECK(source_signature IS NOT NULL)
+            );
+
+            CREATE TABLE IF NOT EXISTS keystroke_sequences (
+                id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id              TEXT NOT NULL,
+                sequence_hash           BLOB NOT NULL,
+                keystroke_count         INTEGER,
+                timestamp_start         INTEGER,
+                timestamp_end           INTEGER
+            );
+
+            CREATE TABLE IF NOT EXISTS used_nonces (
+                nonce                   BLOB PRIMARY KEY,
+                used_at                 INTEGER NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_secure_events_timestamp ON secure_events(timestamp_ns);
             CREATE INDEX IF NOT EXISTS idx_secure_events_file ON secure_events(file_path, timestamp_ns);
-            CREATE INDEX IF NOT EXISTS idx_secure_events_file_id ON secure_events(file_path, id);"
+            CREATE INDEX IF NOT EXISTS idx_secure_events_file_id ON secure_events(file_path, id);
+            CREATE INDEX IF NOT EXISTS idx_text_fragments_hash ON text_fragments(fragment_hash);
+            CREATE INDEX IF NOT EXISTS idx_text_fragments_session ON text_fragments(session_id, timestamp);
+            CREATE INDEX IF NOT EXISTS idx_keystroke_sequences_session ON keystroke_sequences(session_id);"
         )?;
 
         // Migration: add `last_verified_sequence` to pre-existing integrity rows
@@ -133,6 +170,48 @@ impl SecureStore {
                  ALTER TABLE secure_events ADD COLUMN hw_cosign_entangled_hash BLOB;
                  ALTER TABLE secure_events ADD COLUMN hw_cosign_entropy_digest BLOB;
                  ALTER TABLE secure_events ADD COLUMN hw_cosign_entropy_bytes INTEGER;",
+            )?;
+        }
+
+        // Migration: ensure text_fragments tables exist (created in init_schema, but check for older DBs)
+        if !has_column(&self.conn, "text_fragments", "fragment_hash")? {
+            self.conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS text_fragments (
+                    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    fragment_hash               BLOB NOT NULL UNIQUE,
+                    session_id                  TEXT NOT NULL,
+                    source_app_bundle_id        TEXT,
+                    source_window_title         TEXT,
+                    source_signature            BLOB NOT NULL,
+                    nonce                       BLOB NOT NULL UNIQUE,
+                    timestamp                   INTEGER NOT NULL,
+                    keystroke_context           TEXT,
+                    keystroke_confidence        REAL,
+                    keystroke_sequence_hash     BLOB,
+                    source_session_id           TEXT,
+                    source_evidence_packet      BLOB,
+                    wal_entry_hash              BLOB,
+                    cloudkit_record_id          TEXT,
+                    sync_state                  TEXT,
+                    FOREIGN KEY(session_id) REFERENCES document_sessions(session_id),
+                    CONSTRAINT valid_signature CHECK(source_signature IS NOT NULL)
+                );
+                CREATE TABLE IF NOT EXISTS keystroke_sequences (
+                    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id              TEXT NOT NULL,
+                    sequence_hash           BLOB NOT NULL,
+                    keystroke_count         INTEGER,
+                    timestamp_start         INTEGER,
+                    timestamp_end           INTEGER,
+                    FOREIGN KEY(session_id) REFERENCES document_sessions(session_id)
+                );
+                CREATE TABLE IF NOT EXISTS used_nonces (
+                    nonce                   BLOB PRIMARY KEY,
+                    used_at                 INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_text_fragments_hash ON text_fragments(fragment_hash);
+                CREATE INDEX IF NOT EXISTS idx_text_fragments_session ON text_fragments(session_id, timestamp);
+                CREATE INDEX IF NOT EXISTS idx_keystroke_sequences_session ON keystroke_sequences(session_id);",
             )?;
         }
 

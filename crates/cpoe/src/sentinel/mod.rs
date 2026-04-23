@@ -17,6 +17,7 @@ macro_rules! trace {
 }
 pub(crate) use trace;
 
+pub mod app_registry;
 pub mod behavioral_key;
 pub mod core;
 pub mod core_session;

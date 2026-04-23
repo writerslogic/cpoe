@@ -198,6 +198,27 @@ impl AiToolCategory {
     }
 }
 
+/// Source context of a keystroke during Phase 2 clipboard/paste tracking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum KeystrokeContext {
+    /// User typing fresh text, not from clipboard.
+    OriginalComposition,
+    /// User editing text that was pasted (within paste window).
+    PastedContent,
+    /// User typing after paste boundary (fresh composition).
+    AfterPaste,
+}
+
+impl fmt::Display for KeystrokeContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::OriginalComposition => f.write_str("original"),
+            Self::PastedContent => f.write_str("pasted"),
+            Self::AfterPaste => f.write_str("after-paste"),
+        }
+    }
+}
+
 /// How an AI tool detection was established.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
@@ -564,15 +585,39 @@ pub fn parse_url_parts(url: &str) -> (String, String) {
 /// extension here is a code change that should be reviewed for correctness.
 /// Sorted lexicographically to enable binary search.
 const DOC_EXTENSIONS: &[&str] = &[
-    ".bat", ".c", ".cpp", ".css", ".csv", ".doc", ".docx", ".go", ".h", ".html", ".java", ".jl",
-    ".js", ".json", ".jsx", ".kt", ".lua", ".md", ".odt", ".org", ".pdf", ".php", ".pl", ".ppt",
-    ".pptx", ".ps1", ".py", ".r", ".rb", ".rs", ".rtf", ".scala", ".sh", ".swift", ".tex", ".toml",
-    ".ts", ".tsx", ".txt", ".xls", ".xlsx", ".xml", ".yaml", ".yml",
+    ".adoc", ".afdesign", ".afphoto", ".afpub", ".asciidoc",
+    ".bat", ".c", ".cpp", ".css", ".csv",
+    ".doc", ".docx", ".draft",
+    ".epub",
+    ".fdx", ".fountain",
+    ".go",
+    ".h", ".html",
+    ".idml", ".indd",
+    ".java", ".jl", ".js", ".json", ".jsx",
+    ".kt",
+    ".latex", ".lua",
+    ".md", ".mmd",
+    ".odt", ".opml", ".org",
+    ".pages", ".pdf", ".php", ".pl", ".ppt", ".pptx", ".ps1",
+    ".r", ".rb", ".rs", ".rst", ".rtf",
+    ".scala", ".scriv", ".scrivx", ".sh", ".swift",
+    ".tex", ".toml", ".ts", ".tsx", ".txt",
+    ".ulysses",
+    ".wpd", ".wri",
+    ".xls", ".xlsx", ".xml",
+    ".yaml", ".yml",
 ];
 
-/// Electron-based editors that don't expose `AXDocument` and need title parsing.
-/// For these apps, bare filenames without extensions are accepted as document names.
-const ELECTRON_EDITORS: &[&str] = &[
+/// Apps that do not expose `AXDocument` and require title-based document inference.
+///
+/// Includes Electron-based editors, native apps that store content in containers
+/// or cloud libraries (Bear, Ulysses), and any app whose window title is the
+/// only reliable source of document identity. For these apps, bare names without
+/// a recognised file extension are accepted as document identifiers.
+///
+/// Keep in sync with `sentinel/app_registry.rs` `needs_title_inference` fields.
+const TITLE_INFERRED_APPS: &[&str] = &[
+    // Electron editors
     "abnerworks.Typora",
     "com.typora.Typora",
     "md.obsidian",
@@ -585,6 +630,15 @@ const ELECTRON_EDITORS: &[&str] = &[
     "com.notion.id",
     "com.notion.Notion",
     "com.figma.Desktop",
+    "com.hemingwayapp.hemingway",
+    "com.celtx.mac",
+    // Container-based / cloud-library apps (no AXDocument file path)
+    "com.ulyssesapp.mac",
+    "net.shinyfrog.bear",
+    "com.agiletortoise.Drafts-OSX",
+    "com.bloombuilt.dayone-mac",
+    "com.luki.paper.mac",        // Craft
+    "com.microsoft.onenote.mac",
 ];
 
 /// Window title fragments that indicate no real document is open.
@@ -623,8 +677,8 @@ pub fn infer_document_path_from_title_with_bundle(
         return None;
     }
 
-    let is_electron_editor = bundle_id
-        .map(|id| ELECTRON_EDITORS.iter().any(|e| e.eq_ignore_ascii_case(id)))
+    let is_title_inferred = bundle_id
+        .map(|id| TITLE_INFERRED_APPS.iter().any(|e| e.eq_ignore_ascii_case(id)))
         .unwrap_or(false);
 
     // Try standard separator-based extraction first.
@@ -635,9 +689,9 @@ pub fn infer_document_path_from_title_with_bundle(
             if looks_like_file_path(left) {
                 return Some(left.to_string());
             }
-            // For Electron editors, accept the left segment as a document name
-            // even without a recognized extension, unless it's a skip-title.
-            if is_electron_editor && looks_like_document_name(left) {
+            // For apps without AXDocument, accept the left segment as a document
+            // name even without a recognised extension, unless it's a skip-title.
+            if is_title_inferred && looks_like_document_name(left) {
                 return Some(left.to_string());
             }
             // Also check remaining segments (right side, further splits).
@@ -657,7 +711,7 @@ pub fn infer_document_path_from_title_with_bundle(
     if looks_like_file_path(trimmed) {
         return Some(trimmed.to_string());
     }
-    if is_electron_editor && looks_like_document_name(trimmed) {
+    if is_title_inferred && looks_like_document_name(trimmed) {
         return Some(trimmed.to_string());
     }
 

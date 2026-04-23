@@ -314,7 +314,13 @@ impl Default for SentinelConfig {
                 // Writing apps
                 "scriv", "scrivx", "fdx", "fountain", "mmd",
                 // Document formats
-                "doc", "docx", "odt", "pages",
+                "doc", "docx", "odt", "pages", "wpd", "wri", "epub",
+                // Affinity suite
+                "afpub", "afdesign", "afphoto",
+                // Outlining / structured writing
+                "opml", "itmz", "mm",
+                // Screenplay / script formats
+                "draft",
                 // Markup
                 "tex", "latex", "org", "rst", "adoc", "asciidoc",
                 // Web writing
