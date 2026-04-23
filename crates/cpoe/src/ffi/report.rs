@@ -8,6 +8,7 @@ use crate::war::ear::{
     Ar4siStatus, EarAppraisal, EarToken, SealClaims, TrustworthinessVector, VerifierId,
 };
 use chrono::DateTime;
+use sha2::{Digest, Sha256};
 use std::sync::{Arc, OnceLock};
 use zeroize::Zeroize;
 
@@ -822,6 +823,14 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
         Verdict::LikelySynthetic => "Strong indicators of synthetic or automated content generation.".into(),
     };
 
+    let evidence_chain_hash: String = {
+        let mut h = Sha256::new();
+        for ev in &events {
+            h.update(ev.content_hash);
+        }
+        hex::encode(h.finalize())
+    };
+
     let activity_contexts: Vec<ActivityContext> = sessions
         .iter()
         .map(|s| ActivityContext {
@@ -858,7 +867,7 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
         likelihood_ratio: lr,
         enfsi_tier,
         document_hash: doc_hash,
-        evidence_hash: None,
+        evidence_hash: Some(evidence_chain_hash),
         evidence_cbor_b64: None,
         signing_key_fingerprint: key_fp,
         document_words: if doc_size > 0 { Some(doc_size.max(0) as u64 / 5) } else { None },

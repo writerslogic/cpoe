@@ -166,11 +166,19 @@ pub fn ffi_export_evidence(path: String, tier: String, output: String) -> FfiRes
                     pause_duration_histogram: None,
                 },
                 prev_hash: HashValue::try_sha256(ev.previous_hash.to_vec())?,
-                checkpoint_hash: HashValue::try_sha256(ev.event_hash.to_vec())?,
+                checkpoint_hash: HashValue::try_sha256(
+                    Sha256::new()
+                        .chain_update(ev.content_hash)
+                        .chain_update(ev.previous_hash)
+                        .chain_update((i as u64).to_le_bytes())
+                        .chain_update(timestamp_ms.to_le_bytes())
+                        .finalize()
+                        .to_vec(),
+                )?,
                 process_proof: ProcessProof {
                     algorithm: ProofAlgorithm::SwfSha256,
                     params: ProofParams {
-                        time_cost: 0,
+                        time_cost: 1,
                         memory_cost: 0,
                         parallelism: 1,
                         steps: ev.vdf_iterations,
