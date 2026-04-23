@@ -19,6 +19,7 @@ pub(crate) use trace;
 
 pub mod app_registry;
 pub mod behavioral_key;
+pub mod clipboard;
 pub mod core;
 pub mod core_session;
 mod core_setup;
@@ -42,6 +43,7 @@ pub mod windows_focus;
 #[cfg(test)]
 mod tests;
 
+pub use self::clipboard::{ClipboardMonitor, CopyEvent, EvidenceEvent, ClipboardError};
 pub use self::core::Sentinel;
 pub use self::daemon::{
     cmd_start, cmd_start_foreground, cmd_status, cmd_stop, cmd_track, cmd_untrack, DaemonHandle,

@@ -17,7 +17,6 @@ pub mod checkpoint;
 pub mod checkpoint_mmr;
 pub mod collaboration;
 pub mod continuation;
-pub mod credentials;
 pub mod evidence;
 pub mod mmr;
 pub mod provenance;
@@ -114,11 +113,6 @@ pub use crate::research::{
 };
 
 pub use crate::config::{FingerprintConfig, PrivacyConfig, ResearchConfig, SentinelConfig};
-pub use crate::credentials::{
-    BehavioralMarkers, CredentialBuilder, CredentialMetadata, CredentialProof,
-    CredentialSubject, CredentialVerifier, DigitalCredential, VerificationDetails,
-    VerificationResult, WalletCredentialConfig, WalletIntegration,
-};
 pub use crate::store::{SecureEvent, SecureStore};
 
 pub use crate::trust_policy::{

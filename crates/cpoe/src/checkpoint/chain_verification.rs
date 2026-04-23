@@ -165,6 +165,7 @@ impl Chain {
                         ));
                         return report;
                     }
+                    report.clock_tolerance_violations.push((i, drift));
                     report
                         .warnings
                         .push(format!("checkpoint {i}: minor clock drift ({drift}s)"));

@@ -47,6 +47,7 @@ fn derive_challenges(
     let mut seen = std::collections::BTreeSet::new();
     let mut challenges = Vec::with_capacity(q as usize);
     let mut counter = 0u32;
+    // Modulo reduction introduces negligible bias (~0.002% for k=4096) per draft-condrey-cfrg-posme.
     while challenges.len() < q as usize {
         let h = posme_hash(&[&sigma, &i2osp(counter)]);
         let val = u32::from_be_bytes([h[0], h[1], h[2], h[3]]) % k;

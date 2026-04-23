@@ -89,6 +89,8 @@ pub struct VerificationReport {
     /// Non-fatal issues (e.g., unsigned under `Optional` policy)
     pub warnings: Vec<String>,
     pub errors: Vec<String>,
+    /// (checkpoint index, drift in seconds) — SPEC_DEVIATION: tolerates up to 1s negative drift
+    pub clock_tolerance_violations: Vec<(usize, i64)>,
 }
 
 impl VerificationReport {
@@ -101,6 +103,7 @@ impl VerificationReport {
             metadata_valid: true,
             warnings: Vec::new(),
             errors: Vec::new(),
+            clock_tolerance_violations: Vec::new(),
         }
     }
 

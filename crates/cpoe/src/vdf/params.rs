@@ -364,7 +364,15 @@ impl BatchVerifier {
         }
 
         for handle in handles {
-            let _ = handle.join();
+            if let Err(_) = handle.join() {
+                // Worker thread panicked; mark all unprocessed results as errored
+                let mut res = results.lock_recover();
+                for r in res.iter_mut() {
+                    if r.error.is_none() && !r.valid {
+                        r.error = Some("worker thread panic".to_string());
+                    }
+                }
+            }
         }
 
         match Arc::try_unwrap(results) {

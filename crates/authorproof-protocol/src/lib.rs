@@ -11,6 +11,7 @@ pub mod error;
 pub mod evidence;
 pub mod forensics;
 pub mod identity;
+pub mod method_detection;
 pub mod rfc;
 pub mod war;
 #[cfg(feature = "wasm")]

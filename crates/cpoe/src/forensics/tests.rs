@@ -769,8 +769,6 @@ fn test_per_checkpoint_flags_empty_checkpoints() {
 
 #[test]
 fn test_per_checkpoint_flags_robotic_timing() {
-    use crate::evidence::CheckpointProof;
-
     // Create events with perfectly regular timing (low CV = robotic)
     let events: Vec<EventData> = (0..20)
         .map(|i| EventData {

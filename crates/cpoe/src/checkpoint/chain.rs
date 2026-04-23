@@ -144,6 +144,14 @@ impl Chain {
             Checkpoint::new_base(ordinal, previous_hash, content_hash, content_size, message);
 
         {
+            // Invariant: min_iterations must always be > 0 to ensure minimum cost for
+            // zero-duration VDFs (genesis and clock-regressed checkpoints).
+            if self.metadata.vdf_params.min_iterations == 0 {
+                return Err(Error::checkpoint(
+                    "VDF parameters have min_iterations=0; refusing checkpoint (cost would be zero)",
+                ));
+            }
+
             let duration = if ordinal == 0 {
                 // Genesis: no elapsed time; VDF uses min_iterations to prevent forgery.
                 vdf_duration.unwrap_or(Duration::from_secs(0))
@@ -187,9 +195,10 @@ impl Chain {
         }
         if let Some(mmr) = &self.mmr {
             let append = mmr.finalize_checkpoint(&mut checkpoint)?;
-            if let Ok(proof_bytes) = append.proof().serialize() {
-                checkpoint.mmr_inclusion_proof = Some(proof_bytes);
-            }
+            checkpoint.mmr_inclusion_proof = Some(
+                append.proof().serialize()
+                    .map_err(|e| Error::checkpoint(format!("MMR proof serialization failed: {e}")))?
+            );
         } else {
             checkpoint.hash = checkpoint.compute_hash();
         }
@@ -291,13 +300,16 @@ impl Chain {
             return Err(Error::checkpoint("chain file must not be a symlink"));
         }
         let mac_path = mac_sidecar_path(path);
-        if !mac_path.exists() {
-            return Self::load(path);
-        }
-        let stored_mac: [u8; 32] = fs::read(&mac_path)
-            .map_err(|e| Error::checkpoint(format!("failed to read chain MAC: {e}")))?
-            .try_into()
-            .map_err(|_| Error::checkpoint("chain MAC file has wrong length (expected 32 bytes)"))?;
+        // Atomically try to read the MAC file; if NotFound, fall back to legacy load.
+        // If it exists but fails to read, propagate the error.
+        let stored_mac: [u8; 32] = match fs::read(&mac_path) {
+            Ok(data) => data.try_into()
+                .map_err(|_| Error::checkpoint("chain MAC file has wrong length (expected 32 bytes)"))?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Self::load(path); // No MAC sidecar → legacy fallback
+            }
+            Err(e) => return Err(Error::checkpoint(format!("failed to read chain MAC: {e}"))),
+        };
         let file_len = fs::metadata(path)?.len();
         if file_len > MAX_CHAIN_FILE_SIZE {
             return Err(Error::checkpoint("chain file exceeds safety limit"));
@@ -706,12 +718,6 @@ impl Chain {
         }).transpose()
             .map_err(|e| Error::checkpoint(format!("SWF intervals CBOR: {e}")))?;
 
-        let phys_cbor = match physics {
-            Some(p) => authorproof_protocol::codec::cbor::encode(&p.combined_hash.to_vec())
-                .map_err(|e| Error::checkpoint(format!("SWF physics CBOR: {e}")))?,
-            None => vec![],
-        };
-
         #[cfg(feature = "posme")]
         let (argon2_swf, posme_swf) = {
             let cn = challenge_nonce.as_ref();
@@ -722,6 +728,11 @@ impl Chain {
                     cn,
                 )
             } else if intervals_cbor.is_some() {
+                let phys_cbor = match physics {
+                    Some(p) => authorproof_protocol::codec::cbor::encode(&p.combined_hash.to_vec())
+                        .map_err(|e| Error::checkpoint(format!("SWF physics CBOR: {e}")))?,
+                    None => vec![],
+                };
                 vdf::posme_seed_enhanced(
                     &previous_hash,
                     intervals_cbor.as_deref().unwrap_or(&[]),
@@ -759,6 +770,11 @@ impl Chain {
                     &jitter_or_nonce,
                 )
             } else if intervals_cbor.is_some() {
+                let phys_cbor = match physics {
+                    Some(p) => authorproof_protocol::codec::cbor::encode(&p.combined_hash.to_vec())
+                        .map_err(|e| Error::checkpoint(format!("SWF physics CBOR: {e}")))?,
+                    None => vec![],
+                };
                 vdf::swf_seed_enhanced(
                     &previous_hash,
                     intervals_cbor.as_deref().unwrap_or(&[]),

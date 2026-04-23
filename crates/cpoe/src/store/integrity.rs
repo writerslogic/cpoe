@@ -121,12 +121,25 @@ impl SecureStore {
                 used_at                 INTEGER NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS clipboard_events (
+                id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+                fragment_hash           BLOB NOT NULL,
+                app_bundle_id           TEXT NOT NULL,
+                window_title            TEXT,
+                text_hash               BLOB NOT NULL,
+                pasteboard_change_count INTEGER NOT NULL,
+                timestamp               INTEGER NOT NULL,
+                captured_at             INTEGER NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_secure_events_timestamp ON secure_events(timestamp_ns);
             CREATE INDEX IF NOT EXISTS idx_secure_events_file ON secure_events(file_path, timestamp_ns);
             CREATE INDEX IF NOT EXISTS idx_secure_events_file_id ON secure_events(file_path, id);
             CREATE INDEX IF NOT EXISTS idx_text_fragments_hash ON text_fragments(fragment_hash);
             CREATE INDEX IF NOT EXISTS idx_text_fragments_session ON text_fragments(session_id, timestamp);
-            CREATE INDEX IF NOT EXISTS idx_keystroke_sequences_session ON keystroke_sequences(session_id);"
+            CREATE INDEX IF NOT EXISTS idx_keystroke_sequences_session ON keystroke_sequences(session_id);
+            CREATE INDEX IF NOT EXISTS idx_clipboard_events_fragment ON clipboard_events(fragment_hash);
+            CREATE INDEX IF NOT EXISTS idx_clipboard_events_timestamp ON clipboard_events(timestamp);"
         )?;
 
         // Migration: add `last_verified_sequence` to pre-existing integrity rows
