@@ -160,6 +160,7 @@ impl CloudKitSyncEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::text_fragments::TextFragment;
 
     #[tokio::test]
     async fn test_sync_engine_creation() {
