@@ -8,25 +8,39 @@ use std::sync::OnceLock;
 use zeroize::Zeroizing;
 
 /// Cached device identity for populating evidence events.
-/// Shared across all FFI modules to avoid duplicate OnceLock instances.
-static DEVICE_IDENTITY: OnceLock<([u8; 16], String)> = OnceLock::new();
+/// Uses Mutex so we can retry if the first attempt returned an ephemeral fallback
+/// (e.g., keychain was locked at startup but unlocked later).
+static DEVICE_IDENTITY: std::sync::Mutex<Option<(bool, [u8; 16], String)>> =
+    std::sync::Mutex::new(None);
 
-pub fn device_identity() -> &'static ([u8; 16], String) {
-    DEVICE_IDENTITY.get_or_init(|| {
-        match crate::identity::secure_storage::SecureStorage::load_device_identity() {
-            Ok(Some(identity)) => identity,
-            Ok(None) | Err(_) => {
-                log::error!(
-                    "SecureStorage device identity unavailable; using random ephemeral device ID"
-                );
-                let mut fallback_id = [0u8; 16];
-                rand::RngCore::fill_bytes(&mut rand::rng(), &mut fallback_id);
-                let machine_id =
-                    sysinfo::System::host_name().unwrap_or_else(|| "unknown".to_string());
-                (fallback_id, machine_id)
-            }
+pub fn device_identity() -> ([u8; 16], String) {
+    let mut guard = DEVICE_IDENTITY.lock().unwrap_or_else(|e| e.into_inner());
+    // If we have a persistent (non-ephemeral) identity, return it.
+    if let Some((true, id, machine)) = guard.as_ref() {
+        return (*id, machine.clone());
+    }
+    // Try loading from secure storage (retries if previously ephemeral).
+    match crate::identity::secure_storage::SecureStorage::load_device_identity() {
+        Ok(Some(identity)) => {
+            *guard = Some((true, identity.0, identity.1.clone()));
+            identity
         }
-    })
+        Ok(None) | Err(_) => {
+            // Return cached ephemeral if we already generated one.
+            if let Some((false, id, machine)) = guard.as_ref() {
+                return (*id, machine.clone());
+            }
+            log::error!(
+                "SecureStorage device identity unavailable; using random ephemeral device ID"
+            );
+            let mut fallback_id = [0u8; 16];
+            rand::RngCore::fill_bytes(&mut rand::rng(), &mut fallback_id);
+            let machine_id =
+                sysinfo::System::host_name().unwrap_or_else(|| "unknown".to_string());
+            *guard = Some((false, fallback_id, machine_id.clone()));
+            (fallback_id, machine_id)
+        }
+    }
 }
 
 /// Try to unwrap a COSE_Sign1 envelope to get the inner CBOR payload.

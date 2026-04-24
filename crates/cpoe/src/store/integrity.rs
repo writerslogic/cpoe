@@ -7,11 +7,21 @@ use anyhow::anyhow;
 use rusqlite::params;
 use subtle::ConstantTimeEq;
 
+const KNOWN_TABLES: &[&str] = &[
+    "integrity", "secure_events", "clipboard_events",
+    "text_fragments", "keystroke_sequences", "used_nonces",
+    "baselines", "fingerprints",
+];
+
 fn has_column(
     conn: &rusqlite::Connection,
     table: &str,
     col: &str,
 ) -> anyhow::Result<bool> {
+    anyhow::ensure!(
+        KNOWN_TABLES.contains(&table),
+        "has_column called with unknown table: {table}"
+    );
     let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
     let found = stmt
         .query_map([], |row| row.get::<_, String>(1))?

@@ -237,6 +237,9 @@ pub fn ffi_text_fragment_store(
     let confidence = confidence.clamp(0.0, 1.0);
     let fragment_hash = hash_text(&text_content);
     let timestamp = current_timestamp_ms();
+    if timestamp <= 0 {
+        return FfiTextFragmentStoreResult::err("System clock unavailable");
+    }
     let nonce = generate_nonce();
 
     let signing_key = match load_signing_key() {
@@ -696,7 +699,7 @@ pub fn ffi_apply_remote_fragment(
     {
         use ed25519_dalek::{Signature, Verifier, VerifyingKey};
         let vk = match VerifyingKey::from_bytes(
-            pub_bytes.as_slice().try_into().unwrap(),
+            pub_bytes.as_slice().try_into().expect("length validated at 32 bytes"),
         ) {
             Ok(k) => k,
             Err(e) => return FfiTextFragmentStoreResult::err(
@@ -704,7 +707,7 @@ pub fn ffi_apply_remote_fragment(
             ),
         };
         // Signature::from_bytes is infallible in ed25519-dalek v2.
-        let sig_arr: &[u8; 64] = source_signature.as_slice().try_into().unwrap();
+        let sig_arr: &[u8; 64] = source_signature.as_slice().try_into().expect("length validated at 64 bytes");
         let sig = Signature::from_bytes(sig_arr);
         // Reconstruct the domain-tagged payload that was signed.
         const DST: &[u8] = b"witnessd-text-fragment-v1";
@@ -851,6 +854,43 @@ pub fn ffi_resolve_sync_conflict(
         } else {
             None
         };
+
+    // Verify remote fragment signature before accepting it
+    if let Some(ref frag) = remote_fragment {
+        let store_tmp = match open_store() {
+            Ok(s) => s,
+            Err(e) => return FfiSyncResult::err(e),
+        };
+        let hash_arr: &[u8; 32] = frag.fragment_hash.as_slice()
+            .try_into()
+            .expect("length validated at 32 bytes");
+        let sig_arr: &[u8; 64] = frag.source_signature.as_slice()
+            .try_into()
+            .expect("length validated at 64 bytes");
+        let signing_key = match crate::ffi::helpers::load_signing_key() {
+            Ok(k) => k,
+            Err(e) => return FfiSyncResult::err(
+                format!("Cannot verify remote signature: {e}"),
+            ),
+        };
+        let pub_bytes = signing_key.verifying_key().to_bytes();
+        match store_tmp.verify_fragment_signature(
+            hash_arr,
+            &frag.nonce,
+            frag.timestamp,
+            &frag.session_id,
+            sig_arr,
+            &pub_bytes,
+        ) {
+            Ok(true) => {}
+            Ok(false) => return FfiSyncResult::err(
+                "Remote fragment signature verification failed",
+            ),
+            Err(e) => return FfiSyncResult::err(
+                format!("Signature verification error: {e}"),
+            ),
+        }
+    }
 
     let mut store = match open_store() {
         Ok(s) => s,
