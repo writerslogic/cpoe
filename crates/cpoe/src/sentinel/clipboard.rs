@@ -446,10 +446,10 @@ pub fn wrap_clipboard_cose_sign1(
 ) -> crate::error::Result<Vec<u8>> {
     let protected = HeaderBuilder::new()
         .algorithm(coset::iana::Algorithm::EdDSA)
+        .iv(nonce.to_vec())
         .build();
 
     let unprotected = HeaderBuilder::new()
-        .iv(nonce.to_vec())
         .build();
 
     let sign1 = CoseSign1Builder::new()

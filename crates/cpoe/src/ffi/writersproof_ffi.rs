@@ -60,16 +60,20 @@ pub fn ffi_anchor_to_writers_proof(document_path: String) -> FfiResult {
 
     // Load signing key and sign the raw hash bytes (matches CLI: signing_key.sign(latest.event_hash.as_slice()))
     let signing_key = match load_signing_key() {
-        Ok(k) => k,
+        Ok(k) => zeroize::Zeroizing::new(k),
         Err(e) => {
             return FfiResult::err(e);
         }
     };
     let signature = {
         use ed25519_dalek::Signer;
-        hex::encode(signing_key.sign(latest.event_hash.as_slice()).to_bytes())
+        const DST: &[u8] = b"witnessd-anchor-v1";
+        let mut payload = Vec::with_capacity(DST.len() + latest.event_hash.len());
+        payload.extend_from_slice(DST);
+        payload.extend_from_slice(latest.event_hash.as_slice());
+        hex::encode(signing_key.sign(&payload).to_bytes())
     };
-    // signing_key implements Zeroize on Drop via ed25519-dalek
+    drop(signing_key);
 
     let did = match load_did() {
         Ok(d) => d,
@@ -224,13 +228,18 @@ pub fn ffi_publish_evidence(
     let evidence_hash = hex::encode(latest.content_hash);
 
     let signing_key = match load_signing_key() {
-        Ok(k) => k,
+        Ok(k) => zeroize::Zeroizing::new(k),
         Err(e) => return fail(e),
     };
     let signature = {
         use ed25519_dalek::Signer;
-        hex::encode(signing_key.sign(latest.event_hash.as_slice()).to_bytes())
+        const DST: &[u8] = b"witnessd-publish-v1";
+        let mut payload = Vec::with_capacity(DST.len() + latest.event_hash.len());
+        payload.extend_from_slice(DST);
+        payload.extend_from_slice(latest.event_hash.as_slice());
+        hex::encode(signing_key.sign(&payload).to_bytes())
     };
+    drop(signing_key);
 
     let did = match load_did() {
         Ok(d) => d,
@@ -353,6 +362,10 @@ pub fn ffi_sync_text_attestation(
         Err(e) => return FfiResult::err(format!("Failed to create API client: {e}")),
     };
 
+    let anchor_evidence_hash = content_hash.clone();
+    let anchor_signature = signature_hex.clone();
+    let anchor_tier = tier.clone();
+
     let req = crate::writersproof::types::TextAttestationRequest {
         content_hash,
         tier,
@@ -371,6 +384,30 @@ pub fn ffi_sync_text_attestation(
     match result {
         Err(_) => FfiResult::err("Text attestation sync timed out".to_string()),
         Ok(Err(e)) => FfiResult::err(format!("Text attestation sync failed: {e}")),
-        Ok(Ok(_)) => FfiResult::ok(format!("Synced: {writersproof_id}")),
+        Ok(Ok(_)) => {
+            // Fire-and-forget anchor to transparency log.
+            let anchor_req = crate::writersproof::AnchorRequest {
+                evidence_hash: anchor_evidence_hash,
+                author_did: String::new(),
+                signature: anchor_signature,
+                metadata: Some(crate::writersproof::AnchorMetadata {
+                    document_name: None,
+                    tier: Some(anchor_tier),
+                }),
+            };
+            let anchor_result = rt.block_on(async {
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(10),
+                    client.anchor(anchor_req),
+                )
+                .await
+            });
+            match anchor_result {
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) => log::warn!("Post-attestation anchor failed: {e}"),
+                Err(_) => log::warn!("Post-attestation anchor timed out"),
+            }
+            FfiResult::ok(format!("Synced: {writersproof_id}"))
+        }
     }
 }
