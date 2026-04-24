@@ -49,7 +49,6 @@ pub mod sentinel;
 pub mod serde_utils;
 pub mod snapshot;
 pub mod store;
-pub mod sync;
 pub mod timing;
 pub mod utils;
 pub mod verify;
