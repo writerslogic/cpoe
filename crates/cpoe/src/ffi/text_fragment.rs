@@ -173,10 +173,14 @@ fn sign_fragment(
 }
 
 fn current_timestamp_ms() -> i64 {
-    std::time::SystemTime::now()
+    let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
+        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0);
+    if ts <= 0 {
+        log::error!("System clock returned non-positive timestamp; evidence timing will be unreliable");
+    }
+    ts
 }
 
 fn generate_nonce() -> [u8; 16] {
@@ -216,6 +220,9 @@ pub fn ffi_text_fragment_store(
     if session_id.is_empty() {
         return FfiTextFragmentStoreResult::err("Session ID is required");
     }
+    if session_id.len() > 256 {
+        return FfiTextFragmentStoreResult::err("Session ID too long");
+    }
 
     let context = match keystroke_context.parse::<KeystrokeContext>() {
         Ok(c) => c,
@@ -224,6 +231,9 @@ pub fn ffi_text_fragment_store(
         ),
     };
 
+    if !confidence.is_finite() {
+        return FfiTextFragmentStoreResult::err("Confidence must be a finite number");
+    }
     let confidence = confidence.clamp(0.0, 1.0);
     let fragment_hash = hash_text(&text_content);
     let timestamp = current_timestamp_ms();
@@ -338,6 +348,12 @@ pub fn ffi_sentinel_record_paste(
 ) -> FfiPasteRecordResult {
     if char_count < 0 {
         return FfiPasteRecordResult::err("char_count must be non-negative");
+    }
+    if timestamp_ns <= 0 {
+        return FfiPasteRecordResult::err("timestamp_ns must be positive");
+    }
+    if !detection_confidence.is_finite() {
+        return FfiPasteRecordResult::err("detection_confidence must be a finite number");
     }
 
     // Update sentinel paste counter (same as old ffi_sentinel_notify_paste).
@@ -588,6 +604,11 @@ pub fn ffi_update_fragment_sync_state(
         Err(e) => return FfiSyncResult::err(e),
     };
 
+    const VALID_STATES: &[&str] = &["pending", "syncing", "synced", "failed", "conflict"];
+    if !VALID_STATES.contains(&state.as_str()) {
+        return FfiSyncResult::err(format!("Invalid sync state: {state}"));
+    }
+
     match store.update_fragment_sync_state(
         fragment_id,
         &state,
@@ -801,15 +822,23 @@ pub fn ffi_resolve_sync_conflict(
                     "Remote nonce required",
                 ),
             };
+            let sid = match remote_session_id {
+                Some(ref s) if !s.is_empty() => s.clone(),
+                _ => return FfiSyncResult::err("Remote session ID required for KeepRemote/KeepNewest"),
+            };
+            let ts = match remote_timestamp_ms {
+                Some(t) if t > 0 => t,
+                _ => return FfiSyncResult::err("Remote timestamp required for KeepRemote/KeepNewest"),
+            };
             Some(TextFragment {
                 id: None,
                 fragment_hash: hash,
-                session_id: remote_session_id.unwrap_or_default(),
+                session_id: sid,
                 source_app_bundle_id: None,
                 source_window_title: None,
                 source_signature: sig,
                 nonce,
-                timestamp: remote_timestamp_ms.unwrap_or(0),
+                timestamp: ts,
                 keystroke_context: None,
                 keystroke_confidence: None,
                 keystroke_sequence_hash: None,

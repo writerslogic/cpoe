@@ -118,7 +118,7 @@ impl std::error::Error for ClipboardError {}
 /// Copy event captured from clipboard.
 #[derive(Debug, Clone)]
 pub struct CopyEvent {
-    /// Nanoseconds since UNIX epoch.
+    /// Milliseconds since UNIX epoch.
     pub timestamp: i64,
     /// App bundle ID (e.g., "com.apple.Notes").
     pub app_bundle_id: String,
@@ -229,12 +229,14 @@ impl ClipboardMonitor {
                     {
                         Ok(()) => {
                             // Emit to broadcast channel only on successful attachment
-                            let _ = self.pending_evidence_tx.send(EvidenceEvent {
+                            if let Err(e) = self.pending_evidence_tx.send(EvidenceEvent {
                                 fragment_hash: copy_event.text_hash,
-                                evidence: vec![],
+                                evidence: copy_event.text_hash.to_vec(),
                                 source_app: copy_event.app_bundle_id.clone(),
                                 timestamp: copy_event.timestamp,
-                            });
+                            }) {
+                                log::debug!("No evidence subscribers: {e}");
+                            }
                         }
                         Err(e) => {
                             log::trace!("Evidence attachment skipped: {}", e);
@@ -260,11 +262,11 @@ impl ClipboardMonitor {
     /// Returns Some(CopyEvent) if change detected and text valid, None if unchanged.
     /// Deduplication via change count and timestamp throttling (100ms).
     async fn check_clipboard_change(&self) -> std::result::Result<Option<CopyEvent>, ClipboardError> {
-        let now = Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        let now = Utc::now().timestamp_millis();
         let last_copy = *self.last_copy_time.read_recover();
 
         // Debounce: reject if < 100ms since last copy
-        if now - last_copy < CLIPBOARD_DEBOUNCE_MS as i64 * 1_000_000 {
+        if now.saturating_sub(last_copy) < CLIPBOARD_DEBOUNCE_MS as i64 {
             return Ok(None);
         }
 
@@ -356,15 +358,16 @@ impl ClipboardMonitor {
         Err(ClipboardError::NoFragmentFound)
     }
 
-    /// Check if text hash matches any fragment in a session.
+    /// Check if text hash matches a fragment in the given session.
     async fn fragment_matches_hash(
         &self,
         store: &Arc<SecureStore>,
-        _session_id: &str,
+        session_id: &str,
         text_hash: &[u8; 32],
     ) -> std::result::Result<bool, ClipboardError> {
         match store.lookup_fragment_by_hash(text_hash) {
-            Ok(Some(_)) => Ok(true),
+            Ok(Some(f)) if f.session_id == session_id => Ok(true),
+            Ok(Some(_)) => Ok(false), // exists in different session
             Ok(None) => Ok(false),
             Err(e) => Err(ClipboardError::Other(
                 format!("Fragment lookup failed: {}", e),
@@ -444,12 +447,16 @@ pub fn wrap_clipboard_cose_sign1(
     signing_key: &SigningKey,
     nonce: &[u8],
 ) -> crate::error::Result<Vec<u8>> {
+    if nonce.len() < 16 {
+        return Err(crate::error::Error::crypto("Nonce must be at least 16 bytes"));
+    }
+
     let protected = HeaderBuilder::new()
         .algorithm(coset::iana::Algorithm::EdDSA)
-        .iv(nonce.to_vec())
         .build();
 
     let unprotected = HeaderBuilder::new()
+        .iv(nonce.to_vec())
         .build();
 
     let sign1 = CoseSign1Builder::new()
