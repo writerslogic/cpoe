@@ -22,7 +22,8 @@
 
 use crate::store::SecureStore;
 use crate::sentinel::types::DocumentSession;
-use crate::utils::{DateTimeNanosExt, crypto_helpers};
+use crate::utils::time::DateTimeNanosExt;
+use crate::utils::crypto_helpers;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
