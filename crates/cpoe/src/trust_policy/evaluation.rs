@@ -43,13 +43,21 @@ impl AppraisalPolicy {
         match self.computation_model {
             TrustComputation::WeightedAverage => {
                 let total_weight: f32 = self.factors.iter().map(|f| f.weight).sum();
-                if total_weight == 0.0 {
+                if total_weight == 0.0 || !total_weight.is_finite() {
                     return 0.0;
                 }
                 let weighted_sum: f32 = self
                     .factors
                     .iter()
-                    .map(|f| f.weight * f.normalized_score)
+                    .map(|f| {
+                        let w = if f.weight.is_finite() { f.weight } else { 0.0 };
+                        let s = if f.normalized_score.is_finite() {
+                            f.normalized_score
+                        } else {
+                            0.0
+                        };
+                        w * s
+                    })
                     .sum();
                 weighted_sum / total_weight
             }
@@ -72,28 +80,44 @@ impl AppraisalPolicy {
                 let product: f32 = self
                     .factors
                     .iter()
-                    .map(|f| f.normalized_score.max(0.0))
+                    .map(|f| {
+                        if f.normalized_score.is_finite() {
+                            f.normalized_score.max(0.0)
+                        } else {
+                            0.0
+                        }
+                    })
                     .product();
                 product.powf(1.0 / self.factors.len() as f32)
             }
             TrustComputation::CustomFormula => {
-                // Weighted geometric mean: penalizes low outliers more than
-                // arithmetic average, rewards uniformly high scores.
                 if self.factors.is_empty() {
                     return 0.0;
                 }
                 let total_weight: f32 = self.factors.iter().map(|f| f.weight).sum();
-                if total_weight == 0.0 {
+                if total_weight <= 0.0 || !total_weight.is_finite() {
                     return 0.0;
                 }
                 let log_sum: f32 = self
                     .factors
                     .iter()
                     .map(|f| {
-                        let s = f.normalized_score.max(1e-6);
-                        (f.weight / total_weight) * s.ln()
+                        let s = if f.normalized_score.is_finite() {
+                            f.normalized_score.max(1e-6)
+                        } else {
+                            1e-6
+                        };
+                        let w = if f.weight.is_finite() {
+                            f.weight.max(0.0)
+                        } else {
+                            0.0
+                        };
+                        (w / total_weight) * s.ln()
                     })
                     .sum();
+                if !log_sum.is_finite() {
+                    return 0.0;
+                }
                 log_sum.exp().clamp(0.0, 1.0)
             }
         }
@@ -101,6 +125,20 @@ impl AppraisalPolicy {
 
     /// Validate that all factor-name references in thresholds exist in the factors list.
     pub fn validate(&self) -> Result<()> {
+        for f in &self.factors {
+            if !f.weight.is_finite() || f.weight < 0.0 {
+                return Err(Error::validation(format!(
+                    "factor '{}' has invalid weight: {}",
+                    f.factor_name, f.weight
+                )));
+            }
+            if !f.normalized_score.is_finite() {
+                return Err(Error::validation(format!(
+                    "factor '{}' has non-finite score: {}",
+                    f.factor_name, f.normalized_score
+                )));
+            }
+        }
         for t in &self.thresholds {
             match t.threshold_type {
                 ThresholdType::MinimumFactor | ThresholdType::RequiredFactor => {

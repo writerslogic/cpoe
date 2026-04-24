@@ -13,7 +13,7 @@ use std::sync::{Arc, OnceLock};
 use zeroize::Zeroize;
 
 const PERCENTILE_IDX_MEDIAN: usize = 2;
-const PERCENTILE_IDX_P95: usize = 4;
+const PERCENTILE_IDX_P90: usize = 4;
 
 struct ForensicCacheEntry {
     event_count: usize,
@@ -372,11 +372,11 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
             process.pause_median_sec =
                 Some(c.percentiles[PERCENTILE_IDX_MEDIAN] / 1_000_000_000.0);
         }
-        if c.percentiles[PERCENTILE_IDX_P95] > 0.0
-            && c.percentiles[PERCENTILE_IDX_P95].is_finite()
+        if c.percentiles[PERCENTILE_IDX_P90] > 0.0
+            && c.percentiles[PERCENTILE_IDX_P90].is_finite()
         {
             process.pause_p95_sec =
-                Some(c.percentiles[PERCENTILE_IDX_P95] / 1_000_000_000.0);
+                Some(c.percentiles[PERCENTILE_IDX_P90] / 1_000_000_000.0);
         }
     }
     let append_ratio = metrics.primary.monotonic_append_ratio.get();

@@ -21,10 +21,14 @@ fn detect_system_language() -> String {
     std::env::var("LANG")
         .ok()
         .and_then(|lang| {
-            // LANG is typically "en_US.UTF-8" or "fr_FR.UTF-8"
             let base = lang.split('.').next()?;
             let normalized = base.replace('_', "-");
-            if normalized.len() >= 2 {
+            if normalized.len() >= 2
+                && normalized.len() <= 35
+                && normalized
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-')
+            {
                 Some(normalized)
             } else {
                 None
@@ -79,7 +83,7 @@ impl TryFrom<&Packet> for rfc::PacketRfc {
                 .checkpoints
                 .iter()
                 .filter_map(|cp| cp.vdf_iterations)
-                .sum(),
+                .fold(0u64, u64::saturating_add),
             rdtsc_checkpoints: Vec::new(),
             entropic_pulse: Vec::new(),
         };

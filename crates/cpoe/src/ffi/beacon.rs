@@ -7,15 +7,27 @@ use std::sync::OnceLock;
 const MAX_EVIDENCE_FILE_SIZE: u64 = 64 * 1024 * 1024;
 
 fn read_bounded(path: &str) -> Result<Vec<u8>, String> {
-    let meta = std::fs::metadata(path).map_err(|e| format!("Failed to stat file: {e}"))?;
-    if meta.len() > MAX_EVIDENCE_FILE_SIZE {
+    use std::io::Read;
+    let mut file =
+        std::fs::File::open(path).map_err(|e| format!("Failed to open file: {e}"))?;
+    let len = file
+        .metadata()
+        .map_err(|e| format!("Failed to stat file: {e}"))?
+        .len();
+    if len > MAX_EVIDENCE_FILE_SIZE {
         return Err(format!(
             "File too large ({} bytes, max {})",
-            meta.len(),
-            MAX_EVIDENCE_FILE_SIZE
+            len, MAX_EVIDENCE_FILE_SIZE
         ));
     }
-    std::fs::read(path).map_err(|e| format!("Failed to read file: {e}"))
+    let mut buf = Vec::with_capacity(len as usize);
+    file.take(MAX_EVIDENCE_FILE_SIZE + 1)
+        .read_to_end(&mut buf)
+        .map_err(|e| format!("Failed to read file: {e}"))?;
+    if buf.len() as u64 > MAX_EVIDENCE_FILE_SIZE {
+        return Err(format!("File grew during read ({} bytes)", buf.len()));
+    }
+    Ok(buf)
 }
 
 static BEACON_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
@@ -105,20 +117,23 @@ pub fn ffi_submit_beacon(document_path: String, timeout_secs: u64) -> FfiBeaconR
     // EH-011: evidence_hash must bind to the document content, not duplicate event_hash.
     let evidence_hash = hex::encode(latest.content_hash);
 
-    let signing_key = match load_signing_key() {
-        Ok(k) => k,
-        Err(e) => return err_beacon(e),
-    };
-    let signature = {
+    let (signature, verifying_key_bytes) = {
+        let signing_key = match load_signing_key() {
+            Ok(k) => k,
+            Err(e) => return err_beacon(e),
+        };
         use ed25519_dalek::Signer;
-        hex::encode(signing_key.sign(latest.event_hash.as_slice()).to_bytes())
+        let sig = hex::encode(signing_key.sign(latest.event_hash.as_slice()).to_bytes());
+        let vk = *signing_key.verifying_key().as_bytes();
+        (sig, vk)
+        // signing_key drops and zeroizes here
     };
 
     let did = match load_did() {
         Ok(d) => d,
         Err(e) => {
             log::debug!("DID from identity.json unavailable: {e}; deriving from signing key");
-            crate::identity::did_key_from_public(signing_key.verifying_key().as_bytes())
+            crate::identity::did_key_from_public(&verifying_key_bytes)
                 .unwrap_or_else(|| "unknown".into())
         }
     };

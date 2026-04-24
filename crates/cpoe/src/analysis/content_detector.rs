@@ -268,6 +268,7 @@ impl ContentDetector {
             email_score,
             chat_score,
             &patterns,
+            text,
         );
 
         ContentAnalysis {
@@ -379,7 +380,7 @@ impl ContentDetector {
         }
 
         // Reduce score if code patterns present
-        if text.contains('{') || text.contains('[') || text.contains('(') && text.contains(')') {
+        if text.contains('{') || text.contains('[') || (text.contains('(') && text.contains(')')) {
             score *= 0.7;
         }
 
@@ -501,6 +502,7 @@ impl ContentDetector {
         email_score: f64,
         chat_score: f64,
         patterns: &[String],
+        text: &str,
     ) -> (ContextType, f64) {
         let candidates = [
             ("code", code_score),
@@ -528,7 +530,7 @@ impl ContentDetector {
                 ContextType::Code { language: lang }
             }
             "prose" => {
-                let style = self.detect_prose_style(patterns);
+                let style = self.detect_prose_style(text);
                 ContextType::Prose { style }
             }
             "tech_doc" => ContextType::TechnicalDoc,
@@ -565,45 +567,19 @@ impl ContentDetector {
             .unwrap_or_else(|| "unknown".to_string())
     }
 
-    /// Detect prose writing style from patterns and content.
-    fn detect_prose_style(&self, patterns: &[String]) -> ProseStyle {
-        let mut academic = 0u32;
-        let mut fiction = 0u32;
-        let mut technical = 0u32;
-        let mut blog = 0u32;
+    /// Detect prose writing style from text content.
+    fn detect_prose_style(&self, text: &str) -> ProseStyle {
+        let lower = text.to_lowercase();
 
-        for p in patterns {
-            let lower = p.to_lowercase();
-            if lower.contains("citation")
-                || lower.contains("abstract")
-                || lower.contains("et al")
-                || lower.contains("hypothesis")
-                || lower.contains("methodology")
-            {
-                academic += 1;
-            }
-            if lower.contains("dialogue")
-                || lower.contains("narrator")
-                || lower.contains("chapter")
-                || lower.contains("character")
-            {
-                fiction += 1;
-            }
-            if lower.contains("api")
-                || lower.contains("config")
-                || lower.contains("parameter")
-                || lower.contains("implementation")
-            {
-                technical += 1;
-            }
-            if lower.contains("post")
-                || lower.contains("comment")
-                || lower.contains("subscribe")
-                || lower.contains("opinion")
-            {
-                blog += 1;
-            }
-        }
+        let academic_keywords = ["citation", "abstract", "et al", "hypothesis", "methodology"];
+        let fiction_keywords = ["dialogue", "narrator", "chapter", "character"];
+        let technical_keywords = ["api", "config", "parameter", "implementation"];
+        let blog_keywords = ["post", "comment", "subscribe", "opinion"];
+
+        let academic: u32 = academic_keywords.iter().filter(|k| lower.contains(*k)).count() as u32;
+        let fiction: u32 = fiction_keywords.iter().filter(|k| lower.contains(*k)).count() as u32;
+        let technical: u32 = technical_keywords.iter().filter(|k| lower.contains(*k)).count() as u32;
+        let blog: u32 = blog_keywords.iter().filter(|k| lower.contains(*k)).count() as u32;
 
         let max = academic.max(fiction).max(technical).max(blog);
         if max == 0 {
