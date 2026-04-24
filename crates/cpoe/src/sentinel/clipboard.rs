@@ -22,8 +22,8 @@
 
 use crate::store::SecureStore;
 use crate::sentinel::types::DocumentSession;
-use crate::utils::time::DateTimeNanosExt;
 use crate::utils::crypto_helpers;
+use crate::RwLockRecover;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -40,6 +40,7 @@ const CLIPBOARD_DEBOUNCE_MS: u64 = 100;
 const MAX_MONITORED_APPS: usize = 50;
 
 /// Maximum evidence cache entries (prevent unbounded memory).
+#[allow(dead_code)]
 const MAX_EVIDENCE_CACHE_SIZE: usize = 1000;
 
 /// Default monitored applications (writing apps).
@@ -154,6 +155,7 @@ pub struct ClipboardMonitor {
     /// Timestamp of last copy event (for debounce).
     last_copy_time: Arc<RwLock<i64>>,
     /// Cache of evidence packets by text hash (hex string).
+    #[allow(dead_code)]
     evidence_cache: Arc<RwLock<HashMap<String, Vec<u8>>>>,
     /// Broadcast sender for evidence events.
     pending_evidence_tx: broadcast::Sender<EvidenceEvent>,
@@ -178,7 +180,7 @@ impl ClipboardMonitor {
     ///
     /// Returns error if limit (50 apps) exceeded.
     pub fn add_monitored_app(&self, bundle_id: String) -> Result<(), ClipboardError> {
-        let mut apps = self.monitored_apps.write();
+        let mut apps = self.monitored_apps.write_recover();
 
         if apps.len() >= MAX_MONITORED_APPS {
             return Err(ClipboardError::MonitoringLimitExceeded);
@@ -249,8 +251,8 @@ impl ClipboardMonitor {
     /// Returns Some(CopyEvent) if change detected and text valid, None if unchanged.
     /// Deduplication via change count and timestamp throttling (100ms).
     async fn check_clipboard_change(&self) -> Result<Option<CopyEvent>, ClipboardError> {
-        let now = chrono::Utc::now().timestamp_nanos_safe();
-        let last_copy = *self.last_copy_time.read().map_err(|e| ClipboardError::Other(format!("RwLock poison: {}", e)))?;
+        let now = Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        let last_copy = *self.last_copy_time.read_recover();
 
         // Debounce: reject if < 100ms since last copy
         if now - last_copy < CLIPBOARD_DEBOUNCE_MS as i64 * 1_000_000 {
@@ -261,7 +263,7 @@ impl ClipboardMonitor {
         let (current_count, text) = self.read_pasteboard().await?;
 
         // Check if change count matches (skip if no change)
-        let last_count = *self.last_change_count.read().map_err(|e| ClipboardError::Other(format!("RwLock poison: {}", e)))?;
+        let last_count = *self.last_change_count.read_recover();
         if current_count == last_count {
             return Ok(None);
         }
@@ -286,8 +288,8 @@ impl ClipboardMonitor {
         };
 
         // Update state
-        *self.last_change_count.write().map_err(|e| ClipboardError::Other(format!("RwLock poison: {}", e)))? = current_count;
-        *self.last_copy_time.write().map_err(|e| ClipboardError::Other(format!("RwLock poison: {}", e)))? = now;
+        *self.last_change_count.write_recover() = current_count;
+        *self.last_copy_time.write_recover() = now;
 
         Ok(Some(copy_event))
     }
@@ -310,9 +312,9 @@ impl ClipboardMonitor {
     ) -> Result<(), ClipboardError> {
         let text_hex = hex::encode(&copy_event.text_hash);
 
-        let sessions_guard = sessions.read().map_err(|e| ClipboardError::Other(format!("RwLock poison: {}", e)))?;
+        let sessions_guard = sessions.read_recover();
         for (session_id, session) in sessions_guard.iter() {
-            if session.is_active() {
+            if session.is_focused() {
                 if let Ok(true) = self.fragment_matches_hash(store, session_id, &copy_event.text_hash).await {
                     log::debug!("Text matched fragment in session {}", session_id);
 
@@ -344,7 +346,7 @@ impl ClipboardMonitor {
         copy_event: &CopyEvent,
         fragment_hash: &[u8; 32],
     ) -> Result<(), ClipboardError> {
-        let now = Utc::now().timestamp_nanos_safe();
+        let now = Utc::now().timestamp_nanos_opt().unwrap_or(0);
 
         store.insert_clipboard_event(
             fragment_hash,
@@ -389,7 +391,7 @@ mod tests {
     #[test]
     fn test_clipboard_monitor_creation() {
         let monitor = ClipboardMonitor::new().expect("Failed to create monitor");
-        let apps = monitor.monitored_apps.read();
+        let apps = monitor.monitored_apps.read_recover();
         assert!(apps.len() > 0);
         assert!(apps.contains(&"com.apple.Notes".to_string()));
     }
@@ -400,7 +402,7 @@ mod tests {
         let result = monitor.add_monitored_app("com.example.App".to_string());
         assert!(result.is_ok());
 
-        let apps = monitor.monitored_apps.read();
+        let apps = monitor.monitored_apps.read_recover();
         assert!(apps.contains(&"com.example.App".to_string()));
     }
 
@@ -413,7 +415,7 @@ mod tests {
         let result2 = monitor.add_monitored_app("com.example.Unique".to_string());
         assert!(result2.is_ok());
 
-        let apps = monitor.monitored_apps.read();
+        let apps = monitor.monitored_apps.read_recover();
         let count = apps
             .iter()
             .filter(|a| *a == "com.example.Unique")
@@ -424,9 +426,10 @@ mod tests {
     #[test]
     fn test_add_monitored_app_limit() {
         let monitor = ClipboardMonitor::new().expect("Failed to create monitor");
+        let defaults = monitor.monitored_apps.read_recover().len();
 
-        // Add apps up to limit
-        for i in 0..MAX_MONITORED_APPS {
+        // Fill remaining slots up to limit
+        for i in 0..(MAX_MONITORED_APPS - defaults) {
             let result = monitor.add_monitored_app(format!("com.example.App{}", i));
             assert!(result.is_ok());
         }

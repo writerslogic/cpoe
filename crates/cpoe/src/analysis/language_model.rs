@@ -181,7 +181,7 @@ impl LanguageClassifier {
     /// Get detailed scores for all classes (for diagnostics).
     pub fn score_all(&self, text: &str) -> HashMap<String, f64> {
         let mut scores = HashMap::new();
-        let mut max_score = 0.0;
+        let mut max_score: f64 = 0.0;
 
         for (class, model) in &self.models {
             let score = model.score(text);
@@ -293,15 +293,15 @@ mod tests {
         let scores = classifier.score_all(text);
 
         // All scores should be 0-1 after normalization
-        for (_, score) in scores {
-            assert!(score >= 0.0 && score <= 1.0);
+        for (_, score) in &scores {
+            assert!(*score >= 0.0 && *score <= 1.0);
         }
 
         // Max score should be 1.0
         let max_score = scores
             .values()
             .cloned()
-            .fold(0.0, f64::max);
+            .fold(0.0_f64, f64::max);
         assert!((max_score - 1.0).abs() < 0.01 || max_score == 0.0); // Float comparison tolerance
     }
 

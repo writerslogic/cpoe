@@ -349,7 +349,7 @@ impl ContentDetector {
         text: &str,
         keystroke_metrics: Option<&KeystrokeMetrics>,
     ) -> f64 {
-        let mut score = 0.0;
+        let mut score: f64 = 0.0;
 
         // Estimate prose characteristics
         let lines: Vec<&str> = text.lines().collect();
@@ -394,7 +394,7 @@ impl ContentDetector {
 
     /// Score likelihood of technical documentation (0.0-1.0).
     fn score_technical_doc(&self, patterns: &[String], text: &str) -> f64 {
-        let mut score = 0.0;
+        let mut score: f64 = 0.0;
 
         // Check for markdown/documentation patterns
         if text.contains("```") || text.contains("# ") || text.contains("## ") {
@@ -425,7 +425,7 @@ impl ContentDetector {
 
     /// Score likelihood of email content (0.0-1.0).
     fn score_email(&self, patterns: &[String], text: &str) -> f64 {
-        let mut score = 0.0;
+        let mut score: f64 = 0.0;
 
         // Check for email headers
         if text.contains("To:") || text.contains("Subject:") || text.contains("From:") {
@@ -459,7 +459,7 @@ impl ContentDetector {
 
     /// Score likelihood of chat message content (0.0-1.0).
     fn score_chat(&self, patterns: &[String], text: &str) -> f64 {
-        let mut score = 0.0;
+        let mut score: f64 = 0.0;
 
         // Shorter messages typical of chat
         if text.len() < 200 {

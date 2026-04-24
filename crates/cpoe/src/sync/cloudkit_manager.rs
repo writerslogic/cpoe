@@ -6,7 +6,6 @@
 //! on other devices, with exponential backoff retry logic and network
 //! state monitoring.
 
-use crate::DateTimeNanosExt;
 use crate::Error;
 use std::sync::Arc;
 use std::time::{Duration, Instant};

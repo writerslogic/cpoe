@@ -8,7 +8,6 @@
 //! - Ed25519 for persistent device identity verification
 
 use crate::Error;
-use crate::DateTimeNanosExt;
 use ed25519_dalek::{SigningKey, Verifier, VerifyingKey};
 use rand::Rng;
 
