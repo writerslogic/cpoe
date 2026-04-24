@@ -56,15 +56,17 @@ pub fn ffi_sentinel_inject_keystroke(
     }
 
     // Rate limiting: reject if injection rate exceeds MAX_INJECT_RATE_PER_SEC.
-    // H-017: Mutex-guarded window prevents races at window boundaries.
+    // Uses monotonic Instant (not caller-supplied timestamp) to prevent bypass
+    // via crafted timestamps. H-017: Mutex-guarded window prevents races.
     {
         use std::sync::Mutex;
+        use std::time::Instant;
         struct RateWindow {
-            start_ns: i64,
+            start: Option<Instant>,
             count: u64,
         }
         static RATE_LIMITER: Mutex<RateWindow> = Mutex::new(RateWindow {
-            start_ns: 0,
+            start: None,
             count: 0,
         });
 
@@ -72,10 +74,10 @@ pub fn ffi_sentinel_inject_keystroke(
             Ok(w) => w,
             Err(poisoned) => poisoned.into_inner(),
         };
-        let elapsed_ns = timestamp_ns.saturating_sub(window.start_ns);
-        if elapsed_ns > 1_000_000_000 {
-            // New 1-second window
-            window.start_ns = timestamp_ns;
+        let now = Instant::now();
+        let elapsed = window.start.map_or(true, |s| now.duration_since(s).as_secs() >= 1);
+        if elapsed {
+            window.start = Some(now);
             window.count = 1;
         } else {
             window.count += 1;
@@ -194,7 +196,8 @@ pub fn ffi_sentinel_inject_keystroke(
     crate::sentinel::trace!("[FFI_INJECT] focus={:?} keycode={}", focus, keycode);
     if let Some(ref path) = focus {
         if let Some(session) = sentinel.sessions.write_recover().get_mut(path) {
-            session.keystroke_count += coalesced_count.max(1);
+            let increment = coalesced_count.clamp(1, 10);
+            session.keystroke_count = session.keystroke_count.saturating_add(increment);
             crate::sentinel::trace!(
                 "[FFI_INJECT] COUNTED {:?} total={}",
                 path,
@@ -220,7 +223,7 @@ pub fn ffi_sentinel_inject_keystroke(
             // cannot be validated against HID system state (H-006).
             let min_confidence = if is_unverified_ffi { 0.5 } else { 0.1 };
             if validation.confidence < min_confidence {
-                session.keystroke_count -= 1;
+                session.keystroke_count = session.keystroke_count.saturating_sub(increment);
                 if pushed {
                     session.jitter_samples.pop();
                 }
