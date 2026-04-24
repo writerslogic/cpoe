@@ -363,7 +363,6 @@ pub fn ffi_sync_text_attestation(
     };
 
     let anchor_evidence_hash = content_hash.clone();
-    let anchor_signature = signature_hex.clone();
     let anchor_tier = tier.clone();
 
     let req = crate::writersproof::types::TextAttestationRequest {
@@ -385,11 +384,29 @@ pub fn ffi_sync_text_attestation(
         Err(_) => FfiResult::err("Text attestation sync timed out".to_string()),
         Ok(Err(e)) => FfiResult::err(format!("Text attestation sync failed: {e}")),
         Ok(Ok(_)) => {
-            // Fire-and-forget anchor to transparency log.
+            // Re-sign with anchor-specific DST for transparency log.
+            let anchor_sig = match load_signing_key() {
+                Ok(k) => {
+                    use ed25519_dalek::Signer;
+                    let sk = zeroize::Zeroizing::new(k);
+                    const DST: &[u8] = b"witnessd-anchor-v1";
+                    let hash_bytes = hex::decode(&anchor_evidence_hash).unwrap_or_default();
+                    let mut payload = Vec::with_capacity(DST.len() + hash_bytes.len());
+                    payload.extend_from_slice(DST);
+                    payload.extend_from_slice(&hash_bytes);
+                    let sig = hex::encode(sk.sign(&payload).to_bytes());
+                    drop(sk);
+                    sig
+                }
+                Err(e) => {
+                    log::warn!("Cannot sign anchor: {e}");
+                    return FfiResult::ok(format!("Synced (anchor skipped): {writersproof_id}"));
+                }
+            };
             let anchor_req = crate::writersproof::AnchorRequest {
                 evidence_hash: anchor_evidence_hash,
                 author_did: String::new(),
-                signature: anchor_signature,
+                signature: anchor_sig,
                 metadata: Some(crate::writersproof::AnchorMetadata {
                     document_name: None,
                     tier: Some(anchor_tier),
