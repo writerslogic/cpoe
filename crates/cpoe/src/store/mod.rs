@@ -6,12 +6,10 @@ use zeroize::{Zeroize, Zeroizing};
 
 pub mod access_log;
 pub mod baselines;
-pub mod cloudkit_sync;
 pub mod document_stats;
 pub mod events;
 pub mod fingerprints;
 pub mod integrity;
-pub mod sync_state;
 pub mod text_fragments;
 pub mod types;
 
