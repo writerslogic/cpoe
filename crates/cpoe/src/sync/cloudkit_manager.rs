@@ -6,7 +6,7 @@
 //! on other devices, with exponential backoff retry logic and network
 //! state monitoring.
 
-use crate::store::text_fragments::TextFragment;
+use crate::DateTimeNanosExt;
 use crate::Error;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -149,10 +149,10 @@ impl CloudKitManager {
         *self.is_syncing.write().await = true;
 
         let start = Instant::now();
-        let stats = SyncStats::default();
+        let mut stats = SyncStats::default();
 
         *self.last_sync_timestamp.write().await =
-            chrono::Utc::now().timestamp_nanos_safe();
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
 
         *self.is_syncing.write().await = false;
         stats.elapsed_ms = start.elapsed().as_millis() as u64;
@@ -183,11 +183,11 @@ impl CloudKitManager {
         }
 
         let start = Instant::now();
-        let stats = SyncStats::default();
+        let mut stats = SyncStats::default();
         let _last_sync = *self.last_sync_timestamp.read().await;
 
         *self.last_sync_timestamp.write().await =
-            chrono::Utc::now().timestamp_nanos_safe();
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
 
         stats.elapsed_ms = start.elapsed().as_millis() as u64;
         Ok(stats)
@@ -210,7 +210,7 @@ impl CloudKitManager {
     /// - Now: T=3500ms (>= 2s): returns Duration::from_secs(2), backoff → 4s
     pub async fn next_retry_delay(&self) -> Duration {
         let mut backoff = self.backoff_state.write().await;
-        let now = chrono::Utc::now().timestamp_nanos_safe();
+        let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
         let elapsed_secs = (now - backoff.last_attempt) / 1_000_000_000;
 
         if elapsed_secs >= backoff.current_backoff_secs as i64 {
@@ -347,7 +347,7 @@ mod tests {
         // Simulate time passage
         let mut backoff = manager.backoff_state.write().await;
         backoff.last_attempt =
-            chrono::Utc::now().timestamp_nanos_safe() - 2_000_000_000; // 2 secs ago
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) - 2_000_000_000; // 2 secs ago
         drop(backoff);
 
         let delay3 = manager.next_retry_delay().await;
@@ -362,7 +362,7 @@ mod tests {
         let mut backoff = manager.backoff_state.write().await;
         backoff.current_backoff_secs = 60;
         backoff.last_attempt =
-            chrono::Utc::now().timestamp_nanos_safe() - 61_000_000_000;
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) - 61_000_000_000;
         drop(backoff);
 
         let delay = manager.next_retry_delay().await;

@@ -5,7 +5,7 @@
 //! Implements last-write-wins strategy with explicit ordering rules to ensure
 //! both devices arrive at identical decisions without coordination.
 
-use crate::store::text_fragments::{KeystrokeContext, TextFragment};
+use crate::store::text_fragments::TextFragment;
 
 /// Result of conflict resolution between two fragment versions.
 #[derive(Debug, Clone)]
@@ -65,7 +65,7 @@ impl ConflictResolver {
         local: &TextFragment,
         remote: &TextFragment,
     ) -> ConflictResolution {
-        let now = chrono::Utc::now().timestamp_nanos_safe();
+        let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
         let local_conf = local.keystroke_confidence.unwrap_or(0.5);
         let remote_conf = remote.keystroke_confidence.unwrap_or(0.5);
         let confidence_diff = (remote_conf - local_conf).abs();

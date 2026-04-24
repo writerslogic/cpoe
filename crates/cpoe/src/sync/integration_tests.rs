@@ -110,7 +110,7 @@ mod tests {
 
         let mut backoff = manager.backoff_state.write().await;
         backoff.last_attempt =
-            chrono::Utc::now().timestamp_nanos_safe() - 2_000_000_000;
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) - 2_000_000_000;
         drop(backoff);
 
         let delay3 = manager.next_retry_delay().await;

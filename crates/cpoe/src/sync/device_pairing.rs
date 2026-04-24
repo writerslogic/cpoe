@@ -8,8 +8,8 @@
 //! - Ed25519 for persistent device identity verification
 
 use crate::Error;
-use crate::utils::time::DateTimeNanosExt;
-use ed25519_dalek::{SigningKey, VerifyingKey};
+use crate::DateTimeNanosExt;
+use ed25519_dalek::{SigningKey, Verifier, VerifyingKey};
 use rand::Rng;
 
 /// Device pairing record stored in CloudKit after successful pairing.
@@ -41,12 +41,12 @@ pub struct DevicePairingRecord {
 impl DevicePairingRecord {
     /// Create a new pairing record from a device's public key.
     pub fn new(device_id: String, public_key: [u8; 32]) -> Self {
-        // Note: timestamp_nanos_safe() returns clamped value on clock skew.
+        // Note: timestamp_nanos_opt().unwrap_or(0) returns clamped value on clock skew.
         // This is acceptable for initial pairing timestamp (one-time use).
         DevicePairingRecord {
             device_id,
             public_key,
-            pairing_timestamp: chrono::Utc::now().timestamp_nanos_safe(),
+            pairing_timestamp: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
             is_verified: false,
             last_sync: 0,
         }
@@ -67,11 +67,12 @@ impl DevicePairingRecord {
             .map_err(|_| Error::crypto("Invalid public key"))?;
 
         // Safety: length checked above guarantees exactly 64 bytes for Ed25519 signature
-        let sig_array: &[u8; 64] = signature.try_into()
+        let sig_bytes: [u8; 64] = signature.try_into()
             .expect("signature length already verified as 64 bytes");
+        let sig = ed25519_dalek::Signature::from_bytes(&sig_bytes);
 
         verifying_key
-            .verify(message, sig_array)
+            .verify(message, &sig)
             .map_err(|_| Error::crypto("Signature verification failed"))
     }
 
@@ -82,7 +83,7 @@ impl DevicePairingRecord {
 
     /// Update last_sync timestamp to now.
     pub fn update_last_sync(&mut self) {
-        self.last_sync = chrono::Utc::now().timestamp_nanos_safe();
+        self.last_sync = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
     }
 }
 
@@ -107,7 +108,7 @@ pub struct QRCodePayload {
 impl QRCodePayload {
     /// Create a new QR code payload from local device signing key.
     pub fn from_signing_key(device_id: String, signing_key: &SigningKey) -> Self {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut pairing_token = [0u8; 32];
         rng.fill(&mut pairing_token);
 
