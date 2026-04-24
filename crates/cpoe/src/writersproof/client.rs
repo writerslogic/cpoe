@@ -295,10 +295,25 @@ impl WritersProofClient {
         &self,
         req: super::types::TextAttestationRequest,
     ) -> Result<super::types::TextAttestationResponse> {
+        if req.content_hash.len() != 64 || !req.content_hash.chars().all(|c| c.is_ascii_hexdigit())
+        {
+            return Err(Error::crypto("content_hash must be 64 hex characters"));
+        }
+        if req.signature_hex.len() != 128 {
+            return Err(Error::crypto("signature_hex must be 128 hex characters"));
+        }
+        if req.public_key_hex.len() != 64 {
+            return Err(Error::crypto("public_key_hex must be 64 hex characters"));
+        }
+
         let url = format!("{}/v1/text-attestation", self.base_url);
         let mut http_req = self.client.post(&url).json(&req);
         if let Some(ref jwt) = self.jwt {
             http_req = http_req.bearer_auth(jwt.as_str());
+        } else {
+            return Err(Error::crypto(
+                "text attestation submission requires authentication",
+            ));
         }
 
         let resp = http_req

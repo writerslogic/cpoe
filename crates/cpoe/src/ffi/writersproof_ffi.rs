@@ -315,14 +315,17 @@ pub fn ffi_sync_text_attestation(
 
     let public_key_hex = hex::encode(signing_key.verifying_key().as_bytes());
 
-    // Sign the content hash with Ed25519 for server-side verification.
+    // Sign with domain separation: DST || content_hash_bytes.
     let signature_hex = {
         use ed25519_dalek::Signer;
         let hash_bytes = match hex::decode(&content_hash) {
             Ok(b) => b,
             Err(e) => return FfiResult::err(format!("Invalid content_hash hex: {e}")),
         };
-        hex::encode(signing_key.sign(&hash_bytes).to_bytes())
+        let mut payload = Vec::with_capacity(25 + hash_bytes.len());
+        payload.extend_from_slice(b"witnessd-text-attest-v1\0\0");
+        payload.extend_from_slice(&hash_bytes);
+        hex::encode(signing_key.sign(&payload).to_bytes())
     };
 
     let api_key = match load_api_key() {

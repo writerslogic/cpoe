@@ -150,7 +150,8 @@ fn hash_normalized_text(text: &str) -> (String, [u8; 32]) {
     (normalized, hash)
 }
 
-/// Sign the fragment payload: session_id || fragment_hash || timestamp || nonce.
+/// Sign the fragment payload with domain separation:
+/// DST || len(session_id) || session_id || fragment_hash || timestamp || nonce.
 fn sign_fragment(
     signing_key: &ed25519_dalek::SigningKey,
     session_id: &str,
@@ -159,7 +160,11 @@ fn sign_fragment(
     nonce: &[u8; 16],
 ) -> [u8; 64] {
     use ed25519_dalek::Signer;
-    let mut payload = Vec::with_capacity(session_id.len() + 32 + 8 + 16);
+    const DST: &[u8] = b"witnessd-text-fragment-v1";
+    let sid_len = (session_id.len() as u32).to_le_bytes();
+    let mut payload = Vec::with_capacity(DST.len() + 4 + session_id.len() + 32 + 8 + 16);
+    payload.extend_from_slice(DST);
+    payload.extend_from_slice(&sid_len);
     payload.extend_from_slice(session_id.as_bytes());
     payload.extend_from_slice(fragment_hash);
     payload.extend_from_slice(&timestamp.to_le_bytes());
@@ -430,19 +435,20 @@ pub fn ffi_attest_text(
     let fragment_hash_hex = hex::encode(fragment_hash);
     let writersproof_id = fragment_hash_hex[..8].to_string();
 
-    // Determine tier from sentinel state.
+    // Determine tier from sentinel state. Snapshot capture_active before
+    // sessions() to avoid TOCTOU (capture could stop between the two calls).
     let sentinel_opt = super::sentinel::get_sentinel();
     let (tier, session_id) = match sentinel_opt.as_ref() {
         Some(s) if s.is_running() => {
+            let capture_active = s.is_keystroke_capture_active();
             let sessions = s.sessions();
-            // Pick the session with the most keystrokes for strongest evidence.
             let matched = sessions
                 .iter()
                 .filter(|sess| {
                     sess.app_bundle_id == app_bundle_id && sess.keystroke_count > 0
                 })
                 .max_by_key(|sess| sess.keystroke_count);
-            if s.is_keystroke_capture_active() {
+            if capture_active {
                 if let Some(sess) = matched {
                     ("verified", sess.session_id.clone())
                 } else {
@@ -457,19 +463,23 @@ pub fn ffi_attest_text(
 
     // Sign and store as text fragment.
     let timestamp = current_timestamp_ms();
+    if timestamp <= 0 {
+        return FfiAttestTextResult::err("System clock error: unable to get current time");
+    }
     let timestamp_iso = chrono::DateTime::from_timestamp_millis(timestamp)
         .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
         .unwrap_or_default();
     let nonce = generate_nonce();
 
     let signing_key = match load_signing_key() {
-        Ok(k) => k,
+        Ok(k) => zeroize::Zeroizing::new(k),
         Err(e) => {
             return FfiAttestTextResult::err(format!("Signing key unavailable: {e}"));
         }
     };
 
     let signature = sign_fragment(&signing_key, &session_id, &fragment_hash, timestamp, &nonce);
+    drop(signing_key);
 
     let fragment = TextFragment {
         id: None,
