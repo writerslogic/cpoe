@@ -23,6 +23,7 @@ pub mod cross_modal;
 pub mod dictation;
 mod engine;
 pub mod error;
+pub mod provenance_metrics;
 pub mod event_validation;
 pub mod forgery_cost;
 mod report;
@@ -45,6 +46,7 @@ pub use cross_modal::{
 };
 pub use engine::*;
 pub use error::*;
+pub use provenance_metrics::{ProvenanceMetrics, SourceSessionInfo};
 pub use event_validation::{
     validate_keystroke_event, EventValidationFlags, EventValidationResult, EventValidationState,
 };

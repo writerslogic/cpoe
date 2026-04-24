@@ -74,6 +74,7 @@ impl SecureStore {
     }
 
     /// Persist a clipboard event to the database.
+    #[allow(clippy::too_many_arguments)]
     pub fn insert_clipboard_event(
         &self,
         fragment_hash: &[u8; 32],

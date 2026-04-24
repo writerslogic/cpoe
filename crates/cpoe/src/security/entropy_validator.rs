@@ -61,12 +61,12 @@ impl EntropyValidator {
 
     /// Create a new entropy validator with custom thresholds.
     pub fn with_config(min_entropy_bits: f64, sample_window: usize) -> Result<Self> {
-        if min_entropy_bits < 0.0 || min_entropy_bits > 10.0 {
+        if !(0.0..=10.0).contains(&min_entropy_bits) {
             return Err(Error::validation(
                 format!("min_entropy_bits must be 0.0-10.0, got {}", min_entropy_bits),
             ));
         }
-        if sample_window < 10 || sample_window > 1000 {
+        if !(10..=1000).contains(&sample_window) {
             return Err(Error::validation(
                 format!("sample_window must be 10-1000, got {}", sample_window),
             ));
@@ -189,7 +189,7 @@ impl EntropyValidator {
 
         // Check mean IKI reasonableness
         // Very fast typing (< 50ms mean) or very slow (> 2000ms mean) = suspicious
-        if mean_iki < 50.0 || mean_iki > 2000.0 {
+        if !(50.0..=2000.0).contains(&mean_iki) {
             return EntropyAssessment::Low;
         }
 
@@ -283,8 +283,8 @@ impl EntropyValidator {
 
         // Pattern 4: Discontinuous gaps followed by immediate recovery
         let mut gap_indices = Vec::new();
-        for i in 0..ikis_ms.len() {
-            if ikis_ms[i] > 1000.0 {
+        for (i, &iki) in ikis_ms.iter().enumerate() {
+            if iki > 1000.0 {
                 // Gap > 1 second
                 gap_indices.push(i);
             }

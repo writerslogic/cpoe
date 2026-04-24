@@ -1,9 +1,98 @@
 // SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 use crate::ffi::types::{FfiCalibrationResult, FfiProcessScore};
+use crate::forensics::provenance_metrics::ProvenanceMetrics;
 use crate::vdf::Parameters;
 use std::sync::Mutex;
 use std::time::Duration;
+
+/// Provenance metrics result returned to Swift.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct FfiProvenanceMetrics {
+    pub success: bool,
+    pub total_fragments: u32,
+    pub original_composition_pct: f64,
+    pub sourced_unknown_pct: f64,
+    pub sourced_verified_pct: f64,
+    pub chain_depth: u32,
+    pub source_trustworthiness: f64,
+    pub authenticity_score: f64,
+    pub source_sessions: Vec<FfiSourceSession>,
+    pub error_message: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct FfiSourceSession {
+    pub session_id: String,
+    pub app_bundle_id: String,
+    pub fragment_count: u32,
+    pub verified: bool,
+}
+
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn ffi_get_provenance_metrics(session_id: String) -> FfiProvenanceMetrics {
+    let store = match crate::ffi::helpers::open_store() {
+        Ok(s) => s,
+        Err(e) => {
+            return FfiProvenanceMetrics {
+                success: false,
+                total_fragments: 0,
+                original_composition_pct: 0.0,
+                sourced_unknown_pct: 0.0,
+                sourced_verified_pct: 0.0,
+                chain_depth: 0,
+                source_trustworthiness: 0.0,
+                authenticity_score: 0.0,
+                source_sessions: vec![],
+                error_message: Some(e),
+            };
+        }
+    };
+
+    let fragments = match store.get_fragments_for_session(&session_id) {
+        Ok(f) => f,
+        Err(e) => {
+            return FfiProvenanceMetrics {
+                success: false,
+                total_fragments: 0,
+                original_composition_pct: 0.0,
+                sourced_unknown_pct: 0.0,
+                sourced_verified_pct: 0.0,
+                chain_depth: 0,
+                source_trustworthiness: 0.0,
+                authenticity_score: 0.0,
+                source_sessions: vec![],
+                error_message: Some(format!("Failed to load fragments: {e}")),
+            };
+        }
+    };
+
+    let metrics = ProvenanceMetrics::compute(&fragments);
+
+    FfiProvenanceMetrics {
+        success: true,
+        total_fragments: metrics.total_fragments as u32,
+        original_composition_pct: metrics.original_composition_ratio * 100.0,
+        sourced_unknown_pct: metrics.sourced_unknown_ratio * 100.0,
+        sourced_verified_pct: metrics.sourced_verified_ratio * 100.0,
+        chain_depth: metrics.chain_depth,
+        source_trustworthiness: metrics.source_trustworthiness,
+        authenticity_score: metrics.authenticity_score,
+        source_sessions: metrics
+            .source_sessions
+            .iter()
+            .map(|s| FfiSourceSession {
+                session_id: s.session_id.clone(),
+                app_bundle_id: s.app_bundle_id.clone().unwrap_or_default(),
+                fragment_count: s.fragment_count as u32,
+                verified: s.verified,
+            })
+            .collect(),
+        error_message: None,
+    }
+}
 
 static CALIBRATED_PARAMS: Mutex<Option<Parameters>> = Mutex::new(None);
 

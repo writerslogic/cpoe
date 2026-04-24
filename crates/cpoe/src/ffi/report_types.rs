@@ -36,6 +36,29 @@ pub struct FfiWarReport {
     pub dimensions: Vec<FfiDimensionScore>,
     pub limitations: Vec<String>,
     pub guilloche_seed_hex: String,
+    pub provenance: Option<FfiProvenanceBreakdown>,
+}
+
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct FfiProvenanceBreakdown {
+    pub total_fragments: u32,
+    pub original_composition_pct: f64,
+    pub sourced_unknown_pct: f64,
+    pub sourced_verified_pct: f64,
+    pub chain_depth: u32,
+    pub source_trustworthiness: f64,
+    pub authenticity_score: f64,
+    pub sources: Vec<FfiProvenanceSource>,
+}
+
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct FfiProvenanceSource {
+    pub session_id: String,
+    pub app_bundle_id: String,
+    pub fragment_count: u32,
+    pub verified: bool,
 }
 
 #[derive(Debug, Clone)]

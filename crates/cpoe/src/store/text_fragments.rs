@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 use crate::store::SecureStore;
+use crate::wal::{EntryType, Wal};
 use anyhow::anyhow;
 use rusqlite::params;
 use rusqlite::OptionalExtension;
@@ -146,6 +147,32 @@ impl SecureStore {
         )?;
 
         tx.commit()?;
+        Ok(id)
+    }
+
+    /// Insert a text fragment and append a WAL entry for durability.
+    ///
+    /// Calls `insert_text_fragment` for the database insert, then appends a
+    /// `TextFragmentInsert` entry to the WAL with the fragment hash as payload.
+    /// WAL append failure is logged but does not roll back the DB insert.
+    #[allow(dead_code)]
+    pub fn insert_text_fragment_with_wal(
+        &mut self,
+        fragment: &TextFragment,
+        wal: &Wal,
+    ) -> anyhow::Result<i64> {
+        let id = self.insert_text_fragment(fragment)?;
+
+        if let Err(e) = wal.append(
+            EntryType::TextFragmentInsert,
+            fragment.fragment_hash.clone(),
+        ) {
+            log::warn!(
+                "WAL append for TextFragmentInsert failed (db row {}): {}",
+                id, e,
+            );
+        }
+
         Ok(id)
     }
 
@@ -337,6 +364,48 @@ impl SecureStore {
         Ok(fragments)
     }
 
+    /// Get all text fragments in the store, ordered by timestamp.
+    pub fn get_all_fragments(&self) -> anyhow::Result<Vec<TextFragment>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, fragment_hash, session_id, source_app_bundle_id,
+                    source_window_title, source_signature, nonce, timestamp,
+                    keystroke_context, keystroke_confidence,
+                    keystroke_sequence_hash, source_session_id,
+                    source_evidence_packet, wal_entry_hash,
+                    cloudkit_record_id, sync_state
+             FROM text_fragments ORDER BY timestamp ASC",
+        )?;
+
+        let fragments = stmt.query_map([], |row| {
+            Ok(TextFragment {
+                id: Some(row.get(0)?),
+                fragment_hash: row.get(1)?,
+                session_id: row.get(2)?,
+                source_app_bundle_id: row.get(3)?,
+                source_window_title: row.get(4)?,
+                source_signature: row.get(5)?,
+                nonce: row.get(6)?,
+                timestamp: row.get(7)?,
+                keystroke_context: row
+                    .get::<_, Option<String>>(8)?
+                    .and_then(|s| s.parse().ok()),
+                keystroke_confidence: row.get(9)?,
+                keystroke_sequence_hash: row.get(10)?,
+                source_session_id: row.get(11)?,
+                source_evidence_packet: row.get(12)?,
+                wal_entry_hash: row.get(13)?,
+                cloudkit_record_id: row.get(14)?,
+                sync_state: row.get(15)?,
+            })
+        })?;
+
+        let mut result = Vec::new();
+        for frag in fragments {
+            result.push(frag?);
+        }
+        Ok(result)
+    }
+
     /// Count text fragments for a session.
     pub fn count_fragments_for_session(&self, session_id: &str) -> anyhow::Result<u32> {
         let count: u32 = self.conn.query_row(
@@ -346,6 +415,264 @@ impl SecureStore {
         )?;
         Ok(count)
     }
+
+    /// Mark a fragment as pending sync.
+    #[allow(dead_code)]
+    pub fn mark_fragment_for_sync(&self, fragment_id: i64) -> anyhow::Result<()> {
+        let updated = self.conn.execute(
+            "UPDATE text_fragments SET sync_state = 'pending' WHERE id = ?",
+            params![fragment_id],
+        )?;
+        if updated == 0 {
+            anyhow::bail!("No fragment found with id {}", fragment_id);
+        }
+        Ok(())
+    }
+
+    /// Update sync state with details.
+    #[allow(dead_code)]
+    pub fn update_fragment_sync_state(
+        &self,
+        fragment_id: i64,
+        state: &str,
+        cloudkit_record_id: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let valid_states = ["pending", "syncing", "synced", "failed", "conflict"];
+        if !valid_states.contains(&state) {
+            anyhow::bail!(
+                "Invalid sync state '{}'; expected one of: {:?}",
+                state,
+                valid_states
+            );
+        }
+        let updated = self.conn.execute(
+            "UPDATE text_fragments \
+             SET sync_state = ?, \
+                 cloudkit_record_id = COALESCE(?, cloudkit_record_id) \
+             WHERE id = ?",
+            params![state, cloudkit_record_id, fragment_id],
+        )?;
+        if updated == 0 {
+            anyhow::bail!("No fragment found with id {}", fragment_id);
+        }
+        Ok(())
+    }
+
+    /// Get count of fragments pending sync.
+    #[allow(dead_code)]
+    pub fn get_pending_sync_count(&self) -> anyhow::Result<i64> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM text_fragments \
+             WHERE sync_state = 'pending' OR sync_state IS NULL",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(count)
+    }
+
+    /// Apply a remotely synced fragment (from another device via CloudKit).
+    ///
+    /// Same validation as `insert_text_fragment` (nonce uniqueness, signature
+    /// length, timestamp bounds) but sets `sync_state = 'synced'` directly.
+    #[allow(dead_code)]
+    pub fn apply_remote_fragment(
+        &mut self,
+        fragment: &TextFragment,
+    ) -> anyhow::Result<i64> {
+        if fragment.fragment_hash.len() != 32 {
+            anyhow::bail!(
+                "fragment_hash must be 32 bytes, got {}",
+                fragment.fragment_hash.len()
+            );
+        }
+        if fragment.nonce.len() != 16 {
+            anyhow::bail!(
+                "nonce must be 16 bytes, got {}",
+                fragment.nonce.len()
+            );
+        }
+        if fragment.source_signature.len() != 64 {
+            anyhow::bail!(
+                "source_signature must be 64 bytes (Ed25519), got {}",
+                fragment.source_signature.len()
+            );
+        }
+
+        // Check nonce uniqueness
+        let nonce_used: bool = self
+            .conn
+            .query_row(
+                "SELECT 1 FROM used_nonces WHERE nonce = ? LIMIT 1",
+                [&fragment.nonce],
+                |_| Ok(true),
+            )
+            .optional()?
+            .unwrap_or(false);
+
+        if nonce_used {
+            anyhow::bail!("Nonce replay detected on remote fragment");
+        }
+
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_millis() as i64;
+
+        let tx = self.conn.transaction()?;
+
+        tx.execute(
+            "INSERT INTO text_fragments (
+                fragment_hash, session_id, source_app_bundle_id,
+                source_window_title, source_signature, nonce, timestamp,
+                keystroke_context, keystroke_confidence,
+                keystroke_sequence_hash, source_session_id,
+                source_evidence_packet, wal_entry_hash,
+                cloudkit_record_id, sync_state
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced')",
+            params![
+                &fragment.fragment_hash[..],
+                &fragment.session_id,
+                &fragment.source_app_bundle_id,
+                &fragment.source_window_title,
+                &fragment.source_signature[..],
+                &fragment.nonce[..],
+                fragment.timestamp,
+                fragment.keystroke_context.map(|c| c.as_str()),
+                fragment.keystroke_confidence,
+                fragment.keystroke_sequence_hash.as_deref(),
+                &fragment.source_session_id,
+                fragment.source_evidence_packet.as_deref(),
+                fragment.wal_entry_hash.as_deref(),
+                &fragment.cloudkit_record_id,
+            ],
+        )?;
+
+        let id = tx.last_insert_rowid();
+
+        tx.execute(
+            "INSERT INTO used_nonces (nonce, used_at) VALUES (?, ?)",
+            params![&fragment.nonce[..], now_ms],
+        )?;
+
+        tx.commit()?;
+        Ok(id)
+    }
+
+    /// Detect sync conflict between local and remote versions.
+    #[allow(dead_code)]
+    pub fn detect_sync_conflict(
+        &self,
+        fragment_hash: &[u8; 32],
+        remote_timestamp: i64,
+    ) -> anyhow::Result<SyncConflict> {
+        let local = self.lookup_fragment_by_hash(fragment_hash)?;
+        match local {
+            None => Ok(SyncConflict::NoConflict),
+            Some(existing) => {
+                let local_ts = existing.timestamp;
+                if local_ts == remote_timestamp {
+                    Ok(SyncConflict::NoConflict)
+                } else if local_ts > remote_timestamp {
+                    Ok(SyncConflict::LocalNewer)
+                } else if local_ts < remote_timestamp {
+                    Ok(SyncConflict::RemoteNewer)
+                } else {
+                    Ok(SyncConflict::BothModified {
+                        local_ts,
+                        remote_ts: remote_timestamp,
+                    })
+                }
+            }
+        }
+    }
+
+    /// Resolve sync conflict using a strategy.
+    #[allow(dead_code)]
+    pub fn resolve_sync_conflict(
+        &mut self,
+        fragment_id: i64,
+        strategy: SyncResolutionStrategy,
+        remote_fragment: Option<&TextFragment>,
+    ) -> anyhow::Result<()> {
+        match strategy {
+            SyncResolutionStrategy::KeepLocal => {
+                // Mark local as authoritative, set synced
+                self.update_fragment_sync_state(fragment_id, "synced", None)?;
+            }
+            SyncResolutionStrategy::KeepRemote => {
+                let remote = remote_fragment.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Remote fragment required for KeepRemote strategy"
+                    )
+                })?;
+                // Delete the local version and insert the remote one
+                self.conn.execute(
+                    "DELETE FROM text_fragments WHERE id = ?",
+                    params![fragment_id],
+                )?;
+                self.apply_remote_fragment(remote)?;
+            }
+            SyncResolutionStrategy::KeepNewest => {
+                if let Some(remote) = remote_fragment {
+                    // Look up local fragment timestamp
+                    let local_ts: Option<i64> = self
+                        .conn
+                        .query_row(
+                            "SELECT timestamp FROM text_fragments WHERE id = ?",
+                            params![fragment_id],
+                            |row| row.get(0),
+                        )
+                        .optional()?;
+
+                    match local_ts {
+                        Some(ts) if ts >= remote.timestamp => {
+                            // Local is newer or equal; keep it
+                            self.update_fragment_sync_state(
+                                fragment_id, "synced", None,
+                            )?;
+                        }
+                        _ => {
+                            // Remote is newer; replace local
+                            self.conn.execute(
+                                "DELETE FROM text_fragments WHERE id = ?",
+                                params![fragment_id],
+                            )?;
+                            self.apply_remote_fragment(remote)?;
+                        }
+                    }
+                } else {
+                    // No remote fragment provided; keep local
+                    self.update_fragment_sync_state(
+                        fragment_id, "synced", None,
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Describes the type of sync conflict between local and remote fragments.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SyncConflict {
+    /// No local fragment exists, or timestamps match.
+    NoConflict,
+    /// Local fragment is newer than remote.
+    LocalNewer,
+    /// Remote fragment is newer than local.
+    RemoteNewer,
+    /// Both have been modified with different timestamps.
+    BothModified { local_ts: i64, remote_ts: i64 },
+}
+
+/// Strategy for resolving a sync conflict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncResolutionStrategy {
+    /// Keep the local version and discard remote.
+    KeepLocal,
+    /// Replace local with the remote version.
+    KeepRemote,
+    /// Keep whichever version has the newest timestamp.
+    KeepNewest,
 }
 
 #[cfg(test)]

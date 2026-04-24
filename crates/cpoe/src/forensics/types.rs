@@ -342,6 +342,9 @@ pub struct ForensicMetrics {
     /// Three-phase fatigue trajectory analysis.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fatigue_trajectory: Option<FatigueTrajectoryMetrics>,
+    /// Text fragment provenance metrics (composition ratios, source trust).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<super::provenance_metrics::ProvenanceMetrics>,
 }
 
 impl ForensicMetrics {
@@ -369,6 +372,13 @@ impl ForensicMetrics {
             .any(|m| m.similarity_score >= 0.80)
         {
             return ForensicVerdict::V3Suspicious;
+        }
+
+        // High ratio of unverified sourced content is suspicious
+        if let Some(ref prov) = self.provenance {
+            if prov.sourced_unknown_ratio > 0.5 && prov.source_trustworthiness < 0.3 {
+                return ForensicVerdict::V3Suspicious;
+            }
         }
 
         match self.risk_level {
@@ -401,7 +411,16 @@ impl ForensicMetrics {
             hurst_exponent: self.hurst_exponent,
             checkpoint_count: self.checkpoint_count,
             chain_duration_secs: self.session_stats.total_editing_time_sec.max(0.0) as u64,
-            explanation: format!("Internal Assessment Score: {:.2}", self.assessment_score),
+            explanation: if let Some(ref prov) = self.provenance {
+                format!(
+                    "Assessment: {:.2}, Composition: {:.0}% original, Trust: {:.2}",
+                    self.assessment_score,
+                    prov.original_composition_ratio * 100.0,
+                    prov.source_trustworthiness,
+                )
+            } else {
+                format!("Internal Assessment Score: {:.2}", self.assessment_score)
+            },
         }
     }
 }

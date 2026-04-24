@@ -33,7 +33,6 @@ mod rfc_conversions;
 pub mod crypto;
 pub mod keyhierarchy;
 pub mod rats;
-pub mod sealed_chain;
 pub mod sealed_identity;
 pub mod security;
 pub mod tpm;
@@ -55,9 +54,8 @@ pub mod verify;
 pub mod wal;
 
 pub mod anchors;
-pub mod api_types;
+pub mod credentials;
 pub mod declaration;
-pub mod engine;
 pub mod report;
 pub mod research;
 pub mod transcription;

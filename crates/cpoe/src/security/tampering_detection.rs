@@ -156,22 +156,22 @@ impl TamperingDetector {
         sleep_threshold_ms: i64,
         max_orphaned_keys: usize,
     ) -> Result<Self> {
-        if speed_limit_wpm < 100.0 || speed_limit_wpm > 1000.0 {
+        if !(100.0..=1000.0).contains(&speed_limit_wpm) {
             return Err(Error::validation(
                 format!("speed_limit_wpm must be 100-1000, got {}", speed_limit_wpm),
             ));
         }
-        if timing_variance_min_cv < 0.0 || timing_variance_min_cv > 1.0 {
+        if !(0.0..=1.0).contains(&timing_variance_min_cv) {
             return Err(Error::validation(
                 format!("timing_variance_min_cv must be 0-1, got {}", timing_variance_min_cv),
             ));
         }
-        if sleep_threshold_ms < 500 || sleep_threshold_ms > 10000 {
+        if !(500..=10000).contains(&sleep_threshold_ms) {
             return Err(Error::validation(
                 format!("sleep_threshold_ms must be 500-10000, got {}", sleep_threshold_ms),
             ));
         }
-        if max_orphaned_keys < 1 || max_orphaned_keys > 100 {
+        if !(1..=100).contains(&max_orphaned_keys) {
             return Err(Error::validation(
                 format!("max_orphaned_keys must be 1-100, got {}", max_orphaned_keys),
             ));

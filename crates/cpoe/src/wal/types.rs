@@ -28,6 +28,7 @@ pub enum EntryType {
     SessionEnd = 6,
     Checkpoint = 7,
     PathChange = 8,
+    TextFragmentInsert = 9,
 }
 
 impl TryFrom<u8> for EntryType {
@@ -43,6 +44,7 @@ impl TryFrom<u8> for EntryType {
             6 => Ok(EntryType::SessionEnd),
             7 => Ok(EntryType::Checkpoint),
             8 => Ok(EntryType::PathChange),
+            9 => Ok(EntryType::TextFragmentInsert),
             _ => Err(WalError::InvalidEntryType(value)),
         }
     }

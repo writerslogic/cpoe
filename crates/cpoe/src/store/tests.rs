@@ -39,6 +39,7 @@ fn create_test_event(file_path: &str, content_hash: [u8; 32]) -> SecureEvent {
         hw_cosign_entangled_hash: None,
         hw_cosign_entropy_digest: None,
         hw_cosign_entropy_bytes: None,
+        posme_proof: None,
     }
 }
 
@@ -238,6 +239,7 @@ fn test_event_with_optional_fields() {
         hw_cosign_entangled_hash: None,
         hw_cosign_entropy_digest: None,
         hw_cosign_entropy_bytes: None,
+        posme_proof: None,
     };
 
     store.add_secure_event(&mut event).expect("insert event");

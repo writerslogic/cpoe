@@ -42,7 +42,7 @@ impl TfidfModel {
         for (label, text) in documents {
             label_docs
                 .entry(label)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(text);
         }
 

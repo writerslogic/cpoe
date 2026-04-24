@@ -481,6 +481,87 @@ pub(super) fn write_chain_of_custody(html: &mut String, r: &WarReport) -> fmt::R
 }
 
 // ---------------------------------------------------------------------------
+// Content Provenance
+// ---------------------------------------------------------------------------
+
+pub(super) fn write_provenance_breakdown(html: &mut String, r: &WarReport) -> fmt::Result {
+    let prov = match r.provenance_breakdown {
+        Some(ref p) => p,
+        None => return Ok(()),
+    };
+
+    write!(
+        html,
+        r#"<h3>Content Provenance</h3>
+<p>Breakdown of content origin based on {} text fragment{} analyzed.</p>
+<div class="info-box"><table>"#,
+        prov.total_fragments,
+        if prov.total_fragments == 1 { "" } else { "s" },
+    )?;
+
+    row(
+        html,
+        "Original Composition",
+        &format!("{:.1}%", prov.original_composition_pct),
+    )?;
+    row(
+        html,
+        "Sourced (Verified)",
+        &format!("{:.1}%", prov.sourced_verified_pct),
+    )?;
+    row(
+        html,
+        "Sourced (Unverified)",
+        &format!("{:.1}%", prov.sourced_unknown_pct),
+    )?;
+    row(
+        html,
+        "Source Trust",
+        &format!("{:.2}", prov.source_trustworthiness),
+    )?;
+    row(
+        html,
+        "Authenticity Score",
+        &format!("{:.2}", prov.authenticity_score),
+    )?;
+    row(
+        html,
+        "Provenance Chain Depth",
+        &format!("{}", prov.chain_depth),
+    )?;
+
+    writeln!(html, "</table></div>")?;
+
+    if !prov.sources.is_empty() {
+        write!(
+            html,
+            r#"<h4>Source Sessions</h4>
+<div class="info-box"><table>
+<tr><th>Session</th><th>App</th><th>Fragments</th><th>Verified</th></tr>"#
+        )?;
+        for src in &prov.sources {
+            write!(
+                html,
+                "<tr><td><code>{}</code></td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                html_escape(
+                    &src.session_id
+                        .get(..16)
+                        .unwrap_or(&src.session_id)
+                ),
+                html_escape(
+                    src.app_bundle_id.as_deref().unwrap_or("unknown")
+                ),
+                src.fragment_count,
+                if src.verified { "Yes" } else { "No" },
+            )?;
+        }
+        writeln!(html, "</table></div>")?;
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Category Scores + Writing Flow
 // ---------------------------------------------------------------------------
 

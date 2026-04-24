@@ -1303,7 +1303,7 @@ mod tests {
         update_keystroke_context_window(&mut session, paste_time, 30_000);
 
         assert!(session.paste_context.is_some());
-        let ctx = session.paste_context.unwrap();
+        let ctx = session.paste_context.as_ref().unwrap();
         assert_eq!(ctx.paste_time, paste_time);
 
         let within_window = paste_time + 15_000 * MS_TO_NS;

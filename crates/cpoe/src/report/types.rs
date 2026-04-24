@@ -401,6 +401,29 @@ pub struct WarReport {
     pub anomalies: Vec<ReportAnomaly>,
     pub verifiable_credential_json: Option<String>,
     pub author_did: Option<String>,
+    pub provenance_breakdown: Option<ProvenanceBreakdown>,
+}
+
+/// Provenance breakdown for the WAR report.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProvenanceBreakdown {
+    pub total_fragments: usize,
+    pub original_composition_pct: f64,
+    pub sourced_unknown_pct: f64,
+    pub sourced_verified_pct: f64,
+    pub chain_depth: u32,
+    pub source_trustworthiness: f64,
+    pub authenticity_score: f64,
+    pub sources: Vec<ProvenanceSource>,
+}
+
+/// A source session contributing content via paste.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProvenanceSource {
+    pub session_id: String,
+    pub app_bundle_id: Option<String>,
+    pub fragment_count: usize,
+    pub verified: bool,
 }
 
 impl WarReport {

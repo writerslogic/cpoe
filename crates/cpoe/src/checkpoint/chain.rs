@@ -61,7 +61,7 @@ fn compute_chain_mac(mac_key: &[u8], data: &[u8]) -> Result<[u8; 32]> {
 
 impl Chain {
     pub fn new(document_path: impl AsRef<Path>, vdf_params: Parameters) -> Result<Self> {
-        Self::new_with_mode(document_path, vdf_params, EntanglementMode::Entangled)
+        Self::new_with_mode(document_path, vdf_params, EntanglementMode::Legacy)
     }
 
     /// Attach an MMR coordinator so each commit anchors its root in the signed hash.

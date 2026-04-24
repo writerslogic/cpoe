@@ -31,7 +31,7 @@ fn forensic_cache() -> &'static dashmap::DashMap<String, ForensicCacheEntry> {
 ///
 /// Returns `(WarReport, guilloche_seed_hex)` on success.
 pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String), String> {
-    let (file_path_str, _store, events) = crate::ffi::helpers::load_events_for_path(path)?;
+    let (file_path_str, store, events) = crate::ffi::helpers::load_events_for_path(path)?;
     let file_path = std::path::PathBuf::from(&file_path_str);
 
     if !file_path.exists() {
@@ -907,9 +907,39 @@ pub(crate) fn build_war_report_for_path(path: &str) -> Result<(WarReport, String
                 })
             }
         },
+        provenance_breakdown: None,
     };
 
     war_report.verifiable_credential_json = build_vc_json(&war_report);
+
+    // Compute provenance breakdown from text fragments
+    war_report.provenance_breakdown = {
+        let fragments = store.get_all_fragments().unwrap_or_default();
+        if fragments.is_empty() {
+            None
+        } else {
+            let m = crate::forensics::ProvenanceMetrics::compute(&fragments);
+            Some(crate::report::types::ProvenanceBreakdown {
+                total_fragments: m.total_fragments,
+                original_composition_pct: m.original_composition_ratio * 100.0,
+                sourced_unknown_pct: m.sourced_unknown_ratio * 100.0,
+                sourced_verified_pct: m.sourced_verified_ratio * 100.0,
+                chain_depth: m.chain_depth,
+                source_trustworthiness: m.source_trustworthiness,
+                authenticity_score: m.authenticity_score,
+                sources: m
+                    .source_sessions
+                    .into_iter()
+                    .map(|s| crate::report::types::ProvenanceSource {
+                        session_id: s.session_id,
+                        app_bundle_id: s.app_bundle_id,
+                        fragment_count: s.fragment_count,
+                        verified: s.verified,
+                    })
+                    .collect(),
+            })
+        }
+    };
 
     Ok((war_report, guilloche_seed_hex))
 }
@@ -978,6 +1008,30 @@ fn convert_war_report(r: &WarReport, guilloche_seed_hex: &str) -> FfiWarReport {
         dimensions: r.dimensions.iter().map(convert_dimension).collect(),
         limitations: r.limitations.clone(),
         guilloche_seed_hex: guilloche_seed_hex.to_string(),
+        provenance: r.provenance_breakdown.as_ref().map(|p| {
+            FfiProvenanceBreakdown {
+                total_fragments: p.total_fragments as u32,
+                original_composition_pct: p.original_composition_pct,
+                sourced_unknown_pct: p.sourced_unknown_pct,
+                sourced_verified_pct: p.sourced_verified_pct,
+                chain_depth: p.chain_depth,
+                source_trustworthiness: p.source_trustworthiness,
+                authenticity_score: p.authenticity_score,
+                sources: p
+                    .sources
+                    .iter()
+                    .map(|s| FfiProvenanceSource {
+                        session_id: s.session_id.clone(),
+                        app_bundle_id: s
+                            .app_bundle_id
+                            .clone()
+                            .unwrap_or_default(),
+                        fragment_count: s.fragment_count as u32,
+                        verified: s.verified,
+                    })
+                    .collect(),
+            }
+        }),
     }
 }
 

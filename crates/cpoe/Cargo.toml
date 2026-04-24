@@ -11,9 +11,13 @@ readme = "README.md"
 keywords = ["cryptography", "authorship", "witnessing", "attestation", "proof-of-process"]
 categories = ["cryptography", "authentication"]
 rust-version = "1.75.0"
+
 homepage = "https://github.com/writerslogic/cpoe"
 documentation = "https://docs.rs/cpoe"
 exclude = ["tests/", "fuzz/", "benches/"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }
 
 [lib]
 name = "cpoe_engine"
@@ -162,8 +166,6 @@ x11rb = { version = "0.13", features = ["allow-unsafe-code"], optional = true }
 
 [features]
 default = ["cpoe_jitter"]
-cargo-clippy = []
-secure-enclave = []
 cpoe_jitter = ["dep:cpoe-jitter"]
 x11 = ["x11rb"]  # Enable X11 focus detection on Linux
 ffi = ["dep:uniffi", "uniffi/cli"]  # UniFFI bindings for Swift (macOS GUI)

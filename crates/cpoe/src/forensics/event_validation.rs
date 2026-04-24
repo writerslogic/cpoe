@@ -42,10 +42,6 @@ pub const ZONE_RAPID_IKI_NS: i64 = 50_000_000;
 /// Minimum zone distance that counts as a large jump.
 pub const ZONE_DISTANCE_THRESHOLD: i8 = 5;
 
-/// Grace period after focus change for polling lag (200 ms).
-#[allow(dead_code)]
-pub const FOCUS_GRACE_MS: i64 = 200;
-
 // ---------------------------------------------------------------------------
 // Result types
 // ---------------------------------------------------------------------------

@@ -375,7 +375,7 @@ impl BatchVerifier {
         }
 
         for handle in handles {
-            if let Err(_) = handle.join() {
+            if handle.join().is_err() {
                 // Worker thread panicked; mark all unprocessed results as errored
                 let mut res = results.lock_recover();
                 for r in res.iter_mut() {

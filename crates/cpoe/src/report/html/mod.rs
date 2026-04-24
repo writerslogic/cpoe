@@ -40,6 +40,9 @@ fn render_html_inner(html: &mut String, r: &WarReport) -> std::fmt::Result {
     // Chain of evidence
     sections::write_chain_of_custody(html, r)?;
 
+    // Content provenance breakdown
+    sections::write_provenance_breakdown(html, r)?;
+
     // Author declaration
     sections::write_declaration_summary(html, r)?;
 

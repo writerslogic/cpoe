@@ -397,9 +397,7 @@ fn test_entangled_chain_creation() {
 #[test]
 fn test_entangled_commit_requires_entangled_mode() {
     let (dir, path) = temp_document();
-    let mut chain = Chain::new_with_mode(&path, test_vdf_params(), EntanglementMode::Legacy)
-        .expect("create legacy chain")
-        .with_signature_policy(SignaturePolicy::Optional);
+    let mut chain = Chain::new(&path, test_vdf_params()).expect("create legacy chain");
 
     let err = chain
         .commit_entangled(

@@ -105,18 +105,6 @@ fn word_surprisal(word: &str) -> f64 {
     }
 }
 
-/// Quick check for common English words (simplified).
-#[allow(dead_code)]
-fn is_common_english_word(word: &str) -> bool {
-    // Heuristics: English words are typically 3-8 chars, contain vowels, no numbers
-    word.len() >= 3
-        && word.len() <= 10
-        && word.chars().all(|c| c.is_alphabetic())
-        && word
-            .chars()
-            .any(|c| matches!(c, 'a' | 'e' | 'i' | 'o' | 'u' | 'y'))
-}
-
 /// Compute Pearson correlation between IKI samples and surprisal values.
 fn compute_iki_surprisal_correlation(ikis: &[f64], surprisals: &[f64]) -> f64 {
     let min_len = ikis.len().min(surprisals.len());

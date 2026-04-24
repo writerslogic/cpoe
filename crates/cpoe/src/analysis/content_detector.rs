@@ -502,7 +502,7 @@ impl ContentDetector {
         chat_score: f64,
         patterns: &[String],
     ) -> (ContextType, f64) {
-        let candidates = vec![
+        let candidates = [
             ("code", code_score),
             ("prose", prose_score),
             ("tech_doc", tech_doc_score),
