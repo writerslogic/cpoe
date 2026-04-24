@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: SSPL-1.0 OR LicenseRef-Commercial
 
 use super::sync_state::{CloudKitRecord, ConflictResolution, SyncMetrics};
+use super::text_fragments::TextFragment;
 use super::SecureStore;
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
@@ -160,7 +161,6 @@ impl CloudKitSyncEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::text_fragments::TextFragment;
 
     #[tokio::test]
     async fn test_sync_engine_creation() {
