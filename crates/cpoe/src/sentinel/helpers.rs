@@ -3,6 +3,7 @@
 use super::shadow::ShadowManager;
 use super::types::*;
 use crate::config::SentinelConfig;
+use crate::crypto::ObfuscatedString;
 use crate::wal::{EntryType, Wal};
 
 use crate::RwLockRecover;

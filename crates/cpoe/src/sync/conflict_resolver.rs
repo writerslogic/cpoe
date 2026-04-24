@@ -5,7 +5,7 @@
 //! Implements last-write-wins strategy with explicit ordering rules to ensure
 //! both devices arrive at identical decisions without coordination.
 
-use crate::store::text_fragments::TextFragment;
+use crate::store::text_fragments::{KeystrokeContext, TextFragment};
 
 /// Result of conflict resolution between two fragment versions.
 #[derive(Debug, Clone)]
@@ -189,13 +189,13 @@ mod tests {
 
     #[test]
     fn test_confidence_difference_high() {
-        let local = make_fragment("sess-1", 0.82, 1000, false);
-        let remote = make_fragment("sess-2", 0.95, 1000, false);
+        let local = make_fragment("sess-1", 0.82, 1000);
+        let remote = make_fragment("sess-2", 0.95, 1000);
 
         let resolution = ConflictResolver::resolve(&local, &remote);
 
-        assert_eq!(resolution.winner.keystroke_confidence, 0.95);
-        assert_eq!(resolution.loser.keystroke_confidence, 0.82);
+        assert_eq!(resolution.winner.keystroke_confidence, Some(0.95));
+        assert_eq!(resolution.loser.keystroke_confidence, Some(0.82));
         assert_eq!(resolution.resolution_rule, "confidence_difference");
     }
 
