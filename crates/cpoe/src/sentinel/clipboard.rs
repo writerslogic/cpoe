@@ -226,6 +226,7 @@ impl ClipboardMonitor {
         self: Arc<Self>,
         sessions: Arc<RwLock<HashMap<String, DocumentSession>>>,
         store: Arc<SecureStore>,
+        signing_key: Arc<RwLock<super::behavioral_key::BehavioralKey>>,
         cancel: CancellationToken,
     ) -> std::result::Result<(), ClipboardError> {
         loop {
@@ -233,14 +234,15 @@ impl ClipboardMonitor {
                 Ok(Some(mut copy_event)) => {
                     // Try to attach evidence if text matches a session fragment
                     match self
-                        .try_attach_evidence(&copy_event, &sessions, &store)
+                        .try_attach_evidence(&copy_event, &sessions, &store, &signing_key)
                         .await
                     {
-                        Ok(()) => {
+                        Ok(signed) => {
                             // Emit to broadcast channel only on successful attachment
+                            let evidence = signed.unwrap_or_else(|| copy_event.text_hash.to_vec());
                             if let Err(e) = self.pending_evidence_tx.send(EvidenceEvent {
                                 fragment_hash: copy_event.text_hash,
-                                evidence: copy_event.text_hash.to_vec(),
+                                evidence,
                                 source_app: copy_event.app_bundle_id.clone(),
                                 timestamp: copy_event.timestamp,
                             }) {
@@ -350,7 +352,8 @@ impl ClipboardMonitor {
         copy_event: &CopyEvent,
         sessions: &Arc<RwLock<HashMap<String, DocumentSession>>>,
         store: &Arc<SecureStore>,
-    ) -> std::result::Result<(), ClipboardError> {
+        signing_key: &Arc<RwLock<super::behavioral_key::BehavioralKey>>,
+    ) -> std::result::Result<Option<Vec<u8>>, ClipboardError> {
         let text_hex = hex::encode(copy_event.text_hash);
 
         // Collect focused session IDs under the lock, then drop it before awaiting.
@@ -369,9 +372,36 @@ impl ClipboardMonitor {
                 .await
             {
                 log::debug!("Text matched fragment in session {}", session_id);
-                self.persist_clipboard_event(store, copy_event, &copy_event.text_hash)
-                    .await?;
-                return Ok(());
+
+                // Sign clipboard evidence with COSE_Sign1 when key is available.
+                // Payload binds text_hash + app_bundle_id + timestamp to prevent
+                // attribution tampering by a user-adversary.
+                let signed_evidence = {
+                    let guard = signing_key.read_recover();
+                    guard.key().and_then(|sk| {
+                        let mut nonce = [0u8; 16];
+                        use rand::RngCore;
+                        rand::rng().fill_bytes(&mut nonce);
+                        let mut payload = Vec::with_capacity(
+                            32 + copy_event.app_bundle_id.len() + 8,
+                        );
+                        payload.extend_from_slice(&copy_event.text_hash);
+                        payload.extend_from_slice(copy_event.app_bundle_id.as_bytes());
+                        payload.extend_from_slice(&copy_event.timestamp.to_le_bytes());
+                        match wrap_clipboard_cose_sign1(&payload, &sk, &nonce) {
+                            Ok(signed) => Some(signed),
+                            Err(e) => {
+                                log::warn!("Clipboard COSE signing failed: {e}");
+                                None
+                            }
+                        }
+                    })
+                };
+
+                self.persist_clipboard_event(
+                    store, copy_event, &copy_event.text_hash, signed_evidence.as_deref(),
+                ).await?;
+                return Ok(signed_evidence);
             }
         }
 
@@ -402,6 +432,7 @@ impl ClipboardMonitor {
         store: &Arc<SecureStore>,
         copy_event: &CopyEvent,
         fragment_hash: &[u8; 32],
+        signed_evidence: Option<&[u8]>,
     ) -> std::result::Result<(), ClipboardError> {
         let now = Utc::now().timestamp_nanos_opt().unwrap_or(0);
 
@@ -413,6 +444,7 @@ impl ClipboardMonitor {
             copy_event.pasteboard_change_count,
             copy_event.timestamp,
             now,
+            signed_evidence,
         ).map_err(|e| ClipboardError::Other(format!("Database persist failed: {}", e)))?;
 
         Ok(())
@@ -462,7 +494,6 @@ impl ClipboardMonitor {
 ///
 /// Protected header contains Algorithm::EdDSA. The `nonce` is included in
 /// the unprotected header for replay prevention. Payload is the raw text bytes.
-#[allow(dead_code)]
 pub fn wrap_clipboard_cose_sign1(
     content: &[u8],
     signing_key: &SigningKey,

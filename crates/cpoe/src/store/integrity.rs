@@ -140,7 +140,8 @@ impl SecureStore {
                 pasteboard_change_count INTEGER NOT NULL,
                 timestamp               INTEGER NOT NULL,
                 captured_at             INTEGER NOT NULL,
-                hmac                    BLOB
+                hmac                    BLOB,
+                signed_evidence         BLOB
             );
 
             CREATE INDEX IF NOT EXISTS idx_secure_events_timestamp ON secure_events(timestamp_ns);
@@ -184,6 +185,12 @@ impl SecureStore {
         if !has_column(&self.conn, "clipboard_events", "hmac")? {
             self.conn
                 .execute_batch("ALTER TABLE clipboard_events ADD COLUMN hmac BLOB;")?;
+        }
+
+        // Migration: add `signed_evidence` to pre-existing clipboard_events
+        if !has_column(&self.conn, "clipboard_events", "signed_evidence")? {
+            self.conn
+                .execute_batch("ALTER TABLE clipboard_events ADD COLUMN signed_evidence BLOB;")?;
         }
 
         if !has_column(&self.conn, "secure_events", "challenge_nonce")? {

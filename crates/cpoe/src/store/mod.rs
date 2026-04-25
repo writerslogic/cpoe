@@ -84,6 +84,7 @@ impl SecureStore {
         pasteboard_change_count: i32,
         timestamp: i64,
         captured_at: i64,
+        signed_evidence: Option<&[u8]>,
     ) -> anyhow::Result<()> {
         // Reject timestamps more than 5 minutes in the future.
         let now_ns = std::time::SystemTime::now()
@@ -109,12 +110,15 @@ impl SecureStore {
         mac.update(&pasteboard_change_count.to_le_bytes());
         mac.update(&timestamp.to_le_bytes());
         mac.update(&captured_at.to_le_bytes());
+        if let Some(se) = signed_evidence {
+            mac.update(se);
+        }
         let hmac_tag: [u8; 32] = mac.finalize().into_bytes().into();
 
         self.conn.execute(
             "INSERT INTO clipboard_events
-             (fragment_hash, app_bundle_id, window_title, text_hash, pasteboard_change_count, timestamp, captured_at, hmac)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+             (fragment_hash, app_bundle_id, window_title, text_hash, pasteboard_change_count, timestamp, captured_at, hmac, signed_evidence)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             rusqlite::params![
                 fragment_hash,
                 app_bundle_id,
@@ -123,7 +127,8 @@ impl SecureStore {
                 pasteboard_change_count,
                 timestamp,
                 captured_at,
-                hmac_tag
+                hmac_tag,
+                signed_evidence
             ],
         )?;
         Ok(())

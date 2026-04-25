@@ -454,7 +454,7 @@ pub fn ffi_attest_text(
     }
 
     let fragment_hash_hex = hex::encode(fragment_hash);
-    let writersproof_id = fragment_hash_hex[..8].to_string();
+    let writersproof_id = fragment_hash_hex[..16].to_string();
 
     // Determine tier from sentinel state. Snapshot capture_active before
     // sessions() to avoid TOCTOU (capture could stop between the two calls).
@@ -1008,7 +1008,7 @@ mod tests {
         assert_eq!(result.tier, "declared");
         assert!(!result.fragment_hash_hex.is_empty());
         assert_eq!(result.fragment_hash_hex.len(), 64);
-        assert_eq!(result.writersproof_id.len(), 8);
+        assert_eq!(result.writersproof_id.len(), 16);
         assert!(result.fragment_hash_hex.starts_with(&result.writersproof_id));
         assert!(result.attestation_text.contains("WritersProof Declared"));
         assert!(result.attestation_text.contains("verify.writersproof.com"));

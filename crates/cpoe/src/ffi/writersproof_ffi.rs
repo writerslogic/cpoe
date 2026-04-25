@@ -313,8 +313,8 @@ pub fn ffi_sync_text_attestation(
     if content_hash.len() != 64 || !content_hash.chars().all(|c| c.is_ascii_hexdigit()) {
         return FfiResult::err("content_hash must be 64 hex characters".to_string());
     }
-    if writersproof_id.len() != 8 {
-        return FfiResult::err("writersproof_id must be 8 hex characters".to_string());
+    if !(writersproof_id.len() == 8 || writersproof_id.len() == 16) {
+        return FfiResult::err("writersproof_id must be 8 or 16 hex characters".to_string());
     }
 
     let signing_key = match load_signing_key() {
